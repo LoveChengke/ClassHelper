@@ -1,0 +1,32 @@
+{
+  "name": "@classhelper/web-admin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "班级小助手 Web 管理端（Vue 3 + Vite + Element Plus）",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit -p tsconfig.json && vite build",
+    "build:only": "vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@classhelper/shared": "workspace:*",
+    "@element-plus/icons-vue": "^2.3.2",
+    "axios": "^1.20.0",
+    "echarts": "^6.1.0",
+    "element-plus": "^2.14.5",
+    "pinia": "^4.0.3",
+    "socket.io-client": "^4.8.3",
+    "vue": "^3.5.42",
+    "vue-router": "^5.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.0",
+    "vue-tsc": "^3.3.11"
+  }
+}

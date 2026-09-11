@@ -1,0 +1,39 @@
+{
+  "name": "class-helper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "班级小助手 - 班级信息管理系统（Web 管理端 + 后端服务 + 桌面客户端）",
+  "packageManager": "pnpm@11.8.0",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "build:shared": "pnpm --filter @classhelper/shared build",
+    "dev": "pnpm build:shared && concurrently -k -n shared,server,web -c cyan,green,magenta \"pnpm --filter @classhelper/shared dev\" \"pnpm --filter @classhelper/server dev\" \"pnpm --filter @classhelper/web-admin dev\"",
+    "dev:server": "pnpm build:shared && pnpm --filter @classhelper/server dev",
+    "dev:web": "pnpm build:shared && pnpm --filter @classhelper/web-admin dev",
+    "build": "pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build",
+    "typecheck": "pnpm build:shared && pnpm -r --no-bail typecheck",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{ts,js,mjs,cjs,vue,json,md,yaml,yml,css,scss,html}\"",
+    "format:check": "prettier --check \"**/*.{ts,js,mjs,cjs,vue,json,md,yaml,yml,css,scss,html}\"",
+    "db:generate": "pnpm --filter @classhelper/server db:generate",
+    "db:migrate": "pnpm --filter @classhelper/server db:migrate",
+    "db:seed": "pnpm --filter @classhelper/server db:seed",
+    "db:reset": "pnpm --filter @classhelper/server db:reset",
+    "db:studio": "pnpm --filter @classhelper/server db:studio",
+    "db:switch:mysql": "node scripts/use-database.mjs mysql",
+    "db:switch:sqlite": "node scripts/use-database.mjs sqlite",
+    "verify:e2e": "pnpm --filter @classhelper/server verify:e2e"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "eslint": "^10.10.0",
+    "eslint-plugin-vue": "^10.11.0",
+    "prettier": "^3.9.6",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.70.0",
+    "vue-eslint-parser": "^10.4.1"
+  }
+}

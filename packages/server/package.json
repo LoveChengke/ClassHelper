@@ -1,0 +1,46 @@
+{
+  "name": "@classhelper/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "班级小助手后端服务：REST API + Socket.IO 实时推送 + Prisma 数据访问",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "start:tsx": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:push": "prisma db push",
+    "db:seed": "prisma db seed",
+    "db:reset": "prisma migrate reset --force",
+    "db:studio": "prisma studio",
+    "verify:e2e": "node scripts/verify-e2e.mjs"
+  },
+  "dependencies": {
+    "@classhelper/shared": "workspace:*",
+    "@libsql/client": "^0.17.0",
+    "@prisma/adapter-libsql": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "socket.io": "^4.8.3",
+    "zod": "^4.6.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^22.20.2",
+    "prisma": "7.10.0",
+    "socket.io-client": "^4.8.3",
+    "tsx": "^4.23.13",
+    "typescript": "~5.9.3"
+  }
+}

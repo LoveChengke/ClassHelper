@@ -1,0 +1,235 @@
+// 班级小助手 - 数据模型
+//
+// 设计说明：
+// 1) 本 schema 使用 sqlite provider（本地 MVP / 离线开发）。
+//    字段全部使用 String / Int / Float / Boolean / DateTime 等跨库通用类型，
+//    不使用 Prisma enum 与 @db.* 原生类型，因此可平移到 MySQL。
+//    MySQL 版本见同目录 schema.mysql.prisma，切换步骤见 docs/mysql.md。
+// 2) 角色与优先级用 String 存储（'ADMIN' | 'TEACHER' | 'STUDENT'、
+//    'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'），在 API 层用 zod 校验，
+//    这样 SQLite / MySQL 行为完全一致。
+// 3) 所有主键使用 cuid 字符串，便于多端离线生成与合并。
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+/// 用户：教师 / 管理员 / 学生统一存储
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  name         String
+  role         String   @default("STUDENT")
+  classId      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // 学生的主班级（一个学生属于一个主班级）
+  class             Class?             @relation("ClassStudents", fields: [classId], references: [id], onDelete: SetNull)
+  // 教师创建（负责）的班级
+  ownedClasses      Class[]            @relation("ClassOwner")
+  // 教师被分配协作的班级
+  classAssignments  ClassTeacher[]
+  courses           Course[]
+  homeworkStatuses  HomeworkStatus[]
+  notificationReads NotificationRead[]
+  grades            Grade[]
+  enrollments       Enrollment[]
+  createdHomeworks  Homework[]         @relation("HomeworkCreator")
+  createdNotices    Notification[]     @relation("NotificationCreator")
+
+  @@index([classId])
+  @@index([role])
+}
+
+/// 班级
+model Class {
+  id        String   @id @default(cuid())
+  name      String
+  grade     String
+  teacherId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  teacher       User             @relation("ClassOwner", fields: [teacherId], references: [id], onDelete: Cascade)
+  students      User[]           @relation("ClassStudents")
+  teachers      ClassTeacher[]
+  courses       Course[]
+  schedules     Schedule[]
+  homeworks     Homework[]
+  notifications Notification[]
+  grades        Grade[]
+  enrollments   Enrollment[]
+
+  @@index([teacherId])
+}
+
+/// 教师-班级 分配关系（一个教师可管理多个班级）
+model ClassTeacher {
+  id        String   @id @default(cuid())
+  classId   String
+  teacherId String
+  createdAt DateTime @default(now())
+
+  class   Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+  teacher User  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, teacherId])
+  @@index([teacherId])
+}
+
+/// 学生-班级 选课/归属记录（与 User.classId 保持同步，支持未来多班）
+model Enrollment {
+  id        String   @id @default(cuid())
+  userId    String
+  classId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  class Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, classId])
+  @@index([classId])
+}
+
+/// 课程
+model Course {
+  id        String   @id @default(cuid())
+  name      String
+  teacherId String
+  classId   String
+  createdAt DateTime @default(now())
+
+  teacher   User       @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  class     Class      @relation(fields: [classId], references: [id], onDelete: Cascade)
+  schedules Schedule[]
+  homeworks Homework[]
+  grades    Grade[]
+
+  @@unique([classId, name])
+  @@index([classId])
+}
+
+/// 课表条目
+model Schedule {
+  id        String   @id @default(cuid())
+  classId   String
+  courseId  String
+  /// 1=周一 ... 7=周日
+  dayOfWeek Int
+  /// HH:mm
+  startTime String
+  /// HH:mm
+  endTime   String
+  location  String?
+  /// 学期起始周次（含）
+  weekStart Int      @default(1)
+  /// 学期结束周次（含）
+  weekEnd   Int      @default(20)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  class  Class  @relation(fields: [classId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([classId, dayOfWeek])
+  @@index([courseId])
+}
+
+/// 作业
+model Homework {
+  id            String    @id @default(cuid())
+  classId       String
+  courseId      String?
+  title         String
+  content       String
+  attachmentUrl String?
+  dueAt         DateTime?
+  createdBy     String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  class    Class            @relation(fields: [classId], references: [id], onDelete: Cascade)
+  course   Course?          @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  creator  User             @relation("HomeworkCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  statuses HomeworkStatus[]
+
+  @@index([classId, createdAt])
+  @@index([courseId])
+  @@index([dueAt])
+}
+
+/// 学生作业完成状态
+model HomeworkStatus {
+  id         String   @id @default(cuid())
+  homeworkId String
+  userId     String
+  completed  Boolean  @default(false)
+  updatedAt  DateTime @updatedAt
+
+  homework Homework @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([homeworkId, userId])
+  @@index([userId])
+}
+
+/// 通知
+model Notification {
+  id        String   @id @default(cuid())
+  classId   String
+  title     String
+  content   String
+  priority  String   @default("NORMAL")
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  class   Class              @relation(fields: [classId], references: [id], onDelete: Cascade)
+  creator User               @relation("NotificationCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  reads   NotificationRead[]
+
+  @@index([classId, createdAt])
+}
+
+/// 通知已读记录
+model NotificationRead {
+  id             String   @id @default(cuid())
+  notificationId String
+  userId         String
+  readAt         DateTime @default(now())
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId])
+}
+
+/// 成绩
+model Grade {
+  id          String   @id @default(cuid())
+  classId     String
+  courseId    String?
+  userId      String
+  examName    String
+  score       Float
+  totalScore  Float    @default(100)
+  publishedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  class   Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  course  Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  student User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, publishedAt])
+  @@index([classId, examName])
+  @@index([courseId])
+}

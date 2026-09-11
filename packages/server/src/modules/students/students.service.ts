@@ -1,0 +1,149 @@
+import type { StudentDto } from '@classhelper/shared';
+import { env } from '../../config/env.js';
+import { assertClassWritable, classScopeWhere, isAdmin, resolveClassScope } from '../../lib/access.js';
+import { prisma } from '../../lib/db.js';
+import { ApiError } from '../../lib/http.js';
+import type { TokenPayload } from '../../lib/jwt.js';
+import { toStudentDto } from '../../lib/mappers.js';
+import { hashPassword } from '../../lib/password.js';
+import type { CreateStudentInput, ResetPasswordInput, UpdateStudentInput } from './students.schemas.js';
+
+export interface ListStudentOptions {
+  classId?: string;
+  keyword?: string;
+}
+
+/** 学生名单（按班级权限过滤） */
+export async function listStudents(user: TokenPayload, options: ListStudentOptions): Promise<StudentDto[]> {
+  const scope = await resolveClassScope(user, options.classId);
+
+  const students = await prisma.user.findMany({
+    where: {
+      role: 'STUDENT',
+      ...classScopeWhere(scope),
+      ...(options.keyword
+        ? {
+            OR: [{ name: { contains: options.keyword } }, { username: { contains: options.keyword } }],
+          }
+        : {}),
+    },
+    include: { class: { select: { name: true, grade: true } } },
+    orderBy: [{ classId: 'asc' }, { username: 'asc' }],
+    take: 500,
+  });
+
+  return students.map(toStudentDto);
+}
+
+/** 新建学生账号（可选直接分班） */
+export async function createStudent(user: TokenPayload, input: CreateStudentInput): Promise<StudentDto> {
+  if (input.classId) await assertClassWritable(user, input.classId);
+
+  const passwordHash = await hashPassword(input.password ?? env.defaultStudentPassword);
+  const created = await prisma.user.create({
+    data: {
+      username: input.username,
+      name: input.name,
+      role: 'STUDENT',
+      classId: input.classId ?? null,
+      passwordHash,
+    },
+  });
+
+  if (input.classId) {
+    await prisma.enrollment.upsert({
+      where: { userId_classId: { userId: created.id, classId: input.classId } },
+      create: { userId: created.id, classId: input.classId },
+      update: {},
+    });
+  }
+
+  const student = await prisma.user.findUniqueOrThrow({
+    where: { id: created.id },
+    include: { class: { select: { name: true, grade: true } } },
+  });
+  return toStudentDto(student);
+}
+
+/** 修改学生信息 / 调班 */
+export async function updateStudent(
+  user: TokenPayload,
+  studentId: string,
+  input: UpdateStudentInput,
+): Promise<StudentDto> {
+  const student = await prisma.user.findUnique({ where: { id: studentId } });
+  if (!student || student.role !== 'STUDENT') throw ApiError.notFound('学生不存在');
+
+  if (student.classId) {
+    await assertClassWritable(user, student.classId);
+  } else if (!isAdmin(user)) {
+    throw ApiError.forbidden('该学生尚未分班，仅管理员可以直接修改');
+  }
+
+  const nextClassId = input.classId === undefined ? student.classId : (input.classId ?? null);
+  if (nextClassId && nextClassId !== student.classId) {
+    await assertClassWritable(user, nextClassId);
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: studentId },
+    data: {
+      ...(input.name ? { name: input.name } : {}),
+      ...(input.username ? { username: input.username } : {}),
+      classId: nextClassId,
+    },
+  });
+
+  // 同步 Enrollment：换班时清理旧记录
+  if (nextClassId) {
+    await prisma.enrollment.deleteMany({ where: { userId: studentId, classId: { not: nextClassId } } });
+    await prisma.enrollment.upsert({
+      where: { userId_classId: { userId: studentId, classId: nextClassId } },
+      create: { userId: studentId, classId: nextClassId },
+      update: {},
+    });
+  } else {
+    await prisma.enrollment.deleteMany({ where: { userId: studentId } });
+  }
+
+  const result = await prisma.user.findUniqueOrThrow({
+    where: { id: updated.id },
+    include: { class: { select: { name: true, grade: true } } },
+  });
+  return toStudentDto(result);
+}
+
+/** 删除学生账号（级联删除其作业状态、成绩、已读记录） */
+export async function deleteStudent(user: TokenPayload, studentId: string): Promise<void> {
+  const student = await prisma.user.findUnique({ where: { id: studentId } });
+  if (!student || student.role !== 'STUDENT') throw ApiError.notFound('学生不存在');
+
+  if (student.classId) {
+    await assertClassWritable(user, student.classId);
+  } else if (!isAdmin(user)) {
+    throw ApiError.forbidden('该学生尚未分班，仅管理员可以删除');
+  }
+
+  await prisma.user.delete({ where: { id: studentId } });
+}
+
+/** 重置学生密码（未指定时使用默认初始密码） */
+export async function resetPassword(
+  user: TokenPayload,
+  studentId: string,
+  input: ResetPasswordInput,
+): Promise<void> {
+  const student = await prisma.user.findUnique({ where: { id: studentId } });
+  if (!student || student.role !== 'STUDENT') throw ApiError.notFound('学生不存在');
+
+  if (student.classId) {
+    await assertClassWritable(user, student.classId);
+  } else if (!isAdmin(user)) {
+    throw ApiError.forbidden('该学生尚未分班，仅管理员可以重置密码');
+  }
+
+  await prisma.user.update({
+    where: { id: studentId },
+    data: { passwordHash: await hashPassword(input.newPassword ?? env.defaultStudentPassword) },
+  });
+}

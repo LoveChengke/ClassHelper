@@ -1,0 +1,119 @@
+:root {
+  --ch-bg: #f5f7fa;
+  --ch-card-radius: 10px;
+  --ch-border: #e4e7ed;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  background: var(--ch-bg);
+  color: #303133;
+}
+
+.page {
+  padding: 16px 20px 24px;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.page-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.page-subtitle {
+  color: #909399;
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+
+.toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.stat-card {
+  background: #fff;
+  border-radius: var(--ch-card-radius);
+  padding: 16px;
+  border: 1px solid var(--ch-border);
+}
+
+.stat-label {
+  color: #909399;
+  font-size: 13px;
+}
+
+.stat-value {
+  font-size: 26px;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.stat-hint {
+  color: #c0c4cc;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.text-muted {
+  color: #909399;
+}
+
+.mt-12 {
+  margin-top: 12px;
+}
+
+.mt-16 {
+  margin-top: 16px;
+}
+
+.timetable-cell {
+  min-height: 34px;
+}
+
+.timetable-course {
+  font-weight: 600;
+}
+
+.timetable-meta {
+  font-size: 12px;
+  color: #909399;
+}
+
+.unread-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f56c6c;
+  margin-right: 6px;
+}

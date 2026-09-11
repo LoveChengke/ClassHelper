@@ -1,0 +1,104 @@
+import type { DashboardSummary, HomeworkDto, NotificationDto } from '@classhelper/shared';
+import {
+  classScopeIdFilter,
+  classScopeWhere,
+  isStudent,
+  resolveClassScope,
+  requireStudentClassId,
+} from '../../lib/access.js';
+import { prisma } from '../../lib/db.js';
+import type { TokenPayload } from '../../lib/jwt.js';
+import { toHomeworkDto, toNotificationDto } from '../../lib/mappers.js';
+
+const courseSelect = { select: { id: true, name: true } } as const;
+const creatorSelect = { select: { id: true, name: true, username: true } } as const;
+
+/**
+ * 仪表盘汇总。
+ * 教师/管理员看到的是"自己管理的班级"的汇总；学生看到自己班级的汇总。
+ */
+export async function getDashboardSummary(user: TokenPayload): Promise<DashboardSummary> {
+  const student = isStudent(user);
+  // 学生强制限定在自己班级，避免越权统计
+  const scope = await resolveClassScope(user, student ? requireStudentClassId(user) : undefined);
+  // 子表按 classId 过滤；Class 表本身按主键 id 过滤
+  const where = classScopeWhere(scope);
+  const classWhere = classScopeIdFilter(scope);
+  const now = new Date();
+
+  const [
+    classCount,
+    studentCount,
+    courseCount,
+    scheduleCount,
+    homeworkCount,
+    notificationCount,
+    gradeCount,
+    unreadNotificationCount,
+    pendingHomeworkCount,
+    recentNotifications,
+    recentHomeworks,
+    upcoming,
+  ] = await Promise.all([
+    prisma.class.count({ where: classWhere }),
+    prisma.user.count({ where: { ...where, role: 'STUDENT' } }),
+    prisma.course.count({ where }),
+    prisma.schedule.count({ where }),
+    prisma.homework.count({ where }),
+    prisma.notification.count({ where }),
+    prisma.grade.count({ where }),
+    prisma.notification.count({ where: { ...where, reads: { none: { userId: user.sub } } } }),
+    student
+      ? prisma.homework.count({
+          where: { ...where, statuses: { none: { userId: user.sub, completed: true } } },
+        })
+      : prisma.homework.count({ where: { ...where, dueAt: { gte: now } } }),
+    prisma.notification.findMany({
+      where,
+      include: { creator: creatorSelect, reads: { where: { userId: user.sub } } },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    }),
+    prisma.homework.findMany({
+      where,
+      include: {
+        course: courseSelect,
+        creator: creatorSelect,
+        statuses: student ? { where: { userId: user.sub } } : true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    }),
+    prisma.homework.findMany({
+      where: { ...where, dueAt: { gte: now } },
+      include: {
+        course: courseSelect,
+        creator: creatorSelect,
+        statuses: student ? { where: { userId: user.sub } } : true,
+      },
+      orderBy: { dueAt: 'asc' },
+      take: 5,
+    }),
+  ]);
+
+  return {
+    classCount,
+    studentCount,
+    courseCount,
+    scheduleCount,
+    homeworkCount,
+    notificationCount,
+    gradeCount,
+    unreadNotificationCount,
+    pendingHomeworkCount,
+    recentNotifications: recentNotifications.map((item): NotificationDto =>
+      toNotificationDto(item, { userId: user.sub }),
+    ),
+    recentHomeworks: recentHomeworks.map((item): HomeworkDto =>
+      toHomeworkDto(item, { userId: student ? user.sub : null, withStatus: !student }),
+    ),
+    upcomingDeadlines: upcoming.map((item): HomeworkDto =>
+      toHomeworkDto(item, { userId: student ? user.sub : null, withStatus: !student }),
+    ),
+  };
+}

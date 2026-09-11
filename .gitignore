@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+dist-electron/
+release/
+*.tsbuildinfo
+
+# generated code
+packages/server/src/generated/
+
+# env / secrets
+.env
+.env.local
+.env.*.local
+
+# local database
+packages/server/prisma/*.db
+packages/server/prisma/*.db-journal
+packages/server/prisma/*.db-wal
+packages/server/prisma/*.db-shm
+
+# logs & caches
+*.log
+logs/
+.cache/
+.probe/
+coverage/
+eslint-report.json
+
+# editor / os
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db

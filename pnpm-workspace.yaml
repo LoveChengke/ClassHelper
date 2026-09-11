@@ -1,0 +1,23 @@
+packages:
+  - 'packages/*'
+
+# pnpm 10+/11 默认拦截依赖的构建脚本（postinstall 等）。
+# 这里显式允许本项目的原生/引擎类依赖执行构建脚本，否则 install 会以
+# ERR_PNPM_IGNORED_BUILDS 失败，且后续任何 `pnpm exec` 都会连带失败。
+allowBuilds:
+  prisma: true
+  '@prisma/engines': true
+  '@prisma/client': true
+  esbuild: true
+  electron: true
+  vue-demi: true
+  '@parcel/watcher': true
+  unrs-resolver: true
+
+# 上游新版本发布后立即安装可能带来风险，这里保留默认解析行为。
+# 若要锁定 Node 版本或开启更严格的 peer 校验，可在此追加：
+# strictPeerDependencies: false
+
+# 不因为一次失败的依赖校验就中断后续命令。
+# 依赖安装请显式执行 pnpm install（见 README）。
+verifyDepsBeforeRun: false

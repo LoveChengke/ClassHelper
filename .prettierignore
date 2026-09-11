@@ -1,0 +1,9 @@
+node_modules
+dist
+dist-electron
+release
+packages/server/src/generated
+pnpm-lock.yaml
+.cache
+.pnpm-store
+.probe
