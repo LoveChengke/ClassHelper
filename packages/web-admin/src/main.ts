@@ -21,3 +21,16 @@ app.use(router);
 app.use(ElementPlus, { locale: zhCn });
 
 app.mount('#app');
+
+/**
+ * 注册 Service Worker（仅生产构建）：
+ * - 浏览器可「安装为应用」（PWA），断网时仍能打开应用外壳
+ * - 不缓存 /api 与 /socket.io，保证数据实时性
+ */
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    void navigator.serviceWorker.register('/sw.js').catch((error) => {
+      console.warn('[pwa] Service Worker 注册失败：', error);
+    });
+  });
+}

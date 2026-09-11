@@ -16,14 +16,39 @@ const realtime = useRealtimeStore();
 const notifications = useNotificationStore();
 
 const menuItems = [
-  { name: 'schedule', title: '课表', icon: 'Calendar' },
-  { name: 'homeworks', title: '作业', icon: 'Notebook' },
-  { name: 'notifications', title: '通知', icon: 'Bell' },
-  { name: 'grades', title: '成绩', icon: 'Trophy' },
-  { name: 'settings', title: '设置', icon: 'Setting' },
+  { path: '/schedule', title: '课表', icon: 'Calendar' },
+  { path: '/homeworks', title: '作业', icon: 'Notebook' },
+  { path: '/notifications', title: '通知', icon: 'Bell' },
+  { path: '/grades', title: '成绩', icon: 'Trophy' },
+  { path: '/settings', title: '设置', icon: 'Setting' },
 ];
 
-const activeMenu = computed(() => `/${String(route.name ?? 'schedule')}`);
+/** 高亮当前菜单：直接比较路由路径，避免依赖路由名 */
+const activeMenu = computed(() => route.path);
+
+/**
+ * 菜单点击回调。
+ * 注意：el-menu 的 @select 抛出的是 index（这里即路由路径），
+ * 不能当作路由名传给 router.push({ name })，否则会静默失败（点击无反应）。
+ */
+function handleMenuSelect(index: string): void {
+  void router.push(index);
+}
+
+/** 按路由名跳转（下拉菜单、按钮等程序化调用） */
+function go(name: string): void {
+  void router.push({ name });
+}
+
+/** 开发期自检：菜单路径必须存在于路由表中 */
+if (import.meta.env.DEV) {
+  const knownPaths = new Set(router.getRoutes().map((item) => item.path));
+  for (const item of menuItems) {
+    if (!knownPaths.has(item.path)) {
+      console.error(`[ClientLayout] 菜单项未注册对应路由：${item.path}`);
+    }
+  }
+}
 
 const connectionType = computed(() => {
   if (realtime.connected) return 'success';
@@ -36,10 +61,6 @@ const connectionText = computed(() => {
   if (appStore.serverReachable) return '服务器可达（实时通道重连中）';
   return '离线模式 · 显示缓存数据';
 });
-
-function go(name: string): void {
-  void router.push({ name });
-}
 
 async function handleLogout(): Promise<void> {
   await ElMessageBox.confirm('确认退出当前账号？离线缓存会保留。', '退出登录', { type: 'warning' });
@@ -81,12 +102,12 @@ onUnmounted(() => {
         <el-icon :size="20"><School /></el-icon>
         <span>班级小助手</span>
       </div>
-      <el-menu :default-active="activeMenu" class="menu" @select="go">
-        <el-menu-item v-for="item in menuItems" :key="item.name" :index="`/${item.name}`">
+      <el-menu :default-active="activeMenu" class="menu" @select="handleMenuSelect">
+        <el-menu-item v-for="item in menuItems" :key="item.path" :index="item.path">
           <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.title }}</span>
           <el-badge
-            v-if="item.name === 'notifications' && notifications.unreadCount > 0"
+            v-if="item.path === '/notifications' && notifications.unreadCount > 0"
             :value="notifications.unreadCount"
             class="menu-badge"
           />

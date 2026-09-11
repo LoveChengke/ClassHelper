@@ -25,6 +25,8 @@ export default tseslint.config(
       '**/dist/**',
       '**/dist-electron/**',
       '**/release/**',
+      '**/release-server/**',
+      '**/build/**',
       '**/coverage/**',
       '**/src/generated/**',
       '**/.cache/**',
@@ -35,6 +37,19 @@ export default tseslint.config(
   },
   ...tseslint.configs.recommended,
   ...pluginVue.configs['flat/recommended'],
+  {
+    // Electron 主进程脚本（图标渲染、UI 冒烟）必须是 CommonJS，允许 require
+    files: ['**/*.cjs'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'commonjs',
+      globals: sharedGlobals,
+    },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/no-var-requires': 'off',
+    },
+  },
   {
     files: ['**/*.vue'],
     languageOptions: {

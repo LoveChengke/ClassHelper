@@ -1,0 +1,93 @@
+# 班级小助手 · 生产部署（MySQL + 服务端 + 可选 HTTPS 反代）
+#
+# 使用：
+#   1) 复制环境变量模板并填写密钥：cp deploy/.env.example deploy/.env
+#   2) 构建并启动：docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+#   3) 访问：http://<服务器IP>:4000/
+#
+# 说明：数据库迁移由一次性的 migrate 服务执行（prisma migrate deploy），
+#      服务端容器因此无需内置 Prisma CLI。
+
+name: classhelper
+
+services:
+  # ---------------------------------------------------------------- 数据库
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 deploy/.env 中设置}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-classhelper}
+      MYSQL_USER: ${MYSQL_USER:-classhelper}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 deploy/.env 中设置}
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1', '-p${MYSQL_ROOT_PASSWORD}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks: [classhelper]
+
+  # ---------------------------------------------------------------- 数据库迁移（一次性）
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: build
+    restart: 'no'
+    working_dir: /app/packages/server
+    environment:
+      DATABASE_PROVIDER: mysql
+      DATABASE_URL: mysql://${MYSQL_USER:-classhelper}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-classhelper}
+      # MySQL 需要 mariadb 驱动适配器（切换数据库时按 docs/mysql.md 安装）
+      NODE_ENV: production
+    command: >
+      sh -c "pnpm --filter @classhelper/server add @prisma/adapter-mariadb &&
+             npx prisma migrate deploy"
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [classhelper]
+
+  # ---------------------------------------------------------------- 服务端 + Web 管理端
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: runtime
+    image: classhelper-server:${APP_VERSION:-0.1.0}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4000
+      DATABASE_PROVIDER: mysql
+      DATABASE_URL: mysql://${MYSQL_USER:-classhelper}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-classhelper}
+      JWT_SECRET: ${JWT_SECRET:?请在 deploy/.env 中设置（48 字节随机串）}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      TRUST_PROXY: '1'
+      RATE_LIMIT_ENABLED: 'true'
+      STARTUP_DB_CHECK: 'true'
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TERM_START_DATE: ${TERM_START_DATE:-}
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-admin}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-admin123}
+    ports:
+      - '${SERVER_PORT:-4000}:4000'
+    depends_on:
+      db: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    networks: [classhelper]
+
+networks:
+  classhelper:
+    driver: bridge
+
+volumes:
+  db-data:

@@ -6,6 +6,8 @@ node_modules/
 dist/
 dist-electron/
 release/
+# 服务端免安装目录与安装程序（体积极大，由 pnpm dist:server 生成）
+release-server/
 *.tsbuildinfo
 
 # generated code

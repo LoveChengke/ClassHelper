@@ -31,10 +31,12 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     appChildren: number;
     hasLoginPage: boolean;
     hasInput: boolean;
+    hasLayout: boolean;
     text: string;
   } | null = null;
-  for (let attempt = 0; attempt < 56; attempt += 1) {
-    dom = await win.webContents.executeJavaScript(
+
+  const snapshot = async (): Promise<typeof dom> =>
+    win.webContents.executeJavaScript(
       `(() => {
          const app = document.querySelector('#app');
          return {
@@ -42,13 +44,35 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
            appChildren: app ? app.children.length : 0,
            hasLoginPage: Boolean(document.querySelector('.login-page')),
            hasInput: Boolean(document.querySelector('input')),
+           hasLayout: document.querySelectorAll('.el-menu-item').length > 0,
            text: (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 80),
          };
        })()`,
     );
-    // 等到登录页真正渲染出来（而不是停在启动过渡页）
-    if (dom?.hasLoginPage && dom?.hasInput) break;
+
+  for (let attempt = 0; attempt < 56; attempt += 1) {
+    dom = await snapshot();
+    // 等到登录页或主布局真正渲染出来（而不是停在启动过渡页）
+    if ((dom?.hasLoginPage && dom?.hasInput) || dom?.hasLayout) break;
     await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  // 上次运行可能残留登录态（客户端会直接进主界面）——先退出登录，再校验登录页
+  if (dom?.hasLayout && !dom?.hasLoginPage) {
+    console.log('[SMOKE] 检测到已保存的登录态，先退出登录再校验登录页');
+    await win.webContents.executeJavaScript(
+      `(async () => {
+         if (!window.__classhelperSmoke__) return false;
+         await window.__classhelperSmoke__.sessionCleanup();
+         location.hash = '#/login';
+         return true;
+       })()`,
+    );
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      dom = await snapshot();
+      if (dom?.hasLoginPage && dom?.hasInput) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
   }
 
   record('渲染进程挂载（#app 有子节点）', (dom?.appChildren ?? 0) > 0, `children=${dom?.appChildren ?? 0}`);
@@ -120,10 +144,27 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
        })()`,
     );
     record(
-      '联网集成（登录 + 四类数据 + Socket.IO + 缓存写入）',
+      '联网集成（登录 + 布局挂载 + 四类数据 + Socket.IO + 缓存写入）',
       Boolean(online?.ok),
       String(online?.detail ?? ''),
     );
+
+    // 侧边栏点击导航（回归测试：曾因把 index 当路由名导致点击无反应）
+    const navigation = await win.webContents.executeJavaScript(
+      `(async () => {
+         if (!window.__classhelperSmoke__) return { ok: false, detail: '渲染进程未注册冒烟钩子' };
+         return await window.__classhelperSmoke__.layoutNavigationSelfTest();
+       })()`,
+    );
+    record('侧边栏点击导航（逐一点击 5 个菜单）', Boolean(navigation?.ok), String(navigation?.detail ?? ''));
+
+    const cleanup = await win.webContents.executeJavaScript(
+      `(async () => {
+         if (!window.__classhelperSmoke__) return { ok: false, detail: '渲染进程未注册冒烟钩子' };
+         return await window.__classhelperSmoke__.sessionCleanup();
+       })()`,
+    );
+    record('冒烟收尾：清理登录态', Boolean(cleanup?.ok), String(cleanup?.detail ?? ''));
   }
 
   const failed = results.filter((item) => !item.ok);

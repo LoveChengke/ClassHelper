@@ -1,0 +1,17 @@
+# Docker 构建上下文排除项（镜像只需要源码与配置）
+**/node_modules
+**/dist
+**/release
+**/release-server
+.cache
+.pnpm-store
+.probe
+.git
+.github
+*.log
+packages/server/prisma/*.db
+packages/server/prisma/*.db-journal
+packages/server/src/generated
+packages/desktop-client/build
+packages/web-admin/public/icon-512.png
+deploy/.env

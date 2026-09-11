@@ -1,0 +1,22 @@
+{
+  "name": "classhelper-server-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "班级小助手服务端运行时（安装包 / 容器内置）",
+  "dependencies": {
+    "@libsql/client": "^0.17.0",
+    "@prisma/adapter-libsql": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "bcryptjs": "^3.0.3",
+    "compression": "^1.8.2",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "socket.io": "^4.8.3",
+    "zod": "^4.6.2"
+  }
+}

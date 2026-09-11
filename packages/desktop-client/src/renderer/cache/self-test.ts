@@ -58,8 +58,73 @@ export async function offlineScenario(): Promise<SmokeCheckResult> {
   };
 }
 
+/** 轮询等待条件成立（用于验证点击后界面确实发生跳转） */
+async function waitUntil(predicate: () => boolean, timeoutMs = 3000, intervalMs = 50): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return predicate();
+}
+
+/** 侧边栏菜单与期望路由的对应关系（按显示文案匹配） */
+const EXPECTED_MENU: Array<{ label: string; path: string }> = [
+  { label: '课表', path: '/schedule' },
+  { label: '作业', path: '/homeworks' },
+  { label: '通知', path: '/notifications' },
+  { label: '成绩', path: '/grades' },
+  { label: '设置', path: '/settings' },
+];
+
 /**
- * 冒烟自检 3（需后端在线）：真实登录 + 拉取四类数据 + Socket.IO 连接。
+ * 冒烟自检 3：侧边栏点击导航。
+ * 直接对真实 DOM 触发 click，验证每次点击后路由与视图都发生切换 ——
+ * 这是"点击左侧边栏没反应"这类问题的回归测试。
+ */
+export async function layoutNavigationSelfTest(): Promise<SmokeCheckResult> {
+  const { router } = await import('../router/index.js');
+
+  const findMenuItem = (label: string): HTMLElement | undefined =>
+    (Array.from(document.querySelectorAll('.el-menu-item')) as HTMLElement[]).find((element) =>
+      (element.textContent ?? '').trim().startsWith(label),
+    );
+
+  if (!findMenuItem('课表')) {
+    return { ok: false, detail: '侧边栏未渲染（当前不在主布局或未登录）' };
+  }
+
+  const visited: string[] = [];
+  const failures: string[] = [];
+
+  for (const { label, path } of EXPECTED_MENU) {
+    const element = findMenuItem(label);
+    if (!element) {
+      failures.push(`${label}(菜单项缺失)`);
+      continue;
+    }
+
+    element.click();
+    const navigated = await waitUntil(() => router.currentRoute.value.path === path);
+    const actualPath = router.currentRoute.value.path;
+
+    // 视图内容也要跟着变（标题取自各页 .page-title）
+    const rendered = await waitUntil(() => Boolean(document.querySelector('.page-title')));
+    const title = (document.querySelector('.page-title')?.textContent ?? '').trim();
+
+    visited.push(`${label}→${actualPath}${title ? `(${title})` : ''}`);
+    if (!navigated) failures.push(`${label}(期望 ${path} 实际 ${actualPath})`);
+    else if (!rendered) failures.push(`${label}(视图未渲染)`);
+  }
+
+  return {
+    ok: failures.length === 0,
+    detail: `visited=[${visited.join(' ')}]${failures.length > 0 ? ` failures=${failures.join(';')}` : ''}`,
+  };
+}
+
+/**
+ * 冒烟自检 4（需后端在线）：真实登录 + 拉取四类数据 + Socket.IO 连接。
  * 覆盖渲染进程里实际使用的 API 封装、JWT 注入、实时通道与缓存写入。
  */
 export async function onlineScenario(): Promise<SmokeCheckResult> {
@@ -81,6 +146,12 @@ export async function onlineScenario(): Promise<SmokeCheckResult> {
   try {
     await auth.login(serverUrl, 'student01', 'student123');
     detail.push(`login=${auth.user?.name ?? '-'}`);
+
+    // 进入主布局（后续的侧边栏点击测试依赖布局已挂载）
+    const { router } = await import('../router/index.js');
+    await router.push('/schedule');
+    const layoutMounted = await waitUntil(() => Boolean(document.querySelector('.el-menu-item')), 5000);
+    detail.push(`layout=${layoutMounted}`);
 
     await appStore.init(serverUrl);
     detail.push(`reachable=${appStore.serverReachable}`);
@@ -131,14 +202,12 @@ export async function onlineScenario(): Promise<SmokeCheckResult> {
       homeworks.length > 0 &&
       notifications.length > 0 &&
       grades.length > 0 &&
-      realtime.connected;
+      realtime.connected &&
+      layoutMounted;
 
-    realtime.disconnect();
-    await auth.logout(); // 清理登录态，保证下次冒烟从登录页开始
+    // 会话保留给后续的侧边栏点击测试，由 sessionCleanup() 统一清理
     return { ok, detail: detail.join(' ') };
   } catch (error) {
-    realtime.disconnect();
-    await auth.logout().catch(() => undefined);
     return {
       ok: false,
       detail: `${detail.join(' ')} error=${error instanceof Error ? error.message : String(error)}`,
@@ -146,7 +215,28 @@ export async function onlineScenario(): Promise<SmokeCheckResult> {
   }
 }
 
+/** 冒烟收尾：断开实时通道并退出登录，保证下次冒烟从登录页开始 */
+export async function sessionCleanup(): Promise<SmokeCheckResult> {
+  const [{ useAuthStore }, { useRealtimeStore }] = await Promise.all([
+    import('../stores/auth.js'),
+    import('../stores/realtime.js'),
+  ]);
+  try {
+    useRealtimeStore().disconnect();
+    await useAuthStore().logout();
+    return { ok: true, detail: '已断开实时通道并清理登录态' };
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 /** 注册到 window，供主进程冒烟脚本调用 */
 export function registerSmokeHooks(): void {
-  window.__classhelperSmoke__ = { cacheSelfTest, offlineScenario, onlineScenario };
+  window.__classhelperSmoke__ = {
+    cacheSelfTest,
+    offlineScenario,
+    layoutNavigationSelfTest,
+    onlineScenario,
+    sessionCleanup,
+  };
 }

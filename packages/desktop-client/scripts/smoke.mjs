@@ -23,10 +23,31 @@ if (missing.length > 0) {
 }
 
 console.log('[smoke] 启动 Electron 冒烟验证...\n');
+
+// 未显式指定时自动探测后端：可达则启用联网集成 + 侧边栏点击测试
+let online = process.env.ELECTRON_SMOKE_ONLINE;
+if (online === undefined) {
+  online = '0';
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    const response = await fetch('http://127.0.0.1:4000/api/health', { signal: controller.signal });
+    clearTimeout(timer);
+    online = response.ok ? '1' : '0';
+  } catch {
+    online = '0';
+  }
+  console.log(
+    online === '1'
+      ? '[smoke] 检测到后端在线，将执行联网集成与侧边栏点击测试'
+      : '[smoke] 后端未在线，仅执行本地检查（离线缓存/界面渲染）；如需联网测试请先启动 pnpm dev:server',
+  );
+}
+
 const child = spawn(electronPath, ['.'], {
   cwd: root,
   stdio: 'inherit',
-  env: { ...process.env, ELECTRON_SMOKE_TEST: '1' },
+  env: { ...process.env, ELECTRON_SMOKE_TEST: '1', ELECTRON_SMOKE_ONLINE: online },
 });
 
 child.on('exit', (code) => {

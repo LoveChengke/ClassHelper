@@ -29,8 +29,12 @@
     "db:switch:sqlite": "node scripts/use-database.mjs sqlite",
     "verify:e2e": "pnpm --filter @classhelper/server verify:e2e",
     "verify:desktop": "pnpm --filter @classhelper/desktop-client smoke",
+    "verify:web": "node scripts/ui-smoke/run.mjs",
+    "icons": "node scripts/generate-icons.mjs",
     "dist:win": "pnpm --filter @classhelper/desktop-client dist:win",
-    "dist:dir": "pnpm --filter @classhelper/desktop-client dist:dir"
+    "dist:dir": "pnpm --filter @classhelper/desktop-client dist:dir",
+    "dist:server": "pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build && node scripts/dist-server.mjs",
+    "dist:all": "pnpm dist:server && pnpm dist:win"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

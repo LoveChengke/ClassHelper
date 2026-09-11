@@ -15,14 +15,15 @@
 
 ## 当前交付范围
 
-| 阶段 | 内容                                                                                                       | 状态                                           |
-| ---- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| 1    | pnpm monorepo 脚手架、TypeScript / ESLint / Prettier / 环境变量                                            | ✅ 已完成                                      |
-| 2    | 后端：Prisma schema + 迁移 + 种子数据 + JWT 认证 + RBAC + 模块化 REST API + Socket.IO                      | ✅ 已完成                                      |
-| 3    | Web 管理端：登录、主布局、仪表盘、班级/学生/课表/作业/通知/成绩页面、Axios 封装、实时提示                  | ✅ 已完成                                      |
-| 4    | EXE 客户端：Electron 主进程/preload/渲染进程、登录、课表/作业/通知/成绩/设置、实时推送、IndexedDB 离线缓存 | ✅ 已完成（冒烟验证 9/9 通过）                 |
-| 5    | 三端联调脚本、打包命令、完整 README                                                                        | ✅ 已完成（electron-builder 打包 Windows EXE） |
-| 6    | 测试账号与种子数据说明                                                                                     | ✅ 已完成（见下文）                            |
+| 阶段 | 内容                                                                                                       | 状态                                                       |
+| ---- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| 1    | pnpm monorepo 脚手架、TypeScript / ESLint / Prettier / 环境变量                                            | ✅ 已完成                                                  |
+| 2    | 后端：Prisma schema + 迁移 + 种子数据 + JWT 认证 + RBAC + 模块化 REST API + Socket.IO                      | ✅ 已完成                                                  |
+| 3    | Web 管理端：登录、主布局、仪表盘、班级/学生/课表/作业/通知/成绩页面、Axios 封装、实时提示                  | ✅ 已完成                                                  |
+| 4    | EXE 客户端：Electron 主进程/preload/渲染进程、登录、课表/作业/通知/成绩/设置、实时推送、IndexedDB 离线缓存 | ✅ 已完成（冒烟验证 11/11）                                |
+| 5    | 三端联调脚本、打包命令、完整 README                                                                        | ✅ 已完成（三套安装包 + 两套 UI 回归测试）                 |
+| 6    | 测试账号与种子数据说明                                                                                     | ✅ 已完成（见下文）                                        |
+| 7    | 生产化：服务端安装程序（内置 Node）、Web 端 PWA 可安装、Docker + Nginx 部署、生产加固与运维文档            | ✅ 已完成（见 [`docs/production.md`](docs/production.md)） |
 
 > **与原始提示词的两处偏差（已与你确认）**
 >
@@ -30,18 +31,40 @@
 >    （Socket.IO Client、Pinia、IndexedDB 离线缓存、electron-builder）都基于 Electron，
 >    且本机没有 .NET SDK。
 > 2. 数据库 **先用 SQLite（libSQL 内嵌）跑通 MVP，并预留 MySQL 切换**：本机没有可用 MySQL
->    实例；`docs/mysql.md` 给出云数据库切换的完整步骤。
+>    实例；`docs/mysql.md` 给出云数据库切换的完整步骤，`deploy/` 提供 MySQL 版 Compose。
+
+## 三套交付产物
+
+| 产物                            | 文件                                                                          | 用途                                                                                    |
+| ------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| **服务端 + Web 管理端安装程序** | `release-server/班级小助手服务端-0.1.0-x64-setup.exe`（34 MB）                | 装到教师电脑/校服务器即完整系统，**内置 Node 运行时**，双击安装、开机自启、自动建库建号 |
+| **学生客户端安装程序**          | `packages/desktop-client/release/班级小助手-0.1.0-x64-setup.exe`（107 MB）    | 学生机安装（NSIS 安装包）                                                               |
+| **学生客户端单文件版**          | `packages/desktop-client/release/班级小助手-0.1.0-x64-portable.exe`（107 MB） | 免安装直接运行（U 盘分发）                                                              |
+| Web 管理端（PWA）               | 由服务端在 `/` 直接托管                                                       | 浏览器打开即用，可在 Edge/Chrome 中「安装为应用」                                       |
+
+生产部署（Windows 安装包 / Docker + MySQL / 手动部署）请看
+**[docs/production.md](docs/production.md)**。
 
 ## 目录结构
 
 ```
 class-helper/
-├── package.json                 # 根脚本（dev / build / db:* / verify:* / dist:*）
+├── package.json                 # 根脚本（dev / build / db:* / verify:* / dist:* / icons）
 ├── pnpm-workspace.yaml          # workspace 定义 + allowBuilds（pnpm 11 依赖构建白名单）
 ├── tsconfig.base.json           # 共享 TS 基础配置
 ├── eslint.config.mjs            # ESLint 扁平配置（TS + Vue）
-├── scripts/use-database.mjs     # SQLite ⇄ MySQL provider 切换助手
-├── docs/mysql.md                # MySQL 切换与生产部署指南
+├── .dockerignore                # 容器构建上下文排除项
+├── build/icon.{ico,png}         # 应用图标（由 pnpm icons 生成）
+├── scripts/
+│   ├── use-database.mjs         # SQLite ⇄ MySQL provider 切换助手
+│   ├── generate-icons.mjs       # 用 Electron 渲染 SVG 生成 PNG/ICO 图标
+│   ├── dist-server.mjs          # 服务端 + Web 管理端 打包（免安装目录 + NSIS 安装程序）
+│   ├── nsis/server-installer.nsi# 安装程序脚本模板
+│   └── ui-smoke/                # Web 管理端 UI 真实点击回归测试（Electron 驱动）
+├── deploy/                      # 生产部署：Dockerfile / docker-compose.yml / nginx.conf
+├── docs/
+│   ├── production.md            # 生产部署指南（三种形态 + 运维 + 安全清单）
+│   └── mysql.md                 # MySQL 切换指南
 └── packages/
     ├── shared/                  # 三端共享：类型契约、常量、工具函数
     │   └── src/{types,constants,utils,index}.ts
@@ -52,23 +75,25 @@ class-helper/
     │   ├── prisma.config.ts             # Prisma 7 配置（迁移/种子/连接串）
     │   ├── scripts/verify-e2e.mjs       # 后端端到端验收脚本（54 项）
     │   └── src/
-    │       ├── app.ts                   # Express 装配（服务首页 + 健康检查 + 模块挂载）
-    │       ├── index.ts                 # 启动入口（HTTP + Socket.IO + 优雅退出）
-    │       ├── config/env.ts            # 环境变量校验（zod）
-    │       ├── lib/                     # db / http / jwt / password / access(RBAC) / mappers
-    │       ├── middleware/              # auth / error / validate
+    │       ├── app.ts                   # Express 装配（静态托管 + 探针 + 限流 + 模块挂载）
+    │       ├── index.ts                 # 启动入口（自检/初始化 + HTTP + Socket.IO + 优雅退出）
+    │       ├── config/env.ts            # 环境变量校验（zod）+ 生产配置自检
+    │       ├── lib/                     # db / db-bootstrap / web-static / http / jwt / access(RBAC) / mappers
+    │       ├── middleware/              # auth / error / validate / security(helmet+限流+耗时日志)
     │       ├── realtime/                # socket.ts + bus.ts（事件总线）
     │       └── modules/                 # 功能模块 + registry.ts
-    ├── web-admin/               # Web 管理端（Vue 3 + Vite + Element Plus）
+    ├── web-admin/               # Web 管理端（Vue 3 + Vite + Element Plus + PWA）
+    │   ├── public/                      # manifest / sw.js / 图标（由 pnpm icons 生成）
     │   └── src/{api,stores,router,layouts,views,styles}
     └── desktop-client/          # EXE 客户端（Electron + Vue 3）
         ├── electron-builder.yml         # 打包配置（nsis 安装包 + portable 单文件）
+        ├── build/icon.ico               # 应用图标（electron-builder 自动使用）
         ├── vite.config.mts              # 渲染进程构建（base: './'，hash 路由）
-        ├── scripts/{build-main,dev,smoke}.mjs
+        ├── scripts/{build-main,dev,smoke,dist-win}.mjs
         └── src/
             ├── main/                    # 主进程：窗口/单实例/配置持久化(IPC)/冒烟验证
             ├── preload/                 # contextBridge 安全桥（不暴露 ipcRenderer 本体）
-            ├── types/desktop.d.ts        # 主进程 <-> 渲染进程契约
+            ├── types/desktop.d.ts       # 主进程 <-> 渲染进程契约
             └── renderer/                # 渲染进程：api / stores / cache / router / layouts / views
 ```
 
@@ -179,9 +204,14 @@ pnpm verify:desktop      # Electron 客户端（含联网集成）：9 项
 | `pnpm dev:desktop`                          | 启动 EXE 客户端开发模式（Vite 5174 + Electron，热更新）              |
 | `pnpm build`                                | 构建 shared + 后端 + Web 端 + EXE 客户端                             |
 | `pnpm build:desktop`                        | 仅构建 EXE 客户端（esbuild 主进程/preload + Vite 渲染进程）          |
-| `pnpm verify:desktop`                       | Electron 冒烟验证（需先 `pnpm build:desktop`；后端在线则含联网集成） |
-| `pnpm dist:dir`                             | 打包免安装目录 `release/win-unpacked`（含可执行文件，最快）          |
-| `pnpm dist:win`                             | 打包 nsis 安装包 + portable 单文件 EXE                               |
+| `pnpm icons`                                | 生成应用图标（PNG/ICO，用 Electron 渲染 SVG）                        |
+| **`pnpm dist:server`**                      | **打包服务端 + Web 管理端**（免安装目录 + NSIS 安装程序，内置 Node） |
+| `pnpm dist:dir`                             | 打包客户端免安装目录 `release/win-unpacked`（含可执行文件，最快）    |
+| `pnpm dist:win`                             | 打包客户端 nsis 安装包 + portable 单文件 EXE                         |
+| `pnpm dist:all`                             | 服务端安装程序 + 客户端安装程序一起打                                |
+| `pnpm verify:e2e`                           | 后端端到端验收（54 项，需服务端已启动）                              |
+| `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，7 项）                    |
+| `pnpm verify:desktop`                       | EXE 客户端冒烟验证（11 项，含侧边栏点击与离线回退）                  |
 | `pnpm typecheck`                            | 全仓库类型检查（含 `vue-tsc`）                                       |
 | `pnpm lint` / `pnpm lint:fix`               | ESLint 检查 / 自动修复                                               |
 | `pnpm format` / `pnpm format:check`         | Prettier 格式化 / 检查                                               |
@@ -191,7 +221,6 @@ pnpm verify:desktop      # Electron 客户端（含联网集成）：9 项
 | `pnpm db:reset`                             | 重置数据库并重新执行 seed                                            |
 | `pnpm db:studio`                            | 打开 Prisma Studio                                                   |
 | `pnpm db:switch:mysql` / `db:switch:sqlite` | 切换数据库 provider                                                  |
-| `pnpm verify:e2e`                           | 端到端验收（需后端已启动）                                           |
 
 ## EXE 客户端（学生端）
 
@@ -406,14 +435,23 @@ pnpm db:migrate && pnpm db:seed
 
 打包产物验证（对最终 EXE 实测，非仅开发产物）：
 
-| 产物                                     | 大小    | 冒烟结果                                                       |
-| ---------------------------------------- | ------- | -------------------------------------------------------------- |
-| `release/win-unpacked/班级小助手.exe`    | 234.7MB | ✅ 9/9，`packaged: true`，退出码 0                             |
-| `release/…-x64-portable.exe`（单文件）   | 106.7MB | ✅ 9/9，含联网集成（登录王小明 / Socket.IO 已连接 / 四类数据） |
-| `release/…-x64-setup.exe`（NSIS 安装包） | 106.9MB | ✅ 构建成功（安装后运行同一份 `win-unpacked` 内容）            |
+| 产物                                   | 大小    | 冒烟结果                                                                             |
+| -------------------------------------- | ------- | ------------------------------------------------------------------------------------ |
+| 服务端安装程序（内置 Node + Web 端）   | 33.9MB  | ✅ 静默安装 10s → 自动建库建号 → 服务 34s 就绪 → **对安装实例跑 54/54 e2e + 7/7 UI** |
+| `release/win-unpacked/班级小助手.exe`  | 234.7MB | ✅ 11/11，`packaged: true`，退出码 0                                                 |
+| `release/…-x64-portable.exe`（单文件） | 106.9MB | ✅ 9/9（含联网集成：登录王小明 / Socket.IO 已连接 / 四类数据）                       |
+| `release/…-x64-setup.exe`（客户端）    | 107.2MB | ✅ 构建成功，已嵌入自定义图标                                                        |
 
-当前实测：`pnpm verify:e2e` → **54/54**；`pnpm verify:desktop` → **9/9**；
-`pnpm typecheck`、`pnpm lint`、`pnpm build`、`pnpm dist:win` 全部通过。
+当前实测：
+
+| 验证                                                        | 结果                                |
+| ----------------------------------------------------------- | ----------------------------------- |
+| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次） | **54/54** ✅                        |
+| `pnpm verify:web`（Web 管理端真实点击 + PWA）               | **7/7** ✅                          |
+| `pnpm verify:desktop`（客户端冒烟 + 侧边栏点击 + 离线回退） | **11/11** ✅                        |
+| `pnpm typecheck` / `pnpm lint` / `pnpm format:check`        | 全部通过 ✅                         |
+| 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）          | 通过 ✅                             |
+| Docker / Nginx 部署样例                                     | 文件已提供，本机无 Docker 未实测 ⚠️ |
 
 ## 常见问题（本机环境已知坑）
 
@@ -426,55 +464,66 @@ pnpm db:migrate && pnpm db:seed
    `node packages/web-admin/node_modules/vite/bin/vite.js build`。
    在普通终端（非 Electron 宿主）中 `pnpm <script>` 一切正常。
 
-2. **原生模块会按 Electron ABI 构建**
+2. **不要用 PowerShell 管道调用 `start.cmd`**
+   现象：`& "$install\start.cmd" | Select-Object -First 20` 会一直不返回。
+   原因：脚本内启动的 node 进程在该上下文里继承了管道句柄。
+   规避：双击运行，或用 `Start-Process cmd.exe "/c start.cmd"`（脚本自身 4 秒内退出）。
+
+3. **原生模块会按 Electron ABI 构建**
    同一原因会让 `node-gyp` / `prebuild-install` 以 `runtime=electron` 为目标，
    装出的 `.node` 在 Node 进程里无法加载。本项目因此改用 **libSQL 适配器**
    （`@libsql/win32-x64-msvc` 为 npm 预编译包，无需本地编译），彻底规避该问题。
 
-3. **本机 TLS 中间人证书导致依赖二进制下载失败**
+4. **本机 TLS 中间人证书导致依赖二进制下载失败**
    现象：`prebuild-install warn install unable to verify the first certificate`。
    规避：安装时设置 `NODE_OPTIONS=--use-system-ca`（Node ≥ 22.15 支持），
    并确保 `npm_config_cache` 指向可写目录（如仓库内 `.cache/npm-cache`）。
 
-4. **受限沙箱下 Vite 构建报 `spawn EPERM`**
+5. **受限沙箱下 Vite 构建报 `spawn EPERM`**
    Vite 在 Windows 上通过 `execFile` 解析真实路径，需要放开子进程管道限制后再构建。
 
-5. **Prisma 7 与旧版本差异**
+6. **Prisma 7 与旧版本差异**
    `prisma` 的 npm `latest` 标签当前指向 `8.0.0-rc`，本项目**显式锁定 7.10.0**；
    生成器为 `prisma-client`（输出到 `src/generated/prisma`，已 gitignore），
    连接串在 `prisma.config.ts` 中配置，且必须通过 driver adapter 接入数据库。
 
-6. **Electron 二进制下载慢或失败**
+7. **Electron 二进制下载慢或失败**
    `electron` 的 postinstall 会从 GitHub 拉取约 151MB 发行包，本机实测 10 分钟仍未完成。
    规避：安装前设置镜像与缓存目录（本项目已把 electron 缓存指向 `.cache/electron`）：
    `ELECTRON_MIRROR=https://cdn.npmmirror.com/binaries/electron/`。
    打包阶段 `scripts/dist-win.mjs` 已内置该镜像，并优先复用本地已解压的 Electron。
 
-7. **electron-builder 的构建工具（NSIS / winCodeSign）下载慢**
+8. **electron-builder 的构建工具（NSIS / winCodeSign）下载慢**
    通过 `ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`
    解决（已内置到 `dist-win.mjs`），实测 nsis-3.0.4.1 与 nsis-resources 正常下载。
+   `scripts/dist-server.mjs` 会直接复用 electron-builder 缓存里的 `makensis`。
 
-8. **打包未提供图标**
-   未放置 `packages/desktop-client/build/icon.ico` 时使用 Electron 默认图标。
-   放入 256×256 及以上尺寸的 `.ico`（或 256×256 PNG）即可自动使用。
+9. **应用图标**
+   `pnpm icons` 会用 Electron 渲染 SVG 生成 `packages/desktop-client/build/icon.ico`（多尺寸）、
+   PWA 所需的 PNG 与 `favicon.svg`。electron-builder 与 NSIS 安装程序都会自动使用该图标。
 
-## 交付清单（阶段 4-6 新增）
+10. **服务端安装包内的 `.cmd` 脚本为什么是英文提示？**
+    cmd.exe 按 OEM 代码页（GBK）解析脚本文件，UTF-8 中文会产生乱码甚至语法错误，
+    因此脚本提示统一用 ASCII，中文说明放在安装向导与 `README.txt` 中。
 
-| 路径                                                                  | 说明                                                        |
-| --------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `packages/desktop-client/src/main/*`                                  | Electron 主进程：窗口、单实例、配置持久化、IPC、冒烟验证    |
-| `packages/desktop-client/src/preload/index.ts`                        | contextBridge 安全桥                                        |
-| `packages/desktop-client/src/renderer/api/*`                          | Axios 封装（动态服务器地址、JWT、离线不弹错）               |
-| `packages/desktop-client/src/renderer/cache/{db,index}.ts`            | IndexedDB 缓存层 + `fetchWithCache` 离线回退                |
-| `packages/desktop-client/src/renderer/stores/*`                       | Pinia：auth / app（可达性与同步）/ realtime / notifications |
-| `packages/desktop-client/src/renderer/views/*`                        | 登录 / 课表 / 作业 / 通知 / 成绩 / 设置                     |
-| `packages/desktop-client/scripts/{build-main,dev,smoke,dist-win}.mjs` | 构建、开发、冒烟、打包脚本                                  |
-| `packages/desktop-client/electron-builder.yml`                        | 打包配置（nsis + portable）                                 |
+## 交付清单（阶段 7 · 生产化）
+
+| 路径                                                | 说明                                                             |
+| --------------------------------------------------- | ---------------------------------------------------------------- |
+| `scripts/dist-server.mjs`                           | 服务端 + Web 端打包（内置 Node、依赖、迁移、启停脚本、安装程序） |
+| `scripts/nsis/server-installer.nsi`                 | NSIS 安装程序模板（安装/快捷方式/开机自启/卸载保留数据）         |
+| `scripts/generate-icons.mjs` + `scripts/icons/`     | 图标生成（Electron 渲染 SVG → PNG/ICO）                          |
+| `scripts/ui-smoke/`                                 | Web 管理端 UI 真实点击回归测试                                   |
+| `packages/server/src/middleware/security.ts`        | helmet + 限流（通用/登录）+ 请求耗时日志                         |
+| `packages/server/src/lib/web-static.ts`             | Web 管理端静态托管 + SPA 回退 + 缓存策略                         |
+| `packages/server/src/lib/db-bootstrap.ts`           | 首启动自动迁移 + 自动创建管理员                                  |
+| `packages/web-admin/public/{manifest,sw.js}`        | PWA：可安装为应用 + 离线外壳                                     |
+| `deploy/{Dockerfile,docker-compose.yml,nginx.conf}` | 云部署与 HTTPS 反代样例                                          |
+| `docs/production.md`                                | 生产部署指南（三种形态 + 运维 + 安全清单 + 故障排查）            |
 
 ## 后续可选增强
 
-1. 自定义应用图标与安装向导文案（`build/icon.ico`）。
-2. 代码签名证书（消除 SmartScreen 提示）。
-3. 客户端"提交类操作离线队列"（当前离线为只读，联网后自动同步读取的数据）。
-4. 云数据库部署清单（Docker Compose + `prisma migrate deploy`）与 CI 流水线。
-5. 课表按当前时间高亮"正在上的课"与上课提醒（可参考 ClassIsland 的课程提醒设计）。
+1. 代码签名证书（消除 SmartScreen 提示）。
+2. 客户端"提交类操作离线队列"（当前离线为只读，联网后自动同步读取的数据）。
+3. Socket.IO 多实例广播（引入 `@socket.io/redis-adapter`）与 CI 流水线。
+4. 课表按当前时间高亮"正在上的课"与上课提醒（可参考 ClassIsland 的课程提醒设计）。

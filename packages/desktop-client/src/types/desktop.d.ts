@@ -41,7 +41,9 @@ declare global {
     __classhelperSmoke__?: {
       cacheSelfTest(): Promise<{ ok: boolean; detail: string }>;
       offlineScenario(): Promise<{ ok: boolean; detail: string }>;
+      layoutNavigationSelfTest(): Promise<{ ok: boolean; detail: string }>;
       onlineScenario(): Promise<{ ok: boolean; detail: string }>;
+      sessionCleanup(): Promise<{ ok: boolean; detail: string }>;
     };
   }
 }

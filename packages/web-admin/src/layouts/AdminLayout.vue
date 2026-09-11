@@ -13,16 +13,36 @@ const auth = useAuthStore();
 const realtime = useRealtimeStore();
 
 const menuItems = [
-  { name: 'dashboard', title: '仪表盘', icon: 'Odometer' },
-  { name: 'classes', title: '班级管理', icon: 'School' },
-  { name: 'students', title: '学生管理', icon: 'User' },
-  { name: 'schedules', title: '课表管理', icon: 'Calendar' },
-  { name: 'homeworks', title: '作业发布', icon: 'Notebook' },
-  { name: 'notifications', title: '通知发布', icon: 'Bell' },
-  { name: 'grades', title: '成绩录入', icon: 'Trophy' },
+  { path: '/dashboard', title: '仪表盘', icon: 'Odometer' },
+  { path: '/classes', title: '班级管理', icon: 'School' },
+  { path: '/students', title: '学生管理', icon: 'User' },
+  { path: '/schedules', title: '课表管理', icon: 'Calendar' },
+  { path: '/homeworks', title: '作业发布', icon: 'Notebook' },
+  { path: '/notifications', title: '通知发布', icon: 'Bell' },
+  { path: '/grades', title: '成绩录入', icon: 'Trophy' },
 ];
 
-const activeMenu = computed(() => `/${String(route.name ?? 'dashboard')}`);
+/** 高亮当前菜单：直接比较路由路径，避免依赖路由名 */
+const activeMenu = computed(() => route.path);
+
+/**
+ * 菜单点击回调。
+ * 注意：el-menu 的 @select 抛出的是 el-menu-item 的 index（这里即路由路径），
+ * 不能当作路由名使用（router.push({ name }) 会因找不到同名路由而静默失败）。
+ */
+function handleMenuSelect(index: string): void {
+  void router.push(index);
+}
+
+/** 开发期自检：菜单路径必须存在于路由表中，防止再次出现"点了没反应" */
+if (import.meta.env.DEV) {
+  const knownPaths = new Set(router.getRoutes().map((item) => item.path));
+  for (const item of menuItems) {
+    if (!knownPaths.has(item.path)) {
+      console.error(`[AdminLayout] 菜单项未注册对应路由：${item.path}`);
+    }
+  }
+}
 
 const connectionText = computed(() => {
   if (realtime.connected) return '实时通道已连接';
@@ -33,10 +53,6 @@ const connectionText = computed(() => {
 const connectionType = computed(() =>
   realtime.connected ? 'success' : realtime.connecting ? 'warning' : 'danger',
 );
-
-function go(name: string): void {
-  void router.push({ name });
-}
 
 async function handleLogout(): Promise<void> {
   await ElMessageBox.confirm('确认退出当前账号？', '退出登录', { type: 'warning' });
@@ -91,8 +107,8 @@ async function submitPassword(): Promise<void> {
         <el-icon :size="22"><School /></el-icon>
         <span class="brand-text">班级小助手</span>
       </div>
-      <el-menu :default-active="activeMenu" class="layout-menu" @select="go">
-        <el-menu-item v-for="item in menuItems" :key="item.name" :index="`/${item.name}`">
+      <el-menu :default-active="activeMenu" class="layout-menu" @select="handleMenuSelect">
+        <el-menu-item v-for="item in menuItems" :key="item.path" :index="item.path">
           <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.title }}</span>
         </el-menu-item>
