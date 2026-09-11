@@ -1,0 +1,115 @@
+:root {
+  --ch-bg: #f5f7fa;
+  --ch-border: #e4e7ed;
+  --ch-sidebar: #1f2d3d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  background: var(--ch-bg);
+  color: #303133;
+  /* 桌面端禁用整页选中，更接近原生应用体验 */
+  user-select: none;
+}
+
+input,
+textarea {
+  user-select: text;
+}
+
+.page {
+  padding: 16px 20px 24px;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.page-subtitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #909399;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mt-12 {
+  margin-top: 12px;
+}
+
+.mt-16 {
+  margin-top: 16px;
+}
+
+.text-muted {
+  color: #909399;
+}
+
+.offline-banner {
+  margin: 0 0 12px;
+}
+
+.timetable-cell {
+  min-height: 30px;
+}
+
+.timetable-course {
+  font-weight: 600;
+}
+
+.timetable-meta {
+  font-size: 12px;
+  color: #909399;
+}
+
+.unread-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f56c6c;
+  margin-right: 6px;
+}
+
+/* 滚动条美化（Windows 默认滚动条较粗） */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c8ccd4;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

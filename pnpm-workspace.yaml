@@ -13,6 +13,9 @@ allowBuilds:
   vue-demi: true
   '@parcel/watcher': true
   unrs-resolver: true
+  # electron-builder 的可选依赖（Squirrel.Windows 打包器）。本项目只用 nsis / portable，
+  # 显式置为 false，避免 pnpm 11 因「未声明允许或禁止」而中断整次安装。
+  electron-winstaller: false
 
 # 上游新版本发布后立即安装可能带来风险，这里保留默认解析行为。
 # 若要锁定 Node 版本或开启更严格的 peer 校验，可在此追加：

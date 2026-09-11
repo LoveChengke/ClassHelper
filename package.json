@@ -12,7 +12,9 @@
     "dev": "pnpm build:shared && concurrently -k -n shared,server,web -c cyan,green,magenta \"pnpm --filter @classhelper/shared dev\" \"pnpm --filter @classhelper/server dev\" \"pnpm --filter @classhelper/web-admin dev\"",
     "dev:server": "pnpm build:shared && pnpm --filter @classhelper/server dev",
     "dev:web": "pnpm build:shared && pnpm --filter @classhelper/web-admin dev",
-    "build": "pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build",
+    "dev:desktop": "pnpm build:shared && pnpm --filter @classhelper/desktop-client dev",
+    "build": "pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build && pnpm --filter @classhelper/desktop-client build",
+    "build:desktop": "pnpm build:shared && pnpm --filter @classhelper/desktop-client build",
     "typecheck": "pnpm build:shared && pnpm -r --no-bail typecheck",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -25,7 +27,10 @@
     "db:studio": "pnpm --filter @classhelper/server db:studio",
     "db:switch:mysql": "node scripts/use-database.mjs mysql",
     "db:switch:sqlite": "node scripts/use-database.mjs sqlite",
-    "verify:e2e": "pnpm --filter @classhelper/server verify:e2e"
+    "verify:e2e": "pnpm --filter @classhelper/server verify:e2e",
+    "verify:desktop": "pnpm --filter @classhelper/desktop-client smoke",
+    "dist:win": "pnpm --filter @classhelper/desktop-client dist:win",
+    "dist:dir": "pnpm --filter @classhelper/desktop-client dist:dir"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

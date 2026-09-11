@@ -1,0 +1,42 @@
+appId: com.classhelper.desktop
+productName: 班级小助手
+copyright: Copyright © 2026 Class Helper
+
+directories:
+  output: release
+  buildResources: build
+
+# 渲染进程产物已由 Vite 打包、主进程/preload 已由 esbuild 打包，
+# 运行时不需要任何 node_modules（electron 模块由 Electron 运行时提供）。
+files:
+  - dist/**/*
+  - package.json
+  - '!node_modules/**/*'
+  - '!**/*.map'
+
+asar: true
+# 没有原生模块，跳过 rebuild，避免不必要的 node-gyp 依赖
+npmRebuild: false
+compression: normal
+removePackageScripts: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  # 未提供 build/icon.ico 时使用 Electron 默认图标
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 班级小助手
+  artifactName: ${productName}-${version}-${arch}-setup.${ext}
+
+portable:
+  artifactName: ${productName}-${version}-${arch}-portable.${ext}
