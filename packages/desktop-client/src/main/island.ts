@@ -62,6 +62,15 @@ class IslandController {
   private boundsToken = 0;
   /** 透明度（淡入淡出）动画令牌，与尺寸动画分开，否则淡入会立刻取消形变 */
   private fadeToken = 0;
+  /**
+   * 自己维护的"窗口当前是否显示"标记。
+   *
+   * 不直接用 `win.isVisible()`：Windows 上 hide/show 是异步生效的，
+   * 在 hide() 刚调用完的瞬间 isVisible() 仍可能返回 true。若此时来了一条新通知，
+   * 逻辑会误判成"窗口已经显示"，于是只做尺寸动画、不调用 show()，
+   * 结果灵动岛再也不出现（真机上表现为"灵动岛消失了"）。
+   */
+  private shown = false;
 
   private state: IslandState = {
     mode: 'hidden',
@@ -115,6 +124,24 @@ class IslandController {
     win.on('closed', () => {
       this.win = null;
       this.ready = false;
+      this.shown = false;
+    });
+    win.on('hide', () => {
+      this.shown = false;
+    });
+    win.on('show', () => {
+      this.shown = true;
+    });
+
+    // 显示器变化（外接屏插拔/改分辨率）后重算顶部居中位置，避免灵动岛"跑"到屏幕外
+    const reposition = (): void => this.reposition();
+    screen.on('display-metrics-changed', reposition);
+    screen.on('display-added', reposition);
+    screen.on('display-removed', reposition);
+    win.on('closed', () => {
+      screen.off('display-metrics-changed', reposition);
+      screen.off('display-added', reposition);
+      screen.off('display-removed', reposition);
     });
 
     this.win = win;
@@ -308,6 +335,7 @@ class IslandController {
       this.emit();
     }
     if (!this.win || this.win.isDestroyed()) return;
+    this.shown = false;
     if (this.win.isVisible()) this.win.hide();
     this.win.setOpacity(1);
   }
@@ -438,7 +466,7 @@ class IslandController {
           : SIZES.expanded
         : SIZES.pill;
 
-    if (!this.win.isVisible()) {
+    if (!this.shown) {
       const pillBounds = this.computeBounds(SIZES.pill);
       // 普通通知：直接出现在屏幕上，不做"上岛"入场动画
       if (size === SIZES.pill) {
@@ -446,6 +474,7 @@ class IslandController {
         this.win.setOpacity(1);
         this.win.setBounds(pillBounds);
         this.win.showInactive();
+        this.shown = true;
         return;
       }
       // 展开 / 紧急：一定从胶囊尺寸开始缓动，保证"展开动画"看得见
@@ -453,11 +482,21 @@ class IslandController {
       this.win.setOpacity(0);
       this.win.setBounds(pillBounds);
       this.win.showInactive();
+      this.shown = true;
       this.animateBounds(size, { spring: true });
       this.fadeIn();
       return;
     }
     this.animateBounds(size, { spring: size !== SIZES.pill });
+  }
+
+  /** 显示器参数变化后把窗口重新摆到当前主屏顶部居中 */
+  private reposition(): void {
+    if (!this.win || this.win.isDestroyed()) return;
+    const size = this.win.getBounds();
+    const target = this.computeBounds({ width: size.width, height: size.height });
+    this.boundsToken += 1;
+    this.win.setBounds(target);
   }
 
   /** 作废进行中的淡入淡出动画 */
@@ -479,7 +518,7 @@ class IslandController {
   }
 
   private fadeOut(): void {
-    if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) return;
+    if (!this.win || this.win.isDestroyed() || !this.shown) return;
     const token = ++this.fadeToken;
     let opacity = this.win.getOpacity();
     const step = (): void => {
@@ -490,6 +529,7 @@ class IslandController {
         setTimeout(step, 16);
         return;
       }
+      this.shown = false;
       this.win.hide();
       this.win.setOpacity(1);
     };

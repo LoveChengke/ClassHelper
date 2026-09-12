@@ -82,14 +82,19 @@ function analyzeBitmap(image: NativeImage): {
   return { opaque, transparent, uniqueColors: colors.size, reddish, edgeReddish };
 }
 
-/** 灵动岛状态截图留档 + 像素统计（便于人工复核外观与自动化断言） */
+/**
+ * 灵动岛状态截图留档 + 像素统计。
+ *
+ * 像素统计**总是执行**（断言不依赖环境变量）；写盘留档仅在设置了
+ * `ISLAND_SHOTS_DIR` 时进行（用于 docs/screenshots 归档与人工复核）。
+ */
 async function captureIsland(
   name: string,
   expected: { width: number; height: number },
 ): Promise<IslandShotStats | null> {
-  const dir = process.env.ISLAND_SHOTS_DIR;
+  const dir = process.env.ISLAND_SHOTS_DIR ?? '';
   const win = island.getWindow();
-  if (!dir || !win || win.isDestroyed() || !win.isVisible()) return null;
+  if (!win || win.isDestroyed() || !win.isVisible()) return null;
   try {
     // 透明窗口直接 capturePage 会得到空白图：把它临时放到不透明背景上再截图
     await win.webContents.executeJavaScript(
@@ -100,9 +105,12 @@ async function captureIsland(
     await win.webContents.executeJavaScript(
       `document.documentElement.style.background = 'transparent'; document.body.style.background = 'transparent'; true`,
     );
-    fs.mkdirSync(dir, { recursive: true });
-    const filePath = path.join(dir, `${name}.png`);
-    fs.writeFileSync(filePath, image.toPNG());
+
+    const filePath = dir ? path.join(dir, `${name}.png`) : '';
+    if (filePath) {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(filePath, image.toPNG());
+    }
 
     const size = image.getSize();
     const stats: IslandShotStats = {
@@ -115,7 +123,7 @@ async function captureIsland(
     };
     islandShots.push(stats);
     console.log(
-      `[SMOKE] 灵动岛截图：${filePath}（${stats.width}x${stats.height} 不透明=${stats.opaque} ` +
+      `[SMOKE] 灵动岛截图：${filePath || '(仅内存统计)'}（${stats.width}x${stats.height} 不透明=${stats.opaque} ` +
         `颜色=${stats.uniqueColors} 偏红=${stats.reddish} 外圈偏红=${stats.edgeReddish}）`,
     );
     return stats;
@@ -404,6 +412,67 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
 }
 
 /**
+ * 真实通知链路自检：教师发通知 → 服务端广播 → 客户端实时通道 → 灵动岛。
+ *
+ * 与 runIslandChecks 的区别：那里是直接调 IPC 验证状态机；这里走完
+ * "HTTP 发布 + Socket.IO 广播 + 渲染进程 realtime store + bridge + IPC" 全链路，
+ * 能抓到"状态机没问题但真机不弹"的问题。
+ */
+async function runIslandRealtimeCheck(win: BrowserWindow): Promise<{ ok: boolean; detail: string }> {
+  const scenario = await win.webContents.executeJavaScript(
+    `(async () => {
+       if (!window.__classhelperSmoke__) return { ok: false, detail: '渲染进程未注册冒烟钩子' };
+       return await window.__classhelperSmoke__.islandRealtimeScenario();
+     })()`,
+  );
+  if (!scenario?.ok) {
+    return { ok: false, detail: `投递失败：${scenario?.detail ?? '未知原因'}` };
+  }
+
+  // 等通知经实时通道到达并弹出胶囊（实测 <100ms，这里留足余量）
+  const deadline = Date.now() + 10_000;
+  let state = island.getState();
+  while (Date.now() < deadline) {
+    state = island.getState();
+    if (state.mode === 'pill' && state.active?.id === scenario.notificationId) break;
+    await sleep(120);
+  }
+  const visible = island.getWindow()?.isVisible() ?? false;
+  const domText = await island
+    .getWindow()
+    ?.webContents.executeJavaScript(
+      `(document.querySelector('.island-card.pill')?.textContent ?? '').replace(/\\s+/g, ' ').trim()`,
+    )
+    .catch(() => '');
+  await captureIsland('island-6-realtime', ISLAND_SIZES.pill);
+
+  const matched = state.mode === 'pill' && state.active?.id === scenario.notificationId;
+  const detail =
+    `通知=${scenario.notificationId} 客户端判定上课中=${scenario.inClass} ` +
+    `灵动岛 mode=${state.mode} 可见=${visible} 文案="${String(domText).slice(0, 40)}"`;
+
+  // 清理：删除本次自检产生的通知，避免污染演示数据
+  const cleanup = await win.webContents
+    .executeJavaScript(
+      `(async () => {
+         if (!window.__classhelperSmoke__?.islandRealtimeCleanup) return { ok: false, detail: '缺少清理钩子' };
+         return await window.__classhelperSmoke__.islandRealtimeCleanup(
+           ${JSON.stringify(scenario.notificationId)},
+           ${JSON.stringify(scenario.teacherToken)},
+         );
+       })()`,
+    )
+    .catch(() => null);
+  console.log(`[SMOKE] 真实链路清理：${cleanup?.detail ?? '未执行'}`);
+
+  // 收尾：把胶囊收起来，避免影响后续用例
+  island.handleAction({ action: 'dismiss' });
+  await sleep(300);
+
+  return { ok: matched && visible, detail };
+}
+
+/**
  * Electron 冒烟验证（ELECTRON_SMOKE_TEST=1 时触发，跑完自动退出）。
  * 覆盖：preload 桥接、渲染进程挂载、登录页 DOM、IndexedDB 缓存读写、离线回退，
  * 以及可选的联网集成（ELECTRON_SMOKE_ONLINE=1）。
@@ -544,6 +613,11 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
       Boolean(online?.ok),
       String(online?.detail ?? ''),
     );
+
+    // 真实通知链路：教师发通知 → 学生客户端实时通道收到 → 灵动岛弹出胶囊
+    // （前面的灵动岛用例只验证状态机，这一条验证"真机上通知真的会浮出来"）
+    const realtime = await runIslandRealtimeCheck(win);
+    record('真实通知链路（Socket.IO → 灵动岛胶囊）', realtime.ok, realtime.detail);
 
     // 侧边栏点击导航（回归测试：曾因把 index 当路由名导致点击无反应）
     const navigation = await win.webContents.executeJavaScript(

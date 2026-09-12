@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { formatDate } from '@classhelper/shared';
+import { PRIORITY_LABELS, formatDate, type IslandState } from '@classhelper/shared';
 import type { DesktopAppInfo } from '../../types/desktop.js';
 import { pingHealth, setApiBaseUrl } from '../api/http.js';
 import { normalizeServerUrl } from '../config.js';
+import { getIslandClassContext } from '../island/bridge.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useNotificationStore } from '../stores/notifications.js';
@@ -102,9 +103,75 @@ async function logout(): Promise<void> {
   await router.replace('/login');
 }
 
+/* ------------------------------------------------------------ 灵动岛自检 */
+
+const islandState = ref<IslandState | null>(null);
+const islandClassContext = ref(getIslandClassContext());
+let islandTimer: ReturnType<typeof setInterval> | null = null;
+
+/** 主进程侧灵动岛状态（隐藏/胶囊/详情 + 待发条数 + 是否上课） */
+async function refreshIslandState(): Promise<void> {
+  islandClassContext.value = getIslandClassContext();
+  if (!window.desktop?.islandGetState) return;
+  islandState.value = await window.desktop.islandGetState();
+}
+
+const islandModeLabel = computed(() => {
+  switch (islandState.value?.mode) {
+    case 'pill':
+      return '新消息胶囊';
+    case 'expanded':
+      return '展开详情';
+    case 'hidden':
+      return '隐藏（无通知时不显示）';
+    default:
+      return '未知';
+  }
+});
+
+const islandHint = computed(() => {
+  const state = islandState.value;
+  if (!state) return '灵动岛尚未就绪';
+  if (islandClassContext.value.inClass) {
+    return state.active?.priority === 'URGENT'
+      ? '上课中：正在显示紧急通知'
+      : '上课中：通知会暂存，下课后自动弹出（紧急通知除外）';
+  }
+  if (state.queued.length > 0) return `有 ${state.queued.length} 条通知待查看`;
+  return '收到通知时会在这里浮出胶囊';
+});
+
+/** 本地推一条测试通知，立刻确认灵动岛能出现（走主进程，不依赖服务器） */
+function testIsland(): void {
+  if (!window.desktop?.islandPush) {
+    ElMessage.error('当前环境不支持灵动岛');
+    return;
+  }
+  window.desktop.islandPush({
+    notification: {
+      id: `local-test-${Date.now()}`,
+      title: '灵动岛自检通知',
+      content: '如果你看到这条胶囊/卡片，说明灵动岛工作正常；点击它可以展开查看详情。',
+      priority: 'NORMAL',
+      createdAt: new Date().toISOString(),
+      courseName: null,
+      teacherName: '本地自检',
+    },
+    context: islandClassContext.value,
+  });
+  void refreshIslandState();
+}
+
 onMounted(async () => {
   await loadAppInfo();
   await appStore.refreshCacheStats();
+  await refreshIslandState();
+  islandTimer = setInterval(() => void refreshIslandState(), 2000);
+});
+
+onUnmounted(() => {
+  if (islandTimer) clearInterval(islandTimer);
+  islandTimer = null;
 });
 </script>
 
@@ -148,6 +215,36 @@ onMounted(async () => {
             <el-descriptions-item label="最近同步">{{ appStore.lastSyncText }}</el-descriptions-item>
             <el-descriptions-item label="实时事件数">{{ realtime.eventCount }} 条</el-descriptions-item>
           </el-descriptions>
+        </el-card>
+
+        <el-card shadow="never" class="mt-12">
+          <template #header>
+            <span>灵动岛（桌面通知浮窗）</span>
+          </template>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="当前形态">
+              <el-tag :type="islandState?.mode === 'hidden' ? 'info' : 'success'" size="small">
+                {{ islandModeLabel }}
+              </el-tag>
+              <el-tag class="ml-8" :type="islandClassContext.inClass ? 'warning' : 'success'" size="small">
+                {{ islandClassContext.inClass ? '上课中（普通通知暂存）' : '非上课时段' }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="窗口可见">
+              {{ islandState ? (islandState.mode === 'hidden' ? '否（无通知时隐藏）' : '是') : '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="待查看通知">
+              {{ islandState?.queued.length ?? 0 }} 条
+              <template v-if="islandState?.active">
+                · 当前：{{ islandState.active.title }}（{{ PRIORITY_LABELS[islandState.active.priority] }}）
+              </template>
+            </el-descriptions-item>
+            <el-descriptions-item label="说明">{{ islandHint }}</el-descriptions-item>
+          </el-descriptions>
+          <div class="toolbar mt-12">
+            <el-button type="primary" @click="testIsland">测试灵动岛</el-button>
+            <el-button @click="refreshIslandState">刷新状态</el-button>
+          </div>
         </el-card>
 
         <el-card shadow="never" class="mt-12">

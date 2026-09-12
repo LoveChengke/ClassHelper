@@ -215,6 +215,88 @@ export async function onlineScenario(): Promise<SmokeCheckResult> {
   }
 }
 
+/**
+ * 冒烟自检 5（需后端在线）：真实通知链路 → 灵动岛。
+ *
+ * 前面的灵动岛用例是直接调 IPC 验证"状态机"，这一条走**真机链路**：
+ * 教师账号给"当前登录学生所在班级"发一条普通通知 → 服务端 Socket.IO 广播
+ * → 客户端 realtime store → bridge → 主进程灵动岛。主进程随后断言灵动岛弹出胶囊。
+ *
+ * 返回临时信息（通知 id / 教师令牌 / 标题）供主进程断言与收尾清理。
+ */
+export async function islandRealtimeScenario(): Promise<{
+  ok: boolean;
+  detail: string;
+  notificationId?: string;
+  teacherToken?: string;
+  title?: string;
+  classId?: string;
+  inClass?: boolean;
+}> {
+  const [{ useAuthStore }, { getIslandClassContext }] = await Promise.all([
+    import('../stores/auth.js'),
+    import('../island/bridge.js'),
+  ]);
+  const auth = useAuthStore();
+  const serverUrl = 'http://127.0.0.1:4000';
+  const classId = auth.classId ?? null;
+  if (!classId) return { ok: false, detail: '当前学生没有班级，无法投递通知' };
+
+  const title = `灵动岛真机链路自检 ${Date.now()}`;
+  try {
+    const login = await fetch(`${serverUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'teacher1', password: 'teacher123' }),
+    }).then((response) => response.json());
+    const teacherToken: string | undefined = login?.data?.token;
+    if (!teacherToken) return { ok: false, detail: `教师登录失败：${JSON.stringify(login).slice(0, 120)}` };
+
+    const created = await fetch(`${serverUrl}/api/notifications`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${teacherToken}` },
+      body: JSON.stringify({
+        classId,
+        title,
+        content: '自动化验证：这条通知用于确认「服务端广播 → 客户端实时通道 → 灵动岛」整条链路可用。',
+        priority: 'NORMAL',
+      }),
+    }).then((response) => response.json());
+    const notificationId: string | undefined = created?.data?.id;
+    if (!notificationId)
+      return { ok: false, detail: `发布通知失败：${JSON.stringify(created).slice(0, 160)}` };
+
+    const context = getIslandClassContext();
+    return {
+      ok: true,
+      detail: `classId=${classId} 通知=${notificationId} 客户端判定上课中=${context.inClass}`,
+      notificationId,
+      teacherToken,
+      title,
+      classId,
+      inClass: context.inClass,
+    };
+  } catch (error) {
+    return { ok: false, detail: `投递失败：${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+/** 冒烟收尾：删除真实链路自检产生的通知 */
+export async function islandRealtimeCleanup(
+  notificationId: string,
+  teacherToken: string,
+): Promise<SmokeCheckResult> {
+  try {
+    const response = await fetch(`http://127.0.0.1:4000/api/notifications/${notificationId}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${teacherToken}` },
+    });
+    return { ok: response.ok, detail: `清理通知 ${notificationId} → HTTP ${response.status}` };
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 /** 冒烟收尾：断开实时通道并退出登录，保证下次冒烟从登录页开始 */
 export async function sessionCleanup(): Promise<SmokeCheckResult> {
   const [{ useAuthStore }, { useRealtimeStore }] = await Promise.all([
@@ -237,6 +319,8 @@ export function registerSmokeHooks(): void {
     offlineScenario,
     layoutNavigationSelfTest,
     onlineScenario,
+    islandRealtimeScenario,
+    islandRealtimeCleanup,
     sessionCleanup,
   };
 }

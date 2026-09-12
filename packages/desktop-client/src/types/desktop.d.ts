@@ -76,6 +76,20 @@ declare global {
       offlineScenario(): Promise<{ ok: boolean; detail: string }>;
       layoutNavigationSelfTest(): Promise<{ ok: boolean; detail: string }>;
       onlineScenario(): Promise<{ ok: boolean; detail: string }>;
+      /** 真实通知链路：教师发通知给当前学生班级，验证 Socket.IO → 灵动岛 */
+      islandRealtimeScenario(): Promise<{
+        ok: boolean;
+        detail: string;
+        notificationId?: string;
+        teacherToken?: string;
+        title?: string;
+        classId?: string;
+        inClass?: boolean;
+      }>;
+      islandRealtimeCleanup(
+        notificationId: string,
+        teacherToken: string,
+      ): Promise<{ ok: boolean; detail: string }>;
       sessionCleanup(): Promise<{ ok: boolean; detail: string }>;
     };
   }
