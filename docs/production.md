@@ -214,22 +214,24 @@ start.cmd      :: Windows
 
 ## 六、故障排查
 
-| 现象               | 排查方向                                                                      |
-| ------------------ | ----------------------------------------------------------------------------- |
-| 浏览器打不开管理端 | `status.cmd`；`logs\server.log` 是否有启动报错；端口是否被占用                |
-| 启动即退出（生产） | 数据库不可用（`DATABASE_URL`/MySQL 未就绪）或 `JWT_SECRET` 未按生产要求配置   |
-| 页面能开但接口 401 | 令牌过期或更换过 `JWT_SECRET`，重新登录                                       |
-| 限流误伤（自己人） | 反向代理未设 `TRUST_PROXY=1`，导致所有请求都算作代理 IP                       |
-| 实时推送不生效     | 反向代理未放行 `/socket.io/` 的 WebSocket 升级（见 nginx 样例）               |
-| 安装后服务没起来   | 查看 `logs\server.error.log`；`start.cmd` 会输出就绪等待结果                  |
-| 数据库文件损坏     | 从备份恢复 `data/classhelper.db`；SQLite 场景请确保同一时间只有一个服务实例   |
-| 升级后需要重新登录 | 说明 `.env` 被覆盖（JWT 密钥变化）；覆盖安装应保留 `.env`，请检查安装目录权限 |
+| 现象                                        | 排查方向                                                                                                                                                                                                       |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 浏览器打不开管理端                          | `status.cmd`；`logs\server.log` 是否有启动报错；端口是否被占用                                                                                                                                                 |
+| 启动即退出（生产）                          | 数据库不可用（`DATABASE_URL`/MySQL 未就绪）或 `JWT_SECRET` 未按生产要求配置                                                                                                                                    |
+| 页面能开但接口 401                          | 令牌过期或更换过 `JWT_SECRET`，重新登录                                                                                                                                                                        |
+| 限流误伤（自己人）                          | 反向代理未设 `TRUST_PROXY=1`，导致所有请求都算作代理 IP                                                                                                                                                        |
+| 实时推送不生效                              | 反向代理未放行 `/socket.io/` 的 WebSocket 升级（见 nginx 样例）                                                                                                                                                |
+| 安装后服务没起来                            | 查看 `logs\server.error.log`；`start.cmd` 会输出就绪等待结果                                                                                                                                                   |
+| 数据库文件损坏                              | 从备份恢复 `data/classhelper.db`；SQLite 场景请确保同一时间只有一个服务实例                                                                                                                                    |
+| 升级后需要重新登录                          | 说明 `.env` 被覆盖（JWT 密钥变化）；覆盖安装应保留 `.env`，请检查安装目录权限                                                                                                                                  |
+| 报 `does not provide an export named ...`   | 安装包内的 `node_modules/@classhelper/shared/dist` 是旧构建（打包机没有先构建 shared）。重新执行 `pnpm dist:server`，该脚本会先构建 shared/server/web 并校验产物新鲜度                                         |
+| 报 `node.exe` 不是有效应用 / 服务启动即退出 | 安装包内置的 `node.exe` 被误打成 Electron 可执行文件（打包机在 Electron 宿主里跑 pnpm 时会取到 `process.execPath`）。已由 `scripts/lib/node-runtime.mjs` 修正；可用 `install\node.exe -v` 确认能打印 Node 版本 |
 
 ---
 
 ## 七、性能与容量参考
 
-- 单机 SQLite 形态适合**单校规模**（数千用户、每天数百次写操作），实测 54 项接口与实时推送全部达标。
+- 单机 SQLite 形态适合**单校规模**（数千用户、每天数百次写操作），实测 62 项接口与实时推送全部达标。
 - 多校区 / 高并发建议切 MySQL，并横向扩容服务端（Socket.IO 需要配置 Redis adapter 才能多实例广播，
   当前为单实例广播；如需多实例请参考 `packages/server/src/realtime/socket.ts` 引入 `@socket.io/redis-adapter`）。
 - 静态资源已设置 immutable 长缓存 + gzip；Web 管理端为 SPA，首屏包体约 900 KB（gzip 约 290 KB），
