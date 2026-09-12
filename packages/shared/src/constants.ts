@@ -129,6 +129,21 @@ export const ISLAND_STYLE_LABELS: Record<(typeof ISLAND_STYLES)[number], string>
  */
 export const ISLAND_SLIVER_WIDTH = 6;
 
+/**
+ * 各形态相对"胶囊"的尺寸增量（**单一事实来源**，主进程与渲染进程共用）：
+ * - 主进程据此计算"固定包围盒窗口"有多大（窗口只为最大形态留位置，开合时不改窗口）；
+ * - 渲染进程据此计算岛的目标尺寸并做弹簧形变。
+ * 取值参考 WinIsland：胶囊 120×27 → 展开 360×200（宽 ×3、高 ×7.4），我们按内容需要取略小的比例。
+ */
+export const ISLAND_SIZE_DELTA = {
+  expanded: { width: 156, height: 186 },
+  urgent: { width: 172, height: 202 },
+  call: { width: 188, height: 218 },
+} as const;
+
+/** 阴影/光晕留白（窗口比最大形态多出的透明边，保证投影不被窗口裁掉） */
+export const ISLAND_SHADOW_PAD = 10;
+
 /** 岛内文本的排版系数（相对基础字号，集中在这里方便统一调整） */
 export const ISLAND_TYPE_SCALE = {
   /** 展开卡标题 */

@@ -3,6 +3,8 @@ import { BrowserWindow, ipcMain, screen } from 'electron';
 import {
   DEFAULT_ISLAND_APPEARANCE,
   ISLAND_POSITIONS,
+  ISLAND_SHADOW_PAD,
+  ISLAND_SIZE_DELTA,
   ISLAND_SLIVER_WIDTH,
   ISLAND_STYLES,
   type IslandAppearance,
@@ -35,37 +37,23 @@ import { getConfig } from './config.js';
 
 /** 基础尺寸：真实尺寸 = 外观设置联动计算（见 sizes()） */
 /**
- * 基准尺寸（对齐 WinIsland 的 `base_width/base_height` 与 `expanded_width/expanded_height` 比例）：
- * - 胶囊：小而饱满（WinIsland compact 为 120×27，我们是文字型胶囊，取 216×34，圆角 = h/2 满圆角）
- * - 展开卡：展开增量与渲染进程 IslandApp.vue 的 EXTRA 常量一一对应
- *   （expanded +156×+218 / urgent +172×+238 / call +188×+254）
+ * 形态尺寸（**岛本身的尺寸**，不是窗口尺寸）：
+ * - 胶囊 = 用户设置的 width/height（WinIsland compact 是 120×27，我们是文字型胶囊，默认 268×44）
+ * - 展开/紧急/叫人 = 胶囊 + `ISLAND_SIZE_DELTA`（与渲染进程共用同一常量表）
+ *
+ * 窗口尺寸 = 最大形态 + `ISLAND_SHADOW_PAD`，**一次算好、开合过程中不变**（照搬 WinIsland：
+ * 它的窗口也是一次创建成最大包围盒，形变全部发生在窗口内的画布上）。
  */
 const BASE = {
   pill: { width: 216, height: 34 },
-  expanded: { width: 372, height: 220 },
-  urgent: { width: 388, height: 236 },
+  expanded: { width: 216 + ISLAND_SIZE_DELTA.expanded.width, height: 34 + ISLAND_SIZE_DELTA.expanded.height },
+  urgent: { width: 216 + ISLAND_SIZE_DELTA.urgent.width, height: 34 + ISLAND_SIZE_DELTA.urgent.height },
   /** "叫人"消息卡片（比普通详情略大，突出"请 XXX 同学找 XXX 老师"） */
-  call: { width: 404, height: 252 },
+  call: { width: 216 + ISLAND_SIZE_DELTA.call.width, height: 34 + ISLAND_SIZE_DELTA.call.height },
 };
 
-/**
- * 帧调度：优先 requestAnimationFrame（有则最平滑），主进程没有该全局时退化为 ~60fps 定时器。
- * 关键点不是用哪个 API，而是**始终只有一条动画循环**：每次新动画都会取消上一条并作废令牌，
- * 结束时再对齐一次最终尺寸，避免累积误差导致边缘"抖一下"。
- */
-type FrameHandle = number;
-declare const requestAnimationFrame: ((callback: (time: number) => void) => number) | undefined;
-declare const cancelAnimationFrame: ((handle: number) => void) | undefined;
-
-function scheduleFrame(callback: () => void): FrameHandle {
-  if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(() => callback());
-  return setTimeout(callback, 16) as unknown as FrameHandle;
-}
-
-function cancelFrame(handle: FrameHandle): void {
-  if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(handle);
-  else clearTimeout(handle as unknown as ReturnType<typeof setTimeout>);
-}
+// 说明：几何动画已全部移交渲染进程（渲染层用 WinIsland 的弹簧逐帧逼近岛的宽高/圆角），
+// 主进程不再做窗口帧动画，因此原 scheduleFrame / cancelFrame / requestAnimationFrame 声明已移除。
 
 const DEFAULT_SIZES: Record<IslandMode, { width: number; height: number }> = {
   hidden: BASE.pill,
@@ -82,6 +70,12 @@ let CALL_SIZE = { ...BASE.call };
  * 高度取胶囊高度的一部分，宽度固定（`ISLAND_SLIVER_WIDTH`）。
  */
 let SLIVER_SIZE = { width: ISLAND_SLIVER_WIDTH, height: 22 };
+
+/**
+ * 固定包围盒窗口的尺寸：取所有形态里最大的一个，再加上阴影留白。
+ * **只在设置变化时重算一次**，开合过程中窗口尺寸恒定（照搬 WinIsland 的"一次建大窗口"）。
+ */
+let BBOX_SIZE = { width: 0, height: 0 };
 
 /** 各状态的自动收起/隐藏时长（毫秒），0 表示不自动收起 */
 const TIMEOUTS = {
@@ -129,6 +123,8 @@ class IslandController {
   private appearance: IslandAppearance = { ...DEFAULT_ISLAND_APPEARANCE };
   /** 当前生效的窗口背景材质（'acrylic' | 'none'），用于避免重复设置与冒烟断言 */
   private backgroundMaterial: string = 'none';
+  /** 当前是否接收鼠标（固定大包围盒窗口默认穿透，由渲染进程按命中动态打开） */
+  private interactive = false;
 
   private state: IslandState = {
     mode: 'hidden',
@@ -166,7 +162,8 @@ class IslandController {
     if (this.win && !this.win.isDestroyed()) return;
 
     const win = new BrowserWindow({
-      ...this.computeBounds(SIZES.hidden),
+      // 固定包围盒（最大形态 + 阴影留白）：开合过程中**窗口不再移动/缩放**
+      ...this.windowBounds(),
       show: false,
       frame: false,
       transparent: true,
@@ -195,7 +192,9 @@ class IslandController {
     // 启动时即应用已保存的风格（glass 需要窗口创建后立刻设置材质）
     this.backgroundMaterial = 'none';
     this.applyBackgroundMaterial();
-    win.setIgnoreMouseEvents(false);
+    // 默认整块窗口不接收鼠标（避免大面积透明窗口吞掉桌面点击），
+    // 只有指针进入"岛"的可见区域时，渲染进程才通过 island:set-interactive 打开命中。
+    win.setIgnoreMouseEvents(true, { forward: true });
     win.on('closed', () => {
       this.win = null;
       this.ready = false;
@@ -545,39 +544,6 @@ class IslandController {
     return { hMode, hValue, vMode, vValue };
   }
 
-  /**
-   * 由锚点 + 目标尺寸推出窗口矩形。
-   *
-   * 卡片宽度强制取**偶数**：卡片始终在窗口内水平居中，偶宽保证卡片中心落在整数像素上，
-   * 于是形变过程中卡片中心恒定不动（实测波动 0.00px），不会出现"左右轻微振动"。
-   */
-  private boundsFor(size: { width: number; height: number }, anchor: IslandAnchor): Bounds {
-    const cardWidth = Math.max(2, evenWidth(Math.round(size.width) - CARD_PAD_X * 2));
-    const cardHeight = Math.max(2, Math.round(size.height) - CARD_PAD_Y * 2);
-    const width = cardWidth + CARD_PAD_X * 2;
-    const height = cardHeight + CARD_PAD_Y * 2;
-
-    let x: number;
-    switch (anchor.hMode) {
-      case 'left':
-        x = anchor.hValue;
-        break;
-      case 'right':
-        x = anchor.hValue - width;
-        break;
-      default:
-        x = anchor.hValue - cardWidth / 2 - CARD_PAD_X;
-        break;
-    }
-
-    const y = anchor.vMode === 'bottom' ? anchor.vValue - height : anchor.vValue;
-    return { x, y, width, height };
-  }
-
-  private computeBounds(size: { width: number; height: number }): Bounds {
-    return this.boundsFor(size, this.resolveAnchor());
-  }
-
   /** 状态变更：先通知渲染进程，再驱动窗口尺寸/透明度动画 */
   private setState(patch: Partial<IslandState>, options: { skipWindow?: boolean } = {}): void {
     this.state = { ...this.state, ...patch, updatedAt: Date.now() };
@@ -598,6 +564,12 @@ class IslandController {
     this.win.webContents.send('island:state', payload);
   }
 
+  /**
+   * 灵动岛窗口是**固定包围盒**（照搬 WinIsland）：开合过程中只改渲染层里岛的宽高/圆角，
+   * 窗口本身**一帧都不动**，因此不会有"逐帧移动+缩放透明窗口"带来的抖动与残影。
+   *
+   * 这里只负责三件事：可见性、焦点、透明度；几何交给渲染进程的弹簧形变。
+   */
   private syncWindow(): void {
     if (!this.win || this.win.isDestroyed()) return;
 
@@ -617,47 +589,68 @@ class IslandController {
       // 关闭时保持原行为（完全淡出并隐藏）。
       if (this.appearance.idleSliver) {
         this.cancelFade();
+        this.setInteractive(false);
         this.win.setOpacity(this.appearance.opacity);
         if (!this.win.isVisible()) this.win.showInactive();
-        this.animateBounds(SLIVER_SIZE);
         return;
       }
       this.fadeOut();
       return;
     }
 
-    const size =
-      this.state.mode === 'expanded'
-        ? this.state.active
-          ? this.isImmediate(this.state.active)
-            ? this.state.active.kind === 'call'
-              ? CALL_SIZE
-              : URGENT_SIZE
-            : SIZES.expanded
-          : SIZES.expanded
-        : SIZES.pill;
-
+    this.setInteractive(true);
     if (!this.win.isVisible()) {
-      const pillBounds = this.computeBounds(SIZES.pill);
-      // 普通通知：直接出现在屏幕上，不做"上岛"入场动画
-      if (size === SIZES.pill) {
-        this.cancelFade();
-        // 必须使用个性化透明度：这里以前硬编码 1，导致"隐藏后再弹出胶囊"会忽略透明度设置
-        this.win.setOpacity(this.appearance.opacity);
-        this.win.setBounds(pillBounds);
-        this.win.showInactive();
-        return;
-      }
-      // 展开 / 紧急：一定从胶囊尺寸开始缓动，保证"展开动画"看得见
+      // 窗口位置由固定包围盒决定（applyWindowLayout），这里只负责显示 + 透明度
       this.cancelFade();
-      this.win.setOpacity(0);
-      this.win.setBounds(pillBounds);
+      this.win.setOpacity(this.appearance.opacity);
       this.win.showInactive();
-      this.animateBounds(size, { spring: true });
-      this.fadeIn();
       return;
     }
-    this.animateBounds(size, { spring: size !== SIZES.pill });
+  }
+
+  /**
+   * 按当前外观把窗口放到锚点上（**只在尺寸/位置设置变化时调用**，开合时不调用）。
+   * 窗口尺寸 = 最大形态 + 2×阴影留白，因此任何形态的岛都能完整容纳。
+   */
+  private applyWindowLayout(): void {
+    if (!this.win || this.win.isDestroyed()) return;
+    const next = this.windowBounds();
+    const current = this.win.getBounds();
+    if (
+      current.x === next.x &&
+      current.y === next.y &&
+      current.width === next.width &&
+      current.height === next.height
+    ) {
+      return;
+    }
+    this.win.setBounds(next);
+  }
+
+  /** 固定包围盒窗口的矩形：以锚点定位，尺寸恒为"最大形态 + 阴影留白" */
+  private windowBounds(): Bounds {
+    const width = Math.round(BBOX_SIZE.width);
+    const height = Math.round(BBOX_SIZE.height);
+    const anchor = this.resolveAnchor();
+
+    // 窗口比岛大 ISLAND_SHADOW_PAD（给投影留白），因此窗口要再偏移一个 pad，
+    // 保证**岛**的边/中心精确落在锚点上（而不是让窗口落在锚点上）。
+    const pad = ISLAND_SHADOW_PAD;
+    let x: number;
+    switch (anchor.hMode) {
+      case 'left':
+        x = anchor.hValue - pad;
+        break;
+      case 'right':
+        x = anchor.hValue + pad - width;
+        break;
+      default:
+        x = anchor.hValue - Math.round(width / 2);
+        break;
+    }
+    const y = anchor.vMode === 'bottom' ? anchor.vValue + pad - height : anchor.vValue - pad;
+
+    return { x, y, width, height };
   }
 
   /** 作废进行中的淡入淡出动画 */
@@ -717,86 +710,19 @@ class IslandController {
   }
 
   /**
-   * 尺寸/位置缓动：Windows 下没有原生窗口动画，这里按帧插值实现"形变"效果。
-   *
-   * 用**单一 requestAnimationFrame 循环**驱动（需求 4）：
-   * - 不再使用 setTimeout 链：避免掉帧、避免"每帧重新排定时器"带来的节奏抖动
-   * - 锚点固定：锚点在动画开始前算一次（整数），过程中只让"对侧边"移动
-   * - 缓动**单调不过冲**：早期版本用 easeOutBack 弹簧缓动，窗口尺寸会超过目标再弹回来，
-   *   观感就是"开合时震一下"；现在统一用 easeOutCubic，尺寸/位置只朝目标单向变化
-   * - 每帧只用整数像素、卡片宽度取偶数，卡片中心与不动的那条边全程恒定
-   * - 关闭动画（appearance.animations = false）时直接落到目标尺寸
+   * 几何动画已完全移交渲染进程（固定窗口内做弹簧形变），这里只保留一个"取消"入口，
+   * 供 `hideImmediately()` 等在打断场景下调用（现在无需真正取消任何窗口动画）。
    */
-  private animateBounds(size: { width: number; height: number }, options: { spring?: boolean } = {}): void {
-    if (!this.win || this.win.isDestroyed()) return;
-    const from = this.win.getBounds();
-    const anchor = this.resolveAnchor();
-    const to = this.boundsFor(size, anchor);
-    if (from.width === to.width && from.height === to.height && from.x === to.x && from.y === to.y) return;
-
-    this.cancelBoundsAnimation();
-    const token = ++this.boundsToken;
-
-    if (!this.appearance.animations) {
-      this.win.setBounds(to);
-      return;
-    }
-
-    // 形变时长：展开稍长一点（视觉上更"从容"），收回更快；倍速来自个性化设置
-    const duration = Math.round(
-      (options.spring === true ? 300 : 220) / Math.max(0.25, this.appearance.speed),
-    );
-    const fromCardWidth = Math.max(2, evenWidth(from.width - CARD_PAD_X * 2));
-    const fromCardHeight = Math.max(2, from.height - CARD_PAD_Y * 2);
-    const toCardWidth = Math.max(2, evenWidth(to.width - CARD_PAD_X * 2));
-    const toCardHeight = Math.max(2, to.height - CARD_PAD_Y * 2);
-    const startedAt = Date.now();
-
-    const frame = (): void => {
-      if (!this.win || this.win.isDestroyed() || token !== this.boundsToken) return;
-      const progress = Math.min(1, (Date.now() - startedAt) / duration);
-      // easeOutCubic：单调递减斜率，永不越过 1（因此不会有回弹）
-      const eased = 1 - Math.pow(1 - progress, 3);
-
-      const cardWidth = Math.max(
-        2,
-        evenWidth(Math.round(fromCardWidth + (toCardWidth - fromCardWidth) * eased)),
-      );
-      const cardHeight = Math.max(2, Math.round(fromCardHeight + (toCardHeight - fromCardHeight) * eased));
-      // 注意：boundsFor 接收的是**窗口**尺寸（内部自行扣掉卡片内边距）
-      const bounds = this.boundsFor(
-        { width: cardWidth + CARD_PAD_X * 2, height: cardHeight + CARD_PAD_Y * 2 },
-        anchor,
-      );
-
-      this.win.setBounds(bounds);
-      if (progress < 1) {
-        this.boundsFrame = scheduleFrame(frame);
-        return;
-      }
-      // 收尾对齐到最终尺寸，避免四舍五入留下误差（会让卡片边缘"抖一下"）
-      this.win.setBounds(to);
-      this.boundsFrame = null;
-      this.applyFocusable();
-    };
-    this.boundsFrame = scheduleFrame(frame);
-  }
-
-  /** 取消进行中的尺寸动画（帧循环） */
   private cancelBoundsAnimation(): void {
-    if (this.boundsFrame !== null) {
-      cancelFrame(this.boundsFrame);
-      this.boundsFrame = null;
-    }
+    this.boundsFrame = null;
     this.boundsToken += 1;
   }
 
   /**
    * 应用外观设置（设置页实时生效）：尺寸联动、透明度、置顶、动画开关与位置。
-   * 尺寸只改窗口与卡片变量，渲染进程用 CSS 变量适配，不会引发布局错乱。
+   * 窗口只在尺寸/位置变化时**重排一次**（`applyWindowLayout`），开合过程不碰窗口。
    */
   setAppearance(patch: Partial<IslandAppearance>): void {
-    const before = this.appearance;
     this.appearance = normalizeAppearance({ ...this.appearance, ...patch });
     recomputeSizes(this.appearance);
 
@@ -809,12 +735,10 @@ class IslandController {
       }
     }
     this.emitAppearance();
+    // 包围盒/锚点可能变化：窗口重排一次（**不是逐帧**，开合过程中绝不会再碰窗口）
+    this.applyWindowLayout();
     // 外观变化后按新尺寸重新同步（隐藏态不显示，不做额外动作）
     if (this.state.mode !== 'hidden') this.syncWindow();
-    // 位置变化：即使当前不可见也先把窗口挪到新锚点，避免下次出现时"从旧位置飞过来"
-    if (this.state.mode === 'hidden' && before.position !== this.appearance.position) {
-      this.syncWindow();
-    }
     logger.info(
       `灵动岛外观已更新：${this.appearance.width}x${this.appearance.height} 圆角=${this.appearance.radius} ` +
         `透明度=${this.appearance.opacity} 位置=${this.appearance.position} 风格=${this.appearance.style} ` +
@@ -847,6 +771,31 @@ class IslandController {
     return this.backgroundMaterial;
   }
 
+  /**
+   * 鼠标命中开关（照搬 WinIsland 的 `set_cursor_hittest`）：
+   * 窗口是固定大包围盒，若不控制命中就会把整片桌面的点击都吃掉。
+   * 渲染进程做命中测试（指针是否在"岛"的可见区域/可交互控件内），再回调这里切换。
+   */
+  setInteractive(interactive: boolean): void {
+    if (this.interactive === interactive) return;
+    this.interactive = interactive;
+    if (!this.win || this.win.isDestroyed()) return;
+    // forward: true 让窗口在"忽略鼠标"时仍把 mousemove 转发给渲染进程，
+    // 这样渲染进程才能发现指针进入岛体并重新打开命中。
+    this.win.setIgnoreMouseEvents(!interactive, { forward: true });
+  }
+
+  /** 当前是否接收鼠标（供冒烟验证） */
+  getInteractive(): boolean {
+    return this.interactive;
+  }
+
+  /** 固定包围盒窗口的矩形（供冒烟验证"窗口全程不变"） */
+  getWindowBounds(): Bounds {
+    if (!this.win || this.win.isDestroyed()) return { x: 0, y: 0, width: 0, height: 0 };
+    return this.win.getBounds();
+  }
+
   getAppearance(): IslandAppearance {
     return { ...this.appearance };
   }
@@ -873,18 +822,24 @@ export function recomputeSizes(appearance: IslandAppearance): void {
   };
   URGENT_SIZE = grow(BASE.urgent);
   CALL_SIZE = grow(BASE.call);
-  // 空闲细缝：卡片宽固定 6px（WinIsland hidden_width 的思路），窗口 = 卡片 + 内边距。
-  // 注意：Windows 对（透明无边框）窗口有约 36px 的**最小高度**限制——
-  // 实测请求 32px 时实际得到 36px，因此这里直接以 36px 为下限，避免断言/预览与真实不一致。
-  const sliverCardHeight = Math.max(16, Math.min(28, appearance.height - 22));
+  // 空闲细缝：宽固定 6px（WinIsland hidden_width 的思路），高取胶囊高度的一部分。
+  // 岛在固定窗口内形变，因此这里就是**岛的尺寸**，不受窗口最小高度限制。
   SLIVER_SIZE = {
-    width: Math.min(ISLAND_SLIVER_WIDTH + CARD_PAD_X * 2, appearance.width),
-    height: Math.max(MIN_WINDOW_HEIGHT, sliverCardHeight + CARD_PAD_Y * 2),
+    width: ISLAND_SLIVER_WIDTH,
+    height: Math.max(12, Math.min(28, appearance.height - 22)),
+  };
+
+  // 固定窗口包围盒 = 最大形态 + 2×阴影留白（岛在其中居中/贴边形变）
+  const maxWidth = Math.max(SIZES.pill.width, SIZES.expanded.width, URGENT_SIZE.width, CALL_SIZE.width);
+  const maxHeight = Math.max(SIZES.pill.height, SIZES.expanded.height, URGENT_SIZE.height, CALL_SIZE.height);
+  BBOX_SIZE = {
+    width: maxWidth + ISLAND_SHADOW_PAD * 2,
+    height: maxHeight + ISLAND_SHADOW_PAD * 2,
   };
 }
 
 /**
- * 空闲细缝的**窗口**尺寸（`getBounds()` 返回值；卡片尺寸 = 再减去内边距）。
+ * 空闲细缝的**岛**尺寸（渲染进程里 `.island-card` 的宽高；窗口是固定包围盒，不代表当前形态）。
  * 供冒烟验证与设置页预览使用。
  */
 export function getSliverSize(): { width: number; height: number } {
@@ -918,18 +873,16 @@ export function normalizeAppearance(input: IslandAppearance): IslandAppearance {
  */
 
 /**
- * 卡片相对窗口的内边距（必须与渲染进程 IslandApp.vue 的 CARD_PAD_X/CARD_PAD_Y 一致）。
- * 取 5px 是为了给展开态的投影（WinIsland: y+2、σ=3）留出不被窗口裁掉的余量。
+ * 岛在固定窗口内的留白（= 阴影余量，见 `ISLAND_SHADOW_PAD`）。
+ * 窗口尺寸 = 最大形态 + 2×该留白，因此投影永远不会被窗口裁掉。
  */
-const CARD_PAD_X = 5;
-const CARD_PAD_Y = 5;
 /** 灵动岛与屏幕工作区边缘的留白 */
 const ISLAND_MARGIN = 8;
 /**
- * Windows 对窗口最小高度的实际限制（实测：请求 32px 会得到 36px）。
- * 空闲细缝等"极小形态"必须以此作为高度下限，否则断言与真实窗口会不一致。
+ * 说明：Windows 对窗口最小高度有约 36px 的限制，但**只影响窗口**。
+ * 新版架构里窗口是固定包围盒、岛在窗口内形变，因此"空闲细缝"可以真正做到 6px 宽/十几像素高
+ * （与 WinIsland 的 hidden_width=5 一致），不再受该限制。
  */
-const MIN_WINDOW_HEIGHT = 36;
 /**
  * 失焦收起的宽限期：刚展开的 500ms 内忽略 blur（避免"刚弹出就被抢焦点导致瞬间收起"）。
  * 冒烟里"点击屏幕任意位置收起"的用例会在展开后等待约 700ms 再触发 blur，仍能正常验证收起。
@@ -949,12 +902,6 @@ interface IslandAnchor {
   hValue: number;
   vMode: 'top' | 'bottom';
   vValue: number;
-}
-
-/** 卡片宽度取偶数：保证水平居中的卡片中心落在整数像素上，形变时不左右跳变 */
-function evenWidth(value: number): number {
-  const safe = Math.max(2, Math.round(value));
-  return safe - (safe % 2);
 }
 
 export const island = new IslandController();
@@ -981,6 +928,11 @@ export function registerIslandIpc(): void {
   });
 
   ipcMain.handle('island:get-appearance', () => island.getAppearance());
+
+  // 渲染进程命中测试结果 → 切换窗口是否接收鼠标
+  ipcMain.on('island:set-interactive', (_event, interactive: boolean) => {
+    island.setInteractive(interactive === true);
+  });
 
   ipcMain.on('island:action', (_event, payload: IslandActionPayload) => {
     if (!payload?.action) return;

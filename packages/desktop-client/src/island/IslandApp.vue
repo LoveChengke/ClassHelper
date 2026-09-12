@@ -2,6 +2,9 @@
 import { computed, onMounted, ref } from 'vue';
 import {
   DEFAULT_ISLAND_APPEARANCE,
+  ISLAND_SHADOW_PAD,
+  ISLAND_SIZE_DELTA,
+  ISLAND_SLIVER_WIDTH,
   type IslandAppearance,
   PRIORITY_LABELS,
   formatDate,
@@ -9,6 +12,7 @@ import {
   type IslandNotificationKind,
   type IslandState,
 } from '@classhelper/shared';
+import { SpringValue } from './spring.js';
 import { squirclePath } from './squircle.js';
 
 /**
@@ -91,16 +95,6 @@ const stateColor = computed(() => {
   return '';
 });
 
-/**
- * 入场动画：胶囊直接出现（WinIsland 的 compact 没有入场动画），
- * 展开 / 紧急只用透明度淡入，形变完全交给窗口尺寸（因此不会出现缩放回弹）。
- */
-const transitionName = computed(() => (mode.value === 'pill' ? 'island-instant' : 'island-fade'));
-const transitionDuration = computed(() => ({
-  enter: mode.value === 'pill' ? 0 : Math.round(140 / appearance.value.speed),
-  leave: Math.round(90 / appearance.value.speed),
-}));
-
 function expand(): void {
   bridge?.sendAction('expand');
 }
@@ -132,64 +126,189 @@ function openApp(): void {
 /** 个性化外观：主进程下发后写入 CSS 变量，形状/排版/配色立即变化（无需重启） */
 const appearance = ref<IslandAppearance>({ ...DEFAULT_ISLAND_APPEARANCE });
 
-/** 卡片与窗口的内边距（必须与主进程 CARD_PAD_X / CARD_PAD_Y 一致） */
-const CARD_PAD_X = 5;
-const CARD_PAD_Y = 5;
+/** 各形态相对"胶囊"的尺寸增量（与主进程共用同一常量表，避免两边漂移） */
+const EXTRA = ISLAND_SIZE_DELTA;
 
 /**
- * 各形态相对"胶囊窗口"的额外尺寸（必须与主进程 BASE.expanded/urgent/call 的增量一致）：
- * 卡片尺寸 = 窗口尺寸 - 内边距，因此卡片始终在窗口内居中、四周留白恒定。
+ * 岛的目标尺寸（**岛本身**，不是窗口）：
+ * - 胶囊：外观设置里的 width/height
+ * - 展开/紧急/叫人：胶囊 + `EXTRA`
+ * - 空闲细缝：6px 宽竖条（WinIsland hidden_width 的思路）
+ * 全部由下面的弹簧逐帧逼近，窗口（固定包围盒）全程不动。
  */
-const EXTRA = {
-  expanded: { width: 156, height: 186 },
-  urgent: { width: 172, height: 202 },
-  call: { width: 188, height: 218 },
-} as const;
-
-/** 当前形态的窗口尺寸（用于推出卡片尺寸） */
-const windowSize = computed(() => {
+function targetSize(): { width: number; height: number } {
   const width = appearance.value.width;
   const height = appearance.value.height;
+  if (mode.value === 'hidden') {
+    // 有"空闲细缝"时才收成细缝；否则保持胶囊尺寸——
+    // 窗口此时是隐藏的，没必要缩到细缝（否则下次弹出会从细缝"长大"，多出入场动画）。
+    if (!appearance.value.idleSliver) return { width, height };
+    return { width: ISLAND_SLIVER_WIDTH, height: Math.max(12, Math.min(28, height - 22)) };
+  }
   if (mode.value !== 'expanded') return { width, height };
   const extra = isCall.value ? EXTRA.call : isUrgent.value ? EXTRA.urgent : EXTRA.expanded;
   return { width: width + extra.width, height: height + extra.height };
-});
-
-/** 卡片像素尺寸（= 窗口 - 内边距） */
-const cardSize = computed(() => ({
-  width: Math.max(2, windowSize.value.width - CARD_PAD_X * 2),
-  height: Math.max(2, windowSize.value.height - CARD_PAD_Y * 2),
-}));
+}
 
 /** 圆角：胶囊取 h/2（满圆角），展开卡取 min(48*系数, w/2, h/2)（WinIsland expanded_island_radius） */
-const cardRadius = computed(() => {
-  const { width, height } = cardSize.value;
-  if (mode.value !== 'expanded') return Math.min(appearance.value.radius, height / 2);
+function targetRadius(size: { width: number; height: number }): number {
+  if (mode.value !== 'expanded') return Math.min(appearance.value.radius, size.height / 2);
   const scaled = (48 * appearance.value.radius) / 20;
-  return Math.max(0, Math.min(scaled, width / 2, height / 2));
-});
+  return Math.max(0, Math.min(scaled, size.width / 2, size.height / 2));
+}
 
-/** 连续圆角路径（超椭圆角，见 squircle.ts） */
-const cardPath = computed(() => squirclePath(cardSize.value.width, cardSize.value.height, cardRadius.value));
+/* ---------------------------------------------------------------- 弹簧形变 */
+
+const springs = {
+  width: new SpringValue(DEFAULT_ISLAND_APPEARANCE.width),
+  height: new SpringValue(DEFAULT_ISLAND_APPEARANCE.height),
+  radius: new SpringValue(DEFAULT_ISLAND_APPEARANCE.radius),
+};
+
+/** 当前正在播放的形变值（渲染用） */
+const morph = ref<{ width: number; height: number; radius: number }>({
+  width: DEFAULT_ISLAND_APPEARANCE.width,
+  height: DEFAULT_ISLAND_APPEARANCE.height,
+  radius: DEFAULT_ISLAND_APPEARANCE.radius,
+});
+/** 形变进度 0（胶囊）→ 1（展开）：用于内容交叉淡入（WinIsland expanded_alpha / mini_alpha） */
+const progress = ref(0);
+
+let rafHandle: number | null = null;
+let lastFrameAt = 0;
+
+function syncTargets(snap = false): void {
+  const size = targetSize();
+  const radius = targetRadius(size);
+  if (snap || !appearance.value.animations) {
+    springs.width.snap(size.width);
+    springs.height.snap(size.height);
+    springs.radius.snap(radius);
+    morph.value = { width: size.width, height: size.height, radius };
+    progress.value = mode.value === 'expanded' ? 1 : 0;
+    return;
+  }
+  springs.width.setTarget(size.width);
+  springs.height.setTarget(size.height);
+  springs.radius.setTarget(radius);
+  startFrameLoop();
+}
+
+function startFrameLoop(): void {
+  if (rafHandle !== null) return;
+  lastFrameAt = performance.now();
+  const frame = (now: number): void => {
+    const delta = now - lastFrameAt;
+    lastFrameAt = now;
+    // 个性化"动画速度"：直接缩放 dt（WinIsland 没有该设置，这是我们的扩展）
+    const scaled = delta * appearance.value.speed;
+    const moving = springs.width.step(scaled) || springs.height.step(scaled) || springs.radius.step(scaled);
+
+    morph.value = {
+      width: springs.width.value,
+      height: springs.height.value,
+      radius: springs.radius.value,
+    };
+
+    // 内容交叉淡入：胶囊层先淡出（进度 2/3 前退净），展开层按平方淡入（WinIsland 的做法）
+    const pill = appearance.value.height;
+    const expanded = targetSize().height;
+    const span = Math.abs(expanded - pill);
+    progress.value =
+      span < 1 ? (mode.value === 'expanded' ? 1 : 0) : Math.abs(morph.value.height - pill) / span;
+
+    if (moving || !springs.width.settled || !springs.height.settled || !springs.radius.settled) {
+      rafHandle = requestAnimationFrame(frame);
+      return;
+    }
+    // 收尾对齐（避免浮点残差）
+    const size = targetSize();
+    springs.width.snap(size.width);
+    springs.height.snap(size.height);
+    springs.radius.snap(targetRadius(size));
+    morph.value = { width: size.width, height: size.height, radius: springs.radius.value };
+    progress.value = mode.value === 'expanded' ? 1 : 0;
+    rafHandle = null;
+  };
+  rafHandle = requestAnimationFrame(frame);
+}
 
 /**
- * 卡片内联样式：尺寸、形状、配色、排版全部由外观设置驱动。
- *
- * 注意 `left` 用 `calc(50% - 卡片宽/2)`（相对**当前窗口宽度**居中），而不是固定 padding：
- * 窗口在形变过程中宽度由主进程逐帧插值，卡片只有居中才能保证"卡片中心全程不动"（实测 0.00px）。
+ * 实际生效的圆角：始终钳制到 `min(圆角, w/2, h/2)`。
+ * 弹簧对"尺寸"与"圆角"是各自独立推进的，形变过程中圆角可能短暂大于 h/2；
+ * 统一钳制既保证形状合法，也让 CSS 变量与真实绘制一致（便于断言）。
  */
-const cardStyle = computed(() => {
-  const card = cardSize.value;
-  return {
-    width: `${card.width}px`,
-    height: `${card.height}px`,
-    left: `calc(50% - ${card.width / 2}px)`,
-    top: `${CARD_PAD_Y}px`,
+const effectiveRadius = computed(() =>
+  Math.max(0, Math.min(morph.value.radius, morph.value.width / 2, morph.value.height / 2)),
+);
+
+/** 连续圆角路径（超椭圆角，见 squircle.ts） */
+const cardPath = computed(() => squirclePath(morph.value.width, morph.value.height, effectiveRadius.value));
+
+/** 胶囊内容透明度：进度到 2/3 时完全退净（WinIsland MINI_FADE_RATE = 1.5） */
+const pillAlpha = computed(() => Math.max(0, Math.min(1, 1 - progress.value * 1.5)));
+/** 展开内容透明度：进度平方（WinIsland expanded_alpha = progress²） */
+const expandedAlpha = computed(() => progress.value * progress.value);
+
+/**
+ * 岛在**固定窗口**内的定位（照搬 WinIsland：窗口不动，岛在画布内居中/贴边形变）。
+ * 水平：居中锚点用 `left: 50% + translateX(-50%)`；左/右锚点贴边（留阴影余量）。
+ */
+const islandStyle = computed(() => {
+  const position = appearance.value.position;
+  const style: Record<string, string> = {
+    width: `${morph.value.width}px`,
+    height: `${morph.value.height}px`,
     '--card-path': `path("${cardPath.value}")`,
-    '--card-r': `${cardRadius.value}px`,
+    '--card-r': `${morph.value.radius}px`,
     '--state-color': stateColor.value || 'transparent',
   };
+  if (position.endsWith('left')) {
+    style.left = `${ISLAND_SHADOW_PAD}px`;
+  } else if (position.endsWith('right')) {
+    style.right = `${ISLAND_SHADOW_PAD}px`;
+  } else {
+    style.left = '50%';
+    style.transform = 'translateX(-50%)';
+  }
+  if (position.startsWith('bottom')) style.bottom = `${ISLAND_SHADOW_PAD}px`;
+  else style.top = `${ISLAND_SHADOW_PAD}px`;
+  return style;
 });
+
+/** 当前形态的样式类（供既有断言与样式复用） */
+const islandClass = computed(() => ({
+  pill: mode.value === 'pill' || (mode.value === 'hidden' && !appearance.value.idleSliver),
+  expanded: mode.value === 'expanded',
+  'hidden-placeholder': mode.value === 'hidden' && !appearance.value.idleSliver,
+  sliver: mode.value === 'hidden' && appearance.value.idleSliver,
+  urgent: isUrgent.value,
+  call: isCall.value,
+  homework: isHomework.value,
+  'after-class': showAfterClassHint.value,
+}));
+
+/**
+ * 鼠标命中测试（照搬 WinIsland 的 set_cursor_hittest 思路）：
+ * 指针在岛体上（或可交互控件上）时才让窗口接收鼠标，否则穿透，保证不吞桌面点击。
+ */
+let lastInteractive: boolean | null = null;
+function updateInteractive(clientX: number, clientY: number): void {
+  const node = document.querySelector('.island-card') as HTMLElement | null;
+  let inside = false;
+  if (node) {
+    const rect = node.getBoundingClientRect();
+    const margin = 2;
+    inside =
+      clientX >= rect.left - margin &&
+      clientX <= rect.right + margin &&
+      clientY >= rect.top - margin &&
+      clientY <= rect.bottom + margin;
+  }
+  if (inside === lastInteractive) return;
+  lastInteractive = inside;
+  bridge?.setInteractive?.(inside);
+}
 
 function applyAppearance(next: IslandAppearance | null | undefined): void {
   if (!next) return;
@@ -201,43 +320,63 @@ function applyAppearance(next: IslandAppearance | null | undefined): void {
   style.setProperty('--island-w', `${next.width}px`);
   style.setProperty('--island-h', `${next.height}px`);
   style.setProperty('--island-anim', next.animations ? '1' : '0');
-  // 形变时长（与主进程的缓动时长一致），用于内容淡入淡出的节奏对齐
-  const morph = next.style === 'glass' ? 320 : 320;
-  style.setProperty('--island-dur', `${Math.round(morph / Math.max(0.25, next.speed))}ms`);
+  style.setProperty('--island-dur', `${Math.round(320 / Math.max(0.25, next.speed))}ms`);
 }
 
 onMounted(async () => {
+  window.addEventListener('mousemove', (event) => updateInteractive(event.clientX, event.clientY));
   bridge?.onState((next) => {
     state.value = next;
+    syncTargets();
   });
   const initial = await bridge?.getState();
   if (initial) state.value = initial;
   // 外观：先同步一次，再订阅后续改动（改设置立即生效）
-  bridge?.onAppearance((next) => applyAppearance(next));
+  bridge?.onAppearance((next) => {
+    applyAppearance(next);
+    syncTargets();
+  });
   const initialAppearance = await bridge?.getAppearance?.();
   applyAppearance(initialAppearance);
+  syncTargets(true);
+  // 初始状态可能是 hidden（窗口未显示），此时同步一次目标即可
+  syncTargets();
 });
 </script>
 
 <template>
+  <!--
+    固定包围盒窗口内的**单个**灵动岛（照搬 WinIsland）：
+    岛的宽高/圆角由弹簧逐帧逼近，窗口本身不动；胶囊层与展开层在里面交叉淡入。
+  -->
   <div class="island-root">
-    <Transition :name="transitionName" :duration="transitionDuration">
-      <!-- 胶囊态：WinIsland compact —— 小尺寸、满圆角、图标 + 文本 + 提示箭头 -->
-      <button
-        v-if="mode === 'pill' && notification"
-        key="pill"
-        type="button"
-        class="island-card pill"
-        :class="{ urgent: isUrgent, call: isCall, homework: isHomework, 'after-class': showAfterClassHint }"
-        :data-style="appearance.style"
-        :style="cardStyle"
-        @click="expand"
+    <div
+      class="island-card"
+      :class="islandClass"
+      :data-style="appearance.style"
+      :style="islandStyle"
+      @click="mode === 'expanded' ? onCardClick($event) : expand()"
+    >
+      <!--
+        形状层：显式给像素宽高 + preserveAspectRatio="none"。
+        只写 width/height:100% 时 SVG 会按 viewBox 比例做 preserveAspectRatio 缩放，
+        形变过程中 viewBox 与元素尺寸不同步就会出现形状错位/残留角（实测肉眼可见）。
+      -->
+      <svg
+        class="shape"
+        :width="Math.max(1, morph.width)"
+        :height="Math.max(1, morph.height)"
+        :viewBox="`0 0 ${Math.max(1, morph.width)} ${Math.max(1, morph.height)}`"
+        preserveAspectRatio="none"
+        aria-hidden="true"
       >
-        <svg class="shape" :viewBox="`0 0 ${cardSize.width} ${cardSize.height}`" aria-hidden="true">
-          <path :d="cardPath" />
-        </svg>
-        <span class="content">
-          <span class="tint" aria-hidden="true"></span>
+        <path :d="cardPath" />
+      </svg>
+      <span class="content">
+        <span class="tint" aria-hidden="true"></span>
+
+        <!-- 胶囊层（WinIsland compact）：进度 > 2/3 时完全退净 -->
+        <span class="layer pill-layer" :style="{ opacity: pillAlpha }">
           <span class="pill-icon" :class="{ urgent: isUrgent, call: isCall, homework: isHomework }">
             <svg v-if="isHomework" viewBox="0 0 24 24" aria-hidden="true">
               <path
@@ -263,7 +402,7 @@ onMounted(async () => {
               {{ pillTitle }}
               <template v-if="queueCount > 0">· 共 {{ queueCount + 1 }} 条</template>
             </span>
-            <span class="pill-sub">{{ notification.teacherName || '老师' }} · 点击查看</span>
+            <span class="pill-sub">{{ notification?.teacherName || '老师' }} · 点击查看</span>
           </span>
           <span class="pill-chevron" aria-hidden="true">
             <svg viewBox="0 0 24 24">
@@ -277,23 +416,9 @@ onMounted(async () => {
             </svg>
           </span>
         </span>
-      </button>
 
-      <!-- 展开态：WinIsland expanded —— 大圆角卡片、白字分级、底部胶囊按钮 -->
-      <section
-        v-else-if="mode === 'expanded' && notification"
-        key="expanded"
-        class="island-card expanded"
-        :class="{ urgent: isUrgent, call: isCall, homework: isHomework }"
-        :data-style="appearance.style"
-        :style="cardStyle"
-        @click="onCardClick"
-      >
-        <svg class="shape" :viewBox="`0 0 ${cardSize.width} ${cardSize.height}`" aria-hidden="true">
-          <path :d="cardPath" />
-        </svg>
-        <span class="content">
-          <span class="tint" aria-hidden="true"></span>
+        <!-- 展开层（WinIsland expanded）：进度²淡入 -->
+        <span class="layer expanded-layer" :style="{ opacity: expandedAlpha }">
           <header class="head">
             <span class="head-icon" :class="{ urgent: isUrgent, call: isCall, homework: isHomework }">
               <svg v-if="isHomework" viewBox="0 0 24 24" aria-hidden="true">
@@ -322,7 +447,7 @@ onMounted(async () => {
               <span v-else-if="showAfterClassHint" class="live-dot muted">下课后补发</span>
               <span class="head-sub">{{ subtitle }}</span>
             </div>
-            <button type="button" class="icon-btn" title="收起" @click="collapse">
+            <button type="button" class="icon-btn" title="收起" @click.stop="collapse">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path
                   fill="none"
@@ -335,30 +460,27 @@ onMounted(async () => {
             </button>
           </header>
 
-          <h3 class="title">{{ notification.title }}</h3>
+          <h3 class="title">{{ notification?.title ?? '' }}</h3>
           <div class="body">
-            <p class="content-text">{{ notification.content }}</p>
+            <p class="content-text">{{ notification?.content ?? '' }}</p>
             <p v-if="callHint" class="call-hint">{{ callHint }}</p>
-            <p v-else-if="notification.subtitle" class="call-hint">{{ notification.subtitle }}</p>
+            <p v-else-if="notification?.subtitle" class="call-hint">{{ notification?.subtitle }}</p>
           </div>
 
           <footer class="foot">
             <span v-if="queueCount > 0" class="more">还有 {{ queueCount }} 条通知</span>
             <span v-else class="more muted">来自班级小助手</span>
             <span class="actions">
-              <button type="button" class="ghost-btn" @click="openApp">打开应用</button>
-              <button type="button" class="ghost-btn" @click="markRead">标为已读</button>
-              <button type="button" class="solid-btn" @click="dismiss">
+              <button type="button" class="ghost-btn" @click.stop="openApp">打开应用</button>
+              <button type="button" class="ghost-btn" @click.stop="markRead">标为已读</button>
+              <button type="button" class="solid-btn" @click.stop="dismiss">
                 {{ isCall ? '收到' : '知道了' }}
               </button>
             </span>
           </footer>
         </span>
-      </section>
-
-      <!-- 隐藏态占位（窗口不可见，仅保证 DOM 结构稳定） -->
-      <div v-else key="hidden" class="island-card hidden-placeholder"></div>
-    </Transition>
+      </span>
+    </div>
   </div>
 </template>
 
@@ -444,9 +566,8 @@ body {
 /* 连续圆角形状：填充 + 1px 描边（描边画在裁切之外，与 WinIsland 一致） */
 .island-card .shape {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  left: 0;
+  top: 0;
   display: block;
 }
 
@@ -456,14 +577,26 @@ body {
   stroke-width: 1;
 }
 
-/* 内容层裁切到同一形状内 */
+/* 内容层裁切到同一形状内；内部两层（胶囊层 / 展开层）交叉淡入 */
 .island-card .content {
   position: absolute;
   inset: 0;
-  display: flex;
-  flex-direction: column;
+  display: block;
   clip-path: var(--card-path);
   overflow: hidden;
+}
+
+.island-card .layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  pointer-events: none;
+}
+
+/* 只有"当前形态"的那一层响应鼠标，避免透明层的按钮被误点 */
+.island-card.pill .pill-layer,
+.island-card.expanded .expanded-layer {
+  pointer-events: auto;
 }
 
 /* 展开态投影（WinIsland: rgba(0,0,0,.11)、y+2、σ=3 → CSS 0 2px 3px） */
@@ -505,7 +638,7 @@ body {
 
 /* ---------------------------------------------------------------- 胶囊（compact） */
 
-.island-card.pill .content {
+.pill-layer {
   flex-direction: row;
   align-items: center;
   gap: calc(var(--island-font, 13px) * 0.62);
@@ -583,10 +716,12 @@ body {
 
 /* ---------------------------------------------------------------- 展开卡（expanded） */
 
-.island-card.expanded .content {
+.expanded-layer {
+  /* 关键：展开层必须纵向排列。此前把 flex-direction 从基类挪到分层时漏了这一条，
+     导致展开卡内容横排（标题/元信息/按钮散落，实机可见） */
+  flex-direction: column;
   padding: calc(var(--island-font, 13px) * 1.4) calc(var(--island-font, 13px) * 1.6);
   gap: calc(var(--island-font, 13px) * 0.7);
-  /* 内容块整体垂直居中：卡片尺寸固定（锚点稳定），留白上下均分比"底部一大块空"更自然 */
   justify-content: center;
 }
 

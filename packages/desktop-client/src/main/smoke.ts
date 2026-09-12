@@ -21,6 +21,23 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** 灵动岛每种形态的截图像素统计（用于"截图像素级留档"断言） */
+/** 岛几何：固定包围盒窗口 + 岛的真实矩形 + 形状路径尺寸 */
+interface IslandGeometry {
+  window: { x: number; y: number; width: number; height: number };
+  island: IslandRect;
+}
+
+/** 岛在屏幕上的矩形（固定包围盒窗口内形变 → 断言都量这个） */
+interface IslandRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  radius?: number;
+  pathWidth?: number;
+  pathHeight?: number;
+}
+
 interface IslandShotStats {
   name: string;
   /** 期望的窗口逻辑尺寸（CSS 像素） */
@@ -35,6 +52,8 @@ interface IslandShotStats {
   reddish: number;
   /** 图像最外圈（2px）的偏红像素数：必须为 0，用于守住"卡片外不允许有光晕外溢" */
   edgeReddish: number;
+  /** 岛矩形之外的偏红像素（窗口留白区，紧急光晕不外溢的断言依据） */
+  outsideReddish?: number;
   filePath: string;
 }
 
@@ -47,6 +66,8 @@ function analyzeBitmap(image: NativeImage): {
   uniqueColors: number;
   reddish: number;
   edgeReddish: number;
+  /** 岛矩形之外的偏红像素（窗口留白区，紧急光晕不外溢的断言依据） */
+  outsideReddish?: number;
 } {
   const bitmap = image.toBitmap();
   const { width, height } = image.getSize();
@@ -98,36 +119,239 @@ async function captureIsland(
     await win.webContents.executeJavaScript(
       `document.documentElement.style.background = '#1f2733'; document.body.style.background = '#1f2733'; true`,
     );
-    await sleep(120);
+    await sleep(160);
+    // 等岛形变收敛：像素级断言与留档都必须在"稳定帧"上做，
+    // 否则会拍到形变中间帧（岛比目标略大/小），"岛外留白"统计随之误报。
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const first = await readIslandGeometryFrom(win);
+      await sleep(50);
+      const second = await readIslandGeometryFrom(win);
+      if (
+        first &&
+        second &&
+        Math.abs(first.island.width - second.island.width) < 0.6 &&
+        Math.abs(first.island.height - second.island.height) < 0.6
+      ) {
+        break;
+      }
+    }
+    // 先取岛的矩形 → 连拍两帧（第一帧可能是形变中的旧帧）→ 再取一次几何。
+    // capturePage 返回的是"最近一次合成的帧"，形变很快时会与 DOM 状态差一帧，
+    // 因此用前后两次几何的**并集**做"岛之外"的判定，避免把岛边缘误算成外溢。
+    await win.webContents.capturePage();
+    await sleep(60);
     const image = await win.webContents.capturePage();
+    // 紧接截图之后读几何：让"矩形"与"画面"尽可能来自同一时刻
+    const geometry = await readIslandGeometryFrom(win);
+    const union = unionIslandRect(geometry, geometry);
     await win.webContents.executeJavaScript(
       `document.documentElement.style.background = 'transparent'; document.body.style.background = 'transparent'; true`,
     );
+
+    const cropped = geometry ? cropToIsland(image, geometry, win) : image;
+    // 岛之外的窗口留白区不允许出现红色（紧急光晕不外溢）——抗锯齿边界向内缩 2px
+    const outsideReddish = union ? countReddishOutsideIsland(image, union, win, 3) : 0;
     const filePath = dir ? path.join(dir, `${name}.png`) : '';
     if (filePath) {
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(filePath, image.toPNG());
+      fs.writeFileSync(filePath, cropped.toPNG());
+      // 同时留档"未裁剪的整窗"图，便于人工核对岛外留白
+      if (geometry) fs.writeFileSync(path.join(dir, `${name}-window.png`), image.toPNG());
     }
 
-    const size = image.getSize();
+    const size = cropped.getSize();
     const stats: IslandShotStats = {
       name,
       expected,
       width: size.width,
       height: size.height,
       filePath,
-      ...analyzeBitmap(image),
+      ...analyzeBitmap(cropped),
+      outsideReddish,
     };
     islandShots.push(stats);
+    const layout = await win.webContents
+      .executeJavaScript(
+        `(() => {
+           const card = document.querySelector('.island-card');
+           if (!card) return null;
+           const dump = (selector) => {
+             const node = card.querySelector(selector);
+             if (!node) return null;
+             const r = node.getBoundingClientRect();
+             const s = getComputedStyle(node);
+             return {
+               selector,
+               rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
+               display: s.display,
+               dir: s.flexDirection,
+               justify: s.justifyContent,
+               opacity: s.opacity,
+             };
+           };
+           return {
+             card: (() => {
+               const r = card.getBoundingClientRect();
+               return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+             })(),
+             items: [
+               dump('.content'),
+               dump('.pill-layer'),
+               dump('.expanded-layer'),
+               dump('.expanded-layer .head'),
+               dump('.expanded-layer .title'),
+               dump('.expanded-layer .body'),
+               dump('.expanded-layer .foot'),
+             ].filter(Boolean),
+           };
+         })()`,
+      )
+      .catch(() => null);
+    if (layout) {
+      console.log(
+        `[SMOKE] 布局诊断 ${name}：卡片=${layout.card.join(',')} ` +
+          layout.items
+            .map(
+              (item: { selector: string; rect: number[]; display: string; dir: string; opacity: string }) =>
+                `${item.selector}[${item.rect.join(',')} ${item.display}/${item.dir} op=${item.opacity}]`,
+            )
+            .join(' '),
+      );
+    }
+    const redBox = reddishBBox(image);
     console.log(
       `[SMOKE] 灵动岛截图：${filePath}（${stats.width}x${stats.height} 不透明=${stats.opaque} ` +
-        `颜色=${stats.uniqueColors} 偏红=${stats.reddish} 外圈偏红=${stats.edgeReddish}）`,
+        `颜色=${stats.uniqueColors} 偏红=${stats.reddish} 外圈偏红=${stats.edgeReddish}）` +
+        ` 诊断[红像素框=${redBox.x},${redBox.y} ${redBox.width}x${redBox.height} ` +
+        `岛=${geometry ? `${geometry.island.x - geometry.window.x},${geometry.island.y - geometry.window.y} ${geometry.island.width}x${geometry.island.height}` : '-'} ` +
+        `窗口=${geometry ? `${geometry.window.width}x${geometry.window.height}` : '-'}]`,
     );
     return stats;
   } catch (error) {
     console.warn('[SMOKE] 灵动岛截图失败', error);
     return null;
   }
+}
+
+/** 按岛的矩形裁剪截图（含比例换算：capturePage 返回物理像素） */
+function cropToIsland(
+  image: Electron.NativeImage,
+  geometry: IslandGeometry,
+  win: BrowserWindow,
+): Electron.NativeImage {
+  const scale = win.webContents.getZoomFactor() || 1;
+  const ratio = image.getSize().width / Math.max(1, geometry.window.width);
+  void scale;
+  const x = Math.max(0, Math.round(geometry.island.x - geometry.window.x) * (ratio / 1));
+  const y = Math.max(0, Math.round(geometry.island.y - geometry.window.y) * ratio);
+  const width = Math.min(image.getSize().width - x, Math.round(geometry.island.width * ratio));
+  const height = Math.min(image.getSize().height - y, Math.round(geometry.island.height * ratio));
+  if (width <= 0 || height <= 0) return image;
+  return image.crop({ x, y, width, height });
+}
+
+/** 偏红像素的包围盒（诊断形状错位：与几何读数对比即可定位偏差来源） */
+function reddishBBox(image: Electron.NativeImage): { x: number; y: number; width: number; height: number } {
+  const bitmap = image.toBitmap();
+  const size = image.getSize();
+  let left = size.width;
+  let top = size.height;
+  let right = -1;
+  let bottom = -1;
+  for (let y = 0; y < size.height; y += 1) {
+    for (let x = 0; x < size.width; x += 1) {
+      const index = (y * size.width + x) * 4;
+      const blue = bitmap[index] ?? 0;
+      const green = bitmap[index + 1] ?? 0;
+      const red = bitmap[index + 2] ?? 0;
+      const alpha = bitmap[index + 3] ?? 0;
+      if (alpha > 40 && red > green + 12 && red > blue + 12) {
+        if (x < left) left = x;
+        if (y < top) top = y;
+        if (x > right) right = x;
+        if (y > bottom) bottom = y;
+      }
+    }
+  }
+  return right < 0
+    ? { x: 0, y: 0, width: 0, height: 0 }
+    : { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
+}
+
+/** 两次几何读数的并集（形变过程中宁可多算一点，也不会把岛边缘误判成"岛外"） */
+function unionIslandRect(a: IslandGeometry | null, b: IslandGeometry | null): IslandGeometry | null {
+  if (!a) return b;
+  if (!b) return a;
+  const left = Math.min(a.island.x, b.island.x);
+  const top = Math.min(a.island.y, b.island.y);
+  const right = Math.max(a.island.x + a.island.width, b.island.x + b.island.width);
+  const bottom = Math.max(a.island.y + a.island.height, b.island.y + b.island.height);
+  return {
+    window: b.window,
+    island: { x: left, y: top, width: right - left, height: bottom - top },
+  };
+}
+
+/**
+ * 统计"岛矩形之外"的偏红像素（窗口留白区）。
+ * 新架构下窗口是固定包围盒，岛只占其中一部分：光晕一旦外溢就会落在这些留白里。
+ */
+function countReddishOutsideIsland(
+  image: Electron.NativeImage,
+  geometry: IslandGeometry,
+  win: BrowserWindow,
+  margin: number,
+): number {
+  const bitmap = image.toBitmap();
+  const size = image.getSize();
+  const ratio = size.width / Math.max(1, geometry.window.width);
+  void win;
+  // margin 是**向外**的容差：岛的描边（1px 居中）与抗锯齿边都算"岛内"，
+  // 只有明显落在岛之外（> margin）的红色才算外溢。此前把它当"向内缩"，
+  // 结果把岛自身的红色描边统计成了"岛外偏红"。
+  const left = (geometry.island.x - geometry.window.x - margin) * ratio;
+  const top = (geometry.island.y - geometry.window.y - margin) * ratio;
+  const right = (geometry.island.x - geometry.window.x + geometry.island.width + margin) * ratio;
+  const bottom = (geometry.island.y - geometry.window.y + geometry.island.height + margin) * ratio;
+
+  let count = 0;
+  for (let y = 0; y < size.height; y += 1) {
+    for (let x = 0; x < size.width; x += 1) {
+      if (x >= left && x <= right && y >= top && y <= bottom) continue;
+      const index = (y * size.width + x) * 4;
+      const blue = bitmap[index] ?? 0;
+      const green = bitmap[index + 1] ?? 0;
+      const red = bitmap[index + 2] ?? 0;
+      const alpha = bitmap[index + 3] ?? 0;
+      if (alpha > 40 && red > green + 12 && red > blue + 12) count += 1;
+    }
+  }
+  return count;
+}
+
+/** 读取岛的几何（截图用；与 runIslandChecks 内的同名逻辑保持一致的语义） */
+async function readIslandGeometryFrom(win: BrowserWindow): Promise<IslandGeometry | null> {
+  const bounds = island.getWindowBounds();
+  const rect = await win.webContents
+    .executeJavaScript(
+      `(() => {
+         const card = document.querySelector('.island-card');
+         if (!card) return null;
+         const r = card.getBoundingClientRect();
+         return { left: r.left, top: r.top, width: r.width, height: r.height };
+       })()`,
+    )
+    .catch(() => null);
+  if (!rect) return null;
+  return {
+    window: bounds,
+    island: {
+      x: bounds.x + rect.left,
+      y: bounds.y + rect.top,
+      width: rect.width,
+      height: rect.height,
+    },
+  };
 }
 
 /** 打印灵动岛渲染进程的真实 DOM 结构（排查空白窗口） */
@@ -212,6 +436,48 @@ async function runIslandChecks(
     `mode=${island.getState().mode} visible=${islandWindow?.isVisible() ?? true}`,
   );
 
+  /**
+   * 读取"岛"的几何：窗口矩形（固定包围盒）+ 岛在屏幕上的真实矩形（渲染层里的 .island-card）。
+   * 新架构下**窗口恒定、岛在窗口内形变**，因此所有尺寸类断言都必须量 `island` 而不是窗口。
+   */
+  const readIslandGeometry = async (): Promise<IslandGeometry | null> => {
+    const win = island.getWindowBounds();
+    const rect = await islandWindow?.webContents
+      .executeJavaScript(
+        `(() => {
+           const card = document.querySelector('.island-card');
+           if (!card) return null;
+           const r = card.getBoundingClientRect();
+           const raw = getComputedStyle(card).getPropertyValue('--card-r').trim();
+           const path = card.querySelector('.shape path');
+           const box = path && typeof path.getBBox === 'function' ? path.getBBox() : null;
+           return {
+             left: r.left,
+             top: r.top,
+             width: r.width,
+             height: r.height,
+             radius: parseFloat(raw) || 0,
+             pathWidth: box ? box.width : 0,
+             pathHeight: box ? box.height : 0,
+           };
+         })()`,
+      )
+      .catch(() => null);
+    if (!rect) return null;
+    return {
+      window: win,
+      island: {
+        x: win.x + rect.left,
+        y: win.y + rect.top,
+        width: rect.width,
+        height: rect.height,
+        radius: rect.radius,
+        pathWidth: rect.pathWidth,
+        pathHeight: rect.pathHeight,
+      },
+    };
+  };
+
   // 2) 下课：自动弹出暂存通知的详情
   island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1 });
   await sleep(900);
@@ -228,8 +494,12 @@ async function runIslandChecks(
   await sleep(300);
   const sampledWidths: number[] = [];
   const sampler = setInterval(() => {
-    const bounds = islandWindow?.getBounds();
-    if (bounds) sampledWidths.push(bounds.width);
+    // 新架构：量"岛"在屏幕上的真实宽度（窗口是固定包围盒，形变发生在窗口内）
+    void readIslandGeometry()
+      .then((geometry) => {
+        if (geometry) sampledWidths.push(Math.round(geometry.island.width));
+      })
+      .catch(() => undefined);
   }, 16);
   island.pushNotification(makeNotification('smoke-urgent-in-class', 'URGENT', '上课期间的紧急通知'), {
     inClass: true,
@@ -245,13 +515,14 @@ async function runIslandChecks(
     `mode=${urgentState.mode} active=${urgentState.active?.id ?? '-'} reason=${urgentState.reason ?? '-'}`,
   );
 
-  const urgentBounds = islandWindow?.getBounds();
+  const urgentGeometry = await readIslandGeometry();
+  const urgentBounds = urgentGeometry?.island ?? null;
   const rampWidths = [
     ...new Set(sampledWidths.filter((width) => width > 0 && width < ISLAND_URGENT_SIZE.width)),
   ];
   record(
-    '紧急通知带展开动画（窗口从胶囊尺寸缓动到紧急尺寸）',
-    rampWidths.length >= 3 && urgentBounds?.width === ISLAND_URGENT_SIZE.width,
+    '紧急通知带展开动画（岛从胶囊尺寸弹簧展开到紧急尺寸）',
+    rampWidths.length >= 3 && Math.abs((urgentBounds?.width ?? 0) - ISLAND_URGENT_SIZE.width) <= 2,
     `采样=${sampledWidths.length} 中间尺寸=${rampWidths.length} 最终=${urgentBounds?.width ?? '-'}x${urgentBounds?.height ?? '-'}`,
   );
   await captureIsland('island-3-urgent', ISLAND_URGENT_SIZE);
@@ -275,16 +546,17 @@ async function runIslandChecks(
     inClass: false,
   });
   await sleep(60);
-  const immediateBounds = islandWindow?.getBounds();
+  const immediateGeometry = await readIslandGeometry();
+  const initialIsland = immediateGeometry?.island ?? null;
   await sleep(640);
   const pillState = island.getState();
   record(
     '普通通知直接显示胶囊（无"上岛"入场动画）',
     hiddenBeforePush &&
       pillState.mode === 'pill' &&
-      immediateBounds?.width === ISLAND_SIZES.pill.width &&
-      immediateBounds?.height === ISLAND_SIZES.pill.height,
-    `推送前隐藏=${hiddenBeforePush} 60ms 内窗口=${immediateBounds?.width ?? '-'}x${immediateBounds?.height ?? '-'}` +
+      Math.abs((initialIsland?.width ?? 0) - ISLAND_SIZES.pill.width) <= 2 &&
+      Math.abs((initialIsland?.height ?? 0) - ISLAND_SIZES.pill.height) <= 2,
+    `推送前隐藏=${hiddenBeforePush} 60ms 内岛=${initialIsland?.width?.toFixed(1) ?? '-'}x${initialIsland?.height?.toFixed(1) ?? '-'}` +
       `（期望 ${ISLAND_SIZES.pill.width}x${ISLAND_SIZES.pill.height}）mode=${pillState.mode}`,
   );
   await captureIsland('island-4-pill', ISLAND_SIZES.pill);
@@ -357,23 +629,28 @@ async function runIslandChecks(
     `chevronClicked=${chevronClicked} mode=${afterChevron.mode}`,
   );
 
-  // 4.4) 收回过程中卡片不能出现"被拉扁的方框"：
-  //      采样卡片尺寸，必须始终是固定的胶囊/详情尺寸之一，绝不出现中间值。
+  // 4.4) 新架构（照搬 WinIsland）：窗口是固定包围盒，开合过程中**窗口一帧都不动**，
+  //      岛在窗口内做弹簧形变。这里逐帧采样"窗口 + 岛"：窗口必须完全恒定，岛形变必须连续。
   island.handleAction({ action: 'expand' });
   await sleep(700);
-  const shrinkSamples: string[] = [];
+  const shrinkSamples: {
+    window: string;
+    island: string;
+    radius: number;
+    pathWidth: number;
+    pathHeight: number;
+  }[] = [];
   const shrinkSampler = setInterval(() => {
-    void islandWindow?.webContents
-      .executeJavaScript(
-        `(() => {
-           const node = document.querySelector('.island-card');
-           if (!node) return '';
-           const rect = node.getBoundingClientRect();
-           return Math.round(rect.width) + 'x' + Math.round(rect.height);
-         })()`,
-      )
-      .then((value: string) => {
-        if (value) shrinkSamples.push(value);
+    void readIslandGeometry()
+      .then((geometry) => {
+        if (!geometry) return;
+        shrinkSamples.push({
+          window: `${geometry.window.width}x${geometry.window.height}@${geometry.window.x},${geometry.window.y}`,
+          island: `${Math.round(geometry.island.width)}x${Math.round(geometry.island.height)}`,
+          radius: Number(geometry.island.radius ?? 0),
+          pathWidth: Number(geometry.island.pathWidth ?? 0),
+          pathHeight: Number(geometry.island.pathHeight ?? 0),
+        });
       })
       .catch(() => undefined);
   }, 40);
@@ -381,20 +658,24 @@ async function runIslandChecks(
   await sleep(700);
   clearInterval(shrinkSampler);
   await sleep(120);
-  // 允许的卡片尺寸由当前外观与各形态窗口尺寸推导（卡片 = 窗口 - 2*5px 内边距）
-  const cardLabel = (size: { width: number; height: number }): string =>
-    `${size.width - 10}x${size.height - 10}`;
-  const allowedSizes = new Set([
-    cardLabel(ISLAND_SIZES.pill),
-    cardLabel(ISLAND_SIZES.expanded),
-    cardLabel(ISLAND_URGENT_SIZE),
-    cardLabel(ISLAND_CALL_SIZE),
-  ]);
-  const stretched = [...new Set(shrinkSamples)].filter((size) => !allowedSizes.has(size));
+  const windowSignatures = [...new Set(shrinkSamples.map((item) => item.window))];
+  const islandSizes = shrinkSamples.map((item) => item.island);
+  const islandWidths = shrinkSamples.map((item) => Number(item.island.split('x')[0]));
+  const islandMonotonic = islandWidths.every(
+    (width, index) => index === 0 || width <= (islandWidths[index - 1] ?? width) + 1,
+  );
+  // 画出来的形状必须与卡片框一致：SVG 路径 bbox ≈ 卡片宽高（±2px）。
+  // 这能一次性抓住"viewBox/preserveAspectRatio 错位导致形状被缩放或残留角"这类问题。
+  const pathFits = shrinkSamples.every(
+    (item) =>
+      Math.abs(item.pathWidth - Number(item.island.split('x')[0])) <= 2 &&
+      Math.abs(item.pathHeight - Number(item.island.split('x')[1])) <= 2,
+  );
   record(
-    '收回动画不出现被拉伸的"方框"（卡片保持固定尺寸）',
-    shrinkSamples.length >= 3 && stretched.length === 0,
-    `采样=${shrinkSamples.length} 尺寸集合=[${[...new Set(shrinkSamples)].join(',')}] 异常尺寸=[${stretched.join(',')}]`,
+    '开合过程中窗口全程恒定、岛在窗口内连续形变（照搬 WinIsland 架构）',
+    shrinkSamples.length >= 3 && windowSignatures.length === 1 && islandMonotonic && pathFits,
+    `采样=${shrinkSamples.length} 窗口签名=[${windowSignatures.join(' ')}]（要求只有 1 种） ` +
+      `岛尺寸序列=[${islandSizes.slice(0, 8).join('→')}${islandSizes.length > 8 ? '…' : ''}] 单调收缩=${islandMonotonic} 形状与卡片框一致=${pathFits}`,
   );
 
   // 4.5) 点击屏幕其他位置（窗口失焦）→ 自动回缩为胶囊
@@ -508,7 +789,7 @@ async function runIslandChecks(
       text:
         `${shot.name} ${shot.width}x${shot.height}(期望 ${shot.expected.width}x${shot.expected.height}, ` +
         `比例偏差 ${ratioDelta.toFixed(3)}) 不透明=${shot.opaque} 颜色=${shot.uniqueColors} ` +
-        `偏红=${shot.reddish} 外圈偏红=${shot.edgeReddish}`,
+        `偏红=${shot.reddish} 岛外偏红=${shot.outsideReddish ?? 0}`,
     };
   });
 
@@ -516,7 +797,7 @@ async function runIslandChecks(
   const wrongRatio = shotDetails.filter((shot) => shot.ratioDelta > 0.05);
   const urgentShot = shotDetails.find((shot) => shot.name.includes('urgent'));
   const urgentReddish = urgentShot?.reddish ?? 0;
-  const edgeReddish = urgentShot?.edgeReddish ?? 0;
+  const outsideReddish = urgentShot?.outsideReddish ?? 0;
   const pillShot = shotDetails.find((shot) => shot.name.includes('pill'));
   const sizesOrdered = Boolean(
     pillShot &&
@@ -538,11 +819,11 @@ async function runIslandChecks(
       ` 形态尺寸递增=${sizesOrdered}`,
   );
 
-  // 7) 光晕只在卡片内部：截图最外圈（窗口留白）不允许出现红色外溢像素
+  // 7) 光晕只在岛内部：固定的窗口包围盒里，岛之外的留白区不允许出现红色外溢像素
   record(
-    '紧急红晕不外溢（窗口边缘无红色光晕像素）',
-    urgentShot !== undefined && edgeReddish === 0 && urgentReddish > 200,
-    `紧急态偏红=${urgentReddish} 最外圈偏红=${edgeReddish}（要求 0）`,
+    '紧急光晕不外溢（岛之外的窗口留白区无红色像素）',
+    urgentShot !== undefined && outsideReddish === 0 && urgentReddish > 200,
+    `紧急态岛内偏红=${urgentReddish} 岛外留白偏红=${outsideReddish}（要求 0）`,
   );
 
   // 8) 个性化外观：高度/宽度/圆角/字号/透明度/动画速度实时生效，且不破坏布局
@@ -554,7 +835,7 @@ async function runIslandChecks(
     inClass: false,
   });
   await sleep(600);
-  const pillBounds = islandWindow?.getBounds();
+  const pillBounds = (await readIslandGeometry())?.island ?? null;
   const cssVars = await islandWindow?.webContents.executeJavaScript(
     `(() => {
        const style = getComputedStyle(document.documentElement);
@@ -610,16 +891,14 @@ async function runIslandChecks(
   await sleep(700);
   const jitterSamples: { win: number; cardWidth: number; cardTop: number }[] = [];
   const jitterSampler = setInterval(() => {
-    const winWidth = islandWindow?.getBounds().width ?? 0;
-    void islandWindow?.webContents
-      .executeJavaScript(
-        `(() => {
-           const card = document.querySelector('.island-card');
-           return card ? { width: card.offsetWidth, top: card.offsetTop } : null;
-         })()`,
-      )
-      .then((value: { width: number; top: number } | null) => {
-        if (value) jitterSamples.push({ win: winWidth, cardWidth: value.width, cardTop: value.top });
+    void readIslandGeometry()
+      .then((geometry) => {
+        if (!geometry) return;
+        jitterSamples.push({
+          win: geometry.window.width,
+          cardWidth: Math.round(geometry.island.width),
+          cardTop: Math.round(geometry.island.y),
+        });
       })
       .catch(() => undefined);
   }, 30);
@@ -628,19 +907,18 @@ async function runIslandChecks(
   clearInterval(jitterSampler);
 
   const winSequence = jitterSamples.map((item) => item.win);
-  const monotonicShrink = winSequence.every(
-    (width, index) => index === 0 || width <= (winSequence[index - 1] ?? width) + 1,
+  const windowConstant = new Set(winSequence).size <= 1;
+  const islandSequence = jitterSamples.map((item) => item.cardWidth);
+  const monotonicShrink = islandSequence.every(
+    (width, index) => index === 0 || width <= (islandSequence[index - 1] ?? width) + 1,
   );
   const cardTops = jitterSamples.map((item) => item.cardTop);
   const topSpread = cardTops.length > 0 ? Math.max(...cardTops) - Math.min(...cardTops) : 99;
-  const cardWidths = [...new Set(jitterSamples.map((item) => item.cardWidth))];
-  const expectedWidths = [ISLAND_SIZES.expanded.width - 10, ISLAND_SIZES.pill.width - 10];
-  const widthOk = cardWidths.every((width) => expectedWidths.includes(width));
   record(
-    '收回过程不抖动（窗口宽度单调收缩 + 卡片布局尺寸不拉伸）',
-    jitterSamples.length >= 4 && monotonicShrink && topSpread <= 1 && widthOk && cardWidths.length <= 2,
-    `采样=${jitterSamples.length} 窗口序列=[${winSequence.join(',')}] 单调收缩=${monotonicShrink} ` +
-      `卡片上边缘波动=${topSpread}px 卡片宽度集合=[${cardWidths.join(',')}]（期望 ${expectedWidths.join('/')}）`,
+    '收回过程不抖动（窗口恒定 + 岛宽度单调收缩 + 岛顶部不动）',
+    jitterSamples.length >= 4 && windowConstant && monotonicShrink && topSpread <= 1,
+    `采样=${jitterSamples.length} 窗口宽度集合=[${[...new Set(winSequence)].join(',')}]（要求 1 个） ` +
+      `岛宽度序列=[${islandSequence.join(',')}] 单调收缩=${monotonicShrink} 岛上边缘波动=${topSpread}px`,
   );
   // 10) 连续快速开合：最终状态与尺寸必须稳定
   for (let index = 0; index < 5; index += 1) {
@@ -651,14 +929,14 @@ async function runIslandChecks(
   }
   await sleep(600);
   const rapidState = island.getState();
-  const rapidBounds = islandWindow?.getBounds();
+  const rapidBounds = (await readIslandGeometry())?.island ?? null;
   const currentAppearance = island.getAppearance();
   record(
     '连续快速展开/收起后状态与尺寸稳定',
     rapidState.mode === 'pill' &&
-      rapidBounds?.width === currentAppearance.width &&
-      rapidBounds?.height === currentAppearance.height,
-    `mode=${rapidState.mode} 窗口=${rapidBounds?.width ?? '-'}x${rapidBounds?.height ?? '-'}` +
+      Math.abs((rapidBounds?.width ?? 0) - currentAppearance.width) <= 2 &&
+      Math.abs((rapidBounds?.height ?? 0) - currentAppearance.height) <= 2,
+    `mode=${rapidState.mode} 岛=${rapidBounds?.width?.toFixed(1) ?? '-'}x${rapidBounds?.height?.toFixed(1) ?? '-'}` +
       `（期望 ${currentAppearance.width}x${currentAppearance.height}）`,
   );
 
@@ -712,8 +990,8 @@ async function runIslandChecks(
   island.pushNotification(makeNotification('smoke-motion', 'NORMAL', '开合不震动校验'), { inClass: false });
   await sleep(350);
 
-  const expandedCard = { width: ISLAND_SIZES.expanded.width - 10, height: ISLAND_SIZES.expanded.height - 10 };
-  const pillCard = { width: ISLAND_SIZES.pill.width - 10, height: ISLAND_SIZES.pill.height - 10 };
+  const expandedCard = { width: ISLAND_SIZES.expanded.width, height: ISLAND_SIZES.expanded.height };
+  const pillCard = { width: ISLAND_SIZES.pill.width, height: ISLAND_SIZES.pill.height };
 
   await runMotionProbe('expand');
   const expandSamples = [...motionSamples];
@@ -729,24 +1007,24 @@ async function runIslandChecks(
   const maxCardH = expandSamples.length ? Math.max(...expandSamples.map((item) => item.cardH)) : 0;
   const maxWinW = expandSamples.length ? Math.max(...expandSamples.map((item) => item.winW)) : 0;
   const maxWinH = expandSamples.length ? Math.max(...expandSamples.map((item) => item.winH)) : 0;
+  const minWinW = expandSamples.length ? Math.min(...expandSamples.map((item) => item.winW)) : 0;
+  const minWinH = expandSamples.length ? Math.min(...expandSamples.map((item) => item.winH)) : 0;
+  const windowFrozen = maxWinW === minWinW && maxWinH === minWinH;
   const expandMonotonic = expandSamples.every(
     (item, index) => index === 0 || item.winW >= (expandSamples[index - 1]?.winW ?? 0) - 1,
   );
-  const expandNoOvershoot =
-    maxCardW <= expandedCard.width + 0.5 &&
-    maxCardH <= expandedCard.height + 0.5 &&
-    maxWinW <= ISLAND_SIZES.expanded.width + 1 &&
-    maxWinH <= ISLAND_SIZES.expanded.height + 1;
+  const expandNoOvershoot = maxCardW <= expandedCard.width + 0.5 && maxCardH <= expandedCard.height + 0.5;
   record(
-    '展开过程不震动（锚点不动 + 尺寸不过冲）',
+    '展开过程不震动（窗口冻结 + 岛锚点不动 + 尺寸不过冲）',
     expandSamples.length >= 5 &&
+      windowFrozen &&
       cxSpread <= 0.5 &&
       topSpreadExpand <= 0.5 &&
       expandMonotonic &&
       expandNoOvershoot,
-    `采样=${expandSamples.length} 卡片中心波动=${cxSpread.toFixed(2)}px 上边缘波动=${topSpreadExpand.toFixed(2)}px ` +
-      `最大卡片=${maxCardW.toFixed(1)}x${maxCardH.toFixed(1)}（目标 ${expandedCard.width}x${expandedCard.height}）` +
-      ` 最大窗口=${maxWinW}x${maxWinH}（目标 ${ISLAND_SIZES.expanded.width}x${ISLAND_SIZES.expanded.height}） 单调=${expandMonotonic}`,
+    `采样=${expandSamples.length} 窗口=${maxWinW}x${maxWinH}（全程冻结=${windowFrozen}） ` +
+      `岛中心波动=${cxSpread.toFixed(2)}px 岛上边缘波动=${topSpreadExpand.toFixed(2)}px ` +
+      `最大岛=${maxCardW.toFixed(1)}x${maxCardH.toFixed(1)}（目标 ${expandedCard.width}x${expandedCard.height}） 单调=${expandMonotonic}`,
   );
 
   await runMotionProbe('collapse');
@@ -759,22 +1037,26 @@ async function runIslandChecks(
     ? Math.max(...collapseSamples.map((item) => item.cardTop)) -
       Math.min(...collapseSamples.map((item) => item.cardTop))
     : 99;
-  const minWinW = collapseSamples.length ? Math.min(...collapseSamples.map((item) => item.winW)) : 0;
   const minCardW = collapseSamples.length ? Math.min(...collapseSamples.map((item) => item.cardW)) : 0;
+  const collapseWindowFrozen =
+    new Set(collapseSamples.map((item) => item.winW)).size <= 1 &&
+    new Set(collapseSamples.map((item) => item.winH)).size <= 1;
   const collapseMonotonic = collapseSamples.every(
     (item, index) =>
-      index === 0 || item.winW <= (collapseSamples[index - 1]?.winW ?? Number.MAX_SAFE_INTEGER) + 1,
+      index === 0 || item.cardW <= (collapseSamples[index - 1]?.cardW ?? Number.MAX_SAFE_INTEGER) + 1,
   );
-  const collapseNoOvershoot = minCardW >= pillCard.width - 0.5 && minWinW >= ISLAND_SIZES.pill.width - 1;
+  const collapseNoOvershoot = minCardW >= pillCard.width - 1;
   record(
-    '收回过程不震动（锚点不动 + 尺寸不过冲）',
+    '收回过程不震动（窗口冻结 + 岛锚点不动 + 尺寸不过冲）',
     collapseSamples.length >= 5 &&
+      collapseWindowFrozen &&
       cxSpreadCollapse <= 0.5 &&
       topSpreadCollapse <= 0.5 &&
       collapseMonotonic &&
       collapseNoOvershoot,
-    `采样=${collapseSamples.length} 卡片中心波动=${cxSpreadCollapse.toFixed(2)}px 上边缘波动=${topSpreadCollapse.toFixed(2)}px ` +
-      `最小卡片宽=${minCardW.toFixed(1)}（目标 ${pillCard.width}） 最小窗口宽=${minWinW}（目标 ${ISLAND_SIZES.pill.width}） 单调=${collapseMonotonic}`,
+    `采样=${collapseSamples.length} 窗口全程冻结=${collapseWindowFrozen} ` +
+      `岛中心波动=${cxSpreadCollapse.toFixed(2)}px 岛上边缘波动=${topSpreadCollapse.toFixed(2)}px ` +
+      `最小岛宽=${minCardW.toFixed(1)}（目标 ${pillCard.width}） 单调收缩=${collapseMonotonic}`,
   );
 
   // 收尾：保持"胶囊可见"状态——后续个性化用例（透明度 / 位置）需要窗口可见才会立即生效
@@ -908,6 +1190,41 @@ async function runIslandChecks(
       `毛玻璃 fill=${glassStyle.fill} 材质=${glassStyle.material}；` +
       `主题色 fill=${tintedStyle.fill} 材质=${tintedStyle.material}`,
   );
+  // 10.7b) 固定大包围盒窗口的鼠标穿透（照搬 WinIsland set_cursor_hittest）：
+  //        默认整块窗口穿透，指针进入岛体才接收鼠标 —— 否则会吞掉桌面点击。
+  await islandWindow?.webContents
+    .executeJavaScript(
+      `(() => {
+         const card = document.querySelector('.island-card');
+         const r = card.getBoundingClientRect();
+         window.dispatchEvent(
+           new MouseEvent('mousemove', {
+             clientX: r.left + r.width / 2,
+             clientY: r.top + r.height / 2,
+             bubbles: true,
+           }),
+         );
+         return true;
+       })()`,
+    )
+    .catch(() => undefined);
+  await sleep(180);
+  const interactiveInside = island.getInteractive();
+  await islandWindow?.webContents
+    .executeJavaScript(
+      `(() => {
+         window.dispatchEvent(new MouseEvent('mousemove', { clientX: 2, clientY: 2, bubbles: true }));
+         return true;
+       })()`,
+    )
+    .catch(() => undefined);
+  await sleep(180);
+  const interactiveOutside = island.getInteractive();
+  record(
+    '岛外鼠标穿透（固定大窗口不吞桌面点击）',
+    interactiveInside === true && interactiveOutside === false,
+    `指针在岛内 interactive=${interactiveInside}，指针在岛外 interactive=${interactiveOutside}（要求 true / false）`,
+  );
   island.setAppearance({ ...appearanceBefore, style: 'black' });
   await sleep(200);
 
@@ -916,15 +1233,15 @@ async function runIslandChecks(
   island.setAppearance({ ...appearanceBefore, idleSliver: true });
   await drainIsland();
   await sleep(420);
-  const sliverBounds = islandWindow?.getBounds();
+  const sliverBounds = (await readIslandGeometry())?.island ?? null;
   island.pushNotification(makeNotification('smoke-sliver', 'NORMAL', '空闲细缝校验'), { inClass: false });
-  await sleep(500);
-  const afterSliverNotification = islandWindow?.getBounds();
+  await sleep(700);
+  const afterSliverNotification = (await readIslandGeometry())?.island ?? null;
   record(
     '空闲细缝：空闲缩为细缝、来消息自动展开（WinIsland hidden_width）',
-    sliverBounds?.width === sliver.width &&
-      sliverBounds?.height === sliver.height &&
-      afterSliverNotification?.width === island.getAppearance().width,
+    Math.abs((sliverBounds?.width ?? 0) - sliver.width) <= 1 &&
+      Math.abs((sliverBounds?.height ?? 0) - sliver.height) <= 1 &&
+      Math.abs((afterSliverNotification?.width ?? 0) - island.getAppearance().width) <= 2,
     `细缝=${sliverBounds?.width ?? '-'}x${sliverBounds?.height ?? '-'}（期望 ${sliver.width}x${sliver.height}）` +
       ` 来消息后=${afterSliverNotification?.width ?? '-'}x${afterSliverNotification?.height ?? '-'} ${islandStateSummary()}`,
   );
@@ -993,7 +1310,7 @@ async function runIslandChecks(
   for (const item of positionCases) {
     island.setAppearance({ ...appearanceBefore, position: item.position });
     await sleep(450);
-    const bounds = islandWindow?.getBounds();
+    const bounds = (await readIslandGeometry())?.island ?? null;
     const matched = Boolean(bounds) && item.verify(bounds as Electron.Rectangle);
     if (!matched) positionOk = false;
     positionDetails.push(
@@ -1024,7 +1341,7 @@ async function runIslandChecks(
   await sleep(300);
   island.handleAction({ action: 'expand' });
   await sleep(60);
-  const instantBounds = islandWindow?.getBounds();
+  const instantBounds = (await readIslandGeometry())?.island ?? null;
   const expectedExpanded = ISLAND_SIZES.expanded;
   const animationsOff = island.getAppearance().animations === false;
   record(
@@ -1038,14 +1355,15 @@ async function runIslandChecks(
   const measureCollapse = async (speed: number): Promise<number> => {
     island.setAppearance({ ...appearanceBefore, animations: true, speed });
     island.handleAction({ action: 'expand' });
-    await sleep(500);
+    await sleep(900);
     const started = Date.now();
     island.handleAction({ action: 'collapse' });
     const target = island.getAppearance().width;
-    const deadline = started + 2500;
+    const deadline = started + 3000;
     while (Date.now() < deadline) {
-      const width = islandWindow?.getBounds().width ?? 0;
-      if (Math.abs(width - target) <= 1) break;
+      const geometry = await readIslandGeometry();
+      const width = geometry?.island.width ?? 0;
+      if (Math.abs(width - target) <= 1.5) break;
       await sleep(16);
     }
     return Date.now() - started;

@@ -73,6 +73,8 @@ export interface IslandRendererBridge {
   getAppearance(): Promise<IslandAppearance>;
   sendAction(action: 'expand' | 'collapse' | 'dismiss' | 'mark-read' | 'open-app', id?: string): void;
   getState(): Promise<IslandState>;
+  /** 命中测试结果：指针是否在岛体上（决定固定大窗口是否接收鼠标） */
+  setInteractive(interactive: boolean): void;
 }
 
 declare global {

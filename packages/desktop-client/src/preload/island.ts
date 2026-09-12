@@ -12,6 +12,8 @@ export interface IslandBridge {
   /** 订阅个性化外观（设置页改动后实时生效） */
   onAppearance(handler: (appearance: IslandAppearance) => void): void;
   getAppearance(): Promise<IslandAppearance>;
+  /** 命中测试结果：指针是否在岛体上（决定窗口是否接收鼠标） */
+  setInteractive(interactive: boolean): void;
 }
 
 const bridge: IslandBridge = {
@@ -26,6 +28,9 @@ const bridge: IslandBridge = {
     ipcRenderer.on('island:appearance', (_event, appearance: IslandAppearance) => handler(appearance));
   },
   getAppearance: () => ipcRenderer.invoke('island:get-appearance'),
+  setInteractive: (interactive) => {
+    ipcRenderer.send('island:set-interactive', interactive);
+  },
 };
 
 contextBridge.exposeInMainWorld('island', bridge);
