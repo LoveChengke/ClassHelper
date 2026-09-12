@@ -72,12 +72,17 @@ export const DEFAULT_ISLAND_APPEARANCE = {
   width: 268,
   radius: 20,
   opacity: 1,
-  accent: '#6cc4ff',
+  /** 默认强调色采用 Apple 系统蓝（与 WinIsland 的系统色体系一致） */
+  accent: '#0a84ff',
   fontSize: 13,
   animations: true,
   speed: 1,
   position: 'top-center',
   alwaysOnTop: true,
+  /** 纯黑底（WinIsland default 风格） */
+  style: 'black',
+  /** 空闲时完全隐藏（与原行为一致；打开后空闲会留一条细缝） */
+  idleSliver: false,
 } as const;
 
 /** 个性化设置项的合法区间（前端滑块与后端校验共用，避免越界导致布局错乱） */
@@ -86,19 +91,59 @@ export const ISLAND_APPEARANCE_RANGES = {
   width: { min: 220, max: 420 },
   radius: { min: 8, max: 32 },
   opacity: { min: 0.4, max: 1 },
-  fontSize: { min: 11, max: 18 },
+  fontSize: { min: 11, max: 20 },
   speed: { min: 0.5, max: 2 },
 } as const;
 
-/** 停靠位置可选值 */
-export const ISLAND_POSITIONS = ['top-center', 'top-left', 'top-right', 'bottom-center'] as const;
+/** 停靠位置可选值（与 WinIsland 的 DockPosition 一致：顶/底 × 左/中/右） */
+export const ISLAND_POSITIONS = [
+  'top-center',
+  'top-left',
+  'top-right',
+  'bottom-center',
+  'bottom-left',
+  'bottom-right',
+] as const;
 
 export const ISLAND_POSITION_LABELS: Record<(typeof ISLAND_POSITIONS)[number], string> = {
   'top-center': '顶部居中',
   'top-left': '左上角',
   'top-right': '右上角',
   'bottom-center': '底部居中',
+  'bottom-left': '左下角',
+  'bottom-right': '右下角',
 };
+
+/** 视觉风格可选值（参考 WinIsland 的 island_style） */
+export const ISLAND_STYLES = ['black', 'glass', 'tinted'] as const;
+
+export const ISLAND_STYLE_LABELS: Record<(typeof ISLAND_STYLES)[number], string> = {
+  black: '纯黑（灵动岛默认）',
+  glass: '毛玻璃（半透明模糊）',
+  tinted: '主题色渐变',
+};
+
+/**
+ * 空闲细缝尺寸（参考 WinIsland hidden_width = 5：空闲态是一条很窄的圆角柱）。
+ * 宽度固定 6px，高度取胶囊高度的一部分，视觉上就是一条"小黑条"。
+ */
+export const ISLAND_SLIVER_WIDTH = 6;
+
+/** 岛内文本的排版系数（相对基础字号，集中在这里方便统一调整） */
+export const ISLAND_TYPE_SCALE = {
+  /** 展开卡标题 */
+  title: 1.08,
+  /** 正文 */
+  body: 0.95,
+  /** 次要说明 / 元信息 */
+  meta: 0.78,
+  /** 徽标 / 按钮 */
+  badge: 0.76,
+  /** 胶囊主标题 */
+  pillTitle: 0.92,
+  /** 胶囊副标题 */
+  pillSub: 0.74,
+} as const;
 /** 默认学期周次上限 */
 export const DEFAULT_WEEK_COUNT = 20;
 

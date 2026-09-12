@@ -6,10 +6,13 @@ import {
   DEFAULT_ISLAND_APPEARANCE,
   ISLAND_APPEARANCE_RANGES as RANGES,
   ISLAND_POSITION_LABELS,
+  ISLAND_STYLE_LABELS,
+  ISLAND_STYLES,
   ISLAND_POSITIONS,
   formatDate,
   type IslandAppearance,
   type IslandPosition,
+  type IslandStyle,
 } from '@classhelper/shared';
 import type { DesktopAppInfo } from '../../types/desktop.js';
 import { pingHealth, setApiBaseUrl } from '../api/http.js';
@@ -118,6 +121,11 @@ const savingIsland = ref(false);
 const positionOptions = ISLAND_POSITIONS.map((value) => ({
   value,
   label: ISLAND_POSITION_LABELS[value],
+}));
+
+const styleOptions = ISLAND_STYLES.map((value) => ({
+  value,
+  label: ISLAND_STYLE_LABELS[value],
 }));
 
 /** 读取当前生效的外观（主进程为单一事实来源） */
@@ -279,9 +287,24 @@ onMounted(async () => {
             <el-form-item label="主题色">
               <el-color-picker
                 :model-value="island.accent"
-                @change="(value: string | null) => applyIslandAppearance({ accent: value ?? '#6cc4ff' })"
+                @change="(value: string | null) => applyIslandAppearance({ accent: value ?? '#0a84ff' })"
               />
               <span class="text-muted ml-8">用于高亮、按钮与进度条</span>
+            </el-form-item>
+            <el-form-item label="视觉风格">
+              <el-select
+                :model-value="island.style"
+                style="width: 180px"
+                @change="(value: IslandStyle) => applyIslandAppearance({ style: value })"
+              >
+                <el-option
+                  v-for="item in styleOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </el-select>
+              <span class="text-muted ml-8">纯黑 / 毛玻璃（亚克力）/ 主题色渐变</span>
             </el-form-item>
             <el-form-item label="显示位置">
               <el-select
@@ -313,6 +336,15 @@ onMounted(async () => {
                   (value: boolean | string | number) => applyIslandAppearance({ alwaysOnTop: Boolean(value) })
                 "
               />
+            </el-form-item>
+            <el-form-item label="空闲细缝">
+              <el-switch
+                :model-value="island.idleSliver"
+                @change="
+                  (value: boolean | string | number) => applyIslandAppearance({ idleSliver: Boolean(value) })
+                "
+              />
+              <span class="text-muted ml-8">参考 WinIsland：没有消息时保留一条细缝（关闭则完全隐藏）</span>
             </el-form-item>
           </el-form>
           <div class="toolbar">

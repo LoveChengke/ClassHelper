@@ -5,7 +5,7 @@ import type { BrowserWindow, NativeImage } from 'electron';
 import type { IslandAppearance, IslandNotification } from '@classhelper/shared';
 import { getConfig, saveConfig } from './config.js';
 import { getDiagnostics } from './ipc.js';
-import { island, ISLAND_CALL_SIZE, ISLAND_SIZES, ISLAND_URGENT_SIZE } from './island.js';
+import { getSliverSize, island, ISLAND_CALL_SIZE, ISLAND_SIZES, ISLAND_URGENT_SIZE } from './island.js';
 import { destroyTray, getTrayState, isTrayReady } from './tray.js';
 
 interface SmokeResult {
@@ -381,7 +381,15 @@ async function runIslandChecks(
   await sleep(700);
   clearInterval(shrinkSampler);
   await sleep(120);
-  const allowedSizes = new Set(['396x308', '416x336', '432x352', '260x38']);
+  // 允许的卡片尺寸由当前外观与各形态窗口尺寸推导（卡片 = 窗口 - 2*5px 内边距）
+  const cardLabel = (size: { width: number; height: number }): string =>
+    `${size.width - 10}x${size.height - 10}`;
+  const allowedSizes = new Set([
+    cardLabel(ISLAND_SIZES.pill),
+    cardLabel(ISLAND_SIZES.expanded),
+    cardLabel(ISLAND_URGENT_SIZE),
+    cardLabel(ISLAND_CALL_SIZE),
+  ]);
   const stretched = [...new Set(shrinkSamples)].filter((size) => !allowedSizes.has(size));
   record(
     '收回动画不出现被拉伸的"方框"（卡片保持固定尺寸）',
@@ -626,7 +634,7 @@ async function runIslandChecks(
   const cardTops = jitterSamples.map((item) => item.cardTop);
   const topSpread = cardTops.length > 0 ? Math.max(...cardTops) - Math.min(...cardTops) : 99;
   const cardWidths = [...new Set(jitterSamples.map((item) => item.cardWidth))];
-  const expectedWidths = [ISLAND_SIZES.expanded.width - 8, ISLAND_SIZES.pill.width - 8];
+  const expectedWidths = [ISLAND_SIZES.expanded.width - 10, ISLAND_SIZES.pill.width - 10];
   const widthOk = cardWidths.every((width) => expectedWidths.includes(width));
   record(
     '收回过程不抖动（窗口宽度单调收缩 + 卡片布局尺寸不拉伸）',
@@ -704,8 +712,8 @@ async function runIslandChecks(
   island.pushNotification(makeNotification('smoke-motion', 'NORMAL', '开合不震动校验'), { inClass: false });
   await sleep(350);
 
-  const expandedCard = { width: ISLAND_SIZES.expanded.width - 8, height: ISLAND_SIZES.expanded.height - 6 };
-  const pillCard = { width: ISLAND_SIZES.pill.width - 8, height: ISLAND_SIZES.pill.height - 6 };
+  const expandedCard = { width: ISLAND_SIZES.expanded.width - 10, height: ISLAND_SIZES.expanded.height - 10 };
+  const pillCard = { width: ISLAND_SIZES.pill.width - 10, height: ISLAND_SIZES.pill.height - 10 };
 
   await runMotionProbe('expand');
   const expandSamples = [...motionSamples];
@@ -771,6 +779,168 @@ async function runIslandChecks(
 
   // 收尾：保持"胶囊可见"状态——后续个性化用例（透明度 / 位置）需要窗口可见才会立即生效
   await sleep(250);
+  /** 排空灵动岛队列：连续收起直到没有活动通知与排队通知（否则"空闲态"断言会被下一条顶掉） */
+  const drainIsland = async (): Promise<void> => {
+    for (let index = 0; index < 20; index += 1) {
+      const current = island.getState();
+      if (!current.active && current.queued.length === 0) return;
+      island.handleAction({ action: 'dismiss' });
+      await sleep(120);
+    }
+  };
+
+  /** 灵动岛状态摘要（失败时用于定位是"没排空队列"还是"几何没生效"） */
+  const islandStateSummary = (): string => {
+    const current = island.getState();
+    return `mode=${current.mode} active=${current.active?.id ?? 'null'} queued=${current.queued.length} visible=${
+      islandWindow?.isVisible() ?? '-'
+    }`;
+  };
+
+  /** 等待灵动岛渲染出指定选择器（最多约 2s） */
+  const waitForIslandDom = async (selector: string, timeoutMs = 2000): Promise<boolean> => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const found = await islandWindow?.webContents
+        .executeJavaScript(`Boolean(document.querySelector(${JSON.stringify(selector)}))`)
+        .catch(() => false);
+      if (found) return true;
+      await sleep(60);
+    }
+    return false;
+  };
+
+  // 10.6) 字号：所有文本都由基础字号推导，改设置必须"立刻看到"（WinIsland 的 font_size 模型）
+  const readFontSizes = async (): Promise<Record<string, number>> =>
+    (await islandWindow?.webContents
+      .executeJavaScript(
+        `(() => {
+           const pick = (selector) => {
+             const node = document.querySelector(selector);
+             if (!node) return 0;
+             return Math.round(parseFloat(getComputedStyle(node).fontSize) * 100) / 100;
+           };
+           return {
+             'pill-title': pick('.pill-title'),
+             'pill-sub': pick('.pill-sub'),
+             title: pick('.title'),
+             content: pick('.content-text'),
+             ghost: pick('.ghost-btn'),
+           };
+         })()`,
+      )
+      .catch(() => ({}))) ?? {};
+
+  const probeFontScale = async (fontSize: number): Promise<Record<string, number>> => {
+    island.setAppearance({ ...appearanceBefore, fontSize });
+    await drainIsland();
+    island.pushNotification(makeNotification('smoke-font', 'NORMAL', '字号实时生效校验'), {
+      inClass: false,
+    });
+    await waitForIslandDom('.island-card.pill .pill-title');
+    await sleep(120);
+    const pillSizes = await readFontSizes();
+    island.handleAction({ action: 'expand' });
+    await waitForIslandDom('.island-card.expanded .title');
+    await sleep(160);
+    const expandedSizes = await readFontSizes();
+    // 两次读取各有一半元素不存在（返回 0），合并时只采纳 >0 的有效值
+    const merged: Record<string, number> = { ...pillSizes };
+    for (const [key, value] of Object.entries(expandedSizes)) {
+      if (value > 0) merged[key] = value;
+    }
+    return merged;
+  };
+
+  await drainIsland();
+  const fontSmall = await probeFontScale(13);
+  const fontLarge = await probeFontScale(19);
+  const fontKeys = Object.keys(fontSmall).filter((key) => (fontSmall[key] ?? 0) > 0);
+  const expectedRatio = 19 / 13;
+  const fontRatios = fontKeys.map((key) => ({
+    key,
+    ratio: (fontLarge[key] ?? 0) / (fontSmall[key] ?? 1),
+  }));
+  const fontUniform = fontRatios.every((item) => Math.abs(item.ratio - expectedRatio) <= 0.03);
+  record(
+    '字号设置立刻生效（岛内所有文本按基础字号等比缩放）',
+    fontKeys.length >= 5 && fontUniform,
+    `13px→[${fontKeys.map((key) => `${key}=${fontSmall[key]}`).join(' ')}] ` +
+      `19px→[${fontKeys.map((key) => `${key}=${fontLarge[key]}`).join(' ')}] ` +
+      `期望倍率=${expectedRatio.toFixed(3)} 实测=[${fontRatios.map((item) => `${item.key}:${item.ratio.toFixed(3)}`).join(' ')}] ` +
+      `${islandStateSummary()}`,
+  );
+
+  // 10.7) 视觉风格：纯黑 / 毛玻璃（亚克力）/ 主题色渐变，切换立即生效
+  const probeStyle = async (
+    style: IslandAppearance['style'],
+  ): Promise<{ fill: string; stroke: string; material: string }> => {
+    island.setAppearance({ ...appearanceBefore, style });
+    await sleep(260);
+    const measured = await islandWindow?.webContents
+      .executeJavaScript(
+        `(() => {
+           const path = document.querySelector('.island-card .shape path');
+           if (!path) return null;
+           const style = getComputedStyle(path);
+           return { fill: style.fill, stroke: style.stroke };
+         })()`,
+      )
+      .catch(() => null);
+    return {
+      fill: String(measured?.fill ?? '-'),
+      stroke: String(measured?.stroke ?? '-'),
+      material: island.getBackgroundMaterial(),
+    };
+  };
+
+  const blackStyle = await probeStyle('black');
+  const glassStyle = await probeStyle('glass');
+  const tintedStyle = await probeStyle('tinted');
+  record(
+    '视觉风格切换立刻生效（纯黑 / 毛玻璃亚克力 / 主题色）',
+    blackStyle.fill === 'rgb(0, 0, 0)' &&
+      blackStyle.material === 'none' &&
+      glassStyle.fill.startsWith('rgba(10, 10, 14') &&
+      glassStyle.material === 'acrylic' &&
+      tintedStyle.fill === 'rgb(11, 11, 15)',
+    `纯黑 fill=${blackStyle.fill} 材质=${blackStyle.material}；` +
+      `毛玻璃 fill=${glassStyle.fill} 材质=${glassStyle.material}；` +
+      `主题色 fill=${tintedStyle.fill} 材质=${tintedStyle.material}`,
+  );
+  island.setAppearance({ ...appearanceBefore, style: 'black' });
+  await sleep(200);
+
+  // 10.8) 空闲细缝（参考 WinIsland hidden_width）：开启后空闲留一条细缝，来消息再展开
+  const sliver = getSliverSize();
+  island.setAppearance({ ...appearanceBefore, idleSliver: true });
+  await drainIsland();
+  await sleep(420);
+  const sliverBounds = islandWindow?.getBounds();
+  island.pushNotification(makeNotification('smoke-sliver', 'NORMAL', '空闲细缝校验'), { inClass: false });
+  await sleep(500);
+  const afterSliverNotification = islandWindow?.getBounds();
+  record(
+    '空闲细缝：空闲缩为细缝、来消息自动展开（WinIsland hidden_width）',
+    sliverBounds?.width === sliver.width &&
+      sliverBounds?.height === sliver.height &&
+      afterSliverNotification?.width === island.getAppearance().width,
+    `细缝=${sliverBounds?.width ?? '-'}x${sliverBounds?.height ?? '-'}（期望 ${sliver.width}x${sliver.height}）` +
+      ` 来消息后=${afterSliverNotification?.width ?? '-'}x${afterSliverNotification?.height ?? '-'} ${islandStateSummary()}`,
+  );
+
+  island.setAppearance({ ...appearanceBefore, idleSliver: false });
+  island.handleAction({ action: 'dismiss' });
+  await sleep(450);
+  record(
+    '关闭空闲细缝后空闲再次完全隐藏（保持原行为）',
+    islandWindow?.isVisible() === false,
+    `isVisible=${islandWindow?.isVisible() ?? '-'}`,
+  );
+  island.pushNotification(makeNotification('smoke-after-sliver', 'NORMAL', '细缝关闭后恢复'), {
+    inClass: false,
+  });
+  await sleep(320);
   // 11) 个性化设置的其余参数：透明度 / 主题色 / 动画开关 / 速度 / 位置 / 置顶 / 持久化
   //     （需求 2 的完整清单，逐项断言真实窗口属性，而不是只看设置页显示）
   const workArea = screen.getPrimaryDisplay().workArea;
@@ -830,7 +1000,7 @@ async function runIslandChecks(
       `${item.position}=${bounds ? `${bounds.x},${bounds.y}` : '-'}${matched ? '✓' : '✗'}`,
     );
   }
-  record('个性设置：停靠位置生效（左上/右上/底部居中/顶部居中）', positionOk, positionDetails.join(' '));
+  record('个性设置：停靠位置生效（6 个锚点）', positionOk, positionDetails.join(' '));
   island.setAppearance(appearanceBefore);
 
   // 11.4 置顶开关 → 窗口 alwaysOnTop

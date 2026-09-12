@@ -415,26 +415,45 @@ export interface IslandAppearance {
   height: number;
   /** 胶囊宽度（px，220~420） */
   width: number;
-  /** 卡片圆角（px，8~32） */
+  /** 卡片圆角（px，8~32）：采用连续圆角（squircle），此值为四角的基准半径 */
   radius: number;
   /** 整体不透明度（0.4~1） */
   opacity: number;
   /** 主题色（强调色，用于高亮与按钮） */
   accent: string;
-  /** 基础字号（px，11~18） */
+  /**
+   * 基础字号（px，11~20）——参考 WinIsland 的 font_size：
+   * 岛内**所有文本**都由它乘以各自的排版系数得出，因此改字号会整体等比缩放。
+   */
   fontSize: number;
   /** 是否启用动画（关闭后展开/收起为瞬时） */
   animations: boolean;
   /** 动画速度倍率（0.5 慢 ~ 2 快） */
   speed: number;
-  /** 显示位置 */
+  /** 显示位置（顶/底 × 左/中/右，与 WinIsland 的 DockPosition 对齐） */
   position: IslandPosition;
   /** 是否始终置顶 */
   alwaysOnTop: boolean;
+  /**
+   * 视觉风格（参考 WinIsland 的 island_style）：
+   * - `black`：纯黑底（默认，WinIsland `default` 风格）
+   * - `glass`：半透明 + 背景模糊（WinIsland `glass` 风格）
+   * - `tinted`：强调色渐变（本产品特色，保持与原主题色一致）
+   */
+  style: IslandStyle;
+  /**
+   * 空闲时是否保留一条"细缝"（参考 WinIsland 的 hidden_width：空闲态是一条很窄的圆角柱）。
+   * 关闭时（默认）空闲即完全隐藏，与原行为一致。
+   */
+  idleSliver: boolean;
 }
 
-/** 灵动岛停靠位置 */
-export type IslandPosition = 'top-center' | 'top-left' | 'top-right' | 'bottom-center';
+/** 灵动岛停靠位置（6 个锚点，与 WinIsland 一致） */
+export type IslandPosition =
+  'top-center' | 'top-left' | 'top-right' | 'bottom-center' | 'bottom-left' | 'bottom-right';
+
+/** 灵动岛视觉风格 */
+export type IslandStyle = 'black' | 'glass' | 'tinted';
 
 /** 灵动岛当前状态（主进程持有，渲染进程与冒烟测试读取） */
 export interface IslandState {

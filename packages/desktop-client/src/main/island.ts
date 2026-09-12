@@ -2,6 +2,9 @@ import path from 'node:path';
 import { BrowserWindow, ipcMain, screen } from 'electron';
 import {
   DEFAULT_ISLAND_APPEARANCE,
+  ISLAND_POSITIONS,
+  ISLAND_SLIVER_WIDTH,
+  ISLAND_STYLES,
   type IslandAppearance,
   type IslandMode,
   type IslandNotification,
@@ -31,12 +34,18 @@ import { getConfig } from './config.js';
  */
 
 /** 基础尺寸：真实尺寸 = 外观设置联动计算（见 sizes()） */
+/**
+ * 基准尺寸（对齐 WinIsland 的 `base_width/base_height` 与 `expanded_width/expanded_height` 比例）：
+ * - 胶囊：小而饱满（WinIsland compact 为 120×27，我们是文字型胶囊，取 216×34，圆角 = h/2 满圆角）
+ * - 展开卡：展开增量与渲染进程 IslandApp.vue 的 EXTRA 常量一一对应
+ *   （expanded +156×+218 / urgent +172×+238 / call +188×+254）
+ */
 const BASE = {
-  pill: { width: 268, height: 44 },
-  expanded: { width: 404, height: 316 },
-  urgent: { width: 424, height: 344 },
+  pill: { width: 216, height: 34 },
+  expanded: { width: 372, height: 220 },
+  urgent: { width: 388, height: 236 },
   /** "叫人"消息卡片（比普通详情略大，突出"请 XXX 同学找 XXX 老师"） */
-  call: { width: 440, height: 360 },
+  call: { width: 404, height: 252 },
 };
 
 /**
@@ -67,6 +76,12 @@ const DEFAULT_SIZES: Record<IslandMode, { width: number; height: number }> = {
 let SIZES: Record<IslandMode, { width: number; height: number }> = { ...DEFAULT_SIZES };
 let URGENT_SIZE = { ...BASE.urgent };
 let CALL_SIZE = { ...BASE.call };
+
+/**
+ * 空闲"细缝"尺寸（参考 WinIsland 的 hidden_width：空闲态是一条很窄的圆角柱）。
+ * 高度取胶囊高度的一部分，宽度固定（`ISLAND_SLIVER_WIDTH`）。
+ */
+let SLIVER_SIZE = { width: ISLAND_SLIVER_WIDTH, height: 22 };
 
 /** 各状态的自动收起/隐藏时长（毫秒），0 表示不自动收起 */
 const TIMEOUTS = {
@@ -112,6 +127,8 @@ class IslandController {
   private boundsFrame: number | null = null;
   /** 外观设置（设置页可调，主进程持久化） */
   private appearance: IslandAppearance = { ...DEFAULT_ISLAND_APPEARANCE };
+  /** 当前生效的窗口背景材质（'acrylic' | 'none'），用于避免重复设置与冒烟断言 */
+  private backgroundMaterial: string = 'none';
 
   private state: IslandState = {
     mode: 'hidden',
@@ -175,6 +192,9 @@ class IslandController {
 
     win.setAlwaysOnTop(this.appearance.alwaysOnTop, 'screen-saver');
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    // 启动时即应用已保存的风格（glass 需要窗口创建后立刻设置材质）
+    this.backgroundMaterial = 'none';
+    this.applyBackgroundMaterial();
     win.setIgnoreMouseEvents(false);
     win.on('closed', () => {
       this.win = null;
@@ -392,6 +412,12 @@ class IslandController {
   hide(): void {
     this.clearTimers();
     if (!this.win || this.win.isDestroyed()) return;
+    // 开启"空闲细缝"时不能走 fadeOut + skipWindow：那样会完全隐藏，
+    // 必须让 syncWindow() 把窗口收成一条细缝（上课时段仍由 syncWindow 兜底为立即隐藏）。
+    if (this.appearance.idleSliver) {
+      this.setState({ mode: 'hidden', reason: null });
+      return;
+    }
     this.fadeOut();
     this.setState({ mode: 'hidden', reason: null }, { skipWindow: true });
   }
@@ -497,26 +523,18 @@ class IslandController {
     const margin = ISLAND_MARGIN;
     const center = Math.round(area.x + area.width / 2);
 
-    switch (this.appearance.position) {
-      case 'top-left':
-        return { hMode: 'left', hValue: area.x + margin, vMode: 'top', vValue: area.y + margin };
-      case 'top-right':
-        return {
-          hMode: 'right',
-          hValue: area.x + area.width - margin,
-          vMode: 'top',
-          vValue: area.y + margin,
-        };
-      case 'bottom-center':
-        return {
-          hMode: 'center',
-          hValue: center,
-          vMode: 'bottom',
-          vValue: area.y + area.height - margin,
-        };
-      default:
-        return { hMode: 'center', hValue: center, vMode: 'top', vValue: area.y + margin };
-    }
+    // 6 个停靠位置（顶/底 × 左/中/右），与 WinIsland 的 DockPosition 一一对应
+    const position = this.appearance.position;
+    const vMode: IslandAnchor['vMode'] = position.startsWith('bottom') ? 'bottom' : 'top';
+    const vValue = vMode === 'bottom' ? area.y + area.height - margin : area.y + margin;
+    const hMode: IslandAnchor['hMode'] = position.endsWith('left')
+      ? 'left'
+      : position.endsWith('right')
+        ? 'right'
+        : 'center';
+    const hValue =
+      hMode === 'left' ? area.x + margin : hMode === 'right' ? area.x + area.width - margin : center;
+    return { hMode, hValue, vMode, vValue };
   }
 
   /**
@@ -587,6 +605,15 @@ class IslandController {
     this.applyFocusable();
 
     if (this.state.mode === 'hidden') {
+      // 空闲"细缝"（参考 WinIsland）：打开后空闲不再完全隐藏，而是留一条很窄的圆角柱；
+      // 关闭时保持原行为（完全淡出并隐藏）。
+      if (this.appearance.idleSliver) {
+        this.cancelFade();
+        this.win.setOpacity(this.appearance.opacity);
+        if (!this.win.isVisible()) this.win.showInactive();
+        this.animateBounds(SLIVER_SIZE);
+        return;
+      }
       this.fadeOut();
       return;
     }
@@ -761,11 +788,13 @@ class IslandController {
    * 尺寸只改窗口与卡片变量，渲染进程用 CSS 变量适配，不会引发布局错乱。
    */
   setAppearance(patch: Partial<IslandAppearance>): void {
+    const before = this.appearance;
     this.appearance = normalizeAppearance({ ...this.appearance, ...patch });
     recomputeSizes(this.appearance);
 
     if (this.win && !this.win.isDestroyed()) {
       this.win.setAlwaysOnTop(this.appearance.alwaysOnTop, 'screen-saver');
+      this.applyBackgroundMaterial();
       if (this.win.isVisible()) {
         // 显示中：立即应用透明度（隐藏时由 fadeIn 负责）
         this.win.setOpacity(this.appearance.opacity);
@@ -774,11 +803,40 @@ class IslandController {
     this.emitAppearance();
     // 外观变化后按新尺寸重新同步（隐藏态不显示，不做额外动作）
     if (this.state.mode !== 'hidden') this.syncWindow();
+    // 位置变化：即使当前不可见也先把窗口挪到新锚点，避免下次出现时"从旧位置飞过来"
+    if (this.state.mode === 'hidden' && before.position !== this.appearance.position) {
+      this.syncWindow();
+    }
     logger.info(
       `灵动岛外观已更新：${this.appearance.width}x${this.appearance.height} 圆角=${this.appearance.radius} ` +
-        `透明度=${this.appearance.opacity} 位置=${this.appearance.position} 动画=${this.appearance.animations} ` +
-        `速度=${this.appearance.speed}`,
+        `透明度=${this.appearance.opacity} 位置=${this.appearance.position} 风格=${this.appearance.style} ` +
+        `字号=${this.appearance.fontSize} 动画=${this.appearance.animations} 速度=${this.appearance.speed} ` +
+        `空闲细缝=${this.appearance.idleSliver}`,
     );
+  }
+
+  /**
+   * 应用窗口背景材质（对应 WinIsland 的 `DWMWA_USE_HOSTBACKDROPBRUSH` / HostBackdropBrush）：
+   * - `glass` 风格：Windows 11 的 acrylic 亚克力（真正的桌面模糊）
+   * - 其他风格：`none`（纯色由渲染进程绘制，避免多余的模糊开销）
+   * 平台不支持时静默降级为半透明纯色。
+   */
+  private applyBackgroundMaterial(): void {
+    if (!this.win || this.win.isDestroyed()) return;
+    const material = this.appearance.style === 'glass' ? 'acrylic' : 'none';
+    if (this.backgroundMaterial === material) return;
+    try {
+      this.win.setBackgroundMaterial(material);
+      this.backgroundMaterial = material;
+    } catch (error) {
+      logger.warn(`设置窗口背景材质失败（降级为纯色）：${(error as Error).message}`);
+      this.backgroundMaterial = 'none';
+    }
+  }
+
+  /** 当前窗口背景材质（供冒烟验证与设置页展示） */
+  getBackgroundMaterial(): string {
+    return this.backgroundMaterial;
   }
 
   getAppearance(): IslandAppearance {
@@ -807,6 +865,22 @@ export function recomputeSizes(appearance: IslandAppearance): void {
   };
   URGENT_SIZE = grow(BASE.urgent);
   CALL_SIZE = grow(BASE.call);
+  // 空闲细缝：卡片宽固定 6px（WinIsland hidden_width 的思路），窗口 = 卡片 + 内边距。
+  // 注意：Windows 对（透明无边框）窗口有约 36px 的**最小高度**限制——
+  // 实测请求 32px 时实际得到 36px，因此这里直接以 36px 为下限，避免断言/预览与真实不一致。
+  const sliverCardHeight = Math.max(16, Math.min(28, appearance.height - 22));
+  SLIVER_SIZE = {
+    width: Math.min(ISLAND_SLIVER_WIDTH + CARD_PAD_X * 2, appearance.width),
+    height: Math.max(MIN_WINDOW_HEIGHT, sliverCardHeight + CARD_PAD_Y * 2),
+  };
+}
+
+/**
+ * 空闲细缝的**窗口**尺寸（`getBounds()` 返回值；卡片尺寸 = 再减去内边距）。
+ * 供冒烟验证与设置页预览使用。
+ */
+export function getSliverSize(): { width: number; height: number } {
+  return { ...SLIVER_SIZE };
 }
 
 /** 夹紧外观取值（越界值直接收敛，避免用户配置破坏布局） */
@@ -819,13 +893,13 @@ export function normalizeAppearance(input: IslandAppearance): IslandAppearance {
     radius: clamp(input.radius, 8, 32),
     opacity: clamp(input.opacity, 0.4, 1),
     accent: /^#[0-9a-fA-F]{6}$/.test(input.accent) ? input.accent : DEFAULT_ISLAND_APPEARANCE.accent,
-    fontSize: clamp(input.fontSize, 11, 18),
+    fontSize: clamp(input.fontSize, 11, 20),
     animations: input.animations !== false,
     speed: clamp(input.speed, 0.5, 2),
-    position: ['top-center', 'top-left', 'top-right', 'bottom-center'].includes(input.position)
-      ? input.position
-      : 'top-center',
+    position: ISLAND_POSITIONS.includes(input.position) ? input.position : 'top-center',
     alwaysOnTop: input.alwaysOnTop !== false,
+    style: ISLAND_STYLES.includes(input.style) ? input.style : 'black',
+    idleSliver: input.idleSliver === true,
   };
 }
 
@@ -835,11 +909,19 @@ export function normalizeAppearance(input: IslandAppearance): IslandAppearance {
  * 现在所有形变统一走单调的 easeOutCubic（见 animateBounds），不再有任何回弹。
  */
 
-/** 卡片相对窗口的内边距（必须与渲染进程 CSS 的 4px / 3px 一致） */
-const CARD_PAD_X = 4;
-const CARD_PAD_Y = 3;
+/**
+ * 卡片相对窗口的内边距（必须与渲染进程 IslandApp.vue 的 CARD_PAD_X/CARD_PAD_Y 一致）。
+ * 取 5px 是为了给展开态的投影（WinIsland: y+2、σ=3）留出不被窗口裁掉的余量。
+ */
+const CARD_PAD_X = 5;
+const CARD_PAD_Y = 5;
 /** 灵动岛与屏幕工作区边缘的留白 */
 const ISLAND_MARGIN = 8;
+/**
+ * Windows 对窗口最小高度的实际限制（实测：请求 32px 会得到 36px）。
+ * 空闲细缝等"极小形态"必须以此作为高度下限，否则断言与真实窗口会不一致。
+ */
+const MIN_WINDOW_HEIGHT = 36;
 
 interface Bounds {
   x: number;

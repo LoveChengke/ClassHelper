@@ -28,7 +28,15 @@ function normalizeIslandAppearance(input?: Partial<IslandAppearance>): IslandApp
     const numeric = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
     return Math.min(max, Math.max(min, Math.round(numeric * 100) / 100));
   };
-  const positions: IslandAppearance['position'][] = ['top-center', 'top-left', 'top-right', 'bottom-center'];
+  const positions: IslandAppearance['position'][] = [
+    'top-center',
+    'top-left',
+    'top-right',
+    'bottom-center',
+    'bottom-left',
+    'bottom-right',
+  ];
+  const styles: IslandAppearance['style'][] = ['black', 'glass', 'tinted'];
   return {
     height: clamp(input?.height, 36, 72, DEFAULT_ISLAND_APPEARANCE.height),
     width: clamp(input?.width, 220, 420, DEFAULT_ISLAND_APPEARANCE.width),
@@ -38,13 +46,17 @@ function normalizeIslandAppearance(input?: Partial<IslandAppearance>): IslandApp
       typeof input?.accent === 'string' && /^#[0-9a-fA-F]{6}$/.test(input.accent)
         ? input.accent
         : DEFAULT_ISLAND_APPEARANCE.accent,
-    fontSize: clamp(input?.fontSize, 11, 18, DEFAULT_ISLAND_APPEARANCE.fontSize),
+    fontSize: clamp(input?.fontSize, 11, 20, DEFAULT_ISLAND_APPEARANCE.fontSize),
     animations: input?.animations !== false,
     speed: clamp(input?.speed, 0.5, 2, DEFAULT_ISLAND_APPEARANCE.speed),
     position: positions.includes(input?.position as IslandAppearance['position'])
       ? (input?.position as IslandAppearance['position'])
       : DEFAULT_ISLAND_APPEARANCE.position,
     alwaysOnTop: input?.alwaysOnTop !== false,
+    style: styles.includes(input?.style as IslandAppearance['style'])
+      ? (input?.style as IslandAppearance['style'])
+      : DEFAULT_ISLAND_APPEARANCE.style,
+    idleSliver: input?.idleSliver === true,
   };
 }
 
