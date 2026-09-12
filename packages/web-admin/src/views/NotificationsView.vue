@@ -65,12 +65,15 @@ const callStudentId = ref('');
 const callStudents = ref<StudentDto[]>([]);
 const callQuickPhrase = ref<string>(CALL_QUICK_PHRASES[0] ?? '');
 const callMessage = ref('');
+/** 紧急叫人：无视上课时段立即展开；默认普通（只进队列，课后弹出） */
+const callUrgent = ref(false);
 
 async function openCall(): Promise<void> {
   callClassId.value = filter.classId || classes.value[0]?.id || '';
   callStudentId.value = '';
   callMessage.value = '';
   callQuickPhrase.value = CALL_QUICK_PHRASES[0] ?? '';
+  callUrgent.value = false;
   callStudents.value = [];
   callVisible.value = true;
   if (callClassId.value) await loadCallStudents();
@@ -103,10 +106,11 @@ async function submitCall(): Promise<void> {
     const created = await callApi.create({
       classId: callClassId.value,
       studentId: callStudentId.value,
+      urgent: callUrgent.value,
       ...(callMessage.value.trim() ? { message: callMessage.value.trim() } : {}),
       ...(callQuickPhrase.value.trim() ? { quickPhrase: callQuickPhrase.value.trim() } : {}),
     });
-    ElMessage.success(`已通知：${created.title}`);
+    ElMessage.success(`已${callUrgent.value ? '紧急' : ''}通知：${created.title}`);
     callVisible.value = false;
   } finally {
     callSending.value = false;
@@ -382,11 +386,21 @@ onUnmounted(() => {
             placeholder="可选；填写后优先于快捷短语"
           />
         </el-form-item>
+        <el-form-item label="级别">
+          <el-radio-group v-model="callUrgent">
+            <el-radio-button :value="false">普通（不打断课堂）</el-radio-button>
+            <el-radio-button :value="true">紧急（立即展开）</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
       </el-form>
       <el-alert
-        type="warning"
+        :type="callUrgent ? 'error' : 'warning'"
         :closable="false"
-        title="学生端桌面会立即浮出「请 XXX 同学找 XXX 老师」，上课时段也照常弹出"
+        :title="
+          callUrgent
+            ? '紧急叫人：学生端桌面无视上课时段立即展开，需学生点「收到」'
+            : '普通叫人：学生端课间先显示胶囊、点击展开；上课时段只排队，下课后弹出'
+        "
       />
       <template #footer>
         <el-button @click="callVisible = false">取消</el-button>

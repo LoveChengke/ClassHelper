@@ -123,12 +123,13 @@ onMounted(async () => {
 const callVisible = ref(false);
 const callSending = ref(false);
 const callTarget = ref<StudentDto | null>(null);
-const callForm = reactive({ quickPhrase: '', message: '' });
+const callForm = reactive({ quickPhrase: '', message: '', urgent: false });
 
 function openCall(row: StudentDto): void {
   callTarget.value = row;
   callForm.quickPhrase = CALL_QUICK_PHRASES[0] ?? '';
   callForm.message = '';
+  callForm.urgent = false;
   callVisible.value = true;
 }
 
@@ -153,10 +154,11 @@ async function submitCall(): Promise<void> {
     const created = await callApi.create({
       classId: target.classId,
       studentId: target.id,
+      urgent: callForm.urgent,
       ...(callForm.message.trim() ? { message: callForm.message.trim() } : {}),
       ...(callForm.quickPhrase.trim() ? { quickPhrase: callForm.quickPhrase.trim() } : {}),
     });
-    ElMessage.success(`已通知 ${target.name}：${created.title}`);
+    ElMessage.success(`已${callForm.urgent ? '紧急' : ''}通知 ${target.name}：${created.title}`);
     callVisible.value = false;
   } finally {
     callSending.value = false;
@@ -235,8 +237,11 @@ async function submitCall(): Promise<void> {
         class="call-alert"
       >
         <template #default>
-          发送后学生端桌面会立即浮出「请 {{ callTarget.name }} 同学找 XXX 老师」，
-          无需学生刷新；上课时段也会立刻显示。
+          发送后学生端桌面会浮出「请 {{ callTarget.name }} 同学找 XXX 老师」；
+          <b>紧急</b>
+          叫人无视上课时段立即展开，
+          <b>普通</b>
+          叫人课间先显示胶囊、上课时段只排队。
         </template>
       </el-alert>
 
@@ -254,6 +259,14 @@ async function submitCall(): Promise<void> {
             {{ phrase }}
           </el-tag>
         </div>
+      </div>
+
+      <div class="call-section">
+        <div class="call-label">级别（默认普通：不打断课堂）</div>
+        <el-radio-group v-model="callForm.urgent">
+          <el-radio-button :value="false">普通</el-radio-button>
+          <el-radio-button :value="true">紧急</el-radio-button>
+        </el-radio-group>
       </div>
 
       <div class="call-section">

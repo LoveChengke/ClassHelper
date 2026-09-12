@@ -567,6 +567,27 @@ async function main() {
       callByTeacher.status === 201 && callTitle.includes('请') && callTitle.includes('找'),
       `status=${callByTeacher.status} title="${callTitle}"`,
     );
+    record(
+      '普通叫人（默认）不是紧急级别：priority=HIGH，学生端按普通通知排队',
+      callByTeacher.payload?.data?.priority === 'HIGH',
+      `priority=${callByTeacher.payload?.data?.priority ?? '-'}（期望 HIGH）`,
+    );
+
+    const urgentCall = await api('/calls', {
+      method: 'POST',
+      token: teacherToken,
+      body: {
+        classId,
+        studentId: studentUser.id,
+        quickPhrase: '请立刻到办公室',
+        urgent: true,
+      },
+    });
+    record(
+      '紧急叫人（urgent=true → priority=URGENT，学生端无视上课时段立即展开）',
+      urgentCall.status === 201 && urgentCall.payload?.data?.priority === 'URGENT',
+      `status=${urgentCall.status} priority=${urgentCall.payload?.data?.priority ?? '-'}`,
+    );
 
     const callWithMessage = await api('/calls', {
       method: 'POST',
@@ -591,9 +612,9 @@ async function main() {
       body: { classId, studentId: studentUser.id, quickPhrase: '请马上来一趟' },
     });
     record(
-      '上课时段允许叫人（不受紧急通知 409 限制）',
+      '上课时段允许叫人（普通叫人同样不受紧急通知 409 限制）',
       callDuringClass.status === 201,
-      `status=${callDuringClass.status}`,
+      `status=${callDuringClass.status} priority=${callDuringClass.payload?.data?.priority ?? '-'}`,
     );
 
     const studentCalls = await api('/calls', {
@@ -614,11 +635,11 @@ async function main() {
     );
 
     // 清理：删除本次叫人产生的通知
-    for (const created of [callByTeacher, callWithMessage, callDuringClass]) {
+    for (const created of [callByTeacher, urgentCall, callWithMessage, callDuringClass]) {
       const id = created.payload?.data?.id;
       if (id) await api(`/notifications/${id}`, { method: 'DELETE', token: teacherToken });
     }
-    record('清理叫人测试数据', true, '已删除 3 条叫人通知');
+    record('清理叫人测试数据', true, '已删除 4 条叫人通知');
   }
 
   // ---------------------------------------------------------------- 6.4 班级角色权限矩阵

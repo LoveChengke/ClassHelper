@@ -36,6 +36,10 @@ interface IslandRect {
   radius?: number;
   pathWidth?: number;
   pathHeight?: number;
+  /** 形状路径绕行总角度（凸、不自交时 |winding| ≈ 2π） */
+  winding?: number;
+  /** 绕行单调性：角的采样参数写反时会在角上“往回折”，这里会变 false */
+  windingOk?: boolean;
 }
 
 interface IslandShotStats {
@@ -55,6 +59,8 @@ interface IslandShotStats {
   /** 岛矩形之外的偏红像素（窗口留白区，紧急光晕不外溢的断言依据） */
   outsideReddish?: number;
   filePath: string;
+  /** 四角圆角几何检查：四个角的边界步进必须一致（抓“角缺一块 / 角画反”） */
+  corners?: { steps: number[]; expectedInset: number; spread: number; limit: number };
 }
 
 const islandShots: IslandShotStats[] = [];
@@ -160,6 +166,18 @@ async function captureIsland(
     }
 
     const size = cropped.getSize();
+    // 四角圆角像素检查：半径取自卡片 CSS 变量 --card-r（与 SVG path 同源）
+    const scaleRatio = image.getSize().width / Math.max(1, geometry?.window.width ?? image.getSize().width);
+    const cardRadius = await win.webContents
+      .executeJavaScript(
+        `(() => {
+           const card = document.querySelector('.island-card');
+           if (!card) return 0;
+           return Number.parseFloat(getComputedStyle(card).getPropertyValue('--card-r')) || 0;
+         })()`,
+      )
+      .catch(() => 0);
+    const corners = cardRadius > 0 ? analyzeCorners(cropped, cardRadius, scaleRatio) : undefined;
     const stats: IslandShotStats = {
       name,
       expected,
@@ -167,6 +185,7 @@ async function captureIsland(
       height: size.height,
       filePath,
       ...analyzeBitmap(cropped),
+      corners,
       outsideReddish,
     };
     islandShots.push(stats);
@@ -248,6 +267,62 @@ function cropToIsland(
   const height = Math.min(image.getSize().height - y, Math.round(geometry.island.height * ratio));
   if (width <= 0 || height <= 0) return image;
   return image.crop({ x, y, width, height });
+}
+
+/**
+ * 圆角像素级检查（专抓“圆角缺一块 / 角画反”这类几何错误）。
+ *
+ * 做法：从裁剪图的四个角沿对角线向内逐像素走，找到第一个“连续 3 像素属于岛体”的位置，
+ * 记为该角的边界步进 `steps`。连续圆角（superellipse n=4.2）理论边界在 0.153r 处，
+ * 四个角必须互相一致——这正是之前的回归点：旧实现四个角共用同一个偏移向量，
+ * 左上/右下被切掉一块，两两之间步进会明显不同。该指标只看角尖端 2~7px，与卡片内文字无关。
+ */
+function analyzeCorners(
+  image: NativeImage,
+  radius: number,
+  ratio: number,
+): { steps: number[]; expectedInset: number; spread: number; limit: number } {
+  const bitmap = image.toBitmap();
+  const size = image.getSize();
+  const r = Math.max(3, radius * ratio);
+  // “岛体存在”判定：与截图时注入的窗口背景色 #1f2733 差异明显即算岛体（纯黑填充、红色描边、
+  // 白色文字都算），这样紧急态顶部的红色渐层不会把四角判定带偏。
+  const bg = { r: 0x1f, g: 0x27, b: 0x33 };
+  const isFill = (x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= size.width || y >= size.height) return false;
+    const index = (y * size.width + x) * 4;
+    const blue = bitmap[index] ?? 255;
+    const green = bitmap[index + 1] ?? 255;
+    const red = bitmap[index + 2] ?? 255;
+    return Math.abs(red - bg.r) > 16 || Math.abs(green - bg.g) > 16 || Math.abs(blue - bg.b) > 16;
+  };
+  const signs: [number, number][] = [
+    [1, 1],
+    [-1, 1],
+    [1, -1],
+    [-1, -1],
+  ];
+  const maxSteps = Math.ceil(r) + 2;
+  const steps: number[] = [];
+  for (const [sx, sy] of signs) {
+    let found = maxSteps;
+    for (let k = 0; k <= maxSteps; k += 1) {
+      const x = sx > 0 ? k : size.width - 1 - k;
+      const y = sy > 0 ? k : size.height - 1 - k;
+      if (isFill(x, y) && isFill(x + sx, y + sy) && isFill(x + 2 * sx, y + 2 * sy)) {
+        found = k;
+        break;
+      }
+    }
+    steps.push(found);
+  }
+  const spread = Math.max(...steps) - Math.min(...steps);
+  return {
+    steps,
+    expectedInset: Number((0.153 * r).toFixed(2)),
+    spread,
+    limit: Math.round(0.3 * r) + 1,
+  };
 }
 
 /** 偏红像素的包围盒（诊断形状错位：与几何读数对比即可定位偏差来源） */
@@ -451,6 +526,32 @@ async function runIslandChecks(
            const raw = getComputedStyle(card).getPropertyValue('--card-r').trim();
            const path = card.querySelector('.shape path');
            const box = path && typeof path.getBBox === 'function' ? path.getBBox() : null;
+           // 路径绕行方向检查：沿路径等距采样，相邻点的方位角必须单调递增（凸、不自交）。
+           // 角的采样参数若写反，路径会在角上“往回折”，这里会立刻暴露。
+           let winding = 0;
+           let windingOk = true;
+           if (path && typeof path.getTotalLength === 'function') {
+             const total = path.getTotalLength();
+             const points = [];
+             for (let index = 0; index < 96; index += 1) {
+               const point = path.getPointAtLength((index / 96) * total);
+               points.push([point.x, point.y]);
+             }
+             const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length;
+             const cy = points.reduce((sum, p) => sum + p[1], 0) / points.length;
+             let previousAngle = null;
+             for (const [x, y] of points) {
+               const angle = Math.atan2(y - cy, x - cx);
+               if (previousAngle !== null) {
+                 let delta = angle - previousAngle;
+                 while (delta > Math.PI) delta -= 2 * Math.PI;
+                 while (delta < -Math.PI) delta += 2 * Math.PI;
+                 if (delta < -0.05) windingOk = false;
+                 winding += delta;
+               }
+               previousAngle = angle;
+             }
+           }
            return {
              left: r.left,
              top: r.top,
@@ -459,6 +560,8 @@ async function runIslandChecks(
              radius: parseFloat(raw) || 0,
              pathWidth: box ? box.width : 0,
              pathHeight: box ? box.height : 0,
+             winding,
+             windingOk,
            };
          })()`,
       )
@@ -474,6 +577,8 @@ async function runIslandChecks(
         radius: rect.radius,
         pathWidth: rect.pathWidth,
         pathHeight: rect.pathHeight,
+        winding: rect.winding,
+        windingOk: rect.windingOk,
       },
     };
   };
@@ -527,13 +632,44 @@ async function runIslandChecks(
   );
   await captureIsland('island-3-urgent', ISLAND_URGENT_SIZE);
 
-  // 3.1) 上课期间请求"收起"也不应显示胶囊（上课严格不显示灵动岛）
+  // 3.1) 上课期间“收起”紧急通知：只回缩为胶囊且保持可见，并且还能再次展开（回归）
   island.handleAction({ action: 'collapse' });
-  await sleep(400);
+  await sleep(450);
+  const collapsedUrgent = island.getState();
+  const collapsedGeometry = await readIslandGeometry();
   record(
-    '上课期间收起不会回缩成胶囊（严格不显示）',
-    island.getState().mode === 'hidden' && !(islandWindow?.isVisible() ?? true),
-    `mode=${island.getState().mode} visible=${islandWindow?.isVisible() ?? true}`,
+    '上课期间紧急通知收起后回缩为胶囊且保持可见',
+    collapsedUrgent.mode === 'pill' &&
+      (islandWindow?.isVisible() ?? false) &&
+      Math.abs((collapsedGeometry?.island.width ?? 0) - ISLAND_SIZES.pill.width) <= 2,
+    `mode=${collapsedUrgent.mode} visible=${islandWindow?.isVisible() ?? '-'} ` +
+      `岛=${collapsedGeometry?.island.width?.toFixed(0) ?? '-'}x${collapsedGeometry?.island.height?.toFixed(0) ?? '-'}`,
+  );
+  island.handleAction({ action: 'expand' });
+  await sleep(600);
+  const reExpanded = island.getState();
+  const reExpandedGeometry = await readIslandGeometry();
+  record(
+    '上课期间紧急通知回收后可再次展开（回归）',
+    reExpanded.mode === 'expanded' &&
+      reExpanded.active?.id === 'smoke-urgent-in-class' &&
+      Math.abs((reExpandedGeometry?.island.width ?? 0) - ISLAND_URGENT_SIZE.width) <= 2,
+    `mode=${reExpanded.mode} active=${reExpanded.active?.id ?? '-'} ` +
+      `岛=${reExpandedGeometry?.island.width?.toFixed(0) ?? '-'}x${reExpandedGeometry?.island.height?.toFixed(0) ?? '-'}` +
+      `（期望 ${ISLAND_URGENT_SIZE.width}）`,
+  );
+  island.pushNotification(makeNotification('smoke-normal-in-class-2', 'NORMAL', '上课中的普通通知'), {
+    inClass: true,
+  });
+  await sleep(350);
+  island.handleAction({ action: 'collapse' });
+  await sleep(300);
+  const afterNormalPush = island.getState();
+  record(
+    '上课期间普通通知只进队列（不顶掉正在展示的紧急消息）',
+    afterNormalPush.active?.id === 'smoke-urgent-in-class' &&
+      afterNormalPush.queued.some((item) => item.id === 'smoke-normal-in-class-2'),
+    `active=${afterNormalPush.active?.id ?? '-'} queued=[${afterNormalPush.queued.map((item) => item.id).join(',')}]`,
   );
 
   // 4) 非上课时段普通通知 → 直接显示胶囊（无入场动画）；点击后展开
@@ -639,6 +775,8 @@ async function runIslandChecks(
     radius: number;
     pathWidth: number;
     pathHeight: number;
+    winding?: number;
+    windingOk?: boolean;
   }[] = [];
   const shrinkSampler = setInterval(() => {
     void readIslandGeometry()
@@ -650,6 +788,8 @@ async function runIslandChecks(
           radius: Number(geometry.island.radius ?? 0),
           pathWidth: Number(geometry.island.pathWidth ?? 0),
           pathHeight: Number(geometry.island.pathHeight ?? 0),
+          winding: Number(geometry.island.winding ?? 0),
+          windingOk: geometry.island.windingOk === true,
         });
       })
       .catch(() => undefined);
@@ -665,17 +805,24 @@ async function runIslandChecks(
     (width, index) => index === 0 || width <= (islandWidths[index - 1] ?? width) + 1,
   );
   // 画出来的形状必须与卡片框一致：SVG 路径 bbox ≈ 卡片宽高（±2px）。
-  // 这能一次性抓住"viewBox/preserveAspectRatio 错位导致形状被缩放或残留角"这类问题。
+  // 这能一次性抓住“viewBox/preserveAspectRatio 错位导致形状被缩放或残留角”这类问题。
   const pathFits = shrinkSamples.every(
     (item) =>
       Math.abs(item.pathWidth - Number(item.island.split('x')[0])) <= 2 &&
       Math.abs(item.pathHeight - Number(item.island.split('x')[1])) <= 2,
   );
+  // 圆角绕行方向：连续圆角路径必须凸且不自交（|绕行| ≈ 2π）；角的采样写反会在形变中被抓到
+  const windingSamples = shrinkSamples.filter((item) => item.windingOk !== undefined);
+  const windingOk =
+    windingSamples.length > 0 &&
+    windingSamples.every((item) => item.windingOk === true) &&
+    windingSamples.every((item) => Math.abs(Math.abs(item.winding ?? 0) - Math.PI * 2) < 0.6);
   record(
     '开合过程中窗口全程恒定、岛在窗口内连续形变（照搬 WinIsland 架构）',
-    shrinkSamples.length >= 3 && windowSignatures.length === 1 && islandMonotonic && pathFits,
+    shrinkSamples.length >= 3 && windowSignatures.length === 1 && islandMonotonic && pathFits && windingOk,
     `采样=${shrinkSamples.length} 窗口签名=[${windowSignatures.join(' ')}]（要求只有 1 种） ` +
-      `岛尺寸序列=[${islandSizes.slice(0, 8).join('→')}${islandSizes.length > 8 ? '…' : ''}] 单调收缩=${islandMonotonic} 形状与卡片框一致=${pathFits}`,
+      `岛尺寸序列=[${islandSizes.slice(0, 8).join('→')}${islandSizes.length > 8 ? '…' : ''}] 单调收缩=${islandMonotonic} ` +
+      `形状与卡片框一致=${pathFits} 圆角绕行正确=${windingOk}（|绕行|=${(windingSamples[0]?.winding ?? 0).toFixed(2)}）`,
   );
 
   // 4.5) 点击屏幕其他位置（窗口失焦）→ 自动回缩为胶囊
@@ -731,13 +878,13 @@ async function runIslandChecks(
   );
   await captureIsland('island-7-homework', ISLAND_SIZES.expanded);
 
-  // 4.7) "叫人"：上课时段也立即展开，展示"请 XXX 同学找 XXX 老师"
+  // 4.7) "紧急叫人"：URGENT + kind=call → 上课时段也立即展开
   island.handleAction({ action: 'dismiss' });
   island.setClassState({ inClass: true, currentPeriodEnd: '08:45', week: 1 });
   await sleep(400);
   island.pushNotification(
     {
-      ...makeNotification('smoke-call', 'HIGH', '请 王小明 同学找 张老师'),
+      ...makeNotification('smoke-call', 'URGENT', '请 王小明 同学找 张老师'),
       kind: 'call',
       subtitle: '请尽快前往，收到后点「收到」',
       teacherName: '张老师',
@@ -762,7 +909,7 @@ async function runIslandChecks(
      }))()`,
   );
   record(
-    '叫人消息上岛（上课时段也立即展开，无需点击）',
+    '紧急叫人消息上岛（上课时段也立即展开，无需点击）',
     callState.mode === 'expanded' &&
       callState.active?.kind === 'call' &&
       callState.reason === 'call' &&
@@ -773,7 +920,40 @@ async function runIslandChecks(
       `徽标=${callDom?.badge} 标题="${callDom?.title}" 按钮=${callDom?.solid}`,
   );
   await captureIsland('island-8-call', ISLAND_CALL_SIZE);
+
+  // 4.8) "普通叫人"：kind=call 但 priority=HIGH（服务端 urgent 缺省）→ 不打断课堂，
+  //      只进队列；与"紧急叫人"合并前的旧行为相反，这里守住回归。
   island.handleAction({ action: 'dismiss' });
+  await sleep(300);
+  island.pushNotification(
+    {
+      ...makeNotification('smoke-call-normal', 'HIGH', '请 王小明 同学找 张老师'),
+      kind: 'call',
+      subtitle: '请尽快前往，收到后点「收到」',
+    },
+    { inClass: true },
+  );
+  await sleep(500);
+  const normalCallState = island.getState();
+  record(
+    '普通叫人只进队列（上课时段不打断、下课再弹）',
+    normalCallState.mode === 'hidden' &&
+      normalCallState.active?.id !== 'smoke-call-normal' &&
+      normalCallState.queued.some((item) => item.id === 'smoke-call-normal'),
+    `mode=${normalCallState.mode} active=${normalCallState.active?.id ?? '-'} ` +
+      `queued=[${normalCallState.queued.map((item) => item.id).join(',')}]`,
+  );
+  // 下课：队列中的普通叫人自动弹出（与普通通知同一路径）
+  island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1 });
+  await sleep(600);
+  const afterClassCall = island.getState();
+  record(
+    '下课后普通叫人自动弹出详情（叫人文案不丢）',
+    afterClassCall.mode === 'expanded' && afterClassCall.active?.id === 'smoke-call-normal',
+    `mode=${afterClassCall.mode} active=${afterClassCall.active?.id ?? '-'} kind=${afterClassCall.active?.kind}`,
+  );
+  island.handleAction({ action: 'dismiss' });
+  await sleep(400);
   island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1 });
   await sleep(400);
 
@@ -824,6 +1004,28 @@ async function runIslandChecks(
     '紧急光晕不外溢（岛之外的窗口留白区无红色像素）',
     urgentShot !== undefined && outsideReddish === 0 && urgentReddish > 200,
     `紧急态岛内偏红=${urgentReddish} 岛外留白偏红=${outsideReddish}（要求 0）`,
+  );
+
+  // 7b) 圆角几何：从四角沿对角线向内找边界，四个角的步进必须一致（旧实现四角共用同一个
+  //     偏移向量，左上/右下被切掉一块，两两步进差异明显）。只看角尖端 2~7px，与文字无关。
+  const cornerShots = shotDetails.filter((shot) => shot.corners);
+  const badCorners = cornerShots.filter((shot) => {
+    const corner = shot.corners;
+    if (!corner) return false;
+    return corner.spread > 2 || corner.steps.some((step) => step < 1 || step > corner.limit);
+  });
+  const cornerReport = cornerShots
+    .map((shot) => {
+      const corner = shot.corners;
+      if (!corner) return shot.name;
+      const flag = corner.spread > 2 ? ' ←离散超限' : '';
+      return `${shot.name} 步进=[${corner.steps.join(',')}] 理论=${corner.expectedInset} 离散=${corner.spread}${flag}`;
+    })
+    .join(' | ');
+  record(
+    '圆角四角一致（无“缺一块 / 角画反”：四角边界步进一致且落在连续圆角理论值内）',
+    cornerShots.length >= 4 && badCorners.length === 0,
+    cornerReport,
   );
 
   // 8) 个性化外观：高度/宽度/圆角/字号/透明度/动画速度实时生效，且不破坏布局
@@ -1192,6 +1394,13 @@ async function runIslandChecks(
   );
   // 10.7b) 固定大包围盒窗口的鼠标穿透（照搬 WinIsland set_cursor_hittest）：
   //        默认整块窗口穿透，指针进入岛体才接收鼠标 —— 否则会吞掉桌面点击。
+  // 指针进入岛体前先保证岛真的画出来了（隐藏态曾让这条断言偶发失败）
+  await drainIsland();
+  island.pushNotification(makeNotification('smoke-interactive', 'NORMAL', '鼠标穿透校验'), {
+    inClass: false,
+  });
+  await waitForIslandDom('.island-card.pill .pill-title');
+  await sleep(200);
   await islandWindow?.webContents
     .executeJavaScript(
       `(() => {

@@ -110,7 +110,11 @@ export function pushHomeworkToIsland(homework: HomeworkDto): void {
   });
 }
 
-/** "叫人"上岛：无论是否上课都立即展开，展示"请 XXX 同学找 XXX 老师" */
+/**
+ * "叫人"上岛：紧急叫人（priority=URGENT）无视上课时段立即展开；
+ * 普通叫人按普通通知处理（课间先显示胶囊、点击展开，上课时段只排队）。
+ * 两种都带"叫人"类型（徽标/「收到」按钮/更大的展开卡）。
+ */
 export function pushCallToIsland(call: NotificationDto): void {
   window.desktop?.islandPush({
     notification: {

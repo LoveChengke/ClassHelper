@@ -15,7 +15,11 @@ const creatorSelect = { select: { id: true, name: true, username: true } } as co
  *
  * 设计：复用通知表落库（学生端通知中心可见、已读状态天然可用、离线也能看到历史），
  * 同时额外广播 `call:new` 到该学生的 user 房间 —— 客户端据此把消息标记为
- * "叫人"类型，无论是否在上课都立即展开显示。
+ * "叫人"类型（徽标/按钮/尺寸），**是否立即展开则由 priority 决定**：
+ * - 紧急叫人（urgent=true → URGENT）：无视上课时段立即展开；
+ * - 普通叫人（默认 → HIGH）：按普通通知处理，上课时段只进队列、下课后弹出，
+ *   课间则先显示胶囊、点击后展开。
+ * 两种情况都不会被"上课时段发布紧急通知"的 409 拦截（老师确实需要学生过来）。
  */
 export async function createCall(user: TokenPayload, input: CreateCallInput): Promise<NotificationDto> {
   await assertCanPublishContent(user, input.classId);
@@ -42,8 +46,9 @@ export async function createCall(user: TokenPayload, input: CreateCallInput): Pr
       classId: input.classId,
       title: buildCallTitle(studentName, teacherName),
       content: message,
-      // 叫人属于需要立即响应的消息，用 HIGH 级别（不会触发上课时段 409 拦截）
-      priority: 'HIGH',
+      // 紧急叫人 → URGENT（客户端无视上课时段立即展开）；普通叫人 → HIGH
+      // （不会触发上课时段 409 拦截，但学生端按普通通知排队处理）
+      priority: input.urgent ? 'URGENT' : 'HIGH',
       createdBy: user.sub,
     },
     include: { creator: creatorSelect, reads: true },
@@ -58,6 +63,6 @@ export async function createCall(user: TokenPayload, input: CreateCallInput): Pr
   // 因此"叫人"消息在班级设备上也会立即展开（学生姓名在标题里，全班都能看到叫谁）
   emitToUser(created.classId, SOCKET_EVENTS.callNew, dto);
 
-  logger.info(`叫人：${teacherName} → ${studentName}（${message}）`);
+  logger.info(`${input.urgent ? '紧急叫人' : '叫人'}：${teacherName} → ${studentName}（${message}）`);
   return dto;
 }

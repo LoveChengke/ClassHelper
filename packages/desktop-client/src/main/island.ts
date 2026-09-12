@@ -265,17 +265,18 @@ class IslandController {
 
   /**
    * 是否需要"立即展开、无视上课时段"。
-   * 紧急通知与"叫人"（老师点名）都属于：学生必须马上看到。
+   * 只认 URGENT：紧急通知、以及"紧急叫人"（服务端 urgent=true 落库为 URGENT）。
+   * 普通叫人（HIGH）与普通通知同等待遇 —— 上课时段只进队列，不打断课堂。
    */
   private isImmediate(notification: IslandNotification): boolean {
-    return notification.priority === 'URGENT' || notification.kind === 'call';
+    return notification.priority === 'URGENT';
   }
 
   /**
    * 收到一条消息。
-   * - 紧急 / 叫人：立刻展开（无视上课时段）
+   * - 紧急（含紧急叫人）：立刻展开（无视上课时段）
    * - 上课中：进队列并保持隐藏（下课后由 setClassState 触发弹出）
-   * - 其它：显示"新消息/新作业"胶囊，等待点击展开
+   * - 其它：显示"新消息/新作业/叫人"胶囊，等待点击展开
    */
   pushNotification(notification: IslandNotification, context: IslandPushContext = {}): void {
     const inClass = context.inClass ?? this.state.inClass;
@@ -293,7 +294,7 @@ class IslandController {
       this.activate(notification, reason, 'expanded');
       logger.info(
         notification.kind === 'call'
-          ? `灵动岛叫人消息：${notification.title}`
+          ? `灵动岛紧急叫人消息：${notification.title}`
           : `灵动岛紧急插播：${notification.title}`,
       );
       return;
@@ -338,6 +339,14 @@ class IslandController {
     }
 
     if (wasInClass && !payload.inClass) {
+      const active = this.state.active;
+      if (active && this.isImmediate(active) && this.state.mode === 'pill') {
+        // 上课期间被收起的紧急消息（含紧急叫人）：下课后自动展开，避免学生错过
+        logger.info('灵动岛：下课，重新展开被收起的紧急消息');
+        this.setState({ mode: 'expanded' });
+        this.scheduleCollapse(active.kind === 'call' ? TIMEOUTS.call : TIMEOUTS.urgent);
+        return;
+      }
       logger.info('灵动岛：下课，弹出上课期间暂存的通知');
       this.flushQueueAfterClass();
       return;
@@ -362,9 +371,10 @@ class IslandController {
   handleAction(payload: IslandActionPayload): void {
     switch (payload.action) {
       case 'expand': {
-        // 上课时段一律不显示灵动岛（只有紧急通知 / 叫人才会自动展开）
-        if (this.state.inClass) break;
         const active = this.state.active;
+        // 上课时段：普通通知（含普通叫人）一律不显示；但紧急通知 / 紧急叫人本来就是必须
+        // 立刻看到的，收起（回缩为胶囊）之后必须能再次点开——否则学生会误以为消息消失了。
+        if (this.state.inClass && !(active && this.isImmediate(active))) break;
         if (active) {
           this.setState({ mode: 'expanded' });
           this.scheduleCollapse(
@@ -379,7 +389,8 @@ class IslandController {
       }
       case 'collapse':
         // 点击卡片空白处 / 右上角收起按钮 / 点击屏幕任意位置：回缩到灵动岛（胶囊）
-        if (this.state.inClass) {
+        // 上课时段：普通通知（含普通叫人）彻底隐藏；紧急消息回缩为**胶囊**（保持可见，允许再次展开）
+        if (this.state.inClass && !(this.state.active && this.isImmediate(this.state.active))) {
           this.hideImmediately();
           break;
         }
@@ -497,6 +508,13 @@ class IslandController {
     this.clearTimers();
     this.collapseTimer = setTimeout(() => {
       this.collapseTimer = null;
+      // 上课时段 + 紧急消息（含紧急叫人）：不自动隐藏（学生必须一直能看到、随时能再点开），
+      // 只把展开卡回缩为胶囊；下课后再恢复为展开提示。
+      const immediateActive = this.state.active;
+      if (this.state.inClass && immediateActive && this.isImmediate(immediateActive)) {
+        if (this.state.mode === 'expanded') this.setState({ mode: 'pill' });
+        return;
+      }
       if (this.state.mode === 'expanded') {
         const hasMore = this.state.queued.length > 1;
         if (hasMore) {
@@ -574,8 +592,9 @@ class IslandController {
     if (!this.win || this.win.isDestroyed()) return;
 
     // 上课时间段：一律不显示灵动岛（只有"正在展示的紧急通知/叫人"允许出现在屏幕上）
-    const immediateShowing =
-      this.state.mode === 'expanded' && this.state.active !== null && this.isImmediate(this.state.active);
+    // 上课时段：只有"紧急通知 / 叫人"允许出现在屏幕上——展开态与胶囊态都算
+    // （胶囊态也允许，学生收起后还能再点开；普通通知则一律隐藏）
+    const immediateShowing = this.state.active !== null && this.isImmediate(this.state.active);
     if (this.state.inClass && !immediateShowing) {
       this.hideImmediately();
       return;

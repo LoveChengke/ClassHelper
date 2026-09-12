@@ -293,6 +293,12 @@ export interface CreateNotificationRequest {
 export interface CreateCallRequest {
   classId: string;
   studentId: string;
+  /**
+   * 是否"紧急叫人"：
+   * - true：落库为 URGENT，学生端灵动岛无视上课时段立即展开（与紧急通知同等待遇）；
+   * - 省略/false：普通叫人（默认），按普通通知处理 —— 上课时段只进队列、不打断课堂，下课后弹出。
+   */
+  urgent?: boolean;
   /** 快捷短语（与 message 至少填一个） */
   quickPhrase?: string;
   /** 自定义消息（优先于快捷短语） */

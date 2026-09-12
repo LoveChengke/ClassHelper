@@ -107,6 +107,12 @@ compact 圆角：`IslandSprings::new` 里 `r = (base_height * compact_scale) / 2
 - 路径缓存 `PATH_CACHE_CAPACITY = 64`
 - **Web 复刻提示**：CSS `border-radius` 是正圆角，观感会偏"软"；要还原请用 SVG path 或
   `corner-shape: squircle`（若可用）/ `clip-path` 近似。**未找到**等价的简单圆角公式——真实几何就是上面那张表。
+- **本仓库的落地实现**（`packages/desktop-client/src/island/squircle.ts`）：不查表，用单参数超椭圆近似
+  `point = center + r·(sign(cos a)·|cos a|^p, sign(sin a)·|sin a|^p)`，`p = 2/n`、`n = 4.2`，
+  四角分别以 `TR(w-r,r) → BR(w-r,h-r) → BL(r,h-r) → TL(r,r)`、起始角 `-π/2, 0, π/2, π` 各扫 `π/2`，
+  每角 14 段。**四个角必须各用自己的圆心 + 角度参数**：早期版本四个角共用同一个"偏移向量"，
+  左上/右下被切成缺一块（用户反馈的"左上角和右下角怎么缺一块 / 圆角边缘割裂"），
+  现已由 `verify:desktop` 的「连续圆角四角一致」断言（四角沿对角线边界步进两两一致 + 路径绕行 \|winding\|≈2π）长期守住。
 
 ### 1.8 窗口留白 / 裁切
 

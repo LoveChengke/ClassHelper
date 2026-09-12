@@ -394,7 +394,29 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 200));
     const darkTag = dialog.querySelector('.call-phrase.el-tag--dark');
     const picked = Boolean(darkTag) && darkTag.textContent.trim() === expected;
-    return { ok: true, phrases, hasTextarea, target, picked, path: location.pathname };
+    // 紧急 / 普通两级：默认普通（不打断课堂），切到紧急必须联动提示文案
+    const radioNodes = Array.from(dialog.querySelectorAll('.el-radio-button'));
+    const levels = radioNodes.map((node) => node.textContent.trim());
+    const alertBefore = dialog.querySelector('.el-alert__title')?.textContent?.trim() ?? '';
+    const urgentNode = radioNodes.find((node) => node.textContent.includes('紧急'));
+    if (urgentNode) urgentNode.click();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const alertAfter = dialog.querySelector('.el-alert__title')?.textContent?.trim() ?? '';
+    const urgentChecked = radioNodes.some(
+      (node) => node.textContent.includes('紧急') && node.classList.contains('is-active'),
+    );
+    return {
+      ok: true,
+      phrases,
+      hasTextarea,
+      target,
+      picked,
+      path: location.pathname,
+      levels,
+      alertBefore,
+      alertAfter,
+      urgentChecked,
+    };
   })()`);
   record(
     '叫人入口（快捷短语 + 自定义消息）',
@@ -404,6 +426,17 @@ async function main() {
       callDialog?.picked === true,
     `path=${callDialog?.path} 对象="${callDialog?.target}" 短语数=${callDialog?.phrases?.length ?? 0} 自定义输入=${callDialog?.hasTextarea} 可选中=${callDialog?.picked}` +
       `${callDialog?.reason ? ` 原因=${callDialog.reason}` : ''}`,
+  );
+  record(
+    '叫人分紧急/普通两级（默认普通，"紧急"联动提示文案）',
+    (callDialog?.levels?.length ?? 0) === 2 &&
+      (callDialog?.levels ?? []).some((level) => level.includes('普通')) &&
+      (callDialog?.levels ?? []).some((level) => level.includes('紧急')) &&
+      (callDialog?.alertBefore ?? '').includes('普通') &&
+      (callDialog?.alertAfter ?? '').includes('紧急') &&
+      callDialog?.urgentChecked === true,
+    `级别=[${(callDialog?.levels ?? []).join(' / ')}] 默认提示="${callDialog?.alertBefore}" ` +
+      `切紧急后="${callDialog?.alertAfter}" 紧急选中=${callDialog?.urgentChecked}`,
   );
   await win.webContents.executeJavaScript(`(() => {
     const cancel = Array.from(document.querySelectorAll('.el-dialog__footer button')).find((node) =>
