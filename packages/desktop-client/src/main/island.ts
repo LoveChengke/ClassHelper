@@ -204,12 +204,20 @@ class IslandController {
     /**
      * 点击屏幕任意位置收起：展开态临时允许窗口获得焦点，
      * 用户点到别处（桌面、浏览器、其他应用）时窗口失焦 → 回缩为胶囊。
+     *
+     * 加一个宽限期（`BLUR_GRACE_MS`）：刚弹出/刚激活的瞬间，系统可能因为换前台窗口、
+     * 抢焦点或截图等操作立刻产生一次 blur，此时收起会让"刚弹出的通知一闪就没了"。
+     * 只在激活满 500ms 后才把 blur 当作"用户点击了别处"。
      */
     win.on('blur', () => {
-      if (this.state.mode === 'expanded' && !this.state.inClass) {
-        logger.info('灵动岛：点击屏幕其他位置，回缩为胶囊');
-        this.handleAction({ action: 'collapse' });
+      if (this.state.mode !== 'expanded' || this.state.inClass) return;
+      const sinceActivated = Date.now() - this.state.updatedAt;
+      if (sinceActivated < BLUR_GRACE_MS) {
+        logger.info(`灵动岛：忽略激活后 ${sinceActivated}ms 内的失焦（宽限期内不收起）`);
+        return;
       }
+      logger.info('灵动岛：点击屏幕其他位置，回缩为胶囊');
+      this.handleAction({ action: 'collapse' });
     });
 
     this.win = win;
@@ -922,6 +930,11 @@ const ISLAND_MARGIN = 8;
  * 空闲细缝等"极小形态"必须以此作为高度下限，否则断言与真实窗口会不一致。
  */
 const MIN_WINDOW_HEIGHT = 36;
+/**
+ * 失焦收起的宽限期：刚展开的 500ms 内忽略 blur（避免"刚弹出就被抢焦点导致瞬间收起"）。
+ * 冒烟里"点击屏幕任意位置收起"的用例会在展开后等待约 700ms 再触发 blur，仍能正常验证收起。
+ */
+const BLUR_GRACE_MS = 500;
 
 interface Bounds {
   x: number;

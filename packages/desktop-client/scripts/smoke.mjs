@@ -83,17 +83,17 @@ async function provisionClassAccount() {
     const target = classes[0];
     if (!target) return null;
 
-    const code = target.code || `SMOKE${Math.floor(Math.random() * 9000 + 1000)}`;
+    // 冒烟**永不修改班级码**（班级码是给学生用的，不应被测试工具改写）：
+    // 只有"现有班级码 + 目标密码登录失败"时才重置密码，班级码原样保留。
+    const code = target.code;
+    if (!code) return null;
 
-    // 若现有班级码 + 目标密码已经能登录，就直接复用，避免每次冒烟都改密码
-    if (target.code) {
-      const probe = await fetch(`${base}/auth/class-login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: target.code, password }),
-      });
-      if (probe.ok) return { code: target.code, password, className: target.name };
-    }
+    const probe = await fetch(`${base}/auth/class-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, password }),
+    });
+    if (probe.ok) return { code, password, className: target.name };
 
     const patchResponse = await fetch(`${base}/classes/${target.id}/class-account`, {
       method: 'PATCH',
