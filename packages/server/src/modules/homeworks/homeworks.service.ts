@@ -10,7 +10,6 @@ import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { toHomeworkDto, toHomeworkStatusDto } from '../../lib/mappers.js';
-import { parseOptionalDate } from '../../lib/schemas.js';
 import { personalIdWhere, resolvePersonalIds } from '../../lib/session.js';
 import { emitToClass } from '../../realtime/bus.js';
 import type {
@@ -101,7 +100,6 @@ export async function createHomework(user: TokenPayload, input: CreateHomeworkIn
       title: input.title,
       content: input.content,
       attachmentUrl: input.attachmentUrl ?? null,
-      dueAt: parseOptionalDate(input.dueAt),
       createdBy: user.sub,
     },
     include: { course: courseSelect, creator: creatorSelect, statuses: true },
@@ -130,7 +128,6 @@ export async function updateHomework(
       ...(input.content ? { content: input.content } : {}),
       ...(input.courseId !== undefined ? { courseId: input.courseId ?? null } : {}),
       ...(input.attachmentUrl !== undefined ? { attachmentUrl: input.attachmentUrl ?? null } : {}),
-      ...(input.dueAt !== undefined ? { dueAt: parseOptionalDate(input.dueAt) } : {}),
     },
     include: { course: courseSelect, creator: creatorSelect, statuses: true },
   });

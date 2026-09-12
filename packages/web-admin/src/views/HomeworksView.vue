@@ -1,11 +1,9 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
   SOCKET_EVENTS,
   formatDate,
-  formatDeadline,
-  isOverdue,
   truncate,
   type ClassDto,
   type CourseDto,
@@ -76,7 +74,6 @@ const form = reactive({
   title: '',
   content: '',
   attachmentUrl: '',
-  dueAt: '',
 });
 
 const rules: FormRules = {
@@ -92,7 +89,6 @@ function openCreate(): void {
   form.title = '';
   form.content = '';
   form.attachmentUrl = '';
-  form.dueAt = '';
   formVisible.value = true;
 }
 
@@ -103,7 +99,6 @@ function openEdit(row: HomeworkDto): void {
   form.title = row.title;
   form.content = row.content;
   form.attachmentUrl = row.attachmentUrl ?? '';
-  form.dueAt = row.dueAt ? row.dueAt.slice(0, 16) : '';
   formVisible.value = true;
 }
 
@@ -117,7 +112,6 @@ async function submitForm(): Promise<void> {
     title: form.title.trim(),
     content: form.content,
     attachmentUrl: form.attachmentUrl.trim() || null,
-    dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : null,
   };
 
   if (editingId.value) {
@@ -207,16 +201,6 @@ onUnmounted(() => {
         <el-table-column label="课程" width="110">
           <template #default="{ row }">{{ row.course?.name ?? '-' }}</template>
         </el-table-column>
-        <el-table-column label="截止时间" width="180">
-          <template #default="{ row }">
-            <span :class="{ 'text-danger': isOverdue(row.dueAt) }">
-              {{ formatDate(row.dueAt, true) || '不限' }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="剩余" width="130">
-          <template #default="{ row }">{{ formatDeadline(row.dueAt) }}</template>
-        </el-table-column>
         <el-table-column label="已完成" width="100">
           <template #default="{ row }">{{ row.completedCount ?? 0 }} 人</template>
         </el-table-column>
@@ -254,15 +238,6 @@ onUnmounted(() => {
         <el-form-item label="附件链接">
           <el-input v-model="form.attachmentUrl" placeholder="https://..." />
         </el-form-item>
-        <el-form-item label="截止时间">
-          <el-date-picker
-            v-model="form.dueAt"
-            type="datetime"
-            placeholder="选择截止时间"
-            value-format="YYYY-MM-DDTHH:mm"
-            style="width: 100%"
-          />
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="formVisible = false">取消</el-button>
@@ -275,9 +250,6 @@ onUnmounted(() => {
         <el-descriptions :column="detailColumns" border size="small">
           <el-descriptions-item label="课程">{{ current.course?.name ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="发布人">{{ current.creator?.name ?? '-' }}</el-descriptions-item>
-          <el-descriptions-item label="截止时间">
-            {{ formatDate(current.dueAt, true) || '不限' }}
-          </el-descriptions-item>
           <el-descriptions-item label="发布时间">
             {{ formatDate(current.createdAt, true) }}
           </el-descriptions-item>

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { booleanFlagSchema, optionalDateTimeSchema } from '../../lib/schemas.js';
+import { booleanFlagSchema } from '../../lib/schemas.js';
 
 export const listHomeworksQuerySchema = z.object({
   classId: z.string().min(1).optional(),
@@ -15,7 +15,6 @@ export const createHomeworkSchema = z.object({
   title: z.string().trim().min(1, '请输入作业标题').max(120),
   content: z.string().min(1, '请输入作业内容').max(5000),
   attachmentUrl: z.string().trim().max(500).nullish(),
-  dueAt: optionalDateTimeSchema,
 });
 
 export const updateHomeworkSchema = z.object({
@@ -23,7 +22,6 @@ export const updateHomeworkSchema = z.object({
   title: z.string().trim().min(1).max(120).optional(),
   content: z.string().min(1).max(5000).optional(),
   attachmentUrl: z.string().trim().max(500).nullish(),
-  dueAt: optionalDateTimeSchema,
 });
 
 export const updateHomeworkStatusSchema = z.object({

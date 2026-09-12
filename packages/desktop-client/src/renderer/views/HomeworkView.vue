@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { SOCKET_EVENTS, formatDate, formatDeadline, isOverdue, type HomeworkDto } from '@classhelper/shared';
+import { SOCKET_EVENTS, formatDate, type HomeworkDto } from '@classhelper/shared';
 import { homeworkApi } from '../api/index.js';
 import { fetchWithCache } from '../cache/index.js';
 import { useAppStore } from '../stores/app.js';
@@ -147,28 +147,14 @@ onUnmounted(() => {
       <el-table v-else :data="filtered" @row-click="openDetail">
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
-            <el-tag
-              :type="row.completed ? 'success' : isOverdue(row.dueAt) ? 'danger' : 'info'"
-              size="small"
-              effect="light"
-            >
-              {{ row.completed ? '已完成' : isOverdue(row.dueAt) ? '已逾期' : '待完成' }}
+            <el-tag :type="row.completed ? 'success' : 'info'" size="small" effect="light">
+              {{ row.completed ? '已完成' : '待完成' }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="title" label="作业标题" min-width="220" show-overflow-tooltip />
         <el-table-column label="课程" width="110">
           <template #default="{ row }">{{ row.course?.name ?? '-' }}</template>
-        </el-table-column>
-        <el-table-column label="截止时间" width="180">
-          <template #default="{ row }">{{ formatDate(row.dueAt, true) || '不限' }}</template>
-        </el-table-column>
-        <el-table-column label="剩余" width="120">
-          <template #default="{ row }">
-            <span :class="{ 'text-danger': isOverdue(row.dueAt) && !row.completed }">
-              {{ row.completed ? '—' : formatDeadline(row.dueAt) }}
-            </span>
-          </template>
         </el-table-column>
         <el-table-column label="操作" width="130" fixed="right">
           <template #default="{ row }">
@@ -198,9 +184,6 @@ onUnmounted(() => {
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="课程">{{ current.course?.name ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="发布人">{{ current.creator?.name ?? '-' }}</el-descriptions-item>
-          <el-descriptions-item label="截止时间">
-            {{ formatDate(current.dueAt, true) || '不限' }}
-          </el-descriptions-item>
           <el-descriptions-item label="发布时间">
             {{ formatDate(current.createdAt, true) }}
           </el-descriptions-item>

@@ -1,11 +1,10 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   PRIORITY_LABELS,
   PRIORITY_TAG_TYPES,
   formatDate,
-  formatDeadline,
   relativeTime,
   type DashboardSummary,
 } from '@classhelper/shared';
@@ -32,7 +31,7 @@ const statCards = computed(() => {
     {
       label: '作业总数',
       value: data?.homeworkCount ?? 0,
-      hint: `待截止/待完成 ${data?.pendingHomeworkCount ?? 0}`,
+      hint: `未完成/待完成 ${data?.pendingHomeworkCount ?? 0}`,
     },
     { label: '通知总数', value: data?.notificationCount ?? 0, hint: `未读 ${unreadCount.value}` },
     { label: '成绩记录', value: data?.gradeCount ?? 0, hint: '已发布成绩' },
@@ -102,7 +101,7 @@ function openNotification(item: NotificationDto): void {
     </div>
 
     <el-row :gutter="12" class="mt-16">
-      <el-col :xs="24" :md="12">
+      <el-col :xs="24" :md="24">
         <el-card shadow="never">
           <template #header>
             <div class="card-header">
@@ -127,25 +126,6 @@ function openNotification(item: NotificationDto): void {
           </ul>
         </el-card>
       </el-col>
-
-      <el-col :xs="24" :md="12">
-        <el-card shadow="never">
-          <template #header>
-            <div class="card-header">
-              <span>即将截止的作业</span>
-              <el-button link type="primary" @click="go('homeworks')">去发布</el-button>
-            </div>
-          </template>
-          <el-empty v-if="(summary?.upcomingDeadlines ?? []).length === 0" description="暂无待截止作业" />
-          <ul v-else class="list">
-            <li v-for="item in summary?.upcomingDeadlines" :key="item.id" class="list-item">
-              <el-tag size="small" effect="plain">{{ item.course?.name ?? '未关联课程' }}</el-tag>
-              <span class="list-title">{{ item.title }}</span>
-              <span class="text-muted">{{ formatDeadline(item.dueAt) }}</span>
-            </li>
-          </ul>
-        </el-card>
-      </el-col>
     </el-row>
 
     <el-card shadow="never" class="mt-16 table-card">
@@ -164,9 +144,6 @@ function openNotification(item: NotificationDto): void {
           <template #default="{ row }">
             <span>{{ row.completedCount ?? 0 }} 人已完成</span>
           </template>
-        </el-table-column>
-        <el-table-column label="截止时间" width="180">
-          <template #default="{ row }">{{ formatDate(row.dueAt, true) || '不限' }}</template>
         </el-table-column>
         <el-table-column label="发布时间" width="180">
           <template #default="{ row }">{{ formatDate(row.createdAt, true) }}</template>

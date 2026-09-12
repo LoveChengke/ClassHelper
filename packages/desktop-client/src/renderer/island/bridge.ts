@@ -1,6 +1,5 @@
 import {
   SOCKET_EVENTS,
-  formatDate,
   resolveClassStatus,
   type ClassPeriod,
   type HomeworkDto,
@@ -91,9 +90,8 @@ export function pushNotificationToIsland(notification: NotificationDto): void {
   });
 }
 
-/** 新作业上岛（homework:new）：胶囊提示"新作业"，展开看截止时间 */
+/** 新作业上岛（homework:new）：胶囊提示"新作业"，点击展开看作业要求 */
 export function pushHomeworkToIsland(homework: HomeworkDto): void {
-  const due = homework.dueAt ? formatDate(homework.dueAt, true) : '未设置截止时间';
   window.desktop?.islandPush({
     notification: {
       id: `homework-${homework.id}`,
@@ -104,7 +102,6 @@ export function pushHomeworkToIsland(homework: HomeworkDto): void {
       courseName: homework.course?.name ?? null,
       teacherName: homework.creator?.name ?? null,
       kind: 'homework',
-      subtitle: `截止时间：${due}`,
     },
     context: getIslandClassContext(),
   });

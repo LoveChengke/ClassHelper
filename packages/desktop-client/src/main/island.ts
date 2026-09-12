@@ -371,10 +371,22 @@ class IslandController {
   handleAction(payload: IslandActionPayload): void {
     switch (payload.action) {
       case 'expand': {
-        const active = this.state.active;
         // 上课时段：普通通知（含普通叫人）一律不显示；但紧急通知 / 紧急叫人本来就是必须
         // 立刻看到的，收起（回缩为胶囊）之后必须能再次点开——否则学生会误以为消息消失了。
-        if (this.state.inClass && !(active && this.isImmediate(active))) break;
+        const showing = this.state.active;
+        if (this.state.inClass && !(showing && this.isImmediate(showing))) break;
+        // 收起态（胶囊 / 空闲细缝）再次点击必须能打开：
+        // active 为空但队列里还有未看通知时，先把它取出来当"当前通知"再展开，
+        // 否则会出现"岛明明在屏幕上，点了没反应"（部分情况下的收起态无法再次打开）。
+        if (!this.state.active) {
+          const pending = this.state.queued[this.state.queued.length - 1];
+          if (pending) {
+            this.state.queued = this.state.queued.filter((item) => item.id !== pending.id);
+            this.state.active = pending;
+            logger.info(`灵动岛：收起态点击，重新打开队列中的通知 ${pending.id}`);
+          }
+        }
+        const active = this.state.active;
         if (active) {
           this.setState({ mode: 'expanded' });
           this.scheduleCollapse(
@@ -515,14 +527,19 @@ class IslandController {
         if (this.state.mode === 'expanded') this.setState({ mode: 'pill' });
         return;
       }
-      if (this.state.mode === 'expanded') {
-        const hasMore = this.state.queued.length > 1;
-        if (hasMore) {
-          this.setState({ mode: 'pill' });
-          this.scheduleCollapse(TIMEOUTS.afterClassPill);
-        } else {
-          this.hide();
-        }
+      // 关键行为：只要还有"没处理完"的通知（当前展示的或队列里的），收起后**保持胶囊**，
+      // 不再直接消失 —— 否则用户看到岛收起了却点不到（"收起状态无法再次打开"）。
+      // 彻底隐藏只发生在：用户点了"知道了 / 标为已读"、队列清空、或进入上课时段。
+      const pending = this.state.active !== null || this.state.queued.length > 0;
+      if (this.state.mode === 'expanded' && this.state.queued.length > 1) {
+        // 还有多条未看：先回缩为"还有 N 条"胶囊
+        this.setState({ mode: 'pill' });
+        if (pending) return;
+        this.hide();
+        return;
+      }
+      if (pending) {
+        if (this.state.mode !== 'pill') this.setState({ mode: 'pill' });
         return;
       }
       this.hide();
@@ -959,4 +976,9 @@ export function registerIslandIpc(): void {
   });
 }
 
-export { SIZES as ISLAND_SIZES, URGENT_SIZE as ISLAND_URGENT_SIZE, CALL_SIZE as ISLAND_CALL_SIZE };
+export {
+  SIZES as ISLAND_SIZES,
+  URGENT_SIZE as ISLAND_URGENT_SIZE,
+  CALL_SIZE as ISLAND_CALL_SIZE,
+  TIMEOUTS as ISLAND_TIMEOUTS,
+};

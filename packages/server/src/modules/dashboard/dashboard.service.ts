@@ -25,7 +25,6 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
   // 子表按 classId 过滤；Class 表本身按主键 id 过滤
   const where = classScopeWhere(scope);
   const classWhere = classScopeIdFilter(scope);
-  const now = new Date();
   // 班级账号（班级设备）以全班学生为范围；普通学生即自己
   const personalIds = await resolvePersonalIds(user);
   const personalWhere = personalIdWhere(personalIds);
@@ -42,7 +41,6 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
     pendingHomeworkCount,
     recentNotifications,
     recentHomeworks,
-    upcoming,
   ] = await Promise.all([
     prisma.class.count({ where: classWhere }),
     prisma.user.count({ where: { ...where, role: 'STUDENT' } }),
@@ -56,7 +54,7 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
       ? prisma.homework.count({
           where: { ...where, statuses: { none: { ...personalWhere, completed: true } } },
         })
-      : prisma.homework.count({ where: { ...where, dueAt: { gte: now } } }),
+      : prisma.homework.count({ where }),
     prisma.notification.findMany({
       where,
       include: { creator: creatorSelect, reads: { where: personalWhere } },
@@ -71,16 +69,6 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
         statuses: student ? { where: personalWhere } : true,
       },
       orderBy: { createdAt: 'desc' },
-      take: 5,
-    }),
-    prisma.homework.findMany({
-      where: { ...where, dueAt: { gte: now } },
-      include: {
-        course: courseSelect,
-        creator: creatorSelect,
-        statuses: student ? { where: personalWhere } : true,
-      },
-      orderBy: { dueAt: 'asc' },
       take: 5,
     }),
   ]);
@@ -99,9 +87,6 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
       toNotificationDto(item, { userIds: personalIds }),
     ),
     recentHomeworks: recentHomeworks.map((item): HomeworkDto =>
-      toHomeworkDto(item, { userIds: student ? personalIds : [], withStatus: !student }),
-    ),
-    upcomingDeadlines: upcoming.map((item): HomeworkDto =>
       toHomeworkDto(item, { userIds: student ? personalIds : [], withStatus: !student }),
     ),
   };

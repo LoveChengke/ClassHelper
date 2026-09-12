@@ -198,11 +198,16 @@ async function main() {
       courseId,
       title: `联调验证作业 ${new Date().toISOString()}`,
       content: '请完成验证脚本创建的作业。',
-      dueAt: new Date(Date.now() + 86_400_000).toISOString(),
     },
   });
   const homeworkId = createdHomework.payload?.data?.id;
   record('教师发布作业', createdHomework.status === 201, `status=${createdHomework.status}`);
+  // 截止时间功能已下线：接口不再返回该字段（历史数据保留在库里但不读写）
+  record(
+    '作业接口不再返回截止时间（dueAt 已下线）',
+    createdHomework.payload?.data?.dueAt === undefined,
+    `dueAt=${String(createdHomework.payload?.data?.dueAt)}`,
+  );
 
   try {
     const { payload, elapsed } = await homeworkWait;

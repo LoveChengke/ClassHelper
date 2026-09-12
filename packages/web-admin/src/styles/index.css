@@ -1,10 +1,239 @@
 :root {
-  --ch-bg: #f5f7fa;
-  --ch-card-radius: 10px;
-  --ch-border: #e4e7ed;
+  --ch-bg: #f2f4f8;
+  /* 圆角设计令牌：卡片 > 面板 > 控件 > 小元素，统一走这四个档位 */
+  --ch-radius-xl: 22px;
+  --ch-radius-lg: 18px;
+  --ch-radius-md: 14px;
+  --ch-radius-sm: 10px;
+  --ch-radius-pill: 999px;
+  --ch-card-radius: var(--ch-radius-lg);
+  --ch-border: #e6e8ef;
+  --ch-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.04);
+  --ch-shadow-md: 0 6px 24px rgba(15, 23, 42, 0.08);
   /* 1Panel 风格：固定顶栏 + 深色侧栏 */
   --ch-header-height: 56px;
   --ch-aside-width: 210px;
+
+  /* Element Plus 圆角令牌对齐（组件库内部都引用这些变量，改这里即可全局生效） */
+  --el-border-radius-base: var(--ch-radius-sm);
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: var(--ch-radius-pill);
+  --el-box-shadow-light: var(--ch-shadow-sm);
+}
+
+/* ---------------------------------------------------------------- 圆角设计：
+
+   统一"大圆角 + 轻阴影 + 无硬边框"的观感：
+   - 卡片 / 面板 / 弹窗 / 抽屉：18~22px 圆角 + 柔和投影（去掉 1px 灰边）
+   - 按钮 / 输入框 / 下拉 / 标签：10px 圆角，胶囊类（标签页、分页、单选组）走 999px
+   - 表格：外层由卡片包裹，表头首末单元格跟随卡片圆角
+
+   全部通过 Element Plus 的 CSS 变量 + 少量类选择器覆盖，不改组件源码。 */
+
+.el-card {
+  border: none;
+  border-radius: var(--ch-radius-lg);
+  box-shadow: var(--ch-shadow-sm);
+  overflow: hidden;
+}
+
+.el-card__header {
+  border-bottom: 1px solid var(--ch-border);
+  padding: 14px 18px;
+  font-weight: 600;
+}
+
+.el-card__body {
+  padding: 18px;
+}
+
+.el-button {
+  border-radius: var(--ch-radius-sm);
+  font-weight: 500;
+}
+
+.el-button.is-round,
+.el-button--circle {
+  border-radius: var(--ch-radius-pill);
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper,
+.el-input-number,
+.el-date-editor.el-input__wrapper {
+  border-radius: var(--ch-radius-sm);
+}
+
+.el-input__wrapper,
+.el-select__wrapper {
+  box-shadow: 0 0 0 1px var(--ch-border) inset;
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset;
+}
+
+.el-textarea__inner {
+  box-shadow: 0 0 0 1px var(--ch-border) inset;
+}
+
+.el-dialog {
+  border-radius: var(--ch-radius-xl);
+  overflow: hidden;
+  box-shadow: var(--ch-shadow-md);
+}
+
+.el-dialog__header {
+  margin-right: 0;
+  padding: 18px 22px 8px;
+  font-weight: 600;
+}
+
+.el-dialog__body {
+  padding: 10px 22px 6px;
+}
+
+.el-dialog__footer {
+  padding: 8px 22px 18px;
+}
+
+.el-drawer {
+  border-radius: var(--ch-radius-xl) 0 0 var(--ch-radius-xl);
+}
+
+.el-drawer.rtl {
+  border-radius: var(--ch-radius-xl) 0 0 var(--ch-radius-xl);
+}
+
+.el-drawer.ltr {
+  border-radius: 0 var(--ch-radius-xl) var(--ch-radius-xl) 0;
+}
+
+.el-drawer.ttb,
+.el-drawer.btt {
+  border-radius: var(--ch-radius-xl);
+}
+
+.el-message,
+.el-message-box,
+.el-notification,
+.el-popper.is-light,
+.el-dropdown-menu,
+.el-select-dropdown,
+.el-picker-panel {
+  border-radius: var(--ch-radius-md);
+}
+
+.el-message-box {
+  border-radius: var(--ch-radius-lg);
+  padding: 20px 22px;
+}
+
+.el-popper.is-light {
+  border: 1px solid var(--ch-border);
+  box-shadow: var(--ch-shadow-sm);
+}
+
+.el-dropdown-menu__item,
+.el-select-dropdown__item {
+  border-radius: var(--ch-radius-sm);
+  margin: 2px 6px;
+}
+
+.el-tag {
+  border-radius: var(--ch-radius-pill);
+  padding: 0 10px;
+}
+
+.el-alert {
+  border-radius: var(--ch-radius-md);
+}
+
+.el-descriptions__body {
+  border-radius: var(--ch-radius-md);
+  overflow: hidden;
+}
+
+.el-descriptions__label.el-descriptions__cell.is-bordered-label {
+  border-radius: 0;
+}
+
+.el-radio-group,
+.el-radio-button:first-child .el-radio-button__inner {
+  border-radius: var(--ch-radius-sm) 0 0 var(--ch-radius-sm);
+}
+
+.el-radio-button:last-child .el-radio-button__inner {
+  border-radius: 0 var(--ch-radius-sm) var(--ch-radius-sm) 0;
+}
+
+.el-radio-button__inner {
+  border-radius: 0;
+}
+
+.el-checkbox__inner,
+.el-switch__core,
+.el-progress-bar__outer,
+.el-progress-bar__inner {
+  border-radius: var(--ch-radius-pill);
+}
+
+.el-tabs__item {
+  border-radius: var(--ch-radius-sm) var(--ch-radius-sm) 0 0;
+}
+
+.el-pagination button,
+.el-pager li,
+.el-pagination .el-input__wrapper {
+  border-radius: var(--ch-radius-sm);
+}
+
+.el-pagination.is-background .el-pager li {
+  border-radius: var(--ch-radius-sm);
+}
+
+.el-table {
+  border-radius: var(--ch-radius-md);
+  --el-table-border-color: var(--ch-border);
+}
+
+.el-table th.el-table__cell {
+  background: #f7f9fc;
+}
+
+.el-table__inner-wrapper::before {
+  display: none;
+}
+
+.el-table--border .el-table__inner-wrapper,
+.el-table--border {
+  border-radius: var(--ch-radius-md);
+}
+
+.el-empty__image {
+  border-radius: var(--ch-radius-md);
+}
+
+.el-form-item__label {
+  font-weight: 500;
+}
+
+.el-upload-dragger,
+.el-upload-list__item {
+  border-radius: var(--ch-radius-md);
+}
+
+.el-step__icon,
+.el-collapse,
+.el-collapse-item__header {
+  border-radius: var(--ch-radius-sm);
+}
+
+.el-menu-item,
+.el-sub-menu__title {
+  border-radius: var(--ch-radius-sm);
 }
 
 * {
@@ -28,7 +257,7 @@ body {
 }
 
 .page {
-  padding: 16px 20px 24px;
+  padding: 18px 22px 28px;
 }
 
 .page-header {
@@ -67,9 +296,18 @@ body {
 
 .stat-card {
   background: #fff;
-  border-radius: var(--ch-card-radius);
-  padding: 16px;
-  border: 1px solid var(--ch-border);
+  border-radius: var(--ch-radius-lg);
+  padding: 18px;
+  border: none;
+  box-shadow: var(--ch-shadow-sm);
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--ch-shadow-md);
 }
 
 .stat-label {

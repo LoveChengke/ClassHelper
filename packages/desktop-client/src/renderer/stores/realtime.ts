@@ -79,7 +79,7 @@ export const useRealtimeStore = defineStore('realtime', () => {
     instance.on(SOCKET_EVENTS.homeworkNew, (payload: HomeworkDto) => {
       mark(SOCKET_EVENTS.homeworkNew);
       ElMessage.success(`新作业：${payload.title}`);
-      // 作业发布也上岛：胶囊提示"新作业"，点击展开看截止时间与要求
+      // 作业发布也上岛：胶囊提示"新作业"，点击展开看作业要求
       pushHomeworkToIsland(payload);
       dispatch(SOCKET_EVENTS.homeworkNew, payload);
     });

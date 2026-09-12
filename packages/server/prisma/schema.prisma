@@ -155,6 +155,8 @@ model Homework {
   title         String
   content       String
   attachmentUrl String?
+  /// 遗留字段：作业"截止时间"功能已下线（UI/接口均不再读写）。
+  /// 保留列以免对已安装的库做破坏性迁移；新库该列恒为 null。
   dueAt         DateTime?
   createdBy     String
   createdAt     DateTime  @default(now())

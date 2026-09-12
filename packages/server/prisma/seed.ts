@@ -186,37 +186,33 @@ async function main(): Promise<void> {
   }
 
   // ---------------------------------------------------------------- 作业
+  // 注：作业"截止时间"功能已下线，种子数据不再写入 dueAt（库字段保留以兼容已装库）
   const now = Date.now();
   const day = 86_400_000;
   const homeworkSeeds = [
     {
       title: '《劝学》全文背诵',
       content: '背诵《劝学》并录制音频上传到班级群，注意断句。',
-      dueInDays: 3,
       courseIndex: 0,
     },
     {
       title: '数学必修一 3.2 习题',
       content: '完成课本 P78 习题 3.2 全部题目，第 12 题选做。',
-      dueInDays: 1,
       courseIndex: 1,
     },
     {
       title: '英语周记一篇',
       content: '以"My School Life"为题写一篇 150 词左右的英语周记。',
-      dueInDays: 5,
       courseIndex: 2,
     },
     {
       title: '物理实验报告',
       content: '整理"探究匀变速直线运动"实验数据，撰写实验报告。',
-      dueInDays: -2,
       courseIndex: 3,
     },
     {
       title: '化学方程式默写',
       content: '默写第一至第三章全部化学方程式，家长签字。',
-      dueInDays: -1,
       courseIndex: 4,
     },
   ];
@@ -234,7 +230,6 @@ async function main(): Promise<void> {
           content: seed.content,
           attachmentUrl:
             seed.courseIndex % 2 === 0 ? 'https://example.com/classhelper/homework-sample.pdf' : null,
-          dueAt: new Date(now + seed.dueInDays * day),
           createdBy: targetClass.teacherId,
         },
       });

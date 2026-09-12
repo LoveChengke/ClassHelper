@@ -299,16 +299,19 @@ async function submitPassword(): Promise<void> {
 
 .layout-menu :deep(.el-menu-item.is-active) {
   background: #409eff;
-  border-radius: 6px;
+  border-radius: var(--ch-radius-sm);
   margin: 0 8px;
 }
 
 .layout-menu :deep(.el-menu-item) {
   margin: 2px 8px;
-  border-radius: 6px;
+  border-radius: var(--ch-radius-sm);
 }
 
 .layout-header {
+  /* 顶栏跟随圆角设计：底部圆角 + 轻投影，与内容区一体化 */
+  border-radius: 0 0 var(--ch-radius-lg) var(--ch-radius-lg);
+  box-shadow: var(--ch-shadow-sm);
   background: #fff;
   border-bottom: 1px solid var(--ch-border);
   display: flex;
@@ -326,7 +329,7 @@ async function submitPassword(): Promise<void> {
   height: 32px;
   margin-right: 2px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--ch-radius-sm);
   background: #f2f3f5;
   color: #303133;
   cursor: pointer;
@@ -392,6 +395,9 @@ async function submitPassword(): Promise<void> {
 <style>
 /* 侧边栏配色放在全局：桌面 asider 与移动端抽屉复用同一套样式（抽屉内容在 teleport 中，scoped 样式不生效） */
 .ch-sidebar {
+  /* 圆角设计：深色侧栏右侧做圆角，与内容区形成"卡片浮起"观感 */
+  border-radius: 0 var(--ch-radius-xl) var(--ch-radius-xl) 0;
+  overflow: hidden;
   background: #1f2d3d;
   color: #fff;
 }

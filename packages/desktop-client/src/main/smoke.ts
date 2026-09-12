@@ -5,7 +5,14 @@ import type { BrowserWindow, NativeImage } from 'electron';
 import type { IslandAppearance, IslandNotification } from '@classhelper/shared';
 import { getConfig, saveConfig } from './config.js';
 import { getDiagnostics } from './ipc.js';
-import { getSliverSize, island, ISLAND_CALL_SIZE, ISLAND_SIZES, ISLAND_URGENT_SIZE } from './island.js';
+import {
+  getSliverSize,
+  island,
+  ISLAND_CALL_SIZE,
+  ISLAND_SIZES,
+  ISLAND_TIMEOUTS,
+  ISLAND_URGENT_SIZE,
+} from './island.js';
 import { destroyTray, getTrayState, isTrayReady } from './tray.js';
 
 interface SmokeResult {
@@ -839,14 +846,14 @@ async function runIslandChecks(
     `展开时 focusable=${focusable} 失焦后 mode=${afterBlur.mode} focusable=${islandWindow?.isFocusable() ?? '-'}`,
   );
 
-  // 4.6) 新作业上岛（kind=homework）：胶囊 + 展开显示截止时间
+  // 4.6) 新作业上岛（kind=homework）：胶囊 + 展开显示作业要求
+  //（截止时间功能已下线：这里同时守住"作业卡上不再出现截止时间"）
   island.handleAction({ action: 'dismiss' });
   await sleep(400);
   island.pushNotification(
     {
       ...makeNotification('smoke-homework', 'NORMAL', '第 3 章课后练习'),
       kind: 'homework',
-      subtitle: '截止时间：2026-09-15 22:00',
       teacherName: '张老师',
     },
     { inClass: false },
@@ -868,13 +875,13 @@ async function runIslandChecks(
   );
   island.handleAction({ action: 'expand' });
   await sleep(700);
-  const homeworkHint = await islandWindow?.webContents.executeJavaScript(
-    `document.querySelector('.island-card.expanded .call-hint')?.textContent?.trim() ?? ''`,
+  const homeworkCardText = await islandWindow?.webContents.executeJavaScript(
+    `document.querySelector('.island-card.expanded')?.innerText?.replace(/\\s+/g, ' ').trim() ?? ''`,
   );
   record(
-    '作业详情显示截止时间',
-    (homeworkHint ?? '').includes('截止时间'),
-    `附加说明="${homeworkHint ?? '-'}"`,
+    '作业详情只显示作业要求（截止时间已下线）',
+    (homeworkCardText ?? '').includes('第 3 章课后练习') && !(homeworkCardText ?? '').includes('截止时间'),
+    `作业卡文案="${homeworkCardText ?? '-'}"`,
   );
   await captureIsland('island-7-homework', ISLAND_SIZES.expanded);
 
@@ -956,6 +963,105 @@ async function runIslandChecks(
   await sleep(400);
   island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1 });
   await sleep(400);
+
+  // 4.9) 收起态回归（用户反馈"收起后部分情况无法再次打开"）：
+  //      a) 胶囊不再因超时消失（有未处理通知时常驻）；
+  //      b) 收起后胶囊仍然可命中（窗口保持可交互）→ 点击可再次展开；
+  //      c) 空闲细缝态同样是"可见即可点"（细缝 6x22 也能命中）。
+  // 注：此处不使用后面的 drainIsland（它在本函数更靠下的位置定义），就地排空队列。
+  const drainForCollapseCheck = async (): Promise<void> => {
+    for (let index = 0; index < 20; index += 1) {
+      const current = island.getState();
+      if (!current.active && current.queued.length === 0) return;
+      island.handleAction({ action: 'dismiss' });
+      await sleep(120);
+    }
+  };
+  /** 合成"指针移到卡片上"：命中测试由渲染进程按指针位置决定（真实场景由系统转发 mousemove） */
+  const hoverCard = async (): Promise<boolean> =>
+    Boolean(
+      await islandWindow?.webContents
+        .executeJavaScript(
+          `(() => {
+             const card = document.querySelector('.island-card');
+             if (!card) return false;
+             const r = card.getBoundingClientRect();
+             window.dispatchEvent(
+               new MouseEvent('mousemove', {
+                 clientX: r.left + r.width / 2,
+                 clientY: r.top + r.height / 2,
+                 bubbles: true,
+               }),
+             );
+             return true;
+           })()`,
+        )
+        .catch(() => false),
+    );
+  await drainForCollapseCheck();
+  await sleep(300);
+  island.pushNotification(makeNotification('smoke-collapse-reopen', 'NORMAL', '收起态回归校验'), {
+    inClass: false,
+  });
+  await sleep(500);
+  const collapseBefore = island.getState();
+  await hoverCard();
+  await sleep(200);
+  await sleep(ISLAND_TIMEOUTS.pill + 700);
+  const lingered = island.getState();
+  const lingeredVisible = islandWindow?.isVisible() ?? false;
+  record(
+    '收起后胶囊常驻（超时不再消失，随时可再次点开）',
+    collapseBefore.mode === 'pill' && lingered.mode === 'pill' && lingeredVisible,
+    `收起前=${collapseBefore.mode} 超时后=${lingered.mode} 可见=${lingeredVisible}`,
+  );
+  // 命中：把窗口显式置为"穿透"（等价于收起瞬间窗口被重置），再做一次状态变化 ——
+  // 主进程会按当前形态重新下发命中，渲染进程也会按缓存指针重算，两者都必须把命中恢复。
+  island.setInteractive(false);
+  await sleep(60);
+  const forcedThrough = island.getInteractive();
+  island.handleAction({ action: 'collapse' });
+  await sleep(300);
+  const interactiveWhilePill = island.getInteractive();
+  await islandWindow?.webContents
+    .executeJavaScript(
+      `(() => {
+         document.querySelector('.island-card')?.click();
+         return true;
+       })()`,
+    )
+    .catch(() => undefined);
+  await sleep(750);
+  const reopened = island.getState();
+  record(
+    '收起态点击可再次展开（胶囊命中恢复 + 点击后展开）',
+    forcedThrough === false &&
+      interactiveWhilePill === true &&
+      reopened.mode === 'expanded' &&
+      reopened.active?.id === 'smoke-collapse-reopen',
+    `置穿透后=${forcedThrough} 状态变化后=${interactiveWhilePill} 点击后 mode=${reopened.mode} ` +
+      `active=${reopened.active?.id ?? '-'}`,
+  );
+
+  const sliverForInteractive = getSliverSize();
+  island.setAppearance({ ...island.getAppearance(), idleSliver: true });
+  await sleep(200);
+  await drainForCollapseCheck();
+  await sleep(500);
+  const sliverState = island.getState();
+  await hoverCard();
+  await sleep(250);
+  const sliverInteractive = island.getInteractive();
+  const sliverVisible = islandWindow?.isVisible() ?? false;
+  record(
+    '空闲细缝态保持可交互（细缝很窄，指针停在岛上仍能点开）',
+    sliverState.mode === 'hidden' && sliverVisible && sliverInteractive === true,
+    `mode=${sliverState.mode} 可见=${sliverVisible} interactive=${sliverInteractive} ` +
+      `细缝=${sliverForInteractive.width}x${sliverForInteractive.height}`,
+  );
+  island.setAppearance({ ...island.getAppearance(), idleSliver: false });
+  await drainForCollapseCheck();
+  await sleep(300);
 
   // 5) 截图留档的像素级断言：每张图必须有实际绘制内容、颜色丰富，且宽高比与
   //    状态机配置的窗口尺寸一致（DPI 无关），紧急形态还必须出现红色描边/内部光晕像素。

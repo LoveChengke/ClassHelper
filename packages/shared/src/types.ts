@@ -215,7 +215,6 @@ export interface HomeworkDto {
   title: string;
   content: string;
   attachmentUrl: string | null;
-  dueAt: string | null;
   createdBy: string;
   createdAt: string;
   course?: CourseBrief | null;
@@ -241,7 +240,6 @@ export interface CreateHomeworkRequest {
   title: string;
   content: string;
   attachmentUrl?: string | null;
-  dueAt?: string | null;
 }
 
 export interface UpdateHomeworkStatusRequest {
@@ -491,7 +489,6 @@ export interface DashboardSummary {
   pendingHomeworkCount: number;
   recentNotifications: NotificationDto[];
   recentHomeworks: HomeworkDto[];
-  upcomingDeadlines: HomeworkDto[];
 }
 
 /* ------------------------------------------------------------------ WebSocket */

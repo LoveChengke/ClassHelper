@@ -190,7 +190,6 @@ export interface HomeworkLike {
   title: string;
   content: string;
   attachmentUrl: string | null;
-  dueAt: Date | null;
   createdBy: string;
   createdAt: Date;
   course?: CourseBriefLike | null;
@@ -228,7 +227,6 @@ export function toHomeworkDto(
     title: item.title,
     content: item.content,
     attachmentUrl: item.attachmentUrl,
-    dueAt: toIsoOrNull(item.dueAt),
     createdBy: item.createdBy,
     createdAt: toIso(item.createdAt),
     course: item.course ? toCourseBrief(item.course) : null,

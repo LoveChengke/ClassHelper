@@ -186,12 +186,15 @@ function syncTargets(snap = false): void {
     springs.radius.snap(radius);
     morph.value = { width: size.width, height: size.height, radius };
     progress.value = mode.value === 'expanded' ? 1 : 0;
+    refreshInteractive();
     return;
   }
   springs.width.setTarget(size.width);
   springs.height.setTarget(size.height);
   springs.radius.setTarget(radius);
   startFrameLoop();
+  // 目标几何变了：立刻按新尺寸重算一次命中（形变过程中每帧也会重算）
+  refreshInteractive();
 }
 
 function startFrameLoop(): void {
@@ -218,6 +221,8 @@ function startFrameLoop(): void {
       span < 1 ? (mode.value === 'expanded' ? 1 : 0) : Math.abs(morph.value.height - pill) / span;
 
     if (moving || !springs.width.settled || !springs.height.settled || !springs.radius.settled) {
+      // 形变过程中岛的可点区域在变：每帧按缓存指针位置重算命中（值不变时不发 IPC）
+      refreshInteractive();
       rafHandle = requestAnimationFrame(frame);
       return;
     }
@@ -228,6 +233,7 @@ function startFrameLoop(): void {
     springs.radius.snap(targetRadius(size));
     morph.value = { width: size.width, height: size.height, radius: springs.radius.value };
     progress.value = mode.value === 'expanded' ? 1 : 0;
+    refreshInteractive();
     rafHandle = null;
   };
   rafHandle = requestAnimationFrame(frame);
@@ -293,7 +299,11 @@ const islandClass = computed(() => ({
  * 指针在岛体上（或可交互控件上）时才让窗口接收鼠标，否则穿透，保证不吞桌面点击。
  */
 let lastInteractive: boolean | null = null;
+/** 最近一次已知的指针位置：岛收起/变大后用它重算命中，避免"鼠标没动就点不到" */
+let lastPointer: { x: number; y: number } | null = null;
+
 function updateInteractive(clientX: number, clientY: number): void {
+  lastPointer = { x: clientX, y: clientY };
   const node = document.querySelector('.island-card') as HTMLElement | null;
   let inside = false;
   if (node) {
@@ -308,6 +318,29 @@ function updateInteractive(clientX: number, clientY: number): void {
   if (inside === lastInteractive) return;
   lastInteractive = inside;
   bridge?.setInteractive?.(inside);
+}
+
+/**
+ * 状态 / 外观变化后主动重算一次命中测试。
+ *
+ * 为什么必须主动算：窗口默认 `setIgnoreMouseEvents(true, {forward:true})`，
+ * 只有在收到 mousemove 时才会打开命中。岛"收起 / 展开 / 换形态"时几何变了，
+ * 但指针可能一动没动（没有新的 mousemove）—— 此时窗口会一直保持"穿透"，
+ * 表现就是**收起后怎么点都打不开**（用户反馈）。所以每次状态变化都用缓存的指针位置重算一次。
+ */
+function refreshInteractive(): void {
+  const fullyHidden = state.value?.mode === 'hidden' && !appearance.value.idleSliver;
+  if (fullyHidden) {
+    if (lastInteractive !== false) {
+      lastInteractive = false;
+      bridge?.setInteractive?.(false);
+    }
+    return;
+  }
+  if (!lastPointer) return;
+  const pointer = lastPointer;
+  lastInteractive = null; // 强制按新几何再算一次
+  updateInteractive(pointer.x, pointer.y);
 }
 
 function applyAppearance(next: IslandAppearance | null | undefined): void {

@@ -102,28 +102,6 @@ export function durationMinutes(startTime: string, endTime: string): number {
   return (eh as number) * 60 + (em as number) - ((sh as number) * 60 + (sm as number));
 }
 
-/* ------------------------------------------------------------------ 作业 */
-
-/** 是否已过截止时间 */
-export function isOverdue(dueAt: string | null | undefined, now: Date = new Date()): boolean {
-  if (!dueAt) return false;
-  const due = toDate(dueAt);
-  return !Number.isNaN(due.getTime()) && due.getTime() < now.getTime();
-}
-
-/** 距离截止时间的可读描述，例如"还剩 2 天"、"已逾期 3 小时" */
-export function formatDeadline(dueAt: string | null | undefined, now: Date = new Date()): string {
-  if (!dueAt) return '无截止时间';
-  const due = toDate(dueAt);
-  if (Number.isNaN(due.getTime())) return '无截止时间';
-  const diffMinutes = Math.round((due.getTime() - now.getTime()) / 60000);
-  const prefix = diffMinutes < 0 ? '已逾期' : '还剩';
-  const abs = Math.abs(diffMinutes);
-  if (abs < 60) return `${prefix} ${abs} 分钟`;
-  if (abs < 60 * 24) return `${prefix} ${Math.floor(abs / 60)} 小时`;
-  return `${prefix} ${Math.floor(abs / (60 * 24))} 天`;
-}
-
 /* ------------------------------------------------------------------ 成绩 */
 
 /** 得分率（0-100），总分非法时返回 0 */
