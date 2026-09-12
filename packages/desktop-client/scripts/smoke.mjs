@@ -84,6 +84,17 @@ async function provisionClassAccount() {
     if (!target) return null;
 
     const code = target.code || `SMOKE${Math.floor(Math.random() * 9000 + 1000)}`;
+
+    // 若现有班级码 + 目标密码已经能登录，就直接复用，避免每次冒烟都改密码
+    if (target.code) {
+      const probe = await fetch(`${base}/auth/class-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: target.code, password }),
+      });
+      if (probe.ok) return { code: target.code, password, className: target.name };
+    }
+
     const patchResponse = await fetch(`${base}/classes/${target.id}/class-account`, {
       method: 'PATCH',
       headers: authHeaders,

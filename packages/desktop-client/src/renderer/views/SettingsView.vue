@@ -333,7 +333,12 @@ onMounted(async () => {
           <template #header><span>账号信息</span></template>
           <el-descriptions :column="1" border size="small">
             <el-descriptions-item label="姓名">{{ auth.user?.name ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="用户名">{{ auth.user?.username ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item :label="auth.isClassSession ? '班级码' : '用户名'">
+              {{ auth.user?.username ?? '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="登录方式">
+              {{ auth.isClassSession ? '班级账号（本机代表全班）' : '个人学生账号' }}
+            </el-descriptions-item>
             <el-descriptions-item label="班级">{{ auth.user?.className ?? '未分班' }}</el-descriptions-item>
             <el-descriptions-item label="年级">{{ auth.user?.grade ?? '-' }}</el-descriptions-item>
           </el-descriptions>
