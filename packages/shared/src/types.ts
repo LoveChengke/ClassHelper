@@ -172,9 +172,17 @@ export interface ScheduleDto {
   location: string | null;
   weekStart: number;
   weekEnd: number;
+  /**
+   * 单双周：ALL = 每周都上（默认）；ODD = 只在单周；EVEN = 只在双周。
+   * 与 ClassIsland 课表的 WeekCountDiv / WeekCountDivTotal 语义对应（见导入模块）。
+   */
+  weekParity: WeekParity;
   createdAt: string;
   course?: CourseBrief | null;
 }
+
+/** 单双周（ClassIsland：WeekCountDivTotal=2 时按 WeekCountDiv 分单/双周） */
+export type WeekParity = 'ALL' | 'ODD' | 'EVEN';
 
 export interface CourseBrief {
   id: string;
@@ -190,6 +198,8 @@ export interface CreateScheduleRequest {
   location?: string | null;
   weekStart?: number;
   weekEnd?: number;
+  /** 单双周：ALL（默认）/ ODD（单周）/ EVEN（双周） */
+  weekParity?: WeekParity;
 }
 
 export type UpdateScheduleRequest = Partial<CreateScheduleRequest>;
@@ -204,6 +214,50 @@ export interface ScheduleDayColumn {
 export interface ScheduleWeekView {
   week: number;
   columns: ScheduleDayColumn[];
+}
+
+/* ------------------------------------------------------------------ ClassIsland 课程表导入（单双周） */
+
+/** 解析出来的单节课（预览用） */
+export interface ClassPlanEntryDto {
+  /** 1=周一 … 7=周日（已从 ClassIsland 的 0=周日 转换） */
+  dayOfWeek: number;
+  /** 展示用：周一 / 周二 … */
+  weekdayLabel?: string;
+  startTime: string;
+  endTime: string;
+  subject: string;
+  teacherName?: string;
+  /** 单双周：ALL / ODD（单周）/ EVEN（双周） */
+  weekParity: WeekParity;
+  /** 原始 WeekCountDiv / WeekCountDivTotal，便于核对来源 */
+  weekCountDiv: number;
+  weekCountDivTotal: number;
+  planName: string;
+}
+
+/** 课程表导入预览结果 */
+export interface ClassPlanPreviewDto {
+  entries: ClassPlanEntryDto[];
+  /** 解析到的科目名（去重） */
+  subjects: string[];
+  /** 班级里还没有、导入时会自动补建的科目 */
+  missingSubjects: string[];
+  /** 解析到的时间表名 */
+  layoutNames: string[];
+  errors: string[];
+  warnings: string[];
+}
+
+/** 课程表导入结果 */
+export interface ClassPlanImportResultDto {
+  imported: number;
+  created: number;
+  updated: number;
+  /** 自动补建的课程名 */
+  createdCourses: string[];
+  weekStart: number;
+  weekEnd: number;
 }
 
 /* ------------------------------------------------------------------ 作业 */
@@ -244,6 +298,35 @@ export interface CreateHomeworkRequest {
 
 export interface UpdateHomeworkStatusRequest {
   completed: boolean;
+}
+
+/** 作业提交名单里的一位学生 */
+export interface HomeworkSubmissionDto {
+  userId: string;
+  name: string;
+  username: string;
+  completed: boolean;
+}
+
+/**
+ * 作业提交名单（"未交名单"功能的载体）：
+ * 教师端 / 班级设备用它勾选谁没交作业，其余学生一律视为已交。
+ */
+export interface HomeworkSubmissionsDto {
+  homeworkId: string;
+  classId: string;
+  /** 全班学生数 */
+  total: number;
+  completedCount: number;
+  /** 只包含未交的学生（completed=false），便于直接渲染"未交名单" */
+  notSubmitted: HomeworkSubmissionDto[];
+  /** 全班学生及其完成状态 */
+  students: HomeworkSubmissionDto[];
+}
+
+export interface UpdateHomeworkSubmissionsRequest {
+  /** 未交作业的学生 id（其余学生一律标记为已交） */
+  notSubmittedUserIds: string[];
 }
 
 export interface HomeworkQueryParams {

@@ -7,12 +7,15 @@ import {
   tableCommitSchema,
   tableFileSchema,
   timeLayoutImportSchema,
+  classPlanImportSchema,
   timeLayoutQuerySchema,
   type TableCommitInput,
   type TableFileInput,
   type TimeLayoutImportInput,
+  type ClassPlanImportInput,
 } from './imports.schemas.js';
 import { buildTemplateCsv, buildTemplateXlsx, commitTable, previewTable } from './table-import.service.js';
+import { importClassPlan, previewClassPlan } from './class-plan.service.js';
 import {
   deleteTimeLayout,
   importTimeLayout,
@@ -121,6 +124,33 @@ router.post('/time-layout', validate({ body: timeLayoutImportSchema }), async (r
 router.delete('/time-layout/:id', async (req, res) => {
   await deleteTimeLayout(getAuthUser(req), req.params.id ?? '');
   sendOk(res, { id: req.params.id }, '时间配置已删除');
+});
+
+/**
+ * POST /api/imports/class-plan/preview - 预览 ClassIsland 课程表 JSON（只解析不写库）
+ * 真实档案里单双周由 ClassPlan.TimeRule.WeekCountDiv / WeekCountDivTotal 表达。
+ */
+router.post('/class-plan/preview', validate({ body: classPlanImportSchema }), async (req, res) => {
+  const result = await previewClassPlan(getAuthUser(req), validatedBody<ClassPlanImportInput>(req));
+  sendOk(
+    res,
+    result,
+    `解析出 ${result.entries.length} 节课（${result.subjects.length} 个科目，缺 ${result.missingSubjects.length} 个待建课程）`,
+  );
+});
+
+/**
+ * POST /api/imports/class-plan - 导入 ClassIsland 课程表（支持单双周）
+ * replace 清空后写入 / merge 按 星期+开始时间+单双周 去重；解析失败返回 400 且不改动现有课表。
+ */
+router.post('/class-plan', validate({ body: classPlanImportSchema }), async (req, res) => {
+  const result = await importClassPlan(getAuthUser(req), validatedBody<ClassPlanImportInput>(req));
+  sendOk(
+    res,
+    result,
+    `导入成功：新增 ${result.created} 节 / 更新 ${result.updated} 节` +
+      `${result.createdCourses.length > 0 ? `（自动补建课程：${result.createdCourses.join('、')}）` : ''}`,
+  );
 });
 
 export const importsModule = defineModule({

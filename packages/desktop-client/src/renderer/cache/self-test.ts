@@ -350,6 +350,7 @@ export async function scheduleTimelineSelfTest(): Promise<SmokeCheckResult> {
   };
 
   const created: string[] = [];
+  const failures: string[] = [];
   let teacherToken = '';
 
   try {
@@ -373,7 +374,9 @@ export async function scheduleTimelineSelfTest(): Promise<SmokeCheckResult> {
       { start: toHHmm(nowMinutes - 180), end: toHHmm(nowMinutes - 120), location: '时间轴自检 · 已结束' },
       { start: toHHmm(nowMinutes - 20), end: toHHmm(nowMinutes + 25), location: '时间轴自检 · 正在上课' },
       { start: toHHmm(nowMinutes + 60), end: toHHmm(nowMinutes + 105), location: '时间轴自检 · 下一节' },
-    ];
+      // 深夜/凌晨时相对时间会越过 23:59 / 00:00，被夹紧后 start >= end（服务端 422）。
+      // 这种探针构造不出来就跳过，"下一节"的断言按实际创建数量放宽。
+    ].filter((probe) => probe.start < probe.end);
     for (const probe of probes) {
       const response = await fetch(`${serverUrl}/api/schedules`, {
         method: 'POST',
@@ -388,11 +391,23 @@ export async function scheduleTimelineSelfTest(): Promise<SmokeCheckResult> {
           weekEnd: 30,
           location: probe.location,
         }),
-      }).then((result) => result.json());
-      const id = response?.data?.id;
+      });
+      const payload = await response.json().catch(() => null);
+      const id = payload?.data?.id;
       if (id) created.push(id);
+      // 记录失败原因（限流 429 / 时间非法 400 等），否则只看到一个"2/3"没法排查
+      else {
+        failures.push(
+          `${probe.start}-${probe.end} status=${response.status} ${payload?.message ?? ''}`.trim(),
+        );
+      }
     }
-    if (created.length < 3) return { ok: false, detail: `探针课表创建失败（${created.length}/3）` };
+    if (created.length < probes.length) {
+      return {
+        ok: false,
+        detail: `探针课表创建失败（${created.length}/${probes.length}）${failures.length > 0 ? `：${failures.join('；')}` : ''}`,
+      };
+    }
 
     await router.push('/schedule');
 
@@ -420,7 +435,7 @@ export async function scheduleTimelineSelfTest(): Promise<SmokeCheckResult> {
           text: (node.textContent ?? '').replace(/\s+/g, ' ').trim(),
         })),
       };
-      if (snapshot.hasCurrent && snapshot.count >= 3) {
+      if (snapshot.hasCurrent && snapshot.count >= probes.length) {
         dom = snapshot;
         break;
       }
@@ -432,13 +447,15 @@ export async function scheduleTimelineSelfTest(): Promise<SmokeCheckResult> {
     const hasPast = dom.tags.some((tag) => tag.state === 'past' && tag.text.includes('已结束'));
     const hasNext = dom.tags.some((tag) => tag.state === 'next' && tag.text.includes('下一节'));
     const countdown = /距下课\s*\d+/.test(dom.currentText) || dom.currentText.includes('即将下课');
+    // 深夜/凌晨可能只构造出 2 个探针（"下一节"跨过 23:59），此时不要求存在该卡片
+    const expectNextProbe = probes.length >= 3;
     const ok =
-      dom.count >= 3 &&
+      dom.count >= probes.length &&
       dom.hasCurrent &&
       dom.hasProgress &&
       countdown &&
       hasPast &&
-      hasNext &&
+      (!expectNextProbe || hasNext) &&
       /^\d{2}:\d{2}$/.test(dom.clock);
 
     return {

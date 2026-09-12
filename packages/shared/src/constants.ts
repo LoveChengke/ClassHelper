@@ -66,6 +66,21 @@ export const WEEKDAY_LABELS: Record<number, string> = {
 
 export const WEEKDAYS: readonly number[] = [1, 2, 3, 4, 5, 6, 7];
 
+/**
+ * 单双周标签与取值（课表用）。
+ * 语义与 ClassIsland 课表一致：WeekCountDivTotal=1 → 每周；=2 时 WeekCountDiv=1 → 单周、=2 → 双周。
+ */
+export const WEEK_PARITY_LABELS: Record<'ALL' | 'ODD' | 'EVEN', string> = {
+  ALL: '每周',
+  ODD: '单周',
+  EVEN: '双周',
+};
+
+export const WEEK_PARITY_VALUES: readonly ('ALL' | 'ODD' | 'EVEN')[] = ['ALL', 'ODD', 'EVEN'];
+
+/** 一个学期按多少周为一个单双周循环（ClassIsland WeekCountDivTotal 的默认值） */
+export const WEEK_PARITY_CYCLE = 2;
+
 /** 灵动岛默认外观（设置页个性化项的初始值，也是区间校验的单一来源） */
 export const DEFAULT_ISLAND_APPEARANCE = {
   height: 44,

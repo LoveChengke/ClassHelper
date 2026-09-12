@@ -17,7 +17,7 @@ import type { TimeLayoutImportInput } from './imports.schemas.js';
  * 因此这里做**容错解析**：先把可能的数组抠出来，再逐条按候选字段名解析时间，
  * 解析失败的行进入 errors（不写库），成功解析但可疑的进入 warnings（可继续导入）。
  */
-export type TimeLayoutItemType = 'class' | 'break' | 'divider';
+export type TimeLayoutItemType = 'class' | 'break' | 'divider' | 'action';
 
 export interface ParsedTimeLayoutItem {
   index: number;
@@ -84,19 +84,47 @@ function secondsToHHmm(seconds: number): string {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
-/** 从任意形态里抠出"可能是时间表条目"的数组 */
+/**
+ * 从任意形态里抠出"可能是时间表条目"的数组。
+ *
+ * ClassIsland 真实档案（`Profiles/<档案名>.json`，1.7.106+ / 2.x）里是：
+ *   `{ "TimeLayouts": { "<guid>": { "Name": "默认", "Layouts": [ { StartTime, EndTime, TimeType } ] } } }`
+ * —— 即**按 Guid 索引的字典**，条目在各自的 `Layouts` 里。早期版本还可能直接是数组或 `{ items: [...] }`。
+ * 之前只认数组 / `.items`，导致真实导出文件完全导不进来（本次修复）。
+ */
 function extractItems(input: unknown): { items: unknown[]; shape: string } {
   if (Array.isArray(input)) return { items: input, shape: 'array' };
   if (input && typeof input === 'object') {
     const record = input as Record<string, unknown>;
-    for (const key of ['TimeLayouts', 'TimeLayoutItems', 'Items', 'items', 'Layouts', 'TimeLayout']) {
+    for (const key of ['TimeLayouts', 'TimeLayoutItems', 'Items', 'items', 'Layouts']) {
       const value = record[key];
       if (Array.isArray(value)) return { items: value, shape: key };
       // 有些导出是 { TimeLayouts: { items: [...] } }
-      if (value && typeof value === 'object' && Array.isArray((value as Record<string, unknown>).items)) {
-        return { items: (value as Record<string, unknown>).items as unknown[], shape: `${key}.items` };
+      const nestedItems =
+        value && typeof value === 'object' ? (value as Record<string, unknown>).items : null;
+      if (Array.isArray(nestedItems)) {
+        return { items: nestedItems as unknown[], shape: `${key}.items` };
+      }
+      // ClassIsland 真实形态：Guid → { Name, Layouts: [...] }；合并所有时间表的 Layouts
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const merged: unknown[] = [];
+        let layoutCount = 0;
+        for (const entry of Object.values(value as Record<string, unknown>)) {
+          const layoutRecord = entry && typeof entry === 'object' ? (entry as Record<string, unknown>) : null;
+          const layouts = layoutRecord?.Layouts ?? layoutRecord?.layouts;
+          if (Array.isArray(layouts)) {
+            merged.push(...layouts);
+            layoutCount += 1;
+          }
+        }
+        if (merged.length > 0) {
+          return { items: merged, shape: `${key}{guid}×${layoutCount}` };
+        }
       }
     }
+    // 单个时间表对象：{ Name, Layouts: [...] }
+    const single = record.Layouts ?? record.layouts;
+    if (Array.isArray(single)) return { items: single, shape: 'Layouts' };
   }
   return { items: [], shape: 'unknown' };
 }
@@ -105,6 +133,7 @@ function normalizeType(record: Record<string, unknown>): TimeLayoutItemType {
   const raw = pick(record, TYPE_KEYS);
   const numeric = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : Number.NaN;
   if (numeric === 1) return 'break';
+  if (numeric === 3) return 'action'; // ClassIsland TimeType=3：行动（非上课/课间）
   if (numeric === 2) return 'divider';
   return 'class';
 }

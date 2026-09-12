@@ -2,7 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app, safeStorage } from 'electron';
 import { DEFAULT_ISLAND_APPEARANCE, DEFAULT_SERVER_URL, type IslandAppearance } from '@classhelper/shared';
-import type { DesktopStoredConfig } from '../types/desktop.js';
+import type { DesktopStoredConfig, HomeworkBoardSettings } from '../types/desktop.js';
+
+/** 作业页展示偏好默认值（看板 + 不显示时间 + 15px） */
+const DEFAULT_HOMEWORK_BOARD: HomeworkBoardSettings = {
+  mode: 'board',
+  showTime: false,
+  fontSize: 15,
+};
 
 interface PersistedConfig {
   serverUrl: string;
@@ -12,6 +19,8 @@ interface PersistedConfig {
   tokenEncrypted: boolean;
   /** 个性化设置：灵动岛外观（向后兼容：旧配置文件没有该字段时用默认值补齐） */
   island?: Partial<IslandAppearance>;
+  /** 作业页展示偏好（向后兼容：旧配置文件没有该字段时用默认值补齐） */
+  homeworkBoard?: Partial<HomeworkBoardSettings>;
 }
 
 const DEFAULT_CONFIG: PersistedConfig = {
@@ -20,7 +29,22 @@ const DEFAULT_CONFIG: PersistedConfig = {
   token: null,
   tokenEncrypted: false,
   island: { ...DEFAULT_ISLAND_APPEARANCE },
+  homeworkBoard: { ...DEFAULT_HOMEWORK_BOARD },
 };
+
+/** 作业页偏好的合法化（模式白名单、字号夹紧） */
+function normalizeHomeworkBoard(input?: Partial<HomeworkBoardSettings>): HomeworkBoardSettings {
+  const mode = input?.mode === 'list' ? 'list' : 'board';
+  const rawFont =
+    typeof input?.fontSize === 'number' && Number.isFinite(input.fontSize)
+      ? input.fontSize
+      : DEFAULT_HOMEWORK_BOARD.fontSize;
+  return {
+    mode,
+    showTime: input?.showTime === true,
+    fontSize: Math.min(28, Math.max(11, Math.round(rawFont))),
+  };
+}
 
 /** 外观字段的合法区间校验（越界值直接夹紧，避免用户配置破坏灵动岛布局） */
 function normalizeIslandAppearance(input?: Partial<IslandAppearance>): IslandAppearance {
@@ -99,6 +123,7 @@ function readPersisted(): PersistedConfig {
       token: typeof parsed.token === 'string' ? parsed.token : null,
       tokenEncrypted: parsed.tokenEncrypted === true,
       island: normalizeIslandAppearance(parsed.island),
+      homeworkBoard: normalizeHomeworkBoard(parsed.homeworkBoard),
     };
   } catch {
     return { ...DEFAULT_CONFIG };
@@ -119,6 +144,7 @@ export function getConfig(): DesktopStoredConfig {
     username: persisted.username,
     token: decryptToken(persisted),
     island: normalizeIslandAppearance(persisted.island),
+    homeworkBoard: normalizeHomeworkBoard(persisted.homeworkBoard),
   };
 }
 
@@ -134,6 +160,12 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
   }
   if (patch.island !== undefined) {
     persisted.island = normalizeIslandAppearance({ ...persisted.island, ...patch.island });
+  }
+  if (patch.homeworkBoard !== undefined) {
+    persisted.homeworkBoard = normalizeHomeworkBoard({
+      ...persisted.homeworkBoard,
+      ...patch.homeworkBoard,
+    });
   }
   if (patch.token !== undefined) {
     const encrypted = encryptToken(patch.token);

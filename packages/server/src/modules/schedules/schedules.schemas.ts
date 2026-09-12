@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { timeSchema, weekNumberSchema } from '../../lib/schemas.js';
 
+/** 单双周：ALL=每周 / ODD=单周 / EVEN=双周（与 ClassIsland 的 WeekCountDiv 语义一致） */
+const weekParitySchema = z.enum(['ALL', 'ODD', 'EVEN']);
+
 export const listSchedulesQuerySchema = z.object({
   classId: z.string().min(1).optional(),
   /** 不传则按"当前教学周"过滤 */
@@ -37,6 +40,8 @@ export const createScheduleSchema = z
     location: z.string().trim().max(64).nullish(),
     weekStart: weekNumberSchema.optional(),
     weekEnd: weekNumberSchema.optional(),
+    /** 单双周（默认 ALL=每周） */
+    weekParity: weekParitySchema.optional(),
   })
   .refine((data) => data.startTime < data.endTime, {
     message: '结束时间必须晚于开始时间',
@@ -56,6 +61,8 @@ export const updateScheduleSchema = z
     location: z.string().trim().max(64).nullish(),
     weekStart: weekNumberSchema.optional(),
     weekEnd: weekNumberSchema.optional(),
+    /** 单双周（默认 ALL=每周） */
+    weekParity: weekParitySchema.optional(),
   })
   .refine((data) => !data.startTime || !data.endTime || data.startTime < data.endTime, {
     message: '结束时间必须晚于开始时间',

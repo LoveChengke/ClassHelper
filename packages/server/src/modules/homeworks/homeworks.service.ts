@@ -1,4 +1,10 @@
-import { SOCKET_EVENTS, type HomeworkDto, type HomeworkStatusDto } from '@classhelper/shared';
+import {
+  SOCKET_EVENTS,
+  type HomeworkDto,
+  type HomeworkStatusDto,
+  type HomeworkSubmissionDto,
+  type HomeworkSubmissionsDto,
+} from '@classhelper/shared';
 import {
   assertCanPublishContent,
   assertClassAccess,
@@ -10,12 +16,13 @@ import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { toHomeworkDto, toHomeworkStatusDto } from '../../lib/mappers.js';
-import { personalIdWhere, resolvePersonalIds } from '../../lib/session.js';
+import { isClassSession, personalIdWhere, resolvePersonalIds } from '../../lib/session.js';
 import { emitToClass } from '../../realtime/bus.js';
 import type {
   CreateHomeworkInput,
   UpdateHomeworkInput,
   UpdateHomeworkStatusInput,
+  UpdateHomeworkSubmissionsInput,
 } from './homeworks.schemas.js';
 
 const courseSelect = { select: { id: true, name: true } } as const;
@@ -211,6 +218,106 @@ export async function updateHomeworkStatus(
   const dto = toHomeworkStatusDto(status);
   emitToClass(homework.classId, SOCKET_EVENTS.homeworkStatus, { ...dto, classId: homework.classId });
   return dto;
+}
+
+/* ------------------------------------------------------------------ 未交名单 */
+
+/** 组装某次作业的全班提交名单（未交名单 = completed=false 的那些） */
+async function buildSubmissions(classId: string, homeworkId: string): Promise<HomeworkSubmissionsDto> {
+  const [students, statuses] = await Promise.all([
+    prisma.user.findMany({
+      where: { classId, role: 'STUDENT' },
+      select: { id: true, name: true, username: true },
+      orderBy: { username: 'asc' },
+    }),
+    prisma.homeworkStatus.findMany({ where: { homeworkId }, select: { userId: true, completed: true } }),
+  ]);
+  const completedBy = new Map(statuses.map((item) => [item.userId, item.completed]));
+  const list: HomeworkSubmissionDto[] = students.map((item) => ({
+    userId: item.id,
+    name: item.name || item.username,
+    username: item.username,
+    completed: completedBy.get(item.id) === true,
+  }));
+  return {
+    homeworkId,
+    classId,
+    total: list.length,
+    completedCount: list.filter((item) => item.completed).length,
+    notSubmitted: list.filter((item) => !item.completed),
+    students: list,
+  };
+}
+
+/** 只有教师 / 管理员 / 班级设备可以维护"未交名单"（普通学生只能标记自己） */
+function assertCanManageSubmissions(user: TokenPayload): void {
+  if (user.role === 'ADMIN' || user.role === 'TEACHER') return;
+  if (isClassSession(user)) return;
+  throw ApiError.forbidden('只有教师或班级设备可以维护未交名单');
+}
+
+/** 读取作业提交名单（教师 / 班级设备） */
+export async function listHomeworkSubmissions(
+  user: TokenPayload,
+  homeworkId: string,
+): Promise<HomeworkSubmissionsDto> {
+  const homework = await prisma.homework.findUnique({
+    where: { id: homeworkId },
+    select: { id: true, classId: true },
+  });
+  if (!homework) throw ApiError.notFound('作业不存在');
+  await assertClassAccess(user, homework.classId);
+  assertCanManageSubmissions(user);
+  return buildSubmissions(homework.classId, homeworkId);
+}
+
+/**
+ * 保存"未交名单"：勾选的学生标记未完成，其余学生一律标记完成。
+ * 这样班级设备的操作语义是"点名谁没交"，比逐个勾"谁交了"更省事。
+ */
+export async function updateHomeworkSubmissions(
+  user: TokenPayload,
+  homeworkId: string,
+  input: UpdateHomeworkSubmissionsInput,
+): Promise<HomeworkSubmissionsDto> {
+  const homework = await prisma.homework.findUnique({
+    where: { id: homeworkId },
+    select: { id: true, classId: true },
+  });
+  if (!homework) throw ApiError.notFound('作业不存在');
+  await assertClassAccess(user, homework.classId);
+  assertCanManageSubmissions(user);
+
+  const students = await prisma.user.findMany({
+    where: { classId: homework.classId, role: 'STUDENT' },
+    select: { id: true },
+  });
+  if (students.length === 0) throw ApiError.badRequest('当前班级还没有学生账号');
+
+  const notSubmitted = new Set(input.notSubmittedUserIds);
+  const studentIds = new Set(students.map((item) => item.id));
+  const outsiders = [...notSubmitted].filter((id) => !studentIds.has(id));
+  if (outsiders.length > 0) throw ApiError.badRequest('未交名单里包含非本班学生');
+
+  await prisma.$transaction(
+    students.map((item) =>
+      prisma.homeworkStatus.upsert({
+        where: { homeworkId_userId: { homeworkId, userId: item.id } },
+        create: { homeworkId, userId: item.id, completed: !notSubmitted.has(item.id) },
+        update: { completed: !notSubmitted.has(item.id) },
+      }),
+    ),
+  );
+
+  const result = await buildSubmissions(homework.classId, homeworkId);
+  // 实时刷新教师端/学生端的完成情况
+  emitToClass(homework.classId, SOCKET_EVENTS.homeworkStatus, {
+    homeworkId,
+    classId: homework.classId,
+    completedCount: result.completedCount,
+    total: result.total,
+  });
+  return result;
 }
 
 async function assertCourseInClass(courseId: string, classId: string): Promise<void> {

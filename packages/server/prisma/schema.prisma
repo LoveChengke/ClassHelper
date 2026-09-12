@@ -137,6 +137,8 @@ model Schedule {
   weekStart Int      @default(1)
   /// 学期结束周次（含）
   weekEnd   Int      @default(20)
+  /// 单双周：ALL=每周（默认）/ ODD=单周 / EVEN=双周（ClassIsland WeekCountDiv + WeekCountDivTotal 的映射）
+  weekParity String @default("ALL")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

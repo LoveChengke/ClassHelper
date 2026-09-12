@@ -434,7 +434,12 @@ class IslandController {
         // 上课时段：普通通知（含普通叫人）一律不显示；但紧急通知 / 紧急叫人本来就是必须
         // 立刻看到的，收起（回缩为胶囊）之后必须能再次点开——否则学生会误以为消息消失了。
         const showing = this.state.active;
-        if (this.state.inClass && !this.isOpenable(showing)) break;
+        if (this.state.inClass && !this.isOpenable(showing)) {
+          logger.info(
+            `灵动岛：上课时段忽略展开（priority=${showing?.priority ?? '-'} kind=${showing?.kind ?? '-'} id=${showing?.id ?? '-'}）`,
+          );
+          break;
+        }
         // 收起态（胶囊 / 空闲细缝）再次点击必须能打开：
         // active 为空但队列里还有未看通知时，先把它取出来当"当前通知"再展开，
         // 否则会出现"岛明明在屏幕上，点了没反应"（部分情况下的收起态无法再次打开）。
@@ -448,6 +453,11 @@ class IslandController {
         }
         const active = this.state.active;
         if (active) {
+          if (this.state.mode !== 'expanded') {
+            logger.info(
+              `灵动岛：展开通知 ${active.id}（priority=${active.priority} kind=${active.kind ?? '-'}）`,
+            );
+          }
           this.setState({ mode: 'expanded' });
           this.scheduleCollapse(
             this.isImmediate(active)

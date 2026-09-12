@@ -4,6 +4,16 @@
  */
 import type { IslandAppearance, IslandNotification, IslandState } from '@classhelper/shared';
 
+/** 作业页展示偏好（看板 / 列表，看板外观） */
+export interface HomeworkBoardSettings {
+  /** 展示模式：board = 按科目卡片看板，list = 默认表格 */
+  mode: 'board' | 'list';
+  /** 看板条目是否显示时间 */
+  showTime: boolean;
+  /** 看板字号（px） */
+  fontSize: number;
+}
+
 export interface DesktopStoredConfig {
   /** 后端服务地址，例如 http://127.0.0.1:4000 */
   serverUrl: string;
@@ -13,6 +23,8 @@ export interface DesktopStoredConfig {
   token: string | null;
   /** 个性化设置：灵动岛外观（高度/宽度/圆角/透明度/主题色/字号/动画/位置/置顶） */
   island: IslandAppearance;
+  /** 作业页展示偏好（看板/列表、显示时间、看板字号） */
+  homeworkBoard: HomeworkBoardSettings;
 }
 
 export interface DesktopAppInfo {

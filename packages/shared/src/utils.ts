@@ -1,5 +1,5 @@
-import { WEEKDAY_LABELS, WEEKDAYS } from './constants.js';
-import type { ClassPeriod, GradeLevel, ScheduleDto, ScheduleWeekView } from './types.js';
+import { WEEKDAY_LABELS, WEEKDAYS, WEEK_PARITY_LABELS } from './constants.js';
+import type { ClassPeriod, GradeLevel, ScheduleDto, ScheduleWeekView, WeekParity } from './types.js';
 
 /* ------------------------------------------------------------------ 日期时间 */
 
@@ -60,12 +60,25 @@ export function relativeTime(value: string | number | Date, now: Date = new Date
 
 /* ------------------------------------------------------------------ 课表 */
 
-/** 判断某个课表条目在第 week 周是否上课 */
+/** 第 week 周是单周还是双周（第 1 周记为单周，与 ClassIsland 的 WeekCountDiv 一致） */
+export function weekParityOf(week: number): Exclude<WeekParity, 'ALL'> {
+  return week % 2 === 0 ? 'EVEN' : 'ODD';
+}
+
+/** 判断某个课表条目在第 week 周是否上课（周次区间 + 单双周） */
 export function isScheduleActiveInWeek(
-  schedule: Pick<ScheduleDto, 'weekStart' | 'weekEnd'>,
+  schedule: Pick<ScheduleDto, 'weekStart' | 'weekEnd'> & { weekParity?: WeekParity | null },
   week: number,
 ): boolean {
-  return week >= schedule.weekStart && week <= schedule.weekEnd;
+  if (week < schedule.weekStart || week > schedule.weekEnd) return false;
+  const parity = schedule.weekParity ?? 'ALL';
+  if (parity === 'ALL') return true;
+  return parity === weekParityOf(week);
+}
+
+/** 格式化单双周标签（课表卡片用） */
+export function formatWeekParity(parity: WeekParity | null | undefined): string {
+  return WEEK_PARITY_LABELS[(parity ?? 'ALL') as WeekParity] ?? '每周';
 }
 
 /** 格式化周次范围，例如"1-20 周" / "单周" */

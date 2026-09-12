@@ -153,6 +153,7 @@ export interface ScheduleLike {
   location: string | null;
   weekStart: number;
   weekEnd: number;
+  weekParity: string;
   createdAt: Date;
   course?: CourseBriefLike | null;
 }
@@ -168,6 +169,7 @@ export function toScheduleDto(item: ScheduleLike): ScheduleDto {
     location: item.location,
     weekStart: item.weekStart,
     weekEnd: item.weekEnd,
+    weekParity: (item.weekParity ?? 'ALL') as ScheduleDto['weekParity'],
     createdAt: toIso(item.createdAt),
     course: item.course ? toCourseBrief(item.course) : null,
   };

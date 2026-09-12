@@ -1,8 +1,9 @@
-﻿import {
+import {
   SOCKET_EVENTS,
   buildScheduleWeekView,
   resolveClassStatus,
   resolveCurrentWeek,
+  weekParityOf,
   type ClassStatusDto,
   type ScheduleDto,
   type ScheduleWeekView,
@@ -43,6 +44,8 @@ export async function listSchedules(
     where: {
       ...classScopeWhere(scope),
       ...(week ? { weekStart: { lte: week }, weekEnd: { gte: week } } : {}),
+      // 单双周：ALL 永远命中；ODD / EVEN 只在对应周次命中（第 1 周为单周）
+      ...(week && week > 0 ? { weekParity: { in: ['ALL', weekParityOf(week)] } } : {}),
       ...(options.dayOfWeek ? { dayOfWeek: options.dayOfWeek } : {}),
     },
     include: { course: courseSelect },
@@ -115,6 +118,8 @@ export async function createSchedule(user: TokenPayload, input: CreateScheduleIn
       location: input.location ?? null,
       weekStart: input.weekStart ?? 1,
       weekEnd: input.weekEnd ?? 20,
+      // 单双周：默认 ALL（每周），与旧数据行为一致
+      weekParity: input.weekParity ?? 'ALL',
     },
     include: { course: courseSelect },
   });
@@ -157,6 +162,7 @@ export async function updateSchedule(
       ...(input.location !== undefined ? { location: input.location ?? null } : {}),
       weekStart,
       weekEnd,
+      ...(input.weekParity !== undefined ? { weekParity: input.weekParity } : {}),
     },
     include: { course: courseSelect },
   });

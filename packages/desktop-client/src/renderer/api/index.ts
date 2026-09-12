@@ -6,6 +6,7 @@ import {
   type GradeDto,
   type HomeworkDto,
   type HomeworkStatusDto,
+  type HomeworkSubmissionsDto,
   type LoginRequest,
   type LoginResponse,
   type NotificationDto,
@@ -44,6 +45,11 @@ export const homeworkApi = {
   detail: (id: string): Promise<HomeworkDto> => api.get(`${API_PATHS.homeworks}/${id}`),
   updateStatus: (id: string, completed: boolean): Promise<HomeworkStatusDto> =>
     api.patch(`${API_PATHS.homeworks}/${id}/status`, { completed }),
+  /** 提交名单 / 未交名单（教师与班级设备可用） */
+  submissions: (id: string): Promise<HomeworkSubmissionsDto> =>
+    api.get(`${API_PATHS.homeworks}/${id}/submissions`),
+  saveSubmissions: (id: string, notSubmittedUserIds: string[]): Promise<HomeworkSubmissionsDto> =>
+    api.patch(`${API_PATHS.homeworks}/${id}/submissions`, { notSubmittedUserIds }),
 };
 
 export const notificationApi = {

@@ -169,6 +169,8 @@ async function main(): Promise<void> {
         if (!course) continue;
         // 前 2 节限制在第 1 周（演示按周筛选）
         const onlyFirstWeek = dayOfWeek === 1 && periodIndex === 0;
+        // 周二第 3 节演示"单双周"：单周上次课表里的科目、双周上一门别的科目
+        const paritySlot = dayOfWeek === 2 && periodIndex === 2;
         await prisma.schedule.create({
           data: {
             classId: targetClass.id,
@@ -179,8 +181,28 @@ async function main(): Promise<void> {
             location: targetClass.room,
             weekStart: 1,
             weekEnd: onlyFirstWeek ? 1 : MAX_TERM_WEEK,
+            weekParity: paritySlot ? 'ODD' : 'ALL',
           },
         });
+        if (paritySlot) {
+          // 双周同一节换另一门课，用于演示"单双周课表"（第 1 周单周、第 2 周双周）
+          const evenCourse = classCourses[(dayOfWeek + periodIndex + 2) % classCourses.length];
+          if (evenCourse) {
+            await prisma.schedule.create({
+              data: {
+                classId: targetClass.id,
+                courseId: evenCourse.id,
+                dayOfWeek,
+                startTime: period.startTime,
+                endTime: period.endTime,
+                location: targetClass.room,
+                weekStart: 1,
+                weekEnd: MAX_TERM_WEEK,
+                weekParity: 'EVEN',
+              },
+            });
+          }
+        }
       }
     }
   }

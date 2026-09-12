@@ -1133,11 +1133,20 @@ async function runIslandChecks(
   await sleep(ISLAND_TIMEOUTS.pill + 700);
   const lingered = island.getState();
   const lingeredVisible = islandWindow?.isVisible() ?? false;
+  // 断言"没有消失"即可：真人可能在这 15 秒里点了岛（那就从胶囊变成展开态），
+  // 但只要还看得见、还是同一条通知，就说明"常驻"成立。
   record(
     '收起后胶囊常驻（超时不再消失，随时可再次点开）',
-    collapseBefore.mode === 'pill' && lingered.mode === 'pill' && lingeredVisible,
-    `收起前=${collapseBefore.mode} 超时后=${lingered.mode} 可见=${lingeredVisible}`,
+    collapseBefore.mode === 'pill' &&
+      lingered.mode !== 'hidden' &&
+      lingeredVisible &&
+      lingered.active?.id === 'smoke-collapse-reopen',
+    `收起前=${collapseBefore.mode} 超时后=${lingered.mode} 可见=${lingeredVisible} ` +
+      `active=${lingered.active?.id ?? '-'}`,
   );
+  // 先确保处于胶囊态（真人在等待期间可能点开过），再验证"命中恢复 + 点击展开"
+  island.handleAction({ action: 'collapse' });
+  await sleep(500);
   // 命中兜底：把窗口显式置为"穿透"，再把光标位置注入到胶囊中心 ——
   // 主进程每 120ms 按光标校正一次命中，必须自己恢复（这正是"点开再收起后点不开"的兜底修复）。
   island.setInteractive(false);
@@ -2281,24 +2290,27 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     record('冒烟收尾：清理登录态', Boolean(cleanup?.ok), String(cleanup?.detail ?? ''));
   }
 
-  // 托盘与退出清理放在最后：会隐藏主窗口并销毁托盘/灵动岛
-  await runTrayAndShutdownChecks(win, record);
-
-  const failed = results.filter((item) => !item.ok);
-  const passed = results.length - failed.length;
-  console.log(`\n[SMOKE] ${passed}/${results.length} 项通过`);
-
-  const resultFile = process.env.ELECTRON_SMOKE_RESULT;
-  if (resultFile) {
+  /**
+   * 把当前结果落盘 + 打印汇总。
+   * 为什么要写两次：托盘/退出清理用例会真的走一遍"退出应用"，进程可能在收尾代码执行前就退出，
+   * 那样 ELECTRON_SMOKE_RESULT 就不会生成（重启校验会误报"结果=-1/0"）。
+   * 所以在跑托盘用例之前先写一次，收尾再写一次（覆盖全部用例）。
+   */
+  const writeResult = (): void => {
+    const failedItems = results.filter((item) => !item.ok);
+    const passedCount = results.length - failedItems.length;
+    console.log(`\n[SMOKE] ${passedCount}/${results.length} 项通过`);
+    const resultFile = process.env.ELECTRON_SMOKE_RESULT;
+    if (!resultFile) return;
     try {
       fs.mkdirSync(path.dirname(resultFile), { recursive: true });
       fs.writeFileSync(
         resultFile,
         JSON.stringify(
           {
-            passed,
+            passed: passedCount,
             total: results.length,
-            ok: failed.length === 0,
+            ok: failedItems.length === 0,
             results,
             finishedAt: new Date().toISOString(),
             appVersion: app.getVersion(),
@@ -2313,7 +2325,15 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     } catch (error) {
       console.error('[SMOKE] 写入结果文件失败', error);
     }
-  }
+  };
 
+  writeResult();
+
+  // 托盘与退出清理放在最后：会隐藏主窗口并销毁托盘/灵动岛
+  await runTrayAndShutdownChecks(win, record);
+
+  writeResult();
+
+  const failed = results.filter((item) => !item.ok);
   app.exit(failed.length === 0 ? 0 : 1);
 }

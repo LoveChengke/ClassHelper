@@ -4,6 +4,7 @@ import {
   SOCKET_EVENTS,
   WEEKDAYS,
   WEEKDAY_LABELS,
+  WEEK_PARITY_LABELS,
   buildWeekOptions,
   formatWeekRange,
   resolveClassStatus,
@@ -73,6 +74,8 @@ interface TimelineLesson {
   course: string;
   location: string;
   weekRange: string;
+  /** 单双周标签（'单周' / '双周'；每周的课为空串） */
+  parityLabel: string;
   state: LessonState;
   /** 进行中：距下课剩余；下一节：距上课剩余（分钟） */
   remainMinutes: number;
@@ -102,6 +105,8 @@ const timeline = computed<TimelineLesson[]>(() =>
       course: item.course?.name ?? '课程',
       location: item.location ?? '未填地点',
       weekRange: formatWeekRange(item.weekStart, item.weekEnd),
+      /** 单双周标签（每周的课不显示） */
+      parityLabel: (item.weekParity ?? 'ALL') === 'ALL' ? '' : WEEK_PARITY_LABELS[item.weekParity],
       state,
       remainMinutes: state === 'current' ? end - nowMinutes : start - nowMinutes,
       progress: state === 'current' ? Math.round(((nowMinutes - start) / Math.max(1, end - start)) * 100) : 0,
@@ -324,6 +329,13 @@ onUnmounted(() => {
                   <span>{{ lesson.location }}</span>
                   <span class="lesson-sep">·</span>
                   <span>{{ lesson.weekRange }}</span>
+                  <!-- 单双周：只有单周/双周上的课才打标签，避免"每周"的课被噪音刷屏 -->
+                  <template v-if="lesson.parityLabel">
+                    <span class="lesson-sep">·</span>
+                    <el-tag size="small" effect="plain" class="lesson-parity">
+                      {{ lesson.parityLabel }}
+                    </el-tag>
+                  </template>
                   <template v-if="lesson.state === 'current'">
                     <span class="lesson-sep">·</span>
                     <span class="lesson-remain">距下课 {{ remainText(lesson.remainMinutes) }}</span>
@@ -621,6 +633,15 @@ onUnmounted(() => {
 
 .lesson-sep {
   opacity: 0.5;
+}
+
+/* 单双周标签：比正文小一号，颜色跟随主题色，避免抢标题 */
+.lesson-parity {
+  height: 18px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--ch-accent, #409eff);
+  border-color: currentColor;
 }
 
 .lesson-remain {

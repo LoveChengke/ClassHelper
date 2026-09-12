@@ -2,6 +2,8 @@ import {
   API_PATHS,
   type ClassDetailDto,
   type ClassDto,
+  type ClassPlanImportResultDto,
+  type ClassPlanPreviewDto,
   type ClassStatusDto,
   type CourseDto,
   type CreateClassRequest,
@@ -15,6 +17,7 @@ import {
   type GradeDto,
   type GradeStats,
   type HomeworkDto,
+  type HomeworkSubmissionsDto,
   type LoginRequest,
   type LoginResponse,
   type NotificationDto,
@@ -110,6 +113,11 @@ export const homeworkApi = {
   update: (id: string, payload: Partial<CreateHomeworkRequest>): Promise<HomeworkDto> =>
     api.patch(`${API_PATHS.homeworks}/${id}`, payload),
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.homeworks}/${id}`),
+  /** 提交名单 / 未交名单（教师与班级设备可用） */
+  submissions: (id: string): Promise<HomeworkSubmissionsDto> =>
+    api.get(`${API_PATHS.homeworks}/${id}/submissions`),
+  saveSubmissions: (id: string, notSubmittedUserIds: string[]): Promise<HomeworkSubmissionsDto> =>
+    api.patch(`${API_PATHS.homeworks}/${id}/submissions`, { notSubmittedUserIds }),
 };
 
 /* ------------------------------------------------------------------ 通知 */
@@ -202,7 +210,7 @@ export const teacherApi = {
   fromClass: (classId: string): Promise<ClassDetailDto> => classApi.detail(classId),
 };
 
-/* ------------------------------------------------------------------ 导入（模板 / 表格 / 课表时间配置） */
+/* ------------------------------------------------------------------ 导入（模板 / 表格 / 课表时间配置 / ClassIsland 课程表） */
 
 export const importApi = {
   /** 模板下载地址（CSV 走 JSON，XLSX 走二进制） */
@@ -251,4 +259,21 @@ export const importApi = {
 
   removeTimeLayout: (id: string): Promise<{ id: string }> =>
     api.delete(`${API_PATHS.imports}/time-layout/${id}`),
+
+  /**
+   * ClassIsland 课程表（ClassPlan）解析预览（不写库）。
+   * 注意：请求体里的 JSON 字段名就叫 payload（与 ClassIsland 档案 JSON 同名）。
+   */
+  previewClassPlan: (payload: {
+    classId: string;
+    mode?: 'replace' | 'merge';
+    payload: unknown;
+  }): Promise<ClassPlanPreviewDto> => api.post(`${API_PATHS.imports}/class-plan/preview`, payload),
+
+  /** 导入 ClassIsland 课程表（支持单双周：replace 覆盖 / merge 合并；失败会抛错且不改动原课表） */
+  importClassPlan: (payload: {
+    classId: string;
+    mode?: 'replace' | 'merge';
+    payload: unknown;
+  }): Promise<ClassPlanImportResultDto> => api.post(`${API_PATHS.imports}/class-plan`, payload),
 };

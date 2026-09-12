@@ -143,6 +143,199 @@ async function main() {
     `第 1 周 ${totalSlots} 节课`,
   );
 
+  /* ---------------------------------------------------------------- 2.1 单双周课表 */
+  // 第 1 周是单周、第 2 周是双周（与 ClassIsland 的 WeekCountDiv 语义一致）
+  const parityCourseId = courseId ?? courses.payload?.data?.[0]?.id;
+  const parityCreate = await api('/schedules', {
+    method: 'POST',
+    token: teacherToken,
+    body: {
+      classId,
+      courseId: parityCourseId,
+      dayOfWeek: 6,
+      startTime: '07:00',
+      endTime: '07:45',
+      weekStart: 1,
+      weekEnd: 20,
+      weekParity: 'ODD',
+      location: '单双周校验 · 单周',
+    },
+  });
+  record(
+    '创建单周课表（weekParity=ODD）',
+    parityCreate.status === 201 && parityCreate.payload?.data?.weekParity === 'ODD',
+    `status=${parityCreate.status} weekParity=${parityCreate.payload?.data?.weekParity ?? '-'}`,
+  );
+  const parityId = parityCreate.payload?.data?.id;
+  const oddGrid = await api(`/schedules/grid?classId=${classId}&week=1`, { token: teacherToken });
+  const evenGrid = await api(`/schedules/grid?classId=${classId}&week=2`, { token: teacherToken });
+  const inGrid = (payload) =>
+    (payload?.data?.columns ?? []).some((col) => (col.items ?? []).some((item) => item.id === parityId));
+  record(
+    '单周课表只出现在单周（week=1 有、week=2 无）',
+    oddGrid.status === 200 && evenGrid.status === 200 && inGrid(oddGrid.payload) && !inGrid(evenGrid.payload),
+    `week1=${inGrid(oddGrid.payload)} week2=${inGrid(evenGrid.payload)}`,
+  );
+  // 补一条双周课（同一时段），验证两周各出现一节、互不冲突
+  const evenCreate = await api('/schedules', {
+    method: 'POST',
+    token: teacherToken,
+    body: {
+      classId,
+      courseId: parityCourseId,
+      dayOfWeek: 6,
+      startTime: '07:00',
+      endTime: '07:45',
+      weekStart: 1,
+      weekEnd: 20,
+      weekParity: 'EVEN',
+      location: '单双周校验 · 双周',
+    },
+  });
+  const evenId = evenCreate.payload?.data?.id;
+  const oddGrid2 = await api(`/schedules/grid?classId=${classId}&week=1`, { token: teacherToken });
+  const evenGrid2 = await api(`/schedules/grid?classId=${classId}&week=2`, { token: teacherToken });
+  const countAt = (payload, id) =>
+    (payload?.data?.columns ?? []).reduce(
+      (sum, col) => sum + (col.items ?? []).filter((item) => item.id === id).length,
+      0,
+    );
+  record(
+    '同一时段的单周/双周课各归各周（互不串周）',
+    evenCreate.status === 201 &&
+      countAt(oddGrid2.payload, parityId) === 1 &&
+      countAt(oddGrid2.payload, evenId) === 0 &&
+      countAt(evenGrid2.payload, parityId) === 0 &&
+      countAt(evenGrid2.payload, evenId) === 1,
+    `week1 单周=${countAt(oddGrid2.payload, parityId)} 双周=${countAt(oddGrid2.payload, evenId)}；` +
+      `week2 单周=${countAt(evenGrid2.payload, parityId)} 双周=${countAt(evenGrid2.payload, evenId)}`,
+  );
+
+  /* ---------------------------------------------------------------- 2.2 ClassIsland 课程表导入（含单双周） */
+  // 真实档案结构：TimeLayouts / ClassPlans / Subjects 都是 Guid 字典，单双周=两条 ClassPlan
+  const classIslandProfile = {
+    Name: '导入校验档案',
+    TimeLayouts: {
+      '11111111-1111-4111-8111-111111111111': {
+        Name: '周一作息',
+        Layouts: [
+          { StartTime: '08:00:00', EndTime: '08:45:00', TimeType: 0, BreakName: '' },
+          { StartTime: '08:45:00', EndTime: '08:55:00', TimeType: 1, BreakName: '课间' },
+          { StartTime: '08:55:00', EndTime: '09:40:00', TimeType: 0, BreakName: '' },
+        ],
+      },
+    },
+    ClassPlans: {
+      'aaaaaaaa-0001-4000-8000-000000000001': {
+        Name: '周一-单周',
+        TimeLayoutId: '11111111-1111-4111-8111-111111111111',
+        TimeRule: { WeekDay: 1, WeekCountDiv: 1, WeekCountDivTotal: 2 },
+        Classes: [
+          { SubjectId: 'bbbbbbbb-0001-4000-8000-000000000001', IsEnabled: true },
+          { SubjectId: 'bbbbbbbb-0002-4000-8000-000000000002', IsEnabled: true },
+        ],
+      },
+      'aaaaaaaa-0002-4000-8000-000000000002': {
+        Name: '周一-双周',
+        TimeLayoutId: '11111111-1111-4111-8111-111111111111',
+        TimeRule: { WeekDay: 1, WeekCountDiv: 2, WeekCountDivTotal: 2 },
+        Classes: [
+          { SubjectId: 'bbbbbbbb-0001-4000-8000-000000000001', IsEnabled: true },
+          { SubjectId: 'bbbbbbbb-0003-4000-8000-000000000003', IsEnabled: true },
+        ],
+      },
+    },
+    Subjects: {
+      'bbbbbbbb-0001-4000-8000-000000000001': { Name: '导入校验语文', TeacherName: '王芳' },
+      'bbbbbbbb-0002-4000-8000-000000000002': { Name: '导入校验数学', TeacherName: '李梅' },
+      'bbbbbbbb-0003-4000-8000-000000000003': { Name: '导入校验英语', TeacherName: '张伟' },
+    },
+  };
+  const classPlanPreview = await api('/imports/class-plan/preview', {
+    method: 'POST',
+    token: teacherToken,
+    body: { classId, mode: 'merge', payload: classIslandProfile },
+  });
+  const previewEntries = classPlanPreview.payload?.data?.entries ?? [];
+  record(
+    'ClassIsland 课程表预览：解析出 4 节（单周 2 / 双周 2）',
+    classPlanPreview.status === 200 &&
+      previewEntries.length === 4 &&
+      previewEntries.filter((item) => item.weekParity === 'ODD').length === 2 &&
+      previewEntries.filter((item) => item.weekParity === 'EVEN').length === 2 &&
+      previewEntries.every((item) => item.dayOfWeek === 1),
+    `status=${classPlanPreview.status} 共 ${previewEntries.length} 节 · ` +
+      `单周 ${previewEntries.filter((item) => item.weekParity === 'ODD').length} / ` +
+      `双周 ${previewEntries.filter((item) => item.weekParity === 'EVEN').length}` +
+      `${classPlanPreview.payload?.data?.errors?.length ? ` 错误=${classPlanPreview.payload.data.errors.join('；')}` : ''}`,
+  );
+  record(
+    '课程表预览会列出需要自动补建的科目',
+    (classPlanPreview.payload?.data?.missingSubjects ?? []).length === 3,
+    `待建科目=[${(classPlanPreview.payload?.data?.missingSubjects ?? []).join('、')}]`,
+  );
+  const classPlanImport = await api('/imports/class-plan', {
+    method: 'POST',
+    token: teacherToken,
+    body: { classId, mode: 'merge', payload: classIslandProfile },
+  });
+  const importResult = classPlanImport.payload?.data;
+  record(
+    '导入 ClassIsland 课程表：4 节写入并自动补建 3 门课程',
+    classPlanImport.status === 200 &&
+      (importResult?.created ?? 0) + (importResult?.updated ?? 0) === 4 &&
+      (importResult?.createdCourses ?? []).length === 3,
+    `新增=${importResult?.created ?? '-'} 更新=${importResult?.updated ?? '-'} ` +
+      `补建=[${(importResult?.createdCourses ?? []).join('、')}]`,
+  );
+  // 导入结果里单双周必须落库：第 1 周只有单周两节、第 2 周只有双周两节
+  const oddAfterImport = await api(`/schedules/grid?classId=${classId}&week=1`, { token: teacherToken });
+  const evenAfterImport = await api(`/schedules/grid?classId=${classId}&week=2`, { token: teacherToken });
+  const importedAt = (payload, parity) =>
+    (payload?.data?.columns ?? []).reduce(
+      (sum, col) =>
+        sum +
+        (col.items ?? []).filter(
+          (item) =>
+            item.location === null &&
+            item.weekParity === parity &&
+            item.dayOfWeek === 1 &&
+            item.startTime < '09:00',
+        ).length,
+      0,
+    );
+  record(
+    '导入后的单双周课表按周正确落位（第 1 周 2 节单周、第 2 周 2 节双周）',
+    importedAt(oddAfterImport.payload, 'ODD') >= 2 &&
+      importedAt(evenAfterImport.payload, 'ODD') === 0 &&
+      importedAt(evenAfterImport.payload, 'EVEN') >= 2 &&
+      importedAt(oddAfterImport.payload, 'EVEN') === 0,
+    `week1 单周=${importedAt(oddAfterImport.payload, 'ODD')} 双周=${importedAt(oddAfterImport.payload, 'EVEN')}；` +
+      `week2 单周=${importedAt(evenAfterImport.payload, 'ODD')} 双周=${importedAt(evenAfterImport.payload, 'EVEN')}`,
+  );
+  // 清理：按"位置/科目名前缀"识别本次写入的数据，避免误删演示课表
+  const allSchedules = await api(`/schedules?classId=${classId}`, { token: teacherToken });
+  let removedSchedules = 0;
+  for (const item of allSchedules.payload?.data ?? []) {
+    const isParityProbe = String(item.location ?? '').startsWith('单双周校验');
+    const isImported = String(item.course?.name ?? '').startsWith('导入校验');
+    if (!isParityProbe && !isImported) continue;
+    const removed = await api(`/schedules/${item.id}`, { method: 'DELETE', token: teacherToken });
+    if (removed.status === 200) removedSchedules += 1;
+  }
+  const allCourses = await api(`/courses?classId=${classId}`, { token: teacherToken });
+  let removedImportedCourses = 0;
+  for (const course of allCourses.payload?.data ?? []) {
+    if (!String(course.name).startsWith('导入校验')) continue;
+    const removed = await api(`/courses/${course.id}`, { method: 'DELETE', token: teacherToken });
+    if (removed.status === 200) removedImportedCourses += 1;
+  }
+  record(
+    '清理单双周校验与导入数据',
+    removedSchedules >= 6,
+    `删除课表 ${removedSchedules} 条、课程 ${removedImportedCourses} 门`,
+  );
+
   // ---------------------------------------------------------------- 3. WebSocket 连接
   const socket = io(BASE_URL, {
     auth: { token: studentToken, clientType: 'desktop' },
@@ -225,6 +418,59 @@ async function main() {
     '学生标记作业完成',
     statusUpdate.status === 200 && statusUpdate.payload?.data?.completed === true,
     `status=${statusUpdate.status}`,
+  );
+
+  /* ---------------------------------------------------------------- 5.1 未交名单 */
+  const submissions = await api(`/homeworks/${homeworkId}/submissions`, { token: teacherToken });
+  const studentIds = (submissions.payload?.data?.students ?? []).map((item) => item.userId);
+  record(
+    '教师可读取作业提交名单（全班学生 + 完成状态）',
+    submissions.status === 200 &&
+      studentIds.length > 0 &&
+      (submissions.payload?.data?.total ?? 0) === studentIds.length,
+    `status=${submissions.status} 全班 ${submissions.payload?.data?.total ?? '-'} 人 · ` +
+      `已完成 ${submissions.payload?.data?.completedCount ?? '-'} 人`,
+  );
+  // 勾选"未交名单"：只留第一位学生未交，其余一律视为已交
+  const firstStudentId = studentIds[0];
+  const savedSubmissions = await api(`/homeworks/${homeworkId}/submissions`, {
+    method: 'PATCH',
+    token: teacherToken,
+    body: { notSubmittedUserIds: [firstStudentId] },
+  });
+  record(
+    '保存未交名单：勾选者标记未交、其余学生自动标记已交',
+    savedSubmissions.status === 200 &&
+      (savedSubmissions.payload?.data?.notSubmitted ?? []).length === 1 &&
+      savedSubmissions.payload?.data?.notSubmitted?.[0]?.userId === firstStudentId &&
+      savedSubmissions.payload?.data?.completedCount === studentIds.length - 1,
+    `status=${savedSubmissions.status} 未交=${(savedSubmissions.payload?.data?.notSubmitted ?? []).length} ` +
+      `已完成=${savedSubmissions.payload?.data?.completedCount ?? '-'}/${savedSubmissions.payload?.data?.total ?? '-'}`,
+  );
+  // 全部已交：未交名单清空
+  const allSubmitted = await api(`/homeworks/${homeworkId}/submissions`, {
+    method: 'PATCH',
+    token: teacherToken,
+    body: { notSubmittedUserIds: [] },
+  });
+  record(
+    '未交名单可一键清空（全部已交）',
+    allSubmitted.status === 200 &&
+      (allSubmitted.payload?.data?.notSubmitted ?? []).length === 0 &&
+      allSubmitted.payload?.data?.completedCount === studentIds.length,
+    `未交=${(allSubmitted.payload?.data?.notSubmitted ?? []).length} ` +
+      `已完成=${allSubmitted.payload?.data?.completedCount ?? '-'}/${allSubmitted.payload?.data?.total ?? '-'}`,
+  );
+  // 越权：普通学生不能维护未交名单（只能标记自己）
+  const studentSubmissions = await api(`/homeworks/${homeworkId}/submissions`, {
+    method: 'PATCH',
+    token: studentToken,
+    body: { notSubmittedUserIds: [] },
+  });
+  record(
+    '普通学生不能维护未交名单（403）',
+    studentSubmissions.status === 403,
+    `status=${studentSubmissions.status}`,
   );
 
   const myHomeworks = await api(`/homeworks?classId=${classId}`, { token: studentToken });

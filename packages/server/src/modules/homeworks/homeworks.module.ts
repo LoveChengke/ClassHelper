@@ -9,9 +9,11 @@ import {
   listHomeworksQuerySchema,
   updateHomeworkSchema,
   updateHomeworkStatusSchema,
+  updateHomeworkSubmissionsSchema,
   type CreateHomeworkInput,
   type UpdateHomeworkInput,
   type UpdateHomeworkStatusInput,
+  type UpdateHomeworkSubmissionsInput,
 } from './homeworks.schemas.js';
 import * as homeworkService from './homeworks.service.js';
 
@@ -94,6 +96,30 @@ router.patch(
       req.body as UpdateHomeworkStatusInput,
     );
     sendOk(res, result, result.completed ? '已标记为完成' : '已取消完成标记');
+  },
+);
+
+/** GET /api/homeworks/:id/submissions - 提交名单（未交名单功能） */
+router.get('/:id/submissions', validate({ params: idParamSchema }), async (req, res) => {
+  const user = getAuthUser(req);
+  const { id } = validatedParams<{ id: string }>(req);
+  const result = await homeworkService.listHomeworkSubmissions(user, id);
+  sendOk(res, result, `未交 ${result.notSubmitted.length} / ${result.total} 人`);
+});
+
+/** PATCH /api/homeworks/:id/submissions - 勾选未交名单（其余学生一律视为已交） */
+router.patch(
+  '/:id/submissions',
+  validate({ params: idParamSchema, body: updateHomeworkSubmissionsSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { id } = validatedParams<{ id: string }>(req);
+    const result = await homeworkService.updateHomeworkSubmissions(
+      user,
+      id,
+      req.body as UpdateHomeworkSubmissionsInput,
+    );
+    sendOk(res, result, `已保存未交名单（未交 ${result.notSubmitted.length} 人）`);
   },
 );
 

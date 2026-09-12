@@ -5,15 +5,20 @@ import {
   SOCKET_EVENTS,
   WEEKDAYS,
   WEEKDAY_LABELS,
+  WEEK_PARITY_LABELS,
+  WEEK_PARITY_VALUES,
   buildWeekOptions,
   formatWeekRange,
+  weekParityOf,
   type ClassDto,
   type CourseDto,
   type CreateScheduleRequest,
   type ScheduleDto,
   type ScheduleWeekView,
+  type WeekParity,
 } from '@classhelper/shared';
 import { classApi, courseApi, dashboardApi, scheduleApi } from '@/api';
+import ClassPlanImportDialog from '@/components/ClassPlanImportDialog.vue';
 import TimeLayoutImportDialog from '@/components/TimeLayoutImportDialog.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
@@ -40,6 +45,12 @@ const rawSchedules = ref<ScheduleDto[]>([]);
 
 const query = reactive({ classId: '', week: 1 });
 const weekOptions = ref<number[]>(buildWeekOptions(20));
+
+/** 当前周次的单双周（第 1 周记为单周），用于工具栏提示与课表校验 */
+const currentWeekParity = computed(() => weekParityOf(query.week));
+const currentWeekParityLabel = computed(
+  () => `第 ${query.week} 周 · ${WEEK_PARITY_LABELS[currentWeekParity.value]}`,
+);
 
 /** 把同一时间段的课表行聚合成"节次"行，形成 7 列课表 */
 const periods = computed(() => {
@@ -112,6 +123,8 @@ const form = reactive({
   location: '',
   weekStart: 1,
   weekEnd: 20,
+  /** 单双周：ALL 每周（默认）/ ODD 单周 / EVEN 双周 */
+  weekParity: 'ALL' as WeekParity,
 });
 
 const rules: FormRules = {
@@ -133,6 +146,7 @@ function openCreate(): void {
   form.location = '';
   form.weekStart = 1;
   form.weekEnd = weekOptions.value.at(-1) ?? 20;
+  form.weekParity = 'ALL';
   formVisible.value = true;
 }
 
@@ -145,6 +159,7 @@ function openEdit(item: ScheduleDto): void {
   form.location = item.location ?? '';
   form.weekStart = item.weekStart;
   form.weekEnd = item.weekEnd;
+  form.weekParity = item.weekParity ?? 'ALL';
   formVisible.value = true;
 }
 
@@ -165,6 +180,7 @@ async function submitForm(): Promise<void> {
     location: form.location || null,
     weekStart: Number(form.weekStart),
     weekEnd: Number(form.weekEnd),
+    weekParity: form.weekParity,
   };
 
   if (editingId.value) {
@@ -207,6 +223,24 @@ function openTimeLayoutImport(): void {
   timeLayoutVisible.value = true;
 }
 
+/* ------------------------------------------------------------ ClassIsland 课程表导入（支持单双周） */
+
+const classPlanVisible = ref(false);
+
+function openClassPlanImport(): void {
+  if (!query.classId) {
+    ElMessage.warning('请先选择班级');
+    return;
+  }
+  classPlanVisible.value = true;
+}
+
+/** 导入成功后刷新周视图与列表（grid + list 都在 loadSchedules 里） */
+async function onClassPlanImported(): Promise<void> {
+  await loadCourses();
+  await loadSchedules();
+}
+
 onMounted(async () => {
   await loadBase();
   await loadSchedules();
@@ -237,12 +271,22 @@ onUnmounted(() => {
         <el-select v-model="query.week" placeholder="周次" style="width: 130px" @change="loadSchedules">
           <el-option v-for="week in weekOptions" :key="week" :label="`第 ${week} 周`" :value="week" />
         </el-select>
+        <el-tag type="info" effect="plain">{{ currentWeekParityLabel }}</el-tag>
         <el-button :icon="'Refresh'" @click="loadSchedules">刷新</el-button>
         <el-button v-if="canManageSchedule" type="primary" :icon="'Plus'" @click="openCreate">
           新增课表
         </el-button>
         <el-button v-if="canManageSchedule" type="warning" :icon="'Upload'" @click="openTimeLayoutImport">
           导入时间配置
+        </el-button>
+        <el-button
+          v-if="canManageSchedule"
+          type="warning"
+          plain
+          :icon="'Upload'"
+          @click="openClassPlanImport"
+        >
+          导入 ClassIsland 课程表
         </el-button>
       </div>
     </div>
@@ -268,7 +312,12 @@ onUnmounted(() => {
         <el-table-column v-for="day in WEEKDAYS" :key="day" :label="WEEKDAY_LABELS[day]" min-width="130">
           <template #default="{ row }">
             <div v-for="item in cellItems(row, day)" :key="item.id" class="timetable-cell">
-              <div class="timetable-course">{{ item.course?.name ?? '-' }}</div>
+              <div class="timetable-course">
+                {{ item.course?.name ?? '-' }}
+                <el-tag v-if="item.weekParity !== 'ALL'" size="small" effect="plain">
+                  {{ WEEK_PARITY_LABELS[item.weekParity] }}
+                </el-tag>
+              </div>
               <div class="timetable-meta">{{ item.location ?? '未填地点' }}</div>
               <div class="timetable-meta">{{ formatWeekRange(item.weekStart, item.weekEnd) }}</div>
               <div>
@@ -323,6 +372,13 @@ onUnmounted(() => {
           <span style="margin: 0 8px">至</span>
           <el-input-number v-model="form.weekEnd" :min="1" :max="30" />
         </el-form-item>
+        <el-form-item label="单双周" prop="weekParity">
+          <el-radio-group v-model="form.weekParity">
+            <el-radio v-for="parity in WEEK_PARITY_VALUES" :key="parity" :value="parity">
+              {{ WEEK_PARITY_LABELS[parity] }}
+            </el-radio>
+          </el-radio-group>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="formVisible = false">取消</el-button>
@@ -335,6 +391,14 @@ onUnmounted(() => {
       v-model="timeLayoutVisible"
       :class-id="query.classId"
       :class-name="classes.find((item) => item.id === query.classId)?.name"
+    />
+
+    <!-- ClassIsland 课程表导入（支持单双周；导入成功后刷新周视图与列表） -->
+    <ClassPlanImportDialog
+      v-model="classPlanVisible"
+      :class-id="query.classId"
+      :class-name="classes.find((item) => item.id === query.classId)?.name"
+      @imported="onClassPlanImported"
     />
   </div>
 </template>

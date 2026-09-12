@@ -46,6 +46,24 @@ export const timeLayoutQuerySchema = z.object({
   classId: z.string().min(1, '请选择班级'),
 });
 
+/**
+ * ClassIsland 课程表（ClassPlan）导入：先预览再提交。
+ * 真实档案 JSON 里 TimeLayouts / ClassPlans / Subjects 都是 "Guid → 对象" 的字典，
+ * 单双周由 ClassPlan.TimeRule.WeekCountDiv / WeekCountDivTotal 表达。
+ */
+export const classPlanImportSchema = z.object({
+  classId: z.string().min(1, '请选择班级'),
+  /** replace = 清空该班现有课表后写入；merge = 保留现有条目，只新增（同 星期+节次+单双周 视为重复则更新） */
+  mode: z.enum(['replace', 'merge']).default('replace'),
+  /** 学期起始周（用于计算单双周；不传则用服务端配置的开学日期推算） */
+  termStartWeek: z.coerce.number().int().min(1).max(60).optional(),
+  payload: z.union([
+    z.string().min(1, '请粘贴或选择 ClassIsland 导出的 JSON'),
+    z.record(z.string(), z.unknown()),
+  ]),
+});
+
 export type TableFileInput = z.infer<typeof tableFileSchema>;
 export type TableCommitInput = z.infer<typeof tableCommitSchema>;
 export type TimeLayoutImportInput = z.infer<typeof timeLayoutImportSchema>;
+export type ClassPlanImportInput = z.infer<typeof classPlanImportSchema>;
