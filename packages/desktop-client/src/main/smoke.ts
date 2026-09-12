@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app } from 'electron';
+import { app, screen } from 'electron';
 import type { BrowserWindow, NativeImage } from 'electron';
-import type { IslandNotification } from '@classhelper/shared';
+import type { IslandAppearance, IslandNotification } from '@classhelper/shared';
+import { getConfig, saveConfig } from './config.js';
 import { getDiagnostics } from './ipc.js';
 import { island, ISLAND_CALL_SIZE, ISLAND_SIZES, ISLAND_URGENT_SIZE } from './island.js';
 import { destroyTray, getTrayState, isTrayReady } from './tray.js';
@@ -651,6 +652,146 @@ async function runIslandChecks(
       rapidBounds?.height === currentAppearance.height,
     `mode=${rapidState.mode} 窗口=${rapidBounds?.width ?? '-'}x${rapidBounds?.height ?? '-'}` +
       `（期望 ${currentAppearance.width}x${currentAppearance.height}）`,
+  );
+
+  // 11) 个性化设置的其余参数：透明度 / 主题色 / 动画开关 / 速度 / 位置 / 置顶 / 持久化
+  //     （需求 2 的完整清单，逐项断言真实窗口属性，而不是只看设置页显示）
+  const workArea = screen.getPrimaryDisplay().workArea;
+
+  // 11.1 透明度 → 窗口 setOpacity
+  island.setAppearance({ ...appearanceBefore, opacity: 0.62 });
+  await sleep(400);
+  const opacityActual = islandWindow?.getOpacity() ?? -1;
+  record(
+    '个性设置：透明度生效（窗口 setOpacity）',
+    Math.abs(opacityActual - 0.62) < 0.03,
+    `设置=0.62 实际=${opacityActual.toFixed(2)}`,
+  );
+
+  // 11.2 主题色 → 渲染进程 CSS 变量
+  island.setAppearance({ ...appearanceBefore, accent: '#ff7043' });
+  await sleep(200);
+  const accentVar = await islandWindow?.webContents.executeJavaScript(
+    `getComputedStyle(document.documentElement).getPropertyValue('--island-accent').trim()`,
+  );
+  record('个性设置：主题色生效（CSS 变量）', accentVar === '#ff7043', `CSS --island-accent=${accentVar}`);
+
+  // 11.3 位置：四个停靠点的窗口坐标必须落在对应锚点
+  const positionCases: {
+    position: IslandAppearance['position'];
+    verify: (bounds: Electron.Rectangle) => boolean;
+  }[] = [
+    {
+      position: 'top-left',
+      verify: (bounds) =>
+        Math.abs(bounds.x - (workArea.x + 8)) <= 1 && Math.abs(bounds.y - (workArea.y + 8)) <= 1,
+    },
+    {
+      position: 'top-right',
+      verify: (bounds) =>
+        Math.abs(bounds.x + bounds.width - (workArea.x + workArea.width - 8)) <= 1 &&
+        Math.abs(bounds.y - (workArea.y + 8)) <= 1,
+    },
+    {
+      position: 'bottom-center',
+      verify: (bounds) => Math.abs(bounds.y + bounds.height - (workArea.y + workArea.height - 8)) <= 1,
+    },
+    {
+      position: 'top-center',
+      verify: (bounds) => Math.abs(bounds.x + bounds.width / 2 - (workArea.x + workArea.width / 2)) <= 2,
+    },
+  ];
+  const positionDetails: string[] = [];
+  let positionOk = true;
+  for (const item of positionCases) {
+    island.setAppearance({ ...appearanceBefore, position: item.position });
+    await sleep(450);
+    const bounds = islandWindow?.getBounds();
+    const matched = Boolean(bounds) && item.verify(bounds as Electron.Rectangle);
+    if (!matched) positionOk = false;
+    positionDetails.push(
+      `${item.position}=${bounds ? `${bounds.x},${bounds.y}` : '-'}${matched ? '✓' : '✗'}`,
+    );
+  }
+  record('个性设置：停靠位置生效（左上/右上/底部居中/顶部居中）', positionOk, positionDetails.join(' '));
+  island.setAppearance(appearanceBefore);
+
+  // 11.4 置顶开关 → 窗口 alwaysOnTop
+  island.setAppearance({ ...appearanceBefore, alwaysOnTop: false });
+  await sleep(250);
+  const topOff = islandWindow?.isAlwaysOnTop() ?? true;
+  island.setAppearance({ ...appearanceBefore, alwaysOnTop: true });
+  await sleep(250);
+  const topOn = islandWindow?.isAlwaysOnTop() ?? false;
+  record(
+    '个性设置：置顶开关生效',
+    topOff === false && topOn === true,
+    `关闭后 isAlwaysOnTop=${topOff}，开启后 isAlwaysOnTop=${topOn}`,
+  );
+
+  // 11.5 动画开关：关闭动画时展开必须"立即到位"（不做逐帧过渡）
+  island.setAppearance({ ...appearanceBefore, animations: false });
+  island.handleAction({ action: 'dismiss' });
+  await sleep(250);
+  island.pushNotification(makeNotification('smoke-anim-off', 'NORMAL', '关闭动画校验'), { inClass: false });
+  await sleep(300);
+  island.handleAction({ action: 'expand' });
+  await sleep(60);
+  const instantBounds = islandWindow?.getBounds();
+  const expectedExpanded = ISLAND_SIZES.expanded;
+  const animationsOff = island.getAppearance().animations === false;
+  record(
+    '个性设置：关闭动画后展开立即到位',
+    !animationsOff ||
+      (instantBounds?.width === expectedExpanded.width && instantBounds?.height === expectedExpanded.height),
+    `animations=${island.getAppearance().animations} 60ms 后窗口=${instantBounds?.width ?? '-'}x${instantBounds?.height ?? '-'}（目标 ${expectedExpanded.width}x${expectedExpanded.height}）`,
+  );
+
+  // 11.6 动画速度：speed=2 的收回耗时必须明显短于 speed=0.5
+  const measureCollapse = async (speed: number): Promise<number> => {
+    island.setAppearance({ ...appearanceBefore, animations: true, speed });
+    island.handleAction({ action: 'expand' });
+    await sleep(500);
+    const started = Date.now();
+    island.handleAction({ action: 'collapse' });
+    const target = island.getAppearance().width;
+    const deadline = started + 2500;
+    while (Date.now() < deadline) {
+      const width = islandWindow?.getBounds().width ?? 0;
+      if (Math.abs(width - target) <= 1) break;
+      await sleep(16);
+    }
+    return Date.now() - started;
+  };
+  const slowMs = await measureCollapse(0.5);
+  const fastMs = await measureCollapse(2);
+  record(
+    '个性设置：动画速度生效（2 倍速明显快于 0.5 倍速）',
+    fastMs + 60 < slowMs,
+    `speed=0.5 收回耗时=${slowMs}ms，speed=2 收回耗时=${fastMs}ms`,
+  );
+  island.handleAction({ action: 'dismiss' });
+  await sleep(250);
+
+  // 11.7 持久化：写入主进程配置后重新读取必须一致（重启客户端后仍生效）
+  const persisted = island.getAppearance();
+  saveConfig({ island: persisted });
+  const restored = getConfig().island ?? null;
+  record(
+    '个性设置：持久化到客户端配置（重启后仍生效）',
+    Boolean(restored) &&
+      restored?.height === persisted.height &&
+      restored?.width === persisted.width &&
+      restored?.radius === persisted.radius &&
+      restored?.opacity === persisted.opacity &&
+      restored?.accent === persisted.accent &&
+      restored?.fontSize === persisted.fontSize &&
+      restored?.animations === persisted.animations &&
+      restored?.speed === persisted.speed &&
+      restored?.position === persisted.position &&
+      restored?.alwaysOnTop === persisted.alwaysOnTop,
+    `写入=${persisted.width}x${persisted.height} 读取=${restored?.width ?? '-'}x${restored?.height ?? '-'} ` +
+      `位置=${restored?.position} 置顶=${restored?.alwaysOnTop} 动画=${restored?.animations}`,
   );
 
   island.setAppearance(appearanceBefore);

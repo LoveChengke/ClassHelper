@@ -20,7 +20,7 @@
 | 1    | pnpm monorepo 脚手架、TypeScript / ESLint / Prettier / 环境变量                                            | ✅ 已完成                                                  |
 | 2    | 后端：Prisma schema + 迁移 + 种子数据 + JWT 认证 + RBAC + 模块化 REST API + Socket.IO                      | ✅ 已完成                                                  |
 | 3    | Web 管理端：登录、主布局、仪表盘、班级/学生/课表/作业/通知/成绩页面、Axios 封装、实时提示                  | ✅ 已完成                                                  |
-| 4    | EXE 客户端：Electron 主进程/preload/渲染进程、登录、课表/作业/通知/成绩/设置、实时推送、IndexedDB 离线缓存 | ✅ 已完成（冒烟验证 40/40）                                |
+| 4    | EXE 客户端：Electron 主进程/preload/渲染进程、登录、课表/作业/通知/成绩/设置、实时推送、IndexedDB 离线缓存 | ✅ 已完成（冒烟验证 47/47）                                |
 | 5    | 三端联调脚本、打包命令、完整 README                                                                        | ✅ 已完成（三套安装包 + 两套 UI 回归测试）                 |
 | 6    | 测试账号与种子数据说明                                                                                     | ✅ 已完成（见下文）                                        |
 | 7    | 生产化：服务端安装程序（内置 Node）、Web 端 PWA 可安装、Docker + Nginx 部署、生产加固与运维文档            | ✅ 已完成（见 [`docs/production.md`](docs/production.md)） |
@@ -173,13 +173,13 @@ pnpm verify:desktop
 # 另开一个终端先启动后端：pnpm dev:server
 pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC + 上课时段拦截 + 叫人 + 导入 + 班级账号：125 项
 pnpm verify:web          # Web 管理端真实点击（含权限入口隐藏、手机适配、叫人入口、紧急通知 + 导入弹窗）：18 项
-pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读/作业/叫人、真实链路、课表时间轴、个性化与托盘）：40 项
+pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读/作业/叫人、真实链路、课表时间轴、个性化 10 项参数与托盘/退出无残留）：47 项
 ```
 
 后端脚本验证**实时推送时延、作业完成、成绩下发、权限隔离、上课时段紧急通知拦截、导入与失败回滚、班级账号代全班操作**等 125 项，
 实测通知 37ms、作业 26ms、成绩 25ms 到达（要求 < 5 秒），紧急通知 409 拦截与二次确认后发布均通过；
 客户端脚本验证 preload 桥接、渲染进程、IndexedDB 读写、断网回退、**灵动岛四种状态切换**与联网集成
-（**班级账号登录** + 四类数据 + Socket.IO），实测 40/40 通过。
+（**班级账号登录** + 四类数据 + Socket.IO），实测 47/47 通过；退出后再启动一次校验单实例锁与文件锁已释放。
 
 ## 默认账号与种子数据
 
@@ -208,30 +208,30 @@ pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读
 
 ## 常用命令
 
-| 命令                                        | 说明                                                                         |
-| ------------------------------------------- | ---------------------------------------------------------------------------- |
-| `pnpm dev`                                  | 并行启动 shared(tsc watch) + 后端 + Web 端                                   |
-| `pnpm dev:server` / `pnpm dev:web`          | 只启动后端 / 只启动 Web 端                                                   |
-| `pnpm dev:desktop`                          | 启动 EXE 客户端开发模式（Vite 5174 + Electron，热更新）                      |
-| `pnpm build`                                | 构建 shared + 后端 + Web 端 + EXE 客户端                                     |
-| `pnpm build:desktop`                        | 仅构建 EXE 客户端（esbuild 主进程/preload + Vite 渲染进程）                  |
-| `pnpm icons`                                | 生成应用图标（PNG/ICO，用 Electron 渲染 SVG）                                |
-| **`pnpm dist:server`**                      | **打包服务端 + Web 管理端**（免安装目录 + NSIS 安装程序，内置 Node）         |
-| `pnpm dist:dir`                             | 打包客户端免安装目录 `release/win-unpacked`（含可执行文件，最快）            |
-| `pnpm dist:win`                             | 打包客户端 nsis 安装包 + portable 单文件 EXE                                 |
-| `pnpm dist:all`                             | 服务端安装程序 + 客户端安装程序一起打                                        |
-| `pnpm verify:e2e`                           | 后端端到端验收（125 项，含角色权限矩阵、导入与班级账号，需服务端已启动）     |
-| `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，18 项，含权限入口隐藏与导入弹窗） |
-| `pnpm verify:desktop`                       | EXE 客户端冒烟验证（40 项，含灵动岛动画/收回/已读/作业/叫人、课表时间轴）    |
-| `pnpm typecheck`                            | 全仓库类型检查（含 `vue-tsc`）                                               |
-| `pnpm lint` / `pnpm lint:fix`               | ESLint 检查 / 自动修复                                                       |
-| `pnpm format` / `pnpm format:check`         | Prettier 格式化 / 检查                                                       |
-| `pnpm db:generate`                          | 生成 Prisma Client（输出到 `packages/server/src/generated/prisma`）          |
-| `pnpm db:migrate`                           | 创建并应用迁移                                                               |
-| `pnpm db:seed`                              | 写入种子数据                                                                 |
-| `pnpm db:reset`                             | 重置数据库并重新执行 seed                                                    |
-| `pnpm db:studio`                            | 打开 Prisma Studio                                                           |
-| `pnpm db:switch:mysql` / `db:switch:sqlite` | 切换数据库 provider                                                          |
+| 命令                                        | 说明                                                                                    |
+| ------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `pnpm dev`                                  | 并行启动 shared(tsc watch) + 后端 + Web 端                                              |
+| `pnpm dev:server` / `pnpm dev:web`          | 只启动后端 / 只启动 Web 端                                                              |
+| `pnpm dev:desktop`                          | 启动 EXE 客户端开发模式（Vite 5174 + Electron，热更新）                                 |
+| `pnpm build`                                | 构建 shared + 后端 + Web 端 + EXE 客户端                                                |
+| `pnpm build:desktop`                        | 仅构建 EXE 客户端（esbuild 主进程/preload + Vite 渲染进程）                             |
+| `pnpm icons`                                | 生成应用图标（PNG/ICO，用 Electron 渲染 SVG）                                           |
+| **`pnpm dist:server`**                      | **打包服务端 + Web 管理端**（免安装目录 + NSIS 安装程序，内置 Node）                    |
+| `pnpm dist:dir`                             | 打包客户端免安装目录 `release/win-unpacked`（含可执行文件，最快）                       |
+| `pnpm dist:win`                             | 打包客户端 nsis 安装包 + portable 单文件 EXE                                            |
+| `pnpm dist:all`                             | 服务端安装程序 + 客户端安装程序一起打                                                   |
+| `pnpm verify:e2e`                           | 后端端到端验收（125 项，含角色权限矩阵、导入与班级账号，需服务端已启动）                |
+| `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，18 项，含权限入口隐藏与导入弹窗）            |
+| `pnpm verify:desktop`                       | EXE 客户端冒烟验证（47 项，含灵动岛动画/收回/已读/作业/叫人、课表时间轴、个性化全参数） |
+| `pnpm typecheck`                            | 全仓库类型检查（含 `vue-tsc`）                                                          |
+| `pnpm lint` / `pnpm lint:fix`               | ESLint 检查 / 自动修复                                                                  |
+| `pnpm format` / `pnpm format:check`         | Prettier 格式化 / 检查                                                                  |
+| `pnpm db:generate`                          | 生成 Prisma Client（输出到 `packages/server/src/generated/prisma`）                     |
+| `pnpm db:migrate`                           | 创建并应用迁移                                                                          |
+| `pnpm db:seed`                              | 写入种子数据                                                                            |
+| `pnpm db:reset`                             | 重置数据库并重新执行 seed                                                               |
+| `pnpm db:studio`                            | 打开 Prisma Studio                                                                      |
+| `pnpm db:switch:mysql` / `db:switch:sqlite` | 切换数据库 provider                                                                     |
 
 ## Web 管理端（含手机小屏适配）
 
@@ -423,6 +423,12 @@ pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读
 任务管理器中不留残留进程。冒烟实测：关闭后 `visible=false / destroyed=false / 进程存活=true`，
 清理后 `托盘=false / 灵动岛=false`。
 
+**"退出无残留"是被实测出来的，不是只写在文档里**：冒烟脚本在 Electron 进程真正退出之后再做两件事 ——
+① 删除该次运行独占的 `userData` 目录（含 Chromium `SingletonLock` 与 IndexedDB 文件句柄），
+删得掉就说明没有进程还占着句柄；② 用**同一个配置目录再启动一次**，若还有残留进程占着单实例锁，
+第二次启动会静默退出且不产出结果文件——实测第二次启动正常跑完并再次全绿
+（`[smoke] [PASS] 退出后无残留：配置文件锁已释放，二次启动成功（41/41）`）。
+
 ### 离线缓存与自动同步
 
 ```
@@ -465,7 +471,7 @@ pnpm dist:win     # nsis 安装包 + portable 单文件（需联网下载 NSIS �
 | 校验项                                 | 实测结果                                                                                                                                                          |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 渲染进程挂载 + 窗口标题                | ✅ `children=1` / `title=班级小助手`                                                                                                                              |
-| 登录页渲染（三个输入框）               | ✅ 服务器地址 / 用户名 / 密码                                                                                                                                     |
+| 登录页渲染（三个输入框）               | ✅ 服务器地址 / **班级码** / 班级密码                                                                                                                             |
 | preload contextBridge 注入             | ✅ 9 个方法（含灵动岛 3 个）                                                                                                                                      |
 | IPC 往返（getAppInfo/saveConfig）      | ✅ Electron 44.3.0                                                                                                                                                |
 | 配置文件写入用户目录                   | ✅ `%APPDATA%\@classhelper\desktop-client\config.json`                                                                                                            |
@@ -484,10 +490,18 @@ pnpm dist:win     # nsis 安装包 + portable 单文件（需联网下载 NSIS �
 | **点击右上角收起按钮回缩为胶囊**       | ✅ 真实点击 `.icon-btn` → `mode=pill`                                                                                                                             |
 | **灵动岛截图留档 + 像素级校验**        | ✅ 4 张（808×632 / 848×688 / 536×88 / 808×632）；宽高比与状态机配置偏差 **0.000**；形态尺寸递增 pill < expanded < urgent；紧急态偏红 **20584 px**（卡片内部光晕） |
 | **紧急红晕不外溢（窗口边缘无红光）**   | ✅ 截图最外圈（2px）偏红像素 = **0**（守住"卡片周围不出现光晕硬边"）                                                                                              |
-| 联网集成（`ELECTRON_SMOKE_ONLINE=1`）  | ✅ 登录王小明 / 1 班级 / 7 作业 / 20 通知 / 8 成绩 / 第1周30节课 / Socket.IO 已连接                                                                               |
+| 联网集成（`ELECTRON_SMOKE_ONLINE=1`）  | ✅ `login=高一(1)班 classSession=true` / 1 班级 / 30 节课 / Socket.IO 已连接                                                                                      |
+| **个性化：尺寸联动不破坏布局**         | ✅ 高 56 / 宽 300 / 圆角 26 / 字号 14 → 窗口 `300x56`，CSS 变量同步，展开态内容溢出 **0px**                                                                       |
+| **个性化：透明度 / 主题色**            | ✅ `setOpacity` 实际 **0.62**（设置 0.62）；`--island-accent` = `#ff7043`                                                                                         |
+| **个性化：停靠位置（4 个锚点）**       | ✅ 左上 `8,8` / 右上 `1164,8` / 底部居中 `586,800` / 顶部居中 `586,8`                                                                                             |
+| **个性化：置顶开关**                   | ✅ 关闭后 `isAlwaysOnTop=false`，开启后 `true`                                                                                                                    |
+| **个性化：动画开关 / 速度**            | ✅ 关闭动画后 60ms 内即为 `404x316`（无过渡）；speed=0.5 收回 435ms vs speed=2 收回 128ms                                                                         |
+| **个性化：持久化**                     | ✅ 写入客户端配置后重新读取完全一致（尺寸/圆角/透明度/主题色/字号/动画/速度/位置/置顶）                                                                           |
+| **退出清理：托盘 / 灵动岛 / 窗口**     | ✅ `isTrayReady()=false`、`island.isReady()=false`、窗口全部销毁                                                                                                  |
+| **退出后无残留（文件锁 + 二次启动）**  | ✅ 配置目录可删除（句柄已释放）→ 用同一配置目录二次启动成功并再次全绿                                                                                             |
 
 该验证对**开发产物与打包后的 EXE 都适用**（打包后用 `ELECTRON_SMOKE_RESULT=<file>` 写出 JSON 结果，
-已实测 `packaged: true`、28/28 通过、退出码 0）。灵动岛各状态的窗口截图会写到
+已实测 `packaged: true`、47/47 通过、退出码 0）。灵动岛各状态的窗口截图会写到
 `ISLAND_SHOTS_DIR`（默认 `.cache/island-shots/`，仓库内留档目录 `docs/screenshots/island/`），
 并对尺寸、宽高比、绘制内容（不透明像素/颜色种类）、紧急态红色像素与外溢红光做断言。
 冒烟进程使用独立 userData（`ELECTRON_SMOKE_PROFILE`），因此**用户开着客户端也能跑验证**。
@@ -836,7 +850,7 @@ pnpm db:migrate && pnpm db:seed
 | ----------------------------------------------------------------------------------------- | ----------------------------------- |
 | `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                               | **125/125** ✅                      |
 | `pnpm verify:web`（Web 管理端真实点击 + 权限入口隐藏 + 手机适配 + 叫人 + 导入弹窗 + PWA） | **18/18** ✅                        |
-| `pnpm verify:desktop`（客户端冒烟 + 灵动岛动画/收回/已读/作业/叫人 + 课表时间轴）         | **40/40** ✅                        |
+| `pnpm verify:desktop`（客户端冒烟 + 灵动岛动画/收回 + 个性化全参数 + 托盘与退出无残留）   | **47/47** ✅                        |
 | `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                                      | 全部通过 ✅                         |
 | 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）                                        | 通过 ✅                             |
 | Docker / Nginx 部署样例                                                                   | 文件已提供，本机无 Docker 未实测 ⚠️ |

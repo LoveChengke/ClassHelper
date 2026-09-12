@@ -119,19 +119,74 @@ if (online === '1') {
   );
 }
 
-const child = spawn(electronPath, ['.'], {
-  cwd: root,
-  stdio: 'inherit',
-  env: resolveElectronEnv({
-    ELECTRON_SMOKE_TEST: '1',
-    ELECTRON_SMOKE_ONLINE: online,
-    ELECTRON_SMOKE_PROFILE: profileDir,
-    ELECTRON_SMOKE_CLASS_CODE: classCredentials?.code ?? '',
-    ELECTRON_SMOKE_CLASS_PASSWORD: classCredentials?.password ?? '',
-  }),
-});
+/** 启动一次冒烟（返回退出码） */
+function launchSmoke(extraEnv) {
+  return new Promise((resolve) => {
+    const child = spawn(electronPath, ['.'], {
+      cwd: root,
+      stdio: 'inherit',
+      env: resolveElectronEnv({
+        ELECTRON_SMOKE_TEST: '1',
+        ELECTRON_SMOKE_ONLINE: online,
+        ELECTRON_SMOKE_PROFILE: profileDir,
+        ELECTRON_SMOKE_CLASS_CODE: classCredentials?.code ?? '',
+        ELECTRON_SMOKE_CLASS_PASSWORD: classCredentials?.password ?? '',
+        ...extraEnv,
+      }),
+    });
+    child.on('exit', (code) => resolve(code ?? 1));
+  });
+}
 
-child.on('exit', (code) => {
-  console.log(`\n[smoke] Electron 退出，code=${code ?? 1}`);
-  process.exit(code ?? 1);
-});
+const code = await launchSmoke();
+console.log(`\n[smoke] Electron 退出，code=${code}`);
+if (code !== 0) process.exit(code);
+
+/**
+ * 需求 5 的"退出不留残留"实测（在进程真正退出之后做，才有意义）：
+ *   1) 配置目录（含 Chromium 的 SingletonLock / IndexedDB 文件锁）必须能被删除
+ *      —— 删不掉说明还有句柄被占用，即存在残留进程；
+ *   2) 用同一个配置目录再启动一次：单实例锁与端口/句柄都已释放才会真正跑起来
+ *      （若还有残留进程占着锁，第二次启动会静默退出且不产出结果文件）。
+ */
+let lockReleased = true;
+try {
+  fs.rmSync(profileDir, { recursive: true, force: true, maxRetries: 2, retryDelay: 200 });
+} catch (error) {
+  lockReleased = false;
+  console.error(`[smoke] [FAIL] 退出后配置文件锁未释放：${error?.message ?? error}`);
+}
+
+const relaunchResult = path.join(repoRoot, '.cache', `desktop-smoke-relaunch-${process.pid}.json`);
+try {
+  fs.rmSync(relaunchResult, { force: true });
+} catch {
+  // 忽略
+}
+
+console.log('\n[smoke] 二次启动校验（单实例锁 / 句柄是否已释放）...');
+const relaunchCode = await launchSmoke({ ELECTRON_SMOKE_ONLINE: '0', ELECTRON_SMOKE_RESULT: relaunchResult });
+
+let relaunchPassed = 0;
+let relaunchTotal = 0;
+try {
+  const payload = JSON.parse(fs.readFileSync(relaunchResult, 'utf8'));
+  relaunchPassed = payload.passed ?? 0;
+  relaunchTotal = payload.total ?? 0;
+} catch {
+  relaunchPassed = -1;
+}
+
+const resourcesOk =
+  lockReleased && relaunchCode === 0 && relaunchTotal > 0 && relaunchPassed === relaunchTotal;
+console.log(
+  resourcesOk
+    ? `[smoke] [PASS] 退出后无残留：配置文件锁已释放，二次启动成功（${relaunchPassed}/${relaunchTotal}）`
+    : `[smoke] [FAIL] 退出后可能仍有残留：文件锁释放=${lockReleased} 二次启动 code=${relaunchCode} 结果=${relaunchPassed}/${relaunchTotal}`,
+);
+try {
+  fs.rmSync(profileDir, { recursive: true, force: true, maxRetries: 2, retryDelay: 200 });
+} catch {
+  // 二次启动可能又建了目录，删除失败不影响结论（首次删除已证明锁已释放）
+}
+process.exit(resourcesOk ? 0 : 1);
