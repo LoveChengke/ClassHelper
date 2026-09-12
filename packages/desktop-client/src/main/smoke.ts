@@ -1,4 +1,4 @@
-﻿import fs from 'node:fs';
+import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import type { BrowserWindow, NativeImage } from 'electron';
@@ -765,6 +765,20 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const realtime = await runIslandRealtimeCheck(win);
     record('真实通知链路（Socket.IO → 灵动岛胶囊）', realtime.delivered, realtime.deliveryDetail);
     record('灵动岛"标为已读"同步通知中心', realtime.markRead, realtime.markReadDetail);
+
+    // ClassIsland 风格「今天」时间轴：造课 → 断言高亮/倒计时/大时钟 → 清理
+    const timeline = await win.webContents.executeJavaScript(
+      `(async () => {
+         if (!window.__classhelperSmoke__?.scheduleTimelineSelfTest) return { ok: false, detail: '缺少时间轴自检钩子' };
+         return await window.__classhelperSmoke__.scheduleTimelineSelfTest();
+       })()`,
+    );
+    record(
+      '课表「今天」时间轴（当前课高亮/倒计时/大时钟）',
+      Boolean(timeline?.ok),
+      String(timeline?.detail ?? ''),
+    );
+
     // 侧边栏点击导航（回归测试：曾因把 index 当路由名导致点击无反应）
     const navigation = await win.webContents.executeJavaScript(
       `(async () => {

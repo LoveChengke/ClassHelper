@@ -20,7 +20,7 @@
 | 1    | pnpm monorepo 脚手架、TypeScript / ESLint / Prettier / 环境变量                                            | ✅ 已完成                                                  |
 | 2    | 后端：Prisma schema + 迁移 + 种子数据 + JWT 认证 + RBAC + 模块化 REST API + Socket.IO                      | ✅ 已完成                                                  |
 | 3    | Web 管理端：登录、主布局、仪表盘、班级/学生/课表/作业/通知/成绩页面、Axios 封装、实时提示                  | ✅ 已完成                                                  |
-| 4    | EXE 客户端：Electron 主进程/preload/渲染进程、登录、课表/作业/通知/成绩/设置、实时推送、IndexedDB 离线缓存 | ✅ 已完成（冒烟验证 33/33）                                |
+| 4    | EXE 客户端：Electron 主进程/preload/渲染进程、登录、课表/作业/通知/成绩/设置、实时推送、IndexedDB 离线缓存 | ✅ 已完成（冒烟验证 34/34）                                |
 | 5    | 三端联调脚本、打包命令、完整 README                                                                        | ✅ 已完成（三套安装包 + 两套 UI 回归测试）                 |
 | 6    | 测试账号与种子数据说明                                                                                     | ✅ 已完成（见下文）                                        |
 | 7    | 生产化：服务端安装程序（内置 Node）、Web 端 PWA 可安装、Docker + Nginx 部署、生产加固与运维文档            | ✅ 已完成（见 [`docs/production.md`](docs/production.md)） |
@@ -173,7 +173,7 @@ pnpm verify:desktop
 # 另开一个终端先启动后端：pnpm dev:server
 pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC + 上课时段拦截 + 叫人：68 项
 pnpm verify:web          # Web 管理端真实点击（含手机小屏适配、叫人入口、紧急通知全屏警告）：16 项
-pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读/作业/叫人、真实链路）：33 项
+pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读/作业/叫人、真实链路、课表时间轴）：34 项
 ```
 
 后端脚本验证**实时推送时延、作业完成、成绩下发、权限隔离、上课时段紧急通知拦截**等 62 项，
@@ -216,7 +216,7 @@ pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读
 | `pnpm dist:all`                             | 服务端安装程序 + 客户端安装程序一起打                                        |
 | `pnpm verify:e2e`                           | 后端端到端验收（68 项，需服务端已启动）                                      |
 | `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，16 项，含手机小屏适配与叫人入口） |
-| `pnpm verify:desktop`                       | EXE 客户端冒烟验证（33 项，含灵动岛动画/收回/已读/作业/叫人、像素级校验）    |
+| `pnpm verify:desktop`                       | EXE 客户端冒烟验证（34 项，含灵动岛动画/收回/已读/作业/叫人、课表时间轴）    |
 | `pnpm typecheck`                            | 全仓库类型检查（含 `vue-tsc`）                                               |
 | `pnpm lint` / `pnpm lint:fix`               | ESLint 检查 / 自动修复                                                       |
 | `pnpm format` / `pnpm format:check`         | Prettier 格式化 / 检查                                                       |
@@ -363,17 +363,25 @@ pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读
 - 字体 `Segoe UI Variable / 微软雅黑 UI`；表格表头无底色、行分隔为 1px 细线；滚动条改为细圆角
 - Element Plus 变量（`--el-color-primary`、`--el-border-radius-base` 等）整体对齐上述规范
 
-实拍（`docs/screenshots/client/`）：
+**课表「今天」时间轴（ClassIsland 标志性观感）**，`今天 / 本周` 双标签：
 
-| 页面 | 截图                                                        |
-| ---- | ----------------------------------------------------------- |
-| 课表 | ![客户端课表](docs/screenshots/client/01-schedule.png)      |
-| 作业 | ![客户端作业](docs/screenshots/client/02-homeworks.png)     |
-| 通知 | ![客户端通知](docs/screenshots/client/03-notifications.png) |
-| 设置 | ![客户端设置](docs/screenshots/client/05-settings.png)      |
+| 元素       | 说明                                                                                                                                                              |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 大时钟     | 时:分 大字 + 秒小字（每秒刷新）+ 日期 / 星期 / 第 N 教学周                                                                                                        |
+| 当前状态卡 | 「正在上 XXX」+ 时段地点 + **距下课 X 分钟**；无课时显示「今天的课都上完了 / 今天没有课程安排」                                                                   |
+| 时间轴     | 左侧时间栏（开始/结束）+ 竖向轨道与节点 + 右侧课卡：**已结束**（置灰）、**正在上课**（强调色实底 + 进度条 + 距下课倒计时）、**下一节**（橙色标记 + 还有多久开始） |
+| 周视图     | 保留原"节次 × 星期"表格（`本周` 标签）                                                                                                                            |
 
-> 后续可继续深化：课表改为 ClassIsland 那种"垂直时间轴 + 当前课高亮卡片"（现为周视图表格）、
-> 迷你悬浮课表窗口、上课/下课提醒动画。
+实拍（`docs/screenshots/client/`，时间轴图为造了"已结束/正在上/下一节"三节课后的抓图）：
+
+| 页面                  | 截图                                                         |
+| --------------------- | ------------------------------------------------------------ |
+| 课表 · 今天（时间轴） | ![客户端课表时间轴](docs/screenshots/client/01-schedule.png) |
+| 作业                  | ![客户端作业](docs/screenshots/client/02-homeworks.png)      |
+| 通知                  | ![客户端通知](docs/screenshots/client/03-notifications.png)  |
+| 设置                  | ![客户端设置](docs/screenshots/client/05-settings.png)       |
+
+> 后续可继续深化：迷你悬浮课表窗口（ClassIsland 的桌面课表条）、上课/下课提醒动画与铃声。
 
 ### 离线缓存与自动同步
 
@@ -645,7 +653,7 @@ pnpm db:migrate && pnpm db:seed
 | ---------------------------------------------------------------------------------- | ----------------------------------- |
 | `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                        | **68/68** ✅                        |
 | `pnpm verify:web`（Web 管理端真实点击 + 手机小屏适配 + 叫人入口 + 紧急通知 + PWA） | **16/16** ✅                        |
-| `pnpm verify:desktop`（客户端冒烟 + 灵动岛动画/收回/已读/作业/叫人 + 像素级校验）  | **33/33** ✅                        |
+| `pnpm verify:desktop`（客户端冒烟 + 灵动岛动画/收回/已读/作业/叫人 + 课表时间轴）  | **34/34** ✅                        |
 | `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                               | 全部通过 ✅                         |
 | 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）                                 | 通过 ✅                             |
 | Docker / Nginx 部署样例                                                            | 文件已提供，本机无 Docker 未实测 ⚠️ |

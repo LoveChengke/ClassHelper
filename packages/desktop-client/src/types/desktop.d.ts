@@ -99,6 +99,8 @@ declare global {
         unreadCount: number;
         title: string;
       }>;
+      /** ClassIsland 风格「今天」时间轴自检（造课 → 读 DOM → 清理） */
+      scheduleTimelineSelfTest(): Promise<{ ok: boolean; detail: string }>;
       sessionCleanup(): Promise<{ ok: boolean; detail: string }>;
     };
   }

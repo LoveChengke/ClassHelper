@@ -1,4 +1,4 @@
-import { cacheGet, cacheRemove, cacheSet, cacheStats } from './db.js';
+﻿import { cacheGet, cacheRemove, cacheSet, cacheStats } from './db.js';
 import { fetchWithCache } from './index.js';
 
 export interface SmokeCheckResult {
@@ -318,6 +318,137 @@ export async function islandReadState(notificationId: string): Promise<{
   };
 }
 
+/**
+ * 冒烟自检 6（需后端在线）：ClassIsland 风格"今天"时间轴。
+ *
+ * 造三节覆盖今天的课（已结束 / 正在上 / 即将开始），切到课表页读取 DOM，
+ * 断言：时间轴渲染出卡片、正在上的那张是"进行中"卡片并带倒计时与进度条、
+ * "已结束"/"下一节"标记存在、大时钟在走。用后删除探针课表。
+ */
+export async function scheduleTimelineSelfTest(): Promise<SmokeCheckResult> {
+  const [{ useAuthStore }, { router }] = await Promise.all([
+    import('../stores/auth.js'),
+    import('../router/index.js'),
+  ]);
+  const auth = useAuthStore();
+  const serverUrl = 'http://127.0.0.1:4000';
+  const classId = auth.classId ?? null;
+  if (!classId) return { ok: false, detail: '当前学生没有班级，无法构造课表' };
+
+  const toHHmm = (minutes: number): string => {
+    const clamped = Math.min(23 * 60 + 59, Math.max(0, minutes));
+    return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`;
+  };
+
+  const created: string[] = [];
+  let teacherToken = '';
+
+  try {
+    const login = await fetch(`${serverUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'teacher1', password: 'teacher123' }),
+    }).then((response) => response.json());
+    teacherToken = login?.data?.token ?? '';
+    if (!teacherToken) return { ok: false, detail: '教师登录失败' };
+
+    const courses = await fetch(`${serverUrl}/api/courses?classId=${classId}`, {
+      headers: { authorization: `Bearer ${teacherToken}` },
+    }).then((response) => response.json());
+    const courseId = courses?.data?.[0]?.id;
+    if (!courseId) return { ok: false, detail: '该班级没有课程，无法构造课表' };
+
+    const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+    const dayOfWeek = new Date().getDay() === 0 ? 7 : new Date().getDay();
+    const probes = [
+      { start: toHHmm(nowMinutes - 180), end: toHHmm(nowMinutes - 120), location: '时间轴自检 · 已结束' },
+      { start: toHHmm(nowMinutes - 20), end: toHHmm(nowMinutes + 25), location: '时间轴自检 · 正在上课' },
+      { start: toHHmm(nowMinutes + 60), end: toHHmm(nowMinutes + 105), location: '时间轴自检 · 下一节' },
+    ];
+    for (const probe of probes) {
+      const response = await fetch(`${serverUrl}/api/schedules`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${teacherToken}` },
+        body: JSON.stringify({
+          classId,
+          courseId,
+          dayOfWeek,
+          startTime: probe.start,
+          endTime: probe.end,
+          weekStart: 1,
+          weekEnd: 30,
+          location: probe.location,
+        }),
+      }).then((result) => result.json());
+      const id = response?.data?.id;
+      if (id) created.push(id);
+    }
+    if (created.length < 3) return { ok: false, detail: `探针课表创建失败（${created.length}/3）` };
+
+    await router.push('/schedule');
+
+    let dom: {
+      count: number;
+      hasCurrent: boolean;
+      currentText: string;
+      hasProgress: boolean;
+      clock: string;
+      headline: string;
+      tags: { state: string; text: string }[];
+    } | null = null;
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const items = Array.from(document.querySelectorAll('.timeline-item'));
+      const current = document.querySelector('.timeline-item.is-current');
+      const snapshot = {
+        count: items.length,
+        hasCurrent: Boolean(current),
+        currentText: (current?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+        hasProgress: Boolean(current?.querySelector('.lesson-progress')),
+        clock: document.querySelector('.clock-main')?.textContent?.trim() ?? '',
+        headline: document.querySelector('.status-title')?.textContent?.trim() ?? '',
+        tags: items.map((node) => ({
+          state: node.getAttribute('data-state') ?? '',
+          text: (node.textContent ?? '').replace(/\s+/g, ' ').trim(),
+        })),
+      };
+      if (snapshot.hasCurrent && snapshot.count >= 3) {
+        dom = snapshot;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    if (!dom) return { ok: false, detail: '时间轴未渲染出"进行中"卡片' };
+
+    const hasPast = dom.tags.some((tag) => tag.state === 'past' && tag.text.includes('已结束'));
+    const hasNext = dom.tags.some((tag) => tag.state === 'next' && tag.text.includes('下一节'));
+    const countdown = /距下课\s*\d+/.test(dom.currentText) || dom.currentText.includes('即将下课');
+    const ok =
+      dom.count >= 3 &&
+      dom.hasCurrent &&
+      dom.hasProgress &&
+      countdown &&
+      hasPast &&
+      hasNext &&
+      /^\d{2}:\d{2}$/.test(dom.clock);
+
+    return {
+      ok,
+      detail:
+        `卡片=${dom.count} 进行中=${dom.hasCurrent} 进度条=${dom.hasProgress} 倒计时=${countdown} ` +
+        `已结束=${hasPast} 下一节=${hasNext} 大时钟=${dom.clock} 摘要="${dom.headline}"`,
+    };
+  } catch (error) {
+    return { ok: false, detail: `时间轴自检异常：${error instanceof Error ? error.message : String(error)}` };
+  } finally {
+    for (const id of created) {
+      await fetch(`${serverUrl}/api/schedules/${id}`, {
+        method: 'DELETE',
+        headers: { authorization: `Bearer ${teacherToken}` },
+      }).catch(() => undefined);
+    }
+  }
+}
 /** 冒烟收尾：断开实时通道并退出登录，保证下次冒烟从登录页开始 */
 export async function sessionCleanup(): Promise<SmokeCheckResult> {
   const [{ useAuthStore }, { useRealtimeStore }] = await Promise.all([
@@ -343,6 +474,7 @@ export function registerSmokeHooks(): void {
     islandRealtimeScenario,
     islandRealtimeCleanup,
     islandReadState,
+    scheduleTimelineSelfTest,
     sessionCleanup,
   };
 }
