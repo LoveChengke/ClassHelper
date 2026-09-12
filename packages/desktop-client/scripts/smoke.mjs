@@ -59,14 +59,24 @@ if (online === undefined) {
 
 /**
  * 准备一个已知可用的班级账号（学生端已改为班级码 + 班级密码登录）：
- * 用管理员账号登录 → 取第一个班级 → 重置成冒烟专用密码（必要时补一个班级码）。
- * 这样无论被测实例是全新安装还是升级安装，冒烟都能拿到可用凭据。
+ * 用管理员账号登录 → 取第一个班级 → 先试"已知密码"（冒烟密码 / 种子默认 123456），
+ * 命中就直接用、**不改动任何数据**；都不行才把该班重置成冒烟专用密码，
+ * 并在脚本收尾时恢复为种子默认密码（避免把演示实例的 123456 悄悄改掉）。
  */
 async function provisionClassAccount() {
   const base = process.env.ELECTRON_SMOKE_API ?? 'http://127.0.0.1:4000/api';
   const username = process.env.ELECTRON_SMOKE_ADMIN ?? 'admin';
   const adminPassword = process.env.ELECTRON_SMOKE_ADMIN_PASSWORD ?? 'admin123';
   const password = process.env.ELECTRON_SMOKE_CLASS_PASSWORD ?? 'smoke123456';
+  const CANDIDATES = [...new Set([password, process.env.ELECTRON_SMOKE_SEED_PASSWORD ?? '123456'])];
+  const tryLogin = async (code, candidate) => {
+    const response = await fetch(`${base}/auth/class-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, password: candidate }),
+    });
+    return response.ok;
+  };
   try {
     const loginResponse = await fetch(`${base}/auth/login`, {
       method: 'POST',
@@ -84,16 +94,13 @@ async function provisionClassAccount() {
     if (!target) return null;
 
     // 冒烟**永不修改班级码**（班级码是给学生用的，不应被测试工具改写）：
-    // 只有"现有班级码 + 目标密码登录失败"时才重置密码，班级码原样保留。
+    // 只有"现有班级码 + 已知密码全部登录失败"时才重置密码，班级码原样保留。
     const code = target.code;
     if (!code) return null;
 
-    const probe = await fetch(`${base}/auth/class-login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, password }),
-    });
-    if (probe.ok) return { code, password, className: target.name };
+    for (const candidate of CANDIDATES) {
+      if (await tryLogin(code, candidate)) return { code, password: candidate, className: target.name };
+    }
 
     const patchResponse = await fetch(`${base}/classes/${target.id}/class-account`, {
       method: 'PATCH',
@@ -103,9 +110,40 @@ async function provisionClassAccount() {
     if (!patchResponse.ok) return null;
 
     const patched = (await patchResponse.json())?.data;
+    // 记下"需要恢复"，脚本收尾时改回种子默认密码（已知密码都不通时无法得知原密码）
+    patchedAccount = { id: target.id, code: patched?.code ?? code, base, authHeaders };
+    console.log(
+      `[smoke] 已知密码均不可用，已把班级 ${target.name} 的密码临时重置为 ${password}` +
+        `（结束时恢复为 ${CANDIDATES[1]}）`,
+    );
     return { code: patched?.code ?? code, password, className: target.name };
   } catch {
     return null;
+  }
+}
+
+/** 冒烟临时重置过的班级账号（结束时恢复） */
+let patchedAccount = null;
+
+/** 恢复被冒烟临时改过的班级密码（失败只告警，不影响冒烟结论） */
+async function restoreClassAccount() {
+  if (!patchedAccount) return;
+  try {
+    const response = await fetch(`${patchedAccount.base}/classes/${patchedAccount.id}/class-account`, {
+      method: 'PATCH',
+      headers: patchedAccount.authHeaders,
+      body: JSON.stringify({
+        code: patchedAccount.code,
+        password: process.env.ELECTRON_SMOKE_SEED_PASSWORD ?? '123456',
+      }),
+    });
+    console.log(
+      response.ok
+        ? '[smoke] 已恢复班级密码为种子默认 123456（冒烟不留副作用）'
+        : `[smoke] [WARN] 班级密码恢复失败：status=${response.status}，请到后台重新设置`,
+    );
+  } catch (error) {
+    console.log(`[smoke] [WARN] 班级密码恢复失败：${error?.message ?? error}`);
   }
 }
 
@@ -140,6 +178,7 @@ function launchSmoke(extraEnv) {
 
 const code = await launchSmoke();
 console.log(`\n[smoke] Electron 退出，code=${code}`);
+await restoreClassAccount();
 if (code !== 0) process.exit(code);
 
 /**
