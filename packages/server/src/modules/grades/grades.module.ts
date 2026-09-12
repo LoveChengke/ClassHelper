@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
 import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
@@ -52,7 +52,7 @@ router.get(
 );
 
 /** POST /api/grades - 录入单条成绩（广播 grade:updated） */
-router.post('/', requireRole('ADMIN'), validate({ body: createGradeSchema }), async (req, res) => {
+router.post('/', requireRole('ADMIN', 'TEACHER'), validate({ body: createGradeSchema }), async (req, res) => {
   const user = getAuthUser(req);
   sendCreated(
     res,
@@ -62,16 +62,21 @@ router.post('/', requireRole('ADMIN'), validate({ body: createGradeSchema }), as
 });
 
 /** POST /api/grades/bulk - 批量录入 / 导入成绩 */
-router.post('/bulk', requireRole('ADMIN'), validate({ body: bulkCreateGradeSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const grades = await gradeService.bulkCreateGrades(user, req.body as BulkCreateGradeInput);
-  sendCreated(res, { count: grades.length, items: grades }, `已录入 ${grades.length} 条成绩`);
-});
+router.post(
+  '/bulk',
+  requireRole('ADMIN', 'TEACHER'),
+  validate({ body: bulkCreateGradeSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const grades = await gradeService.bulkCreateGrades(user, req.body as BulkCreateGradeInput);
+    sendCreated(res, { count: grades.length, items: grades }, `已录入 ${grades.length} 条成绩`);
+  },
+);
 
 /** PATCH /api/grades/:id - 修改成绩 */
 router.patch(
   '/:id',
-  requireRole('ADMIN'),
+  requireRole('ADMIN', 'TEACHER'),
   validate({ params: idParamSchema, body: updateGradeSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -81,12 +86,17 @@ router.patch(
 );
 
 /** DELETE /api/grades/:id - 删除成绩 */
-router.delete('/:id', requireRole('ADMIN'), validate({ params: idParamSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { id } = validatedParams<{ id: string }>(req);
-  await gradeService.deleteGrade(user, id);
-  sendOk(res, { id }, '成绩已删除');
-});
+router.delete(
+  '/:id',
+  requireRole('ADMIN', 'TEACHER'),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { id } = validatedParams<{ id: string }>(req);
+    await gradeService.deleteGrade(user, id);
+    sendOk(res, { id }, '成绩已删除');
+  },
+);
 
 export const gradesModule = defineModule({
   name: 'grades',

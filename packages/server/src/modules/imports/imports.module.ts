@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { sendOk } from '../../lib/http.js';
+import { ApiError, sendOk } from '../../lib/http.js';
 import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
@@ -25,9 +25,12 @@ router.use(authenticate());
 
 /**
  * GET /api/imports/template?kind=grades|students&format=csv|xlsx - 下载导入模板
- * 成绩模板=管理员；名单模板=管理员（与写入权限一致，不额外开入口）
+ * 成绩模板：管理员或班主任（空白模板，不含任何业务数据）；名单模板：仅管理员
  */
-router.get('/template', requireRole('ADMIN'), (req, res) => {
+router.get('/template', requireRole('ADMIN', 'TEACHER'), (req, res) => {
+  if (req.query.kind === 'students' && getAuthUser(req).role !== 'ADMIN') {
+    throw ApiError.forbidden('只有管理员可以导入学生名单');
+  }
   const kind = req.query.kind === 'students' ? 'students' : 'grades';
   const format = req.query.format === 'xlsx' ? 'xlsx' : 'csv';
   if (format === 'xlsx') {
@@ -46,16 +49,30 @@ router.get('/template', requireRole('ADMIN'), (req, res) => {
 
 /**
  * POST /api/imports/table/preview - 上传表格并预览（解析 + 必填列校验 + 建议字段映射）
- * 仅管理员：与"成绩录入 / 名单管理"权限一致
+ * 成绩：管理员或班主任；学生名单：仅管理员（与写入权限保持一致）
  */
-router.post('/table/preview', requireRole('ADMIN'), validate({ body: tableFileSchema }), (req, res) => {
-  sendOk(res, previewTable(validatedBody<TableFileInput>(req)), '表格解析成功');
-});
+router.post(
+  '/table/preview',
+  requireRole('ADMIN', 'TEACHER'),
+  validate({ body: tableFileSchema }),
+  (req, res) => {
+    const input = validatedBody<TableFileInput>(req);
+    if (input.kind === 'students' && getAuthUser(req).role !== 'ADMIN') {
+      throw ApiError.forbidden('只有管理员可以导入学生名单');
+    }
+    sendOk(res, previewTable(input), '表格解析成功');
+  },
+);
 
-/** POST /api/imports/table/commit - 执行导入（字段映射 + 写入模式 + 结果统计） */
+/**
+ * POST /api/imports/table/commit - 执行导入（字段映射 + 写入模式 + 结果统计）
+ *
+ * 路由放行 ADMIN|TEACHER，真正的权限在 service 内按 kind + 班级二次校验：
+ * 成绩 → 管理员或本班班主任；学生名单 → 仅管理员；科任老师一律 403（需求 7）。
+ */
 router.post(
   '/table/commit',
-  requireRole('ADMIN'),
+  requireRole('ADMIN', 'TEACHER'),
   validate({ body: tableCommitSchema }),
   async (req, res) => {
     const result = await commitTable(getAuthUser(req), validatedBody<TableCommitInput>(req));

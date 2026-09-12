@@ -39,10 +39,11 @@ const MENU_ITEMS = [
   { label: '课表管理', path: '/schedules' },
   { label: '作业发布', path: '/homeworks' },
   { label: '通知发布', path: '/notifications' },
+  { label: '成绩录入', path: '/grades' },
 ];
 
 /** 教师端必须隐藏的入口（前端隐藏 + 后端 403，双重保障） */
-const HIDDEN_MENU_LABELS = ['班级管理', '学生管理', '成绩录入'];
+const HIDDEN_MENU_LABELS = ['班级管理', '学生管理'];
 
 const results = [];
 function record(name, ok, detail = '') {
@@ -355,7 +356,7 @@ async function main() {
     return { labels, leaked };
   })()`);
   record(
-    '教师端隐藏无权入口（班级管理/学生管理/成绩录入）',
+    '教师端隐藏无权入口（班级管理/学生管理）',
     (hiddenCheck?.leaked ?? ['?']).length === 0,
     `可见菜单=[${(hiddenCheck?.labels ?? []).join(',')}] 越权入口=[${(hiddenCheck?.leaked ?? []).join(',')}]`,
   );
@@ -409,6 +410,56 @@ async function main() {
       (node.textContent ?? '').trim() === '取消',
     );
     if (cancel) cancel.click();
+    return true;
+  })()`);
+  await sleep(300);
+
+  // 7.65 需求 6：班主任（teacher1）在「成绩录入」页看到导入入口，且弹窗真实可用
+  const gradesImportUi = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
+      (node.textContent ?? '').trim().startsWith('成绩录入'),
+    );
+    if (!menu) return { ok: false, reason: '班主任看不到「成绩录入」入口（需求 6 未生效）' };
+    menu.click();
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline && location.pathname !== '/grades') await sleep(80);
+    await sleep(900);
+
+    const importButton = Array.from(document.querySelectorAll('button')).find((node) =>
+      (node.textContent ?? '').trim() === '导入表格',
+    );
+    if (!importButton) return { ok: false, reason: '成绩页没有「导入表格」按钮（班主任应可导入本班成绩）' };
+    importButton.click();
+    await sleep(700);
+
+    const dialog = Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
+      (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('导入成绩表格'),
+    );
+    if (!dialog) return { ok: false, reason: '导入弹窗未打开' };
+
+    const buttons = Array.from(dialog.querySelectorAll('button')).map((node) => (node.textContent ?? '').trim());
+    return {
+      ok: true,
+      hasExcelTemplate: buttons.some((text) => text.includes('下载模板（Excel）')),
+      hasCsvTemplate: buttons.some((text) => text.includes('下载模板（CSV）')),
+      hasFileInput: Boolean(dialog.querySelector('input[type=file]')),
+      path: location.pathname,
+    };
+  })()`);
+  record(
+    '班主任可用成绩导入入口（模板下载 + 选择文件）',
+    Boolean(gradesImportUi?.ok) &&
+      gradesImportUi?.hasExcelTemplate === true &&
+      gradesImportUi?.hasCsvTemplate === true &&
+      gradesImportUi?.hasFileInput === true,
+    `path=${gradesImportUi?.path ?? '-'} Excel模板=${gradesImportUi?.hasExcelTemplate} CSV模板=${gradesImportUi?.hasCsvTemplate} 文件选择=${gradesImportUi?.hasFileInput}` +
+      `${gradesImportUi?.reason ? ` 原因=${gradesImportUi.reason}` : ''}`,
+  );
+  await win.webContents.executeJavaScript(`(() => {
+    const buttons = Array.from(document.querySelectorAll('.el-dialog__footer button'));
+    const close = buttons.find((node) => (node.textContent ?? '').trim() === '关闭');
+    if (close) close.click();
     return true;
   })()`);
   await sleep(300);

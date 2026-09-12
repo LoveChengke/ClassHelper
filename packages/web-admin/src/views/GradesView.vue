@@ -20,8 +20,16 @@ import { useRealtimeStore } from '@/stores/realtime';
 
 const auth = useAuthStore();
 
-/** 成绩写入仅管理员（教师仍可查看列表与统计，符合需求 7 的权限清单） */
-const isAdmin = computed(() => auth.role === 'ADMIN');
+/**
+ * 成绩写入/导入权限：管理员，或"所选班级的班主任"（需求 6：老师端可用且不越权）。
+ * 科任老师只能查看列表与统计，写入会被后端 403（需求 7：科任仅作业/叫人/通知）。
+ */
+const canManageGrades = computed(() => {
+  if (auth.role === 'ADMIN') return true;
+  if (auth.role !== 'TEACHER') return false;
+  const current = classes.value.find((item) => item.id === filter.classId);
+  return Boolean(current && current.teacherId === auth.user?.id);
+});
 const realtime = useRealtimeStore();
 
 const loading = ref(false);
@@ -295,9 +303,15 @@ onUnmounted(() => {
         <el-select v-model="filter.examName" placeholder="全部考试" clearable style="width: 160px">
           <el-option v-for="item in examOptions" :key="item" :label="item" :value="item" />
         </el-select>
-        <el-button v-if="isAdmin" type="primary" :icon="'Plus'" @click="openSingle">单条录入</el-button>
-        <el-button v-if="isAdmin" type="success" :icon="'Upload'" @click="openBulk">批量录入</el-button>
-        <el-button v-if="isAdmin" type="warning" :icon="'Document'" @click="openImport">导入表格</el-button>
+        <el-button v-if="canManageGrades" type="primary" :icon="'Plus'" @click="openSingle">
+          单条录入
+        </el-button>
+        <el-button v-if="canManageGrades" type="success" :icon="'Upload'" @click="openBulk">
+          批量录入
+        </el-button>
+        <el-button v-if="canManageGrades" type="warning" :icon="'Document'" @click="openImport">
+          导入表格
+        </el-button>
       </div>
     </div>
 
@@ -358,7 +372,7 @@ onUnmounted(() => {
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="isAdmin" link type="danger" @click="removeGrade(row)">删除</el-button>
+            <el-button v-if="canManageGrades" link type="danger" @click="removeGrade(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

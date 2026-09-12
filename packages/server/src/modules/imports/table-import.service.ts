@@ -221,7 +221,8 @@ function cellValue(row: string[], columns: string[], mapping: Record<string, str
 
 /** 导入成绩：学生按用户名/姓名匹配；重复（同班级+学生+考试+课程）按 mode 处理 */
 export async function commitGrades(user: TokenPayload, input: TableCommitInput): Promise<ImportResult> {
-  assertCanManageGrades(user);
+  // 成绩导入：管理员或本班班主任（需求 6）；科任 403
+  await assertCanManageGrades(user, input.classId);
   const buffer = decodeBase64(input.contentBase64);
   const parsed = parseTable(buffer, input.fileName);
 

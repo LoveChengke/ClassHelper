@@ -157,11 +157,27 @@ export async function assertCanPublishContent(user: TokenPayload, classId: strin
   }
 }
 
-/** 成绩录入 / 修改 / 导入：仅管理员 */
-export function assertCanManageGrades(user: TokenPayload): void {
-  if (!canManageGrades(user.role)) {
-    throw ApiError.forbidden('只有管理员可以录入、修改或导入成绩');
+/**
+ * 成绩录入 / 修改 / 导入：管理员，或**本班班主任**（需求 6"老师端可用且不越权"）。
+ * 科任老师仍然被拒（需求 7：科任只有作业 / 叫人 / 通知）。
+ *
+ * @param classId 目标成绩所属班级；不传时按"全局"判定（仅管理员可用，例如空白模板下载）
+ */
+export async function assertCanManageGrades(user: TokenPayload, classId?: string): Promise<void> {
+  if (!classId) {
+    // 没有班级上下文（例如下载空白模板）：只有管理员可以执行
+    if (user.role !== 'ADMIN') throw ApiError.forbidden('该操作需要指定班级，只有管理员可以全局执行');
+    return;
   }
+
+  const classRole = await resolveUserClassRole(user, classId);
+  if (canManageGrades(classRole)) return;
+
+  throw ApiError.forbidden(
+    classRole === 'SUBJECT'
+      ? '科任老师不能录入或导入成绩，请联系班主任或管理员'
+      : '只能录入或导入自己担任班主任的班级的成绩',
+  );
 }
 
 /** 学生的主班级，未分配班级时抛 403 */

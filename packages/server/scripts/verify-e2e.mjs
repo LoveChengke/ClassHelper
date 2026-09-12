@@ -622,8 +622,10 @@ async function main() {
   }
 
   // ---------------------------------------------------------------- 6.4 班级角色权限矩阵
-  // 依据需求：班主任/科任老师不能增删改班级；仅管理员可分配人员；
-  // 科任老师仅作业/叫人/通知；班主任另可管理本班课表；成绩录入仅管理员。
+  // 依据需求 7：班主任/科任老师不能增删改班级；仅管理员可分配人员；
+  // 科任老师仅作业/叫人/通知；班主任另可管理本班课表。
+  // 结合需求 6（成绩与表格导入"老师端可用且不越权"）：成绩写入放开到**本班班主任**，
+  // 科任老师仍然 403，班主任跨班同样 403。
   {
     record('管理员登录（用于权限矩阵校验）', Boolean(adminToken), '已在上文登录');
 
@@ -736,22 +738,45 @@ async function main() {
       });
       record('科任老师录入成绩被拒绝（403）', subjectGrades.status === 403, `status=${subjectGrades.status}`);
 
+      // 需求 6：班主任可以录入**本班**成绩（老师端可用），科任老师与跨班仍然被拒
       const headGrades = await api('/grades', {
         method: 'POST',
         token: teacherToken,
         body: {
           classId: classId,
           userId: studentUser?.id,
-          examName: '班主任越权成绩',
+          examName: '班主任本班成绩',
           score: 90,
           totalScore: 100,
         },
       });
       record(
-        '班主任录入成绩被拒绝（403，成绩仅管理员）',
-        headGrades.status === 403,
+        '班主任录入本班成绩成功（201，需求 6）',
+        headGrades.status === 201,
         `status=${headGrades.status}`,
       );
+      if (headGrades.payload?.data?.id) {
+        await api(`/grades/${headGrades.payload.data.id}`, { method: 'DELETE', token: teacherToken });
+      }
+
+      if (foreignClass) {
+        const headCrossGrades = await api('/grades', {
+          method: 'POST',
+          token: teacherToken,
+          body: {
+            classId: foreignClass.id,
+            userId: studentUser?.id,
+            examName: '班主任跨班成绩',
+            score: 90,
+            totalScore: 100,
+          },
+        });
+        record(
+          '班主任录入他人班级成绩被拒绝（403）',
+          headCrossGrades.status === 403,
+          `status=${headCrossGrades.status}`,
+        );
+      }
 
       const adminGrades = await api('/grades', {
         method: 'POST',
@@ -874,8 +899,22 @@ async function main() {
     `status=${templateXlsxResponse.status} bytes=${templateXlsxBuffer.length}`,
   );
 
-  const templateDenied = await api('/imports/template?kind=grades&format=csv', { token: teacherToken });
-  record('教师下载成绩模板被拒绝（403）', templateDenied.status === 403, `status=${templateDenied.status}`);
+  // 需求 6：成绩模板对老师端开放（空白模板，不含任何业务数据）；名单模板仍仅管理员
+  const teacherGradeTemplate = await api('/imports/template?kind=grades&format=csv', { token: teacherToken });
+  record(
+    '班主任可下载成绩模板（需求 6：老师端可用）',
+    teacherGradeTemplate.status === 200,
+    `status=${teacherGradeTemplate.status}`,
+  );
+
+  const teacherRosterTemplate = await api('/imports/template?kind=students&format=csv', {
+    token: teacherToken,
+  });
+  record(
+    '班主任下载名单模板被拒绝（403，名单仅管理员）',
+    teacherRosterTemplate.status === 403,
+    `status=${teacherRosterTemplate.status}`,
+  );
 
   // 8.2 ClassIsland 课表时间配置：预览 -> 导入 -> 失败回滚 -> 合并 -> 越权 -> 清理
   const sampleLayout = {
@@ -1142,15 +1181,18 @@ async function main() {
     `失败=${gradesBroken.payload?.data?.failed} 首条=第 ${brokenErrors[0]?.row} 行：${brokenErrors[0]?.message ?? ''}`,
   );
 
-  const gradesByTeacher = await api('/imports/table/commit', {
+  // 班主任（本班）重复导入 append 模式：已存在的记录应被跳过而不是报错（需求 6）
+  const gradesByHeadTeacher = await api('/imports/table/commit', {
     method: 'POST',
     token: teacherToken,
     body: { ...gradesCommitBody, mode: 'append' },
   });
   record(
-    '教师（非管理员）导入成绩被拒绝（403）',
-    gradesByTeacher.status === 403,
-    `status=${gradesByTeacher.status}`,
+    '班主任重复导入本班成绩按 append 跳过',
+    gradesByHeadTeacher.status === 200 &&
+      (gradesByHeadTeacher.payload?.data?.skipped ?? 0) >= 1 &&
+      (gradesByHeadTeacher.payload?.data?.inserted ?? -1) === 0,
+    `status=${gradesByHeadTeacher.status} 跳过=${gradesByHeadTeacher.payload?.data?.skipped} 新增=${gradesByHeadTeacher.payload?.data?.inserted}`,
   );
 
   // 8.4 学生名单导入（仅管理员）+ 数据清理
@@ -1178,6 +1220,116 @@ async function main() {
       studentsCommit.payload?.data?.inserted === 1 &&
       studentsCommit.payload?.data?.failed === 1,
     `新增=${studentsCommit.payload?.data?.inserted} 失败=${studentsCommit.payload?.data?.failed}`,
+  );
+
+  // 8.5 需求 6：表格导入在"老师端"可用且不越权
+  //     班主任 → 本班成绩可预览/导入；科任 → 403；班主任 → 名单导入仍 403（人员管理仅管理员）
+  const teacherGradesPreview = await api('/imports/table/preview', {
+    method: 'POST',
+    token: teacherToken,
+    body: { kind: 'grades', fileName: 'grades.csv', contentBase64: gradesCsvBase64 },
+  });
+  record(
+    '班主任可预览成绩表（需求 6：老师端可用）',
+    teacherGradesPreview.status === 200 && (teacherGradesPreview.payload?.data?.totalRows ?? 0) === 3,
+    `status=${teacherGradesPreview.status} 行数=${teacherGradesPreview.payload?.data?.totalRows ?? '-'}`,
+  );
+
+  const teacherGradesCommit = await api('/imports/table/commit', {
+    method: 'POST',
+    token: teacherToken,
+    body: {
+      kind: 'grades',
+      classId,
+      fileName: 'grades.csv',
+      contentBase64: gradesCsvBase64,
+      mapping: {
+        username: '用户名',
+        name: '姓名',
+        examName: '考试名称',
+        score: '分数',
+        totalScore: '总分',
+        courseName: '课程',
+      },
+      mode: 'upsert',
+    },
+  });
+  record(
+    '班主任可导入本班成绩（upsert）',
+    teacherGradesCommit.status === 200 &&
+      (teacherGradesCommit.payload?.data?.inserted ?? 0) +
+        (teacherGradesCommit.payload?.data?.updated ?? 0) >=
+        1,
+    `status=${teacherGradesCommit.status} 新增=${teacherGradesCommit.payload?.data?.inserted} 更新=${teacherGradesCommit.payload?.data?.updated} 失败=${teacherGradesCommit.payload?.data?.failed}`,
+  );
+
+  // teacher2 是高二(3)班的科任老师（班主任是 teacher1）——这才是真正的"科任"场景
+  const subjectOnlyClass = classes.find((item) => item.name?.includes('高二(3)')) ?? null;
+  const subjectGradesImport = await api('/imports/table/commit', {
+    method: 'POST',
+    token: teacher2Token,
+    body: {
+      kind: 'grades',
+      classId: subjectOnlyClass?.id ?? classId,
+      fileName: 'grades.csv',
+      contentBase64: gradesCsvBase64,
+      mapping: {
+        username: '用户名',
+        name: '姓名',
+        examName: '考试名称',
+        score: '分数',
+        totalScore: '总分',
+        courseName: '课程',
+      },
+      mode: 'upsert',
+    },
+  });
+  record(
+    '科任老师导入本班成绩被拒绝（403，需求 7）',
+    Boolean(subjectOnlyClass) && subjectGradesImport.status === 403,
+    `班级=${subjectOnlyClass?.name ?? '未找到高二(3)班'} status=${subjectGradesImport.status}`,
+  );
+
+  if (foreignClass) {
+    const crossGradesImport = await api('/imports/table/commit', {
+      method: 'POST',
+      token: teacherToken,
+      body: {
+        kind: 'grades',
+        classId: foreignClass.id,
+        fileName: 'grades.csv',
+        contentBase64: gradesCsvBase64,
+        mapping: {
+          username: '用户名',
+          name: '姓名',
+          examName: '考试名称',
+          score: '分数',
+          totalScore: '总分',
+          courseName: '课程',
+        },
+        mode: 'upsert',
+      },
+    });
+    record(
+      '班主任向他人班级导入成绩被拒绝（403）',
+      crossGradesImport.status === 403,
+      `status=${crossGradesImport.status}`,
+    );
+  }
+
+  const teacherRosterPreview = await api('/imports/table/preview', {
+    method: 'POST',
+    token: teacherToken,
+    body: {
+      kind: 'students',
+      fileName: 'students.csv',
+      contentBase64: Buffer.from(`\ufeff用户名,姓名${NL}whatever,某人${NL}`, 'utf8').toString('base64'),
+    },
+  });
+  record(
+    '班主任预览学生名单模板被拒绝（403，名单仅管理员）',
+    teacherRosterPreview.status === 403,
+    `status=${teacherRosterPreview.status}`,
   );
 
   const studentsByTeacher = await api('/imports/table/commit', {

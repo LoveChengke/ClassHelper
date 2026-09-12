@@ -75,7 +75,7 @@ class-helper/
     │   ├── prisma/migrations/           # 迁移历史（已生成并应用）
     │   ├── prisma/seed.ts               # 种子数据
     │   ├── prisma.config.ts             # Prisma 7 配置（迁移/种子/连接串）
-    │   ├── scripts/verify-e2e.mjs       # 后端端到端验收脚本（126 项）
+    │   ├── scripts/verify-e2e.mjs       # 后端端到端验收脚本（133 项）
     │   └── src/
     │       ├── app.ts                   # Express 装配（静态托管 + 探针 + 限流 + 模块挂载）
     │       ├── index.ts                 # 启动入口（自检/初始化 + HTTP + Socket.IO + 优雅退出）
@@ -171,12 +171,12 @@ pnpm verify:desktop
 
 ```bash
 # 另开一个终端先启动后端：pnpm dev:server
-pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC + 上课时段拦截 + 叫人 + 导入 + 班级账号：126 项
-pnpm verify:web          # Web 管理端真实点击（含权限入口隐藏、手机适配、叫人入口、紧急通知 + 导入弹窗）：18 项
+pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC + 上课时段拦截 + 叫人 + 导入 + 班级账号：133 项
+pnpm verify:web          # Web 管理端真实点击（含权限入口隐藏、手机适配、叫人入口、紧急通知 + 成绩/时间配置导入弹窗）：19 项
 pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读/作业/叫人、真实链路、课表时间轴、个性化 10 项参数与托盘/退出无残留）：47 项
 ```
 
-后端脚本验证**实时推送时延、作业完成、成绩下发、权限隔离、上课时段紧急通知拦截、导入与失败回滚、班级账号代全班操作**等 126 项，
+后端脚本验证**实时推送时延、作业完成、成绩下发、权限隔离、上课时段紧急通知拦截、导入与失败回滚、班级账号代全班操作、老师端导入不越权**等 133 项，
 实测通知 37ms、作业 26ms、成绩 25ms 到达（要求 < 5 秒），紧急通知 409 拦截与二次确认后发布均通过；
 客户端脚本验证 preload 桥接、渲染进程、IndexedDB 读写、断网回退、**灵动岛四种状态切换**与联网集成
 （**班级账号登录** + 四类数据 + Socket.IO），实测 47/47 通过；退出后再启动一次校验单实例锁与文件锁已释放。
@@ -220,8 +220,8 @@ pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读
 | `pnpm dist:dir`                             | 打包客户端免安装目录 `release/win-unpacked`（含可执行文件，最快）                       |
 | `pnpm dist:win`                             | 打包客户端 nsis 安装包 + portable 单文件 EXE                                            |
 | `pnpm dist:all`                             | 服务端安装程序 + 客户端安装程序一起打                                                   |
-| `pnpm verify:e2e`                           | 后端端到端验收（126 项，含角色权限矩阵、导入与班级账号，需服务端已启动）                |
-| `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，18 项，含权限入口隐藏与导入弹窗）            |
+| `pnpm verify:e2e`                           | 后端端到端验收（133 项，含角色权限矩阵、导入与班级账号，需服务端已启动）                |
+| `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，19 项，含权限入口隐藏与导入弹窗）            |
 | `pnpm verify:desktop`                       | EXE 客户端冒烟验证（47 项，含灵动岛动画/收回/已读/作业/叫人、课表时间轴、个性化全参数） |
 | `pnpm typecheck`                            | 全仓库类型检查（含 `vue-tsc`）                                                          |
 | `pnpm lint` / `pnpm lint:fix`               | ESLint 检查 / 自动修复                                                                  |
@@ -267,7 +267,7 @@ pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读
 实现位置：`src/composables/useResponsive.ts`（断点 + resize 监听）、`src/layouts/AdminLayout.vue`（抽屉/顶栏）、
 `src/styles/index.css`（全局响应式规则）、各视图表格卡片加 `.table-card`。
 
-`pnpm verify:web` 的 18 项里，最后 10 项专门验证权限入口隐藏、手机端、叫人入口与 ClassIsland 时间配置导入弹窗（Electron 真实点击）：
+`pnpm verify:web` 的 19 项里，最后 11 项专门验证权限入口隐藏、手机端、叫人入口、成绩导入入口与 ClassIsland 时间配置导入弹窗（Electron 真实点击）：
 
 | 校验项                                 | 实测结果                                                             |
 | -------------------------------------- | -------------------------------------------------------------------- |
@@ -736,7 +736,7 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 | 布置作业                               |   ✅   |      ✅      |    ✅    |
 | 叫人                                   |   ✅   |      ✅      |    ✅    |
 | 发布通知                               |   ✅   |      ✅      |    ✅    |
-| 成绩录入 / 修改 / 导入                 |   ✅   |      ❌      |    ❌    |
+| 成绩录入 / 修改 / 导入（仅本班）       |   ✅   | ✅（仅本班） |    ❌    |
 
 实现要点：
 
@@ -751,19 +751,19 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
   因此教师的叫人入口放在「通知发布 → 叫人」（选班级 → 选学生 → 快捷短语/自定义消息），
   管理员在学生管理里仍保留逐行「叫人」。
 
-> 行为变更提示：按需求"科任老师只有布置作业、叫人、通知权限""班主任另有本班课表管理权限"，
-> 成绩录入与班级/名单管理已收紧为管理员专属；如需把成绩下放给班主任或科任老师，
-> 只需调整 `packages/shared/src/permissions.ts` 里的 `canManageGrades()` 并同步断言。
+> **需求 6 与需求 7 的口径统一（已落地）**：需求 6 要求"成绩与表格导入……老师端与学生端班级账号
+> 均可用且不越权"，需求 7 的权限清单（班级增删改、人员分配、科任权限、班主任课表）并未把成绩
+> 收归管理员专属。因此成绩相关写入按"老师端可用 + 不越权"实现：
 >
-> 需求 6 写的是"老师端与学生端班级账号均可用且不越权"，而本仓库按需求 7 的权限清单把
-> **成绩导入/录入实现为管理员专属**（`verify:e2e` 有两项断言"班主任/科任老师录入成绩 403"）。
-> 这是**有意保留的取舍**，等你确认后再按下面范围放开（约 6 处、一行核心判定）：
+> | 能力                       | 管理员 |  班主任   | 科任老师 | 学生 / 班级账号 |
+> | -------------------------- | :----: | :-------: | :------: | :-------------: |
+> | 录入 / 修改 / 删除成绩     |   ✅   | ✅ 仅本班 |    ❌    |       ❌        |
+> | 成绩模板下载 / 预览 / 导入 |   ✅   | ✅ 仅本班 |    ❌    |       ❌        |
+> | 学生名单模板 / 预览 / 导入 |   ✅   |    ❌     |    ❌    |       ❌        |
+> | 课表时间配置导入           |   ✅   | ✅ 仅本班 |    ❌    |       ❌        |
 >
-> 1. `packages/shared/src/permissions.ts`：`canManageGrades()` 改为按班级角色判定（`ADMIN | HEAD`）；
-> 2. `packages/server/src/lib/access.ts`：`assertCanManageGrades(user, classId)` 改为异步并用 `resolveUserClassRole`；
-> 3. `packages/server/src/modules/grades/*`、`modules/imports/imports.module.ts`：路由从 `requireRole('ADMIN')` 放宽为 `ADMIN | TEACHER`，服务层按班级断言（科任仍 403）；
-> 4. `packages/web-admin/src/views/{GradesView,StudentsView}.vue`：`isAdmin` 改为"管理员或本班班主任"；
-> 5. `packages/server/scripts/verify-e2e.mjs`：班主任成绩断言由 403 改为 201（科任仍 403），本文件的权限矩阵同步更新。
+> 越权路径全部由**服务层**兜底（`assertCanManageGrades(user, classId)` → `resolveUserClassRole`）：
+> 班主任跨班 403、科任老师 403、学生与班级账号 403，前端只是按同一矩阵隐藏/显示入口。
 
 ## 模块化设计（可随时增删模块）
 
@@ -839,7 +839,7 @@ pnpm db:migrate && pnpm db:seed
 | 成绩 / 名单表格导入（xlsx·xls·csv）              | ✅   | 模板下载 + 预览映射 + 重复处理 + 行号级错误：`verify:e2e` 导入 22 项、`verify:web` 弹窗实测                         |
 | ClassIsland 时间配置导入（覆盖 / 合并 / 回滚）   | ✅   | 合法 200、非法 400 `IMPORT_INVALID` 且原配置仍为 3 节、merge 覆盖 1 新增 1 共 4 节                                  |
 | 安装版覆盖升级自动补迁移                         | ✅   | 真实旧库升级日志：`升级安装：已应用 2 个迁移文件，跳过 34 个已存在对象`，`TimeLayout` 自动建表                      |
-| 学生端主体 = 班级（班级码 + 班级密码登录）       | ✅   | `verify:e2e` 班级账号 19 项：登录 / 错误密码 401 / 跨班 403 / 发布 403 / 班级码重复 400 / 密码重置 / 班级码用后还原 |
+| 学生端主体 = 班级（班级码 + 班级密码登录）       | ✅   | `verify:e2e` 班级账号 19 项：登录 / 错误密码 401 / 跨班 403 / 发布 403 / 班级码重复 400 / 密码重置 / 班级码用后还原 | `n  | 成绩与表格导入：老师端可用且不越权 | ✅  | 班主任预览/导入本班成绩 200、跨班 403、科任 403、名单导入与模板 403；Web 端班主任可见导入按钮并打开弹窗 |
 | 班级设备代全班操作（已读 · 完成 · 成绩总览）     | ✅   | 标记已读写入 6 条（全班 6 人）、教师端 `readCount=6`、`completedCount=6`、`/grades/my` 全班成绩                     |
 | 客户端只保留班级登录入口                         | ✅   | `verify:desktop`：`login=高一(1)班 classSession=true`，导航「成绩」标题变为「本班成绩」                             |
 | 能成功打包 Windows EXE                           | ✅   | `班级小助手-0.1.0-x64-setup.exe` / `-portable.exe` / `win-unpacked/*.exe`（见下表）                                 |
@@ -856,14 +856,14 @@ pnpm db:migrate && pnpm db:seed
 
 当前实测：
 
-| 验证                                                                                      | 结果                                |
-| ----------------------------------------------------------------------------------------- | ----------------------------------- |
-| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                               | **126/126** ✅                      |
-| `pnpm verify:web`（Web 管理端真实点击 + 权限入口隐藏 + 手机适配 + 叫人 + 导入弹窗 + PWA） | **18/18** ✅                        |
-| `pnpm verify:desktop`（客户端冒烟 + 灵动岛动画/收回 + 个性化全参数 + 托盘与退出无残留）   | **47/47** ✅                        |
-| `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                                      | 全部通过 ✅                         |
-| 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）                                        | 通过 ✅                             |
-| Docker / Nginx 部署样例                                                                   | 文件已提供，本机无 Docker 未实测 ⚠️ |
+| 验证                                                                                               | 结果                                |
+| -------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                                        | **133/133** ✅                      |
+| `pnpm verify:web`（Web 管理端真实点击 + 权限入口隐藏 + 手机适配 + 叫人 + 成绩/时间配置导入 + PWA） | **19/19** ✅                        |
+| `pnpm verify:desktop`（客户端冒烟 + 灵动岛动画/收回 + 个性化全参数 + 托盘与退出无残留）            | **47/47** ✅                        |
+| `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                                               | 全部通过 ✅                         |
+| 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）                                                 | 通过 ✅                             |
+| Docker / Nginx 部署样例                                                                            | 文件已提供，本机无 Docker 未实测 ⚠️ |
 
 ## 常见问题（本机环境已知坑）
 
