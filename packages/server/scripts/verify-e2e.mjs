@@ -1237,6 +1237,9 @@ async function main() {
   // ---------------------------------------------------------------- 9. 班级账号（学生端主体 = 班级）
   // 设计：班级码 + 班级密码 → classSession 的 JWT；个人数据（作业完成 / 通知已读 / 成绩）
   //      由服务端按"全班"范围读写，个人学生不再是登录主体（个人账号接口仍向后兼容）。
+  // 注意：本段会临时改动班级码，结束时必须恢复（否则演示实例会留下 E2E#### 这种随机码）。
+  const adminClassList = await api('/classes', { token: adminToken });
+  const originalClassAccount = (adminClassList.payload?.data ?? []).find((item) => item.id === classId) ?? {};
   const classCode = `E2E${Date.now().toString(36).slice(-4).toUpperCase()}`;
   const setAccount = await api(`/classes/${classId}/class-account`, {
     method: 'PATCH',
@@ -1458,7 +1461,7 @@ async function main() {
     `status=${occupiedCode.status} message=${occupiedCode.payload?.message ?? ''}`,
   );
 
-  // 清理：删除回归用的通知 / 作业 / 成绩，并把班级密码恢复为默认
+  // 清理：删除回归用的通知 / 作业 / 成绩，把班级码恢复为验证前的原值，密码恢复为默认
   if (classNameNoticeId) {
     await api(`/notifications/${classNameNoticeId}`, { method: 'DELETE', token: teacherToken });
   }
@@ -1468,11 +1471,28 @@ async function main() {
   if (classNameGrade.payload?.data?.id) {
     await api(`/grades/${classNameGrade.payload.data.id}`, { method: 'DELETE', token: adminToken });
   }
-  await api(`/classes/${classId}/class-account`, {
+
+  const restoreAccount = await api(`/classes/${classId}/class-account`, {
     method: 'PATCH',
     token: adminToken,
-    body: { password: '123456' },
+    body: {
+      ...(originalClassAccount.code ? { code: originalClassAccount.code } : {}),
+      password: '123456',
+    },
   });
+  const restoredLogin = originalClassAccount.code
+    ? await api('/auth/class-login', {
+        method: 'POST',
+        body: { code: originalClassAccount.code, password: '123456' },
+      })
+    : { status: 200 };
+  record(
+    '清理：班级码恢复为验证前的原值（不污染演示数据）',
+    restoreAccount.status === 200 &&
+      (!originalClassAccount.code || restoreAccount.payload?.data?.code === originalClassAccount.code) &&
+      restoredLogin.status === 200,
+    `原值=${originalClassAccount.code || '（未设置）'} 还原后=${restoreAccount.payload?.data?.code ?? '-'} 登录=${restoredLogin.status}`,
+  );
 
   socket.close();
 
