@@ -1,7 +1,9 @@
 import {
   SOCKET_EVENTS,
+  formatDate,
   resolveClassStatus,
   type ClassPeriod,
+  type HomeworkDto,
   type NotificationDto,
   type ScheduleDto,
 } from '@classhelper/shared';
@@ -9,6 +11,7 @@ import { scheduleApi } from '../api/index.js';
 import { fetchWithCache } from '../cache/index.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
+import { useNotificationStore } from '../stores/notifications.js';
 import { useRealtimeStore } from '../stores/realtime.js';
 
 /**
@@ -82,8 +85,65 @@ export function pushNotificationToIsland(notification: NotificationDto): void {
       createdAt: notification.createdAt,
       courseName: currentPeriod?.courseName ?? null,
       teacherName: notification.creator?.name ?? null,
+      kind: 'notification',
     },
     context: getIslandClassContext(),
+  });
+}
+
+/** 新作业上岛（homework:new）：胶囊提示"新作业"，展开看截止时间 */
+export function pushHomeworkToIsland(homework: HomeworkDto): void {
+  const due = homework.dueAt ? formatDate(homework.dueAt, true) : '未设置截止时间';
+  window.desktop?.islandPush({
+    notification: {
+      id: `homework-${homework.id}`,
+      title: homework.title,
+      content: homework.content?.trim() || '（老师没有填写作业说明）',
+      priority: 'NORMAL',
+      createdAt: homework.createdAt,
+      courseName: homework.course?.name ?? null,
+      teacherName: homework.creator?.name ?? null,
+      kind: 'homework',
+      subtitle: `截止时间：${due}`,
+    },
+    context: getIslandClassContext(),
+  });
+}
+
+/** "叫人"上岛：无论是否上课都立即展开，展示"请 XXX 同学找 XXX 老师" */
+export function pushCallToIsland(call: NotificationDto): void {
+  window.desktop?.islandPush({
+    notification: {
+      id: call.id,
+      title: call.title,
+      content: call.content?.trim() || '老师正在等你，请尽快前往。',
+      priority: call.priority,
+      createdAt: call.createdAt,
+      courseName: null,
+      teacherName: call.creator?.name ?? null,
+      kind: 'call',
+      subtitle: '请尽快前往，收到后点「收到」',
+    },
+    context: getIslandClassContext(),
+  });
+}
+
+/**
+ * 灵动岛点了"标为已读" → 在通知中心里也标记已读（并刷新未读红点）。
+ * 由 App.vue 在挂载时订阅一次。
+ */
+export function subscribeIslandMarkRead(): void {
+  window.desktop?.onIslandMarkRead?.((id) => {
+    void (async () => {
+      const store = useNotificationStore();
+      try {
+        await store.markRead(id);
+      } catch {
+        // 离线或通知已被删除：本地先记为已读，等下次同步纠正
+        const target = store.items.find((item) => item.id === id);
+        if (target) target.read = true;
+      }
+    })();
   });
 }
 

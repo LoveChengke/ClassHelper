@@ -1,4 +1,5 @@
 import { authModule } from './auth/auth.module.js';
+import { callsModule } from './calls/calls.module.js';
 import { classesModule } from './classes/classes.module.js';
 import { coursesModule } from './courses/courses.module.js';
 import { dashboardModule } from './dashboard/dashboard.module.js';
@@ -24,6 +25,7 @@ export const apiModules: ApiModule[] = [
   schedulesModule,
   homeworksModule,
   notificationsModule,
+  callsModule,
   gradesModule,
   studentsModule,
   teachersModule,

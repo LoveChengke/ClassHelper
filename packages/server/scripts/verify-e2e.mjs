@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /**
  * 端到端联调验证（对应验收标准）：
  *   1. 教师发布通知 -> 学生端 Socket.IO 5 秒内收到
@@ -546,6 +546,77 @@ async function main() {
       token: teacherToken,
     });
     record('清理探测课表', removedProbe.status === 200, `status=${removedProbe.status}`);
+  }
+
+  // ---------------------------------------------------------------- 6.3 叫人
+  if (classId && studentUser) {
+    const callByTeacher = await api('/calls', {
+      method: 'POST',
+      token: teacherToken,
+      body: {
+        classId,
+        studentId: studentUser.id,
+        quickPhrase: '请到办公室找我',
+      },
+    });
+    const callTitle = callByTeacher.payload?.data?.title ?? '';
+    record(
+      '叫人接口（教师点名 → 201 + "请 XXX 同学找 XXX 老师"）',
+      callByTeacher.status === 201 && callTitle.includes('请') && callTitle.includes('找'),
+      `status=${callByTeacher.status} title="${callTitle}"`,
+    );
+
+    const callWithMessage = await api('/calls', {
+      method: 'POST',
+      token: teacherToken,
+      body: {
+        classId,
+        studentId: studentUser.id,
+        quickPhrase: '请到讲台找我',
+        message: '带上昨天的数学作业本',
+      },
+    });
+    record(
+      '叫人支持自定义消息（优先于快捷短语）',
+      callWithMessage.status === 201 && callWithMessage.payload?.data?.content === '带上昨天的数学作业本',
+      `status=${callWithMessage.status} content="${callWithMessage.payload?.data?.content ?? ''}"`,
+    );
+
+    // 上课时段也允许叫人（不受 409 限制，因为老师确实需要学生马上过来）
+    const callDuringClass = await api('/calls', {
+      method: 'POST',
+      token: teacherToken,
+      body: { classId, studentId: studentUser.id, quickPhrase: '请马上来一趟' },
+    });
+    record(
+      '上课时段允许叫人（不受紧急通知 409 限制）',
+      callDuringClass.status === 201,
+      `status=${callDuringClass.status}`,
+    );
+
+    const studentCalls = await api('/calls', {
+      method: 'POST',
+      token: studentToken,
+      body: { classId, studentId: studentUser.id, quickPhrase: '学生不能叫人' },
+    });
+    record('学生调用叫人接口被拒绝（403）', studentCalls.status === 403, `status=${studentCalls.status}`);
+
+    const studentListAfterCall = await api('/notifications', { token: studentToken });
+    const receivedCall = (studentListAfterCall.payload?.data ?? []).find(
+      (item) => item.id === callWithMessage.payload?.data?.id,
+    );
+    record(
+      '学生通知中心能看到叫人消息（含未读状态）',
+      Boolean(receivedCall) && receivedCall.read === false,
+      `found=${Boolean(receivedCall)} read=${receivedCall?.read ?? '-'}`,
+    );
+
+    // 清理：删除本次叫人产生的通知
+    for (const created of [callByTeacher, callWithMessage, callDuringClass]) {
+      const id = created.payload?.data?.id;
+      if (id) await api(`/notifications/${id}`, { method: 'DELETE', token: teacherToken });
+    }
+    record('清理叫人测试数据', true, '已删除 3 条叫人通知');
   }
 
   // ---------------------------------------------------------------- 7. 权限隔离

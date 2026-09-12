@@ -97,6 +97,11 @@ if (!gotLock) {
         mainWindow.show();
         mainWindow.focus();
       });
+      // 灵动岛点"标为已读"：转交主窗口渲染进程调用接口并刷新通知中心
+      island.setMarkReadHandler((id) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        mainWindow.webContents.send('island:mark-read', id);
+      });
     } catch (error) {
       logger.error('灵动岛初始化失败（不影响主功能）', error);
     }

@@ -1,8 +1,14 @@
 ﻿<script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
-import { ROLE_LABELS, formatDate, type ClassDto, type StudentDto } from '@classhelper/shared';
-import { classApi, studentApi } from '@/api';
+import {
+  CALL_QUICK_PHRASES,
+  ROLE_LABELS,
+  formatDate,
+  type ClassDto,
+  type StudentDto,
+} from '@classhelper/shared';
+import { callApi, classApi, studentApi } from '@/api';
 
 const loading = ref(false);
 const students = ref<StudentDto[]>([]);
@@ -100,6 +106,51 @@ async function resetPassword(row: StudentDto): Promise<void> {
 onMounted(async () => {
   await Promise.all([loadClasses(), loadStudents()]);
 });
+
+/* ------------------------------------------------------------ 叫人 */
+
+const callVisible = ref(false);
+const callSending = ref(false);
+const callTarget = ref<StudentDto | null>(null);
+const callForm = reactive({ quickPhrase: '', message: '' });
+
+function openCall(row: StudentDto): void {
+  callTarget.value = row;
+  callForm.quickPhrase = CALL_QUICK_PHRASES[0] ?? '';
+  callForm.message = '';
+  callVisible.value = true;
+}
+
+function pickPhrase(phrase: string): void {
+  callForm.quickPhrase = callForm.quickPhrase === phrase ? '' : phrase;
+}
+
+async function submitCall(): Promise<void> {
+  const target = callTarget.value;
+  if (!target) return;
+  if (!target.classId) {
+    ElMessage.warning('该学生还没有分班，无法叫人');
+    return;
+  }
+  if (!callForm.message.trim() && !callForm.quickPhrase.trim()) {
+    ElMessage.warning('请选择快捷短语或填写自定义消息');
+    return;
+  }
+
+  callSending.value = true;
+  try {
+    const created = await callApi.create({
+      classId: target.classId,
+      studentId: target.id,
+      ...(callForm.message.trim() ? { message: callForm.message.trim() } : {}),
+      ...(callForm.quickPhrase.trim() ? { quickPhrase: callForm.quickPhrase.trim() } : {}),
+    });
+    ElMessage.success(`已通知 ${target.name}：${created.title}`);
+    callVisible.value = false;
+  } finally {
+    callSending.value = false;
+  }
+}
 </script>
 
 <template>
@@ -151,8 +202,9 @@ onMounted(async () => {
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ formatDate(row.createdAt, true) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
+            <el-button link type="success" @click="openCall(row)">叫人</el-button>
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button link type="warning" @click="resetPassword(row)">重置密码</el-button>
             <el-button link type="danger" @click="removeStudent(row)">删除</el-button>
@@ -160,6 +212,55 @@ onMounted(async () => {
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 叫人：选中学生 + 快捷短语/自定义消息 → 学生端灵动岛立即弹出 -->
+    <el-dialog v-model="callVisible" title="叫人" width="480px">
+      <el-alert
+        v-if="callTarget"
+        :title="`请 ${callTarget.name} 同学找老师`"
+        type="success"
+        :closable="false"
+        class="call-alert"
+      >
+        <template #default>
+          发送后学生端桌面会立即浮出「请 {{ callTarget.name }} 同学找 XXX 老师」，
+          无需学生刷新；上课时段也会立刻显示。
+        </template>
+      </el-alert>
+
+      <div class="call-section">
+        <div class="call-label">快捷短语（点击选择，再点一次取消）</div>
+        <div class="call-phrases">
+          <el-tag
+            v-for="phrase in CALL_QUICK_PHRASES"
+            :key="phrase"
+            class="call-phrase"
+            :effect="callForm.quickPhrase === phrase ? 'dark' : 'plain'"
+            :type="callForm.quickPhrase === phrase ? 'success' : 'info'"
+            @click="pickPhrase(phrase)"
+          >
+            {{ phrase }}
+          </el-tag>
+        </div>
+      </div>
+
+      <div class="call-section">
+        <div class="call-label">自定义消息（可选，优先于快捷短语）</div>
+        <el-input
+          v-model="callForm.message"
+          type="textarea"
+          :rows="3"
+          maxlength="200"
+          show-word-limit
+          placeholder="例如：带上昨天的数学作业到办公室"
+        />
+      </div>
+
+      <template #footer>
+        <el-button @click="callVisible = false">取消</el-button>
+        <el-button type="primary" :loading="callSending" @click="submitCall">发送叫人</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="formVisible" :title="editingId ? '编辑学生' : '新建学生'" width="460px">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
@@ -185,3 +286,30 @@ onMounted(async () => {
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.call-alert {
+  margin-bottom: 12px;
+}
+
+.call-section {
+  margin-bottom: 14px;
+}
+
+.call-label {
+  font-size: 13px;
+  color: #606266;
+  margin-bottom: 8px;
+}
+
+.call-phrases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.call-phrase {
+  cursor: pointer;
+  user-select: none;
+}
+</style>

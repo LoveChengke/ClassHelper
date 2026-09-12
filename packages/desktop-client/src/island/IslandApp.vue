@@ -1,6 +1,12 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { PRIORITY_LABELS, formatDate, type IslandNotification, type IslandState } from '@classhelper/shared';
+import {
+  PRIORITY_LABELS,
+  formatDate,
+  type IslandNotification,
+  type IslandNotificationKind,
+  type IslandState,
+} from '@classhelper/shared';
 
 /**
  * 灵动岛渲染进程。
@@ -25,7 +31,30 @@ const bridge = window.island;
 const notification = computed<IslandNotification | null>(() => state.value.active);
 const mode = computed(() => state.value.mode);
 const isUrgent = computed(() => notification.value?.priority === 'URGENT');
+const kind = computed<IslandNotificationKind>(() => notification.value?.kind ?? 'notification');
+const isCall = computed(() => kind.value === 'call');
+const isHomework = computed(() => kind.value === 'homework');
 const queueCount = computed(() => state.value.queued.length);
+
+/** 胶囊标题：按消息类型区分（新消息 / 新作业 / 叫人） */
+const pillTitle = computed(() => {
+  if (isCall.value) return '老师叫你';
+  if (isHomework.value) return '新作业';
+  return isUrgent.value ? '紧急通知' : '新消息';
+});
+
+/** 展开态徽标：叫人 / 新作业 / 优先级文案 */
+const badgeText = computed(() => {
+  if (isCall.value) return '叫人';
+  if (isHomework.value) return '新作业';
+  return priorityLabel.value;
+});
+
+const badgeClass = computed(() => {
+  if (isCall.value) return 'badge-call';
+  if (isHomework.value) return 'badge-homework';
+  return `badge-${(notification.value?.priority ?? 'NORMAL').toLowerCase()}`;
+});
 
 const priorityLabel = computed(() =>
   notification.value ? (PRIORITY_LABELS[notification.value.priority] ?? notification.value.priority) : '',
@@ -36,6 +65,9 @@ const subtitle = computed(() => {
   const teacher = notification.value.teacherName ? `${notification.value.teacherName} · ` : '';
   return `${teacher}${formatDate(notification.value.createdAt, true)}`;
 });
+
+/** 叫人消息下方的附加说明（例如"请到办公室找我"） */
+const callHint = computed(() => notification.value?.subtitle ?? '');
 
 /** 下课补发时提示"其实上课期间就到了" */
 const showAfterClassHint = computed(() => state.value.reason === 'after-class' && !state.value.inClass);
@@ -97,13 +129,26 @@ onMounted(async () => {
         key="pill"
         type="button"
         class="island-card pill"
-        :class="{ urgent: isUrgent, 'after-class': showAfterClassHint }"
+        :class="{ urgent: isUrgent, call: isCall, homework: isHomework, 'after-class': showAfterClassHint }"
         @click="expand"
       >
-        <span v-if="isUrgent" class="glow" aria-hidden="true"></span>
-        <span class="pulse-dot" :class="{ urgent: isUrgent }"></span>
+        <span v-if="isUrgent || isCall" class="glow" aria-hidden="true"></span>
+        <span class="pulse-dot" :class="{ urgent: isUrgent, call: isCall, homework: isHomework }"></span>
         <span class="pill-icon">
-          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+          <!-- 铃铛（通知）/ 书本（作业）/ 喇叭（叫人） -->
+          <svg v-if="isHomework" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M6 3h9a3 3 0 0 1 3 3v13.5a.5.5 0 0 1-.75.43L15 18.5l-2.25 1.43a.5.5 0 0 1-.53 0L10 18.5l-2.25 1.43a.5.5 0 0 1-.53 0L5 18.5V5a2 2 0 0 1 1-2Zm2 4v1.6h7V7H8Zm0 3.4V12h7v-1.6H8Z"
+            />
+          </svg>
+          <svg v-else-if="isCall" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M4 10v4a1 1 0 0 0 1 1h2l4 3.5a1 1 0 0 0 1.65-.76V5.26A1 1 0 0 0 11 4.5L7 8H5a1 1 0 0 0-1 1Zm12.5-2.9a1 1 0 0 1 1.4.1 8 8 0 0 1 0 9.6 1 1 0 1 1-1.5-1.3 6 6 0 0 0 0-7 1 1 0 0 1 .1-1.4Z"
+            />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
             <path
               fill="currentColor"
               d="M12 2a6 6 0 0 0-6 6v3.1L4.6 14a1 1 0 0 0 .9 1.5h13a1 1 0 0 0 .9-1.5L18 11.1V8a6 6 0 0 0-6-6Zm0 20a3 3 0 0 0 3-2.6H9A3 3 0 0 0 12 22Z"
@@ -112,7 +157,7 @@ onMounted(async () => {
         </span>
         <span class="pill-text">
           <span class="pill-title">
-            {{ isUrgent ? '紧急通知' : '新消息' }}
+            {{ pillTitle }}
             <template v-if="queueCount > 0">· 共 {{ queueCount + 1 }} 条</template>
           </span>
           <span class="pill-sub">{{ notification.teacherName || '老师' }} · 点击查看</span>
@@ -135,13 +180,25 @@ onMounted(async () => {
         v-else-if="mode === 'expanded' && notification"
         key="expanded"
         class="island-card expanded"
-        :class="{ urgent: isUrgent }"
+        :class="{ urgent: isUrgent, call: isCall, homework: isHomework }"
         @click="onCardClick"
       >
-        <span v-if="isUrgent" class="glow" aria-hidden="true"></span>
+        <span v-if="isUrgent || isCall" class="glow" aria-hidden="true"></span>
         <header class="head">
-          <span class="head-icon" :class="{ urgent: isUrgent }">
-            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+          <span class="head-icon" :class="{ urgent: isUrgent, call: isCall, homework: isHomework }">
+            <svg v-if="isHomework" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M6 3h9a3 3 0 0 1 3 3v13.5a.5.5 0 0 1-.75.43L15 18.5l-2.25 1.43a.5.5 0 0 1-.53 0L10 18.5l-2.25 1.43a.5.5 0 0 1-.53 0L5 18.5V5a2 2 0 0 1 1-2Zm2 4v1.6h7V7H8Zm0 3.4V12h7v-1.6H8Z"
+              />
+            </svg>
+            <svg v-else-if="isCall" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M4 10v4a1 1 0 0 0 1 1h2l4 3.5a1 1 0 0 0 1.65-.76V5.26A1 1 0 0 0 11 4.5L7 8H5a1 1 0 0 0-1 1Zm12.5-2.9a1 1 0 0 1 1.4.1 8 8 0 0 1 0 9.6 1 1 0 1 1-1.5-1.3 6 6 0 0 0 0-7 1 1 0 0 1 .1-1.4Z"
+              />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
               <path
                 fill="currentColor"
                 d="M12 2a6 6 0 0 0-6 6v3.1L4.6 14a1 1 0 0 0 .9 1.5h13a1 1 0 0 0 .9-1.5L18 11.1V8a6 6 0 0 0-6-6Zm0 20a3 3 0 0 0 3-2.6H9A3 3 0 0 0 12 22Z"
@@ -149,10 +206,9 @@ onMounted(async () => {
             </svg>
           </span>
           <div class="head-meta">
-            <span class="badge" :class="`badge-${notification.priority.toLowerCase()}`">
-              {{ priorityLabel }}
-            </span>
-            <span v-if="isUrgent" class="live-dot">需立即查看</span>
+            <span class="badge" :class="badgeClass">{{ badgeText }}</span>
+            <span v-if="isCall" class="live-dot call">老师正在等你</span>
+            <span v-else-if="isUrgent" class="live-dot">需立即查看</span>
             <span v-else-if="showAfterClassHint" class="live-dot muted">下课后补发</span>
             <span class="head-sub">{{ subtitle }}</span>
           </div>
@@ -172,6 +228,8 @@ onMounted(async () => {
         <h3 class="title">{{ notification.title }}</h3>
         <div class="body">
           <p class="content">{{ notification.content }}</p>
+          <p v-if="callHint" class="call-hint">{{ callHint }}</p>
+          <p v-if="notification.subtitle && !callHint" class="call-hint">{{ notification.subtitle }}</p>
         </div>
 
         <footer class="foot">
@@ -180,7 +238,7 @@ onMounted(async () => {
           <span class="actions">
             <button type="button" class="ghost-btn" @click="openApp">打开应用</button>
             <button type="button" class="ghost-btn" @click="markRead">标为已读</button>
-            <button type="button" class="solid-btn" @click="dismiss">知道了</button>
+            <button type="button" class="solid-btn" @click="dismiss">{{ isCall ? '收到' : '知道了' }}</button>
           </span>
         </footer>
       </section>
@@ -214,18 +272,17 @@ body,
   box-sizing: border-box;
 }
 
-/* 三态卡片绝对定位，使交叉淡入淡出（并行 Transition）不会互相挤压。
-   注意：窗口只比卡片大 2~4px，任何向外的 box-shadow/光晕都会被窗口边界裁切，
-   在屏幕上表现为"卡片周围一圈奇怪的光晕/硬边"。因此这里**只用 inset 阴影**，
-   所有装饰效果都画在卡片内部。 */
+/* 三态卡片绝对定位 + **固定逻辑尺寸、水平居中锚定**。
+   关键：卡片不能跟随窗口拉伸，否则窗口形变过程中会看到一块被拉扁的"方框"，
+   胶囊里的图标/文字还会被垂直居中而"从上面瞬移到下面"。
+   这里每种形态都是固定尺寸，窗口只负责露出/裁切这块透明区域，形变时卡片内容不缩放。
+   另：窗口只比卡片大 2~4px，向外的 box-shadow/光晕会被窗口边界裁切，
+   因此所有装饰只使用 inset 阴影。 */
 .island-card {
   position: absolute;
   top: 2px;
-  right: 4px;
-  bottom: 2px;
-  left: 4px;
   box-sizing: border-box;
-  border-radius: 24px;
+  border-radius: 22px;
   color: #f7f8fa;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background:
@@ -239,12 +296,77 @@ body,
     background 0.28s ease;
 }
 
+/* 各形态固定尺寸（与主进程 ISLAND_SIZES 对齐：卡片刻意比窗口小 4~8px，四周留 2~4px 透明边） */
+.island-card.pill {
+  left: calc(50% - 130px);
+  width: 260px;
+  height: 38px;
+  border-radius: 20px;
+}
+
+.island-card.expanded {
+  left: calc(50% - 198px);
+  width: 396px;
+  height: 308px;
+  border-radius: 24px;
+}
+
+.island-card.expanded.urgent {
+  left: calc(50% - 208px);
+  width: 416px;
+  height: 336px;
+}
+
+/* 叫人：卡片略大（对应主进程 CALL_SIZE 440x360） */
+.island-card.expanded.call {
+  left: calc(50% - 216px);
+  width: 432px;
+  height: 352px;
+}
+
+/* 隐藏态占位：只保留结构，不占视觉空间 */
+.hidden-placeholder {
+  left: 0;
+  width: 100%;
+  height: 38px;
+  opacity: 0;
+  cursor: default;
+}
+
 /* 紧急通知：红色描边 + 内部光晕呼吸（不外扩，避免窗口边界裁切出光晕硬边） */
 .island-card.urgent {
   border-color: rgba(255, 92, 92, 0.6);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+}
+
+/* 叫人：琥珀金描边（老师点名，需要学生动作） */
+.island-card.call {
+  border-color: rgba(255, 193, 94, 0.65);
+  background:
+    radial-gradient(120% 140% at 50% -20%, rgba(255, 193, 94, 0.18), rgba(255, 255, 255, 0) 55%),
+    linear-gradient(180deg, #2a2417 0%, #0d0c09 100%);
+}
+
+.island-card.call .glow {
+  animation: call-breath 2s ease-in-out infinite;
+}
+
+@keyframes call-breath {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 14px rgba(255, 193, 94, 0.2),
+      inset 0 0 0 1px rgba(255, 193, 94, 0.3);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 26px rgba(255, 193, 94, 0.4),
+      inset 0 0 0 1px rgba(255, 193, 94, 0.55);
+  }
+}
+
+/* 新作业：青蓝描边 */
+.island-card.homework {
+  border-color: rgba(108, 196, 255, 0.55);
 }
 
 .glow {
@@ -591,6 +713,75 @@ body,
 
 .solid-btn:hover {
   transform: translateY(-1px);
+}
+
+/* ---------------------------------------------------------------- 消息类型样式 */
+
+/* "叫人"（老师点名，琥珀金）：图标底色、徽标、按钮 */
+.island-card.pill.call .pill-icon {
+  color: #ffd79a;
+  background: rgba(255, 193, 94, 0.2);
+}
+
+.pulse-dot.call {
+  background: #ffc15e;
+  box-shadow: 0 0 0 0 rgba(255, 193, 94, 0.7);
+}
+
+.head-icon.call {
+  color: #ffd79a;
+  background: rgba(255, 193, 94, 0.22);
+}
+
+.badge-call {
+  color: #3a2600;
+  background: #ffc15e;
+}
+
+.live-dot.call {
+  color: #ffd79a;
+}
+
+.island-card.expanded.call .solid-btn {
+  color: #3a2600;
+  background: #ffc15e;
+}
+
+.island-card.expanded.call .body {
+  background: rgba(255, 193, 94, 0.08);
+}
+
+.call-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #ffd79a;
+  font-weight: 600;
+}
+
+/* 新作业（青蓝） */
+.island-card.pill.homework .pill-icon {
+  color: #b7e2ff;
+  background: rgba(108, 196, 255, 0.18);
+}
+
+.pulse-dot.homework {
+  background: #6cc4ff;
+  box-shadow: 0 0 0 0 rgba(108, 196, 255, 0.6);
+}
+
+.head-icon.homework {
+  color: #b7e2ff;
+  background: rgba(108, 196, 255, 0.2);
+}
+
+.badge-homework {
+  color: #06263f;
+  background: #6cc4ff;
+}
+
+.island-card.expanded.homework .solid-btn {
+  color: #06263f;
+  background: #6cc4ff;
 }
 
 /* ---------------------------------------------------------------- 形变动画 */

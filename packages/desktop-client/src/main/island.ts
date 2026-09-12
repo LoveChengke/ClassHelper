@@ -24,6 +24,9 @@ const SIZES: Record<IslandMode, { width: number; height: number }> = {
 
 const URGENT_SIZE = { width: 424, height: 344 };
 
+/** "叫人"消息卡片（比普通详情略大，突出"请 XXX 同学找 XXX 老师"） */
+const CALL_SIZE = { width: 440, height: 360 };
+
 /** 各状态的自动收起/隐藏时长（毫秒），0 表示不自动收起 */
 const TIMEOUTS = {
   pill: 15_000,
@@ -31,6 +34,8 @@ const TIMEOUTS = {
   afterClassPill: 25_000,
   expanded: 20_000,
   urgent: 45_000,
+  /** 叫人消息常驻更久，避免学生走开一会儿回来就看不到 */
+  call: 90_000,
 };
 
 export interface IslandPushContext {
@@ -76,8 +81,15 @@ class IslandController {
   /** 灵动岛展开时点击"打开应用"交给外部处理 */
   private openAppHandler: (() => void) | null = null;
 
+  /** 灵动岛点"标为已读"时交给外部（主窗口渲染进程）同步通知中心 */
+  private markReadHandler: ((id: string) => void) | null = null;
+
   setOpenAppHandler(handler: () => void): void {
     this.openAppHandler = handler;
+  }
+
+  setMarkReadHandler(handler: (id: string) => void): void {
+    this.markReadHandler = handler;
   }
 
   async init(rendererUrl: string | null): Promise<void> {
@@ -115,6 +127,17 @@ class IslandController {
     win.on('closed', () => {
       this.win = null;
       this.ready = false;
+    });
+
+    /**
+     * 点击屏幕任意位置收起：展开态临时允许窗口获得焦点，
+     * 用户点到别处（桌面、浏览器、其他应用）时窗口失焦 → 回缩为胶囊。
+     */
+    win.on('blur', () => {
+      if (this.state.mode === 'expanded' && !this.state.inClass) {
+        logger.info('灵动岛：点击屏幕其他位置，回缩为胶囊');
+        this.handleAction({ action: 'collapse' });
+      }
     });
 
     this.win = win;
@@ -161,10 +184,18 @@ class IslandController {
   /* ------------------------------------------------------------ 对外行为 */
 
   /**
-   * 收到一条通知。
-   * - 紧急：立刻展开（无视上课时段）
+   * 是否需要"立即展开、无视上课时段"。
+   * 紧急通知与"叫人"（老师点名）都属于：学生必须马上看到。
+   */
+  private isImmediate(notification: IslandNotification): boolean {
+    return notification.priority === 'URGENT' || notification.kind === 'call';
+  }
+
+  /**
+   * 收到一条消息。
+   * - 紧急 / 叫人：立刻展开（无视上课时段）
    * - 上课中：进队列并保持隐藏（下课后由 setClassState 触发弹出）
-   * - 其它：显示"新消息"胶囊，等待点击展开
+   * - 其它：显示"新消息/新作业"胶囊，等待点击展开
    */
   pushNotification(notification: IslandNotification, context: IslandPushContext = {}): void {
     const inClass = context.inClass ?? this.state.inClass;
@@ -172,14 +203,19 @@ class IslandController {
     if (context.currentPeriodEnd !== undefined)
       this.state.currentPeriodEnd = context.currentPeriodEnd ?? null;
 
-    if (notification.priority === 'URGENT') {
-      // 紧急插播：如果正在展示别的通知，把它放回队列
+    if (this.isImmediate(notification)) {
+      // 插播：如果正在展示别的消息，把它放回队列
       if (this.state.active && this.state.active.id !== notification.id) {
         this.state.queued.push(this.state.active);
       }
       this.state.queued = this.state.queued.filter((item) => item.id !== notification.id);
-      this.activate(notification, 'urgent', 'expanded');
-      logger.info(`灵动岛紧急插播：${notification.title}`);
+      const reason = notification.kind === 'call' ? 'call' : 'urgent';
+      this.activate(notification, reason, 'expanded');
+      logger.info(
+        notification.kind === 'call'
+          ? `灵动岛叫人消息：${notification.title}`
+          : `灵动岛紧急插播：${notification.title}`,
+      );
       return;
     }
 
@@ -245,18 +281,24 @@ class IslandController {
 
   handleAction(payload: IslandActionPayload): void {
     switch (payload.action) {
-      case 'expand':
-        // 上课时段一律不显示灵动岛（只有紧急通知能自动展开）
+      case 'expand': {
+        // 上课时段一律不显示灵动岛（只有紧急通知 / 叫人才会自动展开）
         if (this.state.inClass) break;
-        if (this.state.active) {
+        const active = this.state.active;
+        if (active) {
           this.setState({ mode: 'expanded' });
           this.scheduleCollapse(
-            this.state.active.priority === 'URGENT' ? TIMEOUTS.urgent : TIMEOUTS.expanded,
+            this.isImmediate(active)
+              ? active.kind === 'call'
+                ? TIMEOUTS.call
+                : TIMEOUTS.urgent
+              : TIMEOUTS.expanded,
           );
         }
         break;
+      }
       case 'collapse':
-        // 点击卡片空白处 / 右上角收起按钮：回缩到灵动岛（胶囊），不直接消失
+        // 点击卡片空白处 / 右上角收起按钮 / 点击屏幕任意位置：回缩到灵动岛（胶囊）
         if (this.state.inClass) {
           this.hideImmediately();
           break;
@@ -272,12 +314,18 @@ class IslandController {
         this.dismissActive();
         break;
       case 'mark-read': {
-        const queue = this.state.queued.filter((item) => item.id !== payload.id);
+        const id = payload.id;
+        const queue = this.state.queued.filter((item) => item.id !== id);
         this.state.queued = queue;
-        if (this.state.active?.id === payload.id) this.state.active = null;
+        if (this.state.active?.id === id) this.state.active = null;
         this.state.updatedAt = Date.now();
         if (this.state.mode === 'hidden') this.emit();
         else this.dismissActive();
+        // 通知中心同步：转交主窗口渲染进程调用"标记已读"接口并刷新列表
+        if (id) {
+          logger.info(`灵动岛标记已读：${id}`);
+          this.markReadHandler?.(id);
+        }
         break;
       }
       case 'open-app':
@@ -308,6 +356,7 @@ class IslandController {
       this.emit();
     }
     if (!this.win || this.win.isDestroyed()) return;
+    this.win.setFocusable(false);
     if (this.win.isVisible()) this.win.hide();
     this.win.setOpacity(1);
   }
@@ -419,12 +468,16 @@ class IslandController {
   private syncWindow(): void {
     if (!this.win || this.win.isDestroyed()) return;
 
-    // 上课时间段：一律不显示灵动岛（只有"正在展示的紧急通知"允许出现在屏幕上）
-    const urgentShowing = this.state.mode === 'expanded' && this.state.active?.priority === 'URGENT';
-    if (this.state.inClass && !urgentShowing) {
+    // 上课时间段：一律不显示灵动岛（只有"正在展示的紧急通知/叫人"允许出现在屏幕上）
+    const immediateShowing =
+      this.state.mode === 'expanded' && this.state.active !== null && this.isImmediate(this.state.active);
+    if (this.state.inClass && !immediateShowing) {
       this.hideImmediately();
       return;
     }
+
+    // 展开态才允许获得焦点，这样点击屏幕其他位置会 blur → 自动收起
+    this.applyFocusable();
 
     if (this.state.mode === 'hidden') {
       this.fadeOut();
@@ -433,8 +486,12 @@ class IslandController {
 
     const size =
       this.state.mode === 'expanded'
-        ? this.state.active?.priority === 'URGENT'
-          ? URGENT_SIZE
+        ? this.state.active
+          ? this.isImmediate(this.state.active)
+            ? this.state.active.kind === 'call'
+              ? CALL_SIZE
+              : URGENT_SIZE
+            : SIZES.expanded
           : SIZES.expanded
         : SIZES.pill;
 
@@ -463,6 +520,14 @@ class IslandController {
   /** 作废进行中的淡入淡出动画 */
   private cancelFade(): void {
     this.fadeToken += 1;
+  }
+
+  /** 展开态允许聚焦（用于"点击屏幕任意处收起"），其余时间不抢焦点 */
+  private applyFocusable(): void {
+    if (!this.win || this.win.isDestroyed()) return;
+    const shouldFocus = this.state.mode === 'expanded';
+    if (this.win.isFocusable() !== shouldFocus) this.win.setFocusable(shouldFocus);
+    if (shouldFocus) this.win.focus();
   }
 
   private fadeIn(): void {
@@ -561,4 +626,4 @@ export function registerIslandIpc(): void {
   });
 }
 
-export { SIZES as ISLAND_SIZES, URGENT_SIZE as ISLAND_URGENT_SIZE };
+export { SIZES as ISLAND_SIZES, URGENT_SIZE as ISLAND_URGENT_SIZE, CALL_SIZE as ISLAND_CALL_SIZE };

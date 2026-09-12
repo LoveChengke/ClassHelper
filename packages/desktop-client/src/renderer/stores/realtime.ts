@@ -11,7 +11,7 @@ import {
   type ServerToClientEvents,
 } from '@classhelper/shared';
 import { socketUrlOf } from '../config.js';
-import { pushNotificationToIsland } from '../island/bridge.js';
+import { pushCallToIsland, pushHomeworkToIsland, pushNotificationToIsland } from '../island/bridge.js';
 
 type RealtimeEventName = keyof ServerToClientEvents;
 type EventHandler = (payload: unknown) => void;
@@ -79,7 +79,22 @@ export const useRealtimeStore = defineStore('realtime', () => {
     instance.on(SOCKET_EVENTS.homeworkNew, (payload: HomeworkDto) => {
       mark(SOCKET_EVENTS.homeworkNew);
       ElMessage.success(`新作业：${payload.title}`);
+      // 作业发布也上岛：胶囊提示"新作业"，点击展开看截止时间与要求
+      pushHomeworkToIsland(payload);
       dispatch(SOCKET_EVENTS.homeworkNew, payload);
+    });
+
+    instance.on(SOCKET_EVENTS.callNew, (payload: NotificationDto) => {
+      mark(SOCKET_EVENTS.callNew);
+      ElMessage({
+        message: payload.title,
+        type: 'warning',
+        duration: 8000,
+        showClose: true,
+      });
+      // 叫人：无论是否上课都立即展开（老师正在等这位同学）
+      pushCallToIsland(payload);
+      dispatch(SOCKET_EVENTS.callNew, payload);
     });
 
     instance.on(SOCKET_EVENTS.homeworkUpdated, (payload: HomeworkDto & { deleted?: boolean }) => {

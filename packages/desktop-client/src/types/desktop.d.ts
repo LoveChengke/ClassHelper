@@ -55,6 +55,8 @@ export interface DesktopBridge {
   islandSetClassState(payload: IslandClassStatePayload): void;
   /** 读取灵动岛当前状态（设置页/冒烟验证用） */
   islandGetState(): Promise<IslandState>;
+  /** 订阅"灵动岛点了标为已读"事件，用于同步通知中心 */
+  onIslandMarkRead(handler: (id: string) => void): void;
 }
 
 /** 灵动岛窗口自身的桥接（只暴露订阅状态与发送操作） */
@@ -76,6 +78,27 @@ declare global {
       offlineScenario(): Promise<{ ok: boolean; detail: string }>;
       layoutNavigationSelfTest(): Promise<{ ok: boolean; detail: string }>;
       onlineScenario(): Promise<{ ok: boolean; detail: string }>;
+      /** 真实通知链路：教师发通知给当前学生班级，验证 Socket.IO → 灵动岛 */
+      islandRealtimeScenario(): Promise<{
+        ok: boolean;
+        detail: string;
+        notificationId?: string;
+        teacherToken?: string;
+        title?: string;
+        classId?: string;
+        inClass?: boolean;
+      }>;
+      islandRealtimeCleanup(
+        notificationId: string,
+        teacherToken: string,
+      ): Promise<{ ok: boolean; detail: string }>;
+      /** 读取某条通知在通知中心里的已读状态（验证灵动岛"标为已读"链路） */
+      islandReadState(notificationId: string): Promise<{
+        found: boolean;
+        read: boolean;
+        unreadCount: number;
+        title: string;
+      }>;
       sessionCleanup(): Promise<{ ok: boolean; detail: string }>;
     };
   }

@@ -1,7 +1,65 @@
+/* ============================================================================
+ * 班级小助手客户端主题 —— ClassIsland 同款 Fluent 风格
+ *
+ * 参考 ClassIsland（Windows 课件表应用）的观感：
+ *  - WinUI / Fluent 设计语言：浅色 Mica 底 + 半透明"亚克力"卡片 + 1px 细腻描边
+ *  - 强调色 #0F6CBD（悬停 #115EA3），选中项用强调色淡底 + 左侧强调条
+ *  - 圆角：卡片 8px、控件 4~6px、胶囊 999px
+ *  - 字体：Segoe UI Variable / 微软雅黑 UI，字号偏小、行距偏松
+ *  - 阴影极轻（0 2px 4px rgba(0,0,0,.04)），层次主要靠描边与底色区分
+ * ========================================================================== */
+
 :root {
-  --ch-bg: #f5f7fa;
-  --ch-border: #e4e7ed;
-  --ch-sidebar: #1f2d3d;
+  /* Fluent 强调色 */
+  --ch-accent: #0f6cbd;
+  --ch-accent-hover: #115ea3;
+  --ch-accent-soft: rgba(15, 108, 189, 0.08);
+  --ch-accent-soft-strong: rgba(15, 108, 189, 0.14);
+
+  /* 层次底色（Mica / Layer） */
+  --ch-bg: #f3f3f3;
+  --ch-layer: rgba(255, 255, 255, 0.7);
+  --ch-layer-solid: #ffffff;
+  --ch-layer-alt: rgba(249, 249, 249, 0.5);
+  --ch-card-subtle: rgba(255, 255, 255, 0.5);
+
+  /* 描边（Fluent 用半透明黑，避免生硬的灰线） */
+  --ch-border: rgba(0, 0, 0, 0.06);
+  --ch-border-strong: rgba(0, 0, 0, 0.1);
+  --ch-divider: rgba(0, 0, 0, 0.05);
+
+  /* 文本 */
+  --ch-text: #1b1b1b;
+  --ch-text-secondary: #5c5c5c;
+  --ch-text-tertiary: #8a8a8a;
+
+  /* 圆角与阴影 */
+  --ch-radius-card: 8px;
+  --ch-radius-control: 4px;
+  --ch-shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.08);
+  --ch-shadow-card: 0 2px 4px rgba(0, 0, 0, 0.04);
+
+  /* 兼容旧变量名 */
+  --ch-sidebar: #ffffff;
+
+  /* Element Plus 变量对齐 Fluent */
+  --el-color-primary: #0f6cbd;
+  --el-color-primary-light-3: #4d94d1;
+  --el-color-primary-light-5: #7fb1de;
+  --el-color-primary-light-7: #b3d0ec;
+  --el-color-primary-light-8: #d0e2f4;
+  --el-color-primary-light-9: #e7f0f9;
+  --el-color-primary-dark-2: #115ea3;
+  --el-border-radius-base: 4px;
+  --el-border-radius-small: 3px;
+  --el-text-color-primary: #1b1b1b;
+  --el-text-color-regular: #3a3a3a;
+  --el-text-color-secondary: #5c5c5c;
+  --el-border-color: rgba(0, 0, 0, 0.1);
+  --el-border-color-light: rgba(0, 0, 0, 0.06);
+  --el-border-color-lighter: rgba(0, 0, 0, 0.05);
+  --el-fill-color-blank: transparent;
+  --el-font-size-base: 13px;
 }
 
 * {
@@ -17,17 +75,23 @@ body,
 }
 
 body {
-  font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-family:
+    'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC',
+    'Helvetica Neue', Arial, sans-serif;
+  font-size: 13px;
   background: var(--ch-bg);
-  color: #303133;
+  color: var(--ch-text);
   /* 桌面端禁用整页选中，更接近原生应用体验 */
   user-select: none;
+  -webkit-font-smoothing: antialiased;
 }
 
 input,
 textarea {
   user-select: text;
 }
+
+/* ---------------------------------------------------------------- 页面骨架 */
 
 .page {
   padding: 16px 20px 24px;
@@ -39,25 +103,26 @@ textarea {
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .page-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
+  letter-spacing: 0.2px;
 }
 
 .page-subtitle {
   margin: 4px 0 0;
-  font-size: 13px;
-  color: #909399;
+  font-size: 12.5px;
+  color: var(--ch-text-secondary);
 }
 
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -70,12 +135,160 @@ textarea {
 }
 
 .text-muted {
-  color: #909399;
+  color: var(--ch-text-tertiary);
 }
 
 .offline-banner {
   margin: 0 0 12px;
 }
+
+/* ---------------------------------------------------------------- 卡片 / 分组 */
+
+/* 亚克力卡片：半透明底 + 极细描边 + 极轻阴影（ClassIsland 的内容卡片观感） */
+.el-card {
+  border-radius: var(--ch-radius-card) !important;
+  border: 1px solid var(--ch-border) !important;
+  background: var(--ch-layer) !important;
+  backdrop-filter: blur(20px) saturate(1.1);
+  box-shadow: var(--ch-shadow-card) !important;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.el-card:hover {
+  border-color: var(--ch-border-strong) !important;
+}
+
+.el-card__header {
+  padding: 12px 16px !important;
+  border-bottom: 1px solid var(--ch-divider) !important;
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.el-card__body {
+  padding: 14px 16px !important;
+}
+
+/* ---------------------------------------------------------------- 控件 */
+
+.el-button {
+  border-radius: var(--ch-radius-control) !important;
+  font-weight: 500;
+}
+
+.el-button--default {
+  background: rgba(255, 255, 255, 0.7) !important;
+  border-color: var(--ch-border-strong) !important;
+}
+
+.el-button--default:hover {
+  background: rgba(0, 0, 0, 0.04) !important;
+}
+
+.el-button--primary {
+  box-shadow: 0 1px 2px rgba(15, 108, 189, 0.2);
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: var(--ch-radius-control) !important;
+  background: rgba(255, 255, 255, 0.7) !important;
+  box-shadow: 0 0 0 1px var(--ch-border-strong) inset !important;
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--ch-accent) inset !important;
+}
+
+.el-tag {
+  border-radius: var(--ch-radius-control) !important;
+}
+
+.el-dialog,
+.el-drawer {
+  border-radius: var(--ch-radius-card) !important;
+  background: var(--ch-layer-solid) !important;
+}
+
+.el-message-box {
+  border-radius: var(--ch-radius-card) !important;
+}
+
+.el-popper,
+.el-dropdown__popper {
+  border-radius: var(--ch-radius-card) !important;
+  box-shadow: var(--ch-shadow-flyout) !important;
+}
+
+/* ---------------------------------------------------------------- 表格 */
+
+.el-table {
+  --el-table-border-color: var(--ch-divider);
+  --el-table-header-bg-color: transparent;
+  --el-table-row-hover-bg-color: rgba(0, 0, 0, 0.03);
+  background: transparent !important;
+}
+
+.el-table th.el-table__cell {
+  background: transparent !important;
+  font-weight: 600;
+  color: var(--ch-text-secondary);
+}
+
+.el-table td.el-table__cell,
+.el-table th.el-table__cell {
+  border-bottom: 1px solid var(--ch-divider) !important;
+}
+
+.el-table__inner-wrapper::before {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- 侧边导航（Fluent NavigationView 观感） */
+
+.ch-nav {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(24px) saturate(1.2);
+  border-right: 1px solid var(--ch-border);
+}
+
+.ch-nav .el-menu-item {
+  height: 40px;
+  line-height: 40px;
+  margin: 2px 8px;
+  border-radius: var(--ch-radius-control);
+  color: var(--ch-text);
+  font-weight: 500;
+  position: relative;
+}
+
+.ch-nav .el-menu-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* 选中项：强调色淡底 + 左侧强调条（WinUI 经典样式） */
+.ch-nav .el-menu-item.is-active {
+  background: var(--ch-accent-soft);
+  color: var(--ch-text);
+}
+
+.ch-nav .el-menu-item.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--ch-accent);
+}
+
+/* ---------------------------------------------------------------- 课表时间轴 */
 
 .timetable-cell {
   min-height: 30px;
@@ -87,7 +300,7 @@ textarea {
 
 .timetable-meta {
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-text-tertiary);
 }
 
 .unread-dot {
@@ -95,19 +308,27 @@ textarea {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #f56c6c;
+  background: #d13438;
   margin-right: 6px;
 }
 
-/* 滚动条美化（Windows 默认滚动条较粗） */
+/* ---------------------------------------------------------------- 滚动条 */
+
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c8ccd4;
-  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+  background-clip: content-box;
 }
 
 ::-webkit-scrollbar-track {

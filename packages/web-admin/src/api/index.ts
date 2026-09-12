@@ -5,6 +5,7 @@ import {
   type ClassStatusDto,
   type CourseDto,
   type CreateClassRequest,
+  type CreateCallRequest,
   type CreateCourseRequest,
   type CreateGradeRequest,
   type CreateHomeworkRequest,
@@ -116,6 +117,13 @@ export const notificationApi = {
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.notifications}/${id}`),
   unreadCount: (classId?: string): Promise<{ count: number }> =>
     api.get(`${API_PATHS.notifications}/unread-count`, classId ? { classId } : undefined),
+};
+
+/* ------------------------------------------------------------------ 叫人 */
+
+export const callApi = {
+  /** 点名让学生来找老师（学生端灵动岛会立即弹出"请 XXX 同学找 XXX 老师"） */
+  create: (payload: CreateCallRequest): Promise<NotificationDto> => api.post(API_PATHS.calls, payload),
 };
 
 /* ------------------------------------------------------------------ 成绩 */

@@ -97,10 +97,12 @@ onUnmounted(() => {
 
 <template>
   <el-container class="layout">
-    <el-aside width="190px" class="aside">
+    <el-aside width="200px" class="aside ch-nav">
       <div class="brand">
-        <el-icon :size="20"><School /></el-icon>
-        <span>班级小助手</span>
+        <span class="brand-logo">
+          <el-icon :size="16"><School /></el-icon>
+        </span>
+        <span class="brand-text">班级小助手</span>
       </div>
       <el-menu :default-active="activeMenu" class="menu" @select="handleMenuSelect">
         <el-menu-item v-for="item in menuItems" :key="item.path" :index="item.path">
@@ -170,11 +172,10 @@ onUnmounted(() => {
 <style scoped>
 .layout {
   height: 100vh;
+  background: var(--ch-bg);
 }
 
 .aside {
-  background: var(--ch-sidebar);
-  color: #fff;
   display: flex;
   flex-direction: column;
 }
@@ -182,29 +183,38 @@ onUnmounted(() => {
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 54px;
+  gap: 10px;
+  height: 52px;
   padding: 0 16px;
   font-weight: 600;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 14px;
+  color: var(--ch-text);
+}
+
+/* Fluent 品牌标：强调色圆角方块 + 白色图标 */
+.brand-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--ch-accent) 0%, #4d94d1 100%);
+}
+
+.brand-text {
+  letter-spacing: 0.2px;
 }
 
 .menu {
   flex: 1;
   border-right: none;
   background: transparent;
-  --el-menu-text-color: #cbd5e1;
-  --el-menu-hover-bg-color: rgba(255, 255, 255, 0.08);
-  --el-menu-active-color: #fff;
-}
-
-.menu :deep(.el-menu-item) {
-  margin: 2px 8px;
-  border-radius: 6px;
-}
-
-.menu :deep(.el-menu-item.is-active) {
-  background: #409eff;
+  --el-menu-bg-color: transparent;
+  --el-menu-hover-bg-color: rgba(0, 0, 0, 0.04);
+  --el-menu-text-color: var(--ch-text);
+  --el-menu-active-color: var(--ch-text);
 }
 
 .menu-badge {
@@ -213,22 +223,25 @@ onUnmounted(() => {
 
 .aside-footer {
   padding: 10px 16px 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--ch-divider);
 }
 
 .aside-meta {
   font-size: 12px;
-  color: #8fa3b8;
-  line-height: 1.8;
+  color: var(--ch-text-tertiary);
+  line-height: 1.9;
 }
 
 .header {
-  background: #fff;
+  height: 52px;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--ch-border);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding: 0 16px;
 }
 
 .header-left {
@@ -240,15 +253,22 @@ onUnmounted(() => {
 
 .server-url {
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-text-tertiary);
 }
 
 .user-chip {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--ch-radius-control);
   cursor: pointer;
   outline: none;
+  transition: background 0.15s ease;
+}
+
+.user-chip:hover {
+  background: rgba(0, 0, 0, 0.04);
 }
 
 .main {

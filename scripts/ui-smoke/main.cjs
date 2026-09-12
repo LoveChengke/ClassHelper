@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Web 管理端 UI 冒烟测试（Electron 驱动真实浏览器内核）。
  *
  * 覆盖：
@@ -331,6 +331,56 @@ async function main() {
   })()`);
   record('Service Worker 已注册（浏览器可安装为应用）', Boolean(swInfo?.ok), String(swInfo?.detail ?? ''));
 
+  // 7.5 "叫人"入口（学生管理 → 叫人 → 快捷短语/自定义消息）
+  const callDialog = await win.webContents.executeJavaScript(`(async () => {
+    const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
+      (node.textContent ?? '').trim().startsWith('学生管理'),
+    );
+    if (!menu) return { ok: false, reason: '未找到学生管理菜单' };
+    menu.click();
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline && location.pathname !== '/students') {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const callButton = Array.from(document.querySelectorAll('button')).find((node) =>
+      (node.textContent ?? '').trim() === '叫人',
+    );
+    if (!callButton) return { ok: false, reason: '学生列表里没有"叫人"按钮' };
+    callButton.click();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const dialog = document.querySelector('.el-dialog');
+    if (!dialog) return { ok: false, reason: '叫人弹窗未打开' };
+    const phrases = Array.from(dialog.querySelectorAll('.call-phrase')).map((node) => node.textContent.trim());
+    const hasTextarea = Boolean(dialog.querySelector('textarea'));
+    const target = dialog.querySelector('.el-alert__title')?.textContent?.trim() ?? '';
+    // 点第二条快捷短语（第一条是默认选中，再点会取消），确认可切换选中态
+    const phraseNodes = Array.from(dialog.querySelectorAll('.call-phrase'));
+    const target2 = phraseNodes[1] ?? phraseNodes[0];
+    const expected = target2 ? target2.textContent.trim() : '';
+    if (target2) target2.click();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const darkTag = dialog.querySelector('.call-phrase.el-tag--dark');
+    const picked = Boolean(darkTag) && darkTag.textContent.trim() === expected;
+    return { ok: true, phrases, hasTextarea, target, picked, path: location.pathname };
+  })()`);
+  record(
+    '叫人入口（快捷短语 + 自定义消息）',
+    Boolean(callDialog?.ok) &&
+      (callDialog?.phrases?.length ?? 0) >= 5 &&
+      callDialog?.hasTextarea === true &&
+      callDialog?.picked === true,
+    `path=${callDialog?.path} 对象="${callDialog?.target}" 短语数=${callDialog?.phrases?.length ?? 0} 自定义输入=${callDialog?.hasTextarea} 可选中=${callDialog?.picked}` +
+      `${callDialog?.reason ? ` 原因=${callDialog.reason}` : ''}`,
+  );
+  await win.webContents.executeJavaScript(`(() => {
+    const cancel = Array.from(document.querySelectorAll('.el-dialog__footer button')).find((node) =>
+      (node.textContent ?? '').trim() === '取消',
+    );
+    if (cancel) cancel.click();
+    return true;
+  })()`);
+  await sleep(300);
   // 8. 手机小屏适配（390×844，1Panel 风格：侧边栏收进抽屉 + 卡片内横向滚动）
   await runMobileChecks(win);
 

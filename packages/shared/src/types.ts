@@ -254,6 +254,19 @@ export interface CreateNotificationRequest {
   confirmDuringClass?: boolean;
 }
 
+/**
+ * 叫人请求：老师在 Web 管理端选中学生 + 快捷短语/自定义消息，
+ * 学生端灵动岛会立即弹出"请 XXX 同学找 XXX 老师"。
+ */
+export interface CreateCallRequest {
+  classId: string;
+  studentId: string;
+  /** 快捷短语（与 message 至少填一个） */
+  quickPhrase?: string;
+  /** 自定义消息（优先于快捷短语） */
+  message?: string;
+}
+
 export interface NotificationQueryParams {
   classId?: string;
   priority?: NotificationPriority;
@@ -341,6 +354,14 @@ export interface ClassStatusDto {
 /** 灵动岛显示状态 */
 export type IslandMode = 'hidden' | 'pill' | 'expanded';
 
+/**
+ * 灵动岛消息类型：
+ * - `notification` 普通/重要/紧急通知
+ * - `homework`     新作业发布（带截止时间，样式区分）
+ * - `call`         "叫人"：老师点名让某位同学去找他（无论是否上课都立即展开）
+ */
+export type IslandNotificationKind = 'notification' | 'homework' | 'call';
+
 /** 投递到灵动岛的通知载荷（服务端 NotificationDto 的精简版） */
 export interface IslandNotification {
   id: string;
@@ -350,6 +371,10 @@ export interface IslandNotification {
   createdAt: string;
   courseName?: string | null;
   teacherName?: string | null;
+  /** 消息类型，默认 notification */
+  kind?: IslandNotificationKind;
+  /** 附加说明，例如作业截止时间、"请到办公室" */
+  subtitle?: string | null;
 }
 
 /** 灵动岛当前状态（主进程持有，渲染进程与冒烟测试读取） */
@@ -363,8 +388,8 @@ export interface IslandState {
   inClass: boolean;
   /** 当前课的结束时间（HH:mm），用于"下课后自动弹出" */
   currentPeriodEnd: string | null;
-  /** 本轮展示原因：新消息 / 下课后补发 / 紧急插播 */
-  reason: 'new' | 'after-class' | 'urgent' | null;
+  /** 本轮展示原因：新消息 / 下课后补发 / 紧急插播 / 叫人 */
+  reason: 'new' | 'after-class' | 'urgent' | 'call' | null;
   updatedAt: number;
 }
 
@@ -390,6 +415,8 @@ export interface DashboardSummary {
 /** 服务端 -> 客户端事件名 */
 export interface ServerToClientEvents {
   'notification:new': (payload: NotificationDto) => void;
+  /** 叫人：定向广播给被叫学生 */
+  'call:new': (payload: NotificationDto) => void;
   'homework:new': (payload: HomeworkDto) => void;
   /** deleted=true 表示该作业已被删除，客户端应从本地缓存中移除 */
   'homework:updated': (payload: HomeworkDto & { deleted?: boolean }) => void;

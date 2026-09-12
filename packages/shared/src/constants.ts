@@ -1,4 +1,4 @@
-import type { NotificationPriority, UserRole } from './types.js';
+﻿import type { NotificationPriority, UserRole } from './types.js';
 
 /** API 前缀 */
 export const API_PREFIX = '/api';
@@ -16,6 +16,8 @@ export const API_PATHS = {
   schedules: '/schedules',
   homeworks: '/homeworks',
   notifications: '/notifications',
+  /** 叫人：老师点名让学生过来 */
+  calls: '/calls',
   grades: '/grades',
   students: '/students',
   teachers: '/teachers',
@@ -74,8 +76,31 @@ export const SOCKET_EVENTS = {
   gradeUpdated: 'grade:updated',
   scheduleUpdated: 'schedule:updated',
   classUpdated: 'class:updated',
+  /** "叫人"：老师点名让某位同学去找他（定向到 user:{studentId} 房间） */
+  callNew: 'call:new',
   connected: 'connected',
 } as const;
+
+/**
+ * "叫人"快捷短语（Web 管理端一键选择，学生端灵动岛同步展示）。
+ * 自定义消息会替换/补全这些短语；`message` 为空时用短语本身。
+ */
+export const CALL_QUICK_PHRASES: readonly string[] = [
+  '请到办公室找我',
+  '请到讲台找我',
+  '请带上作业本找我',
+  '请带上试卷找我',
+  '请到实验室找我',
+  '请到门卫处找我',
+  '请到教室门口等我',
+  '请马上来一趟',
+] as const;
+
+/** 叫人消息标题模板：请 XXX 同学找 XXX 老师（老师名字已含"老师"时不重复追加） */
+export function buildCallTitle(studentName: string, teacherName: string): string {
+  const teacher = /老师|教师|主任|校长/.test(teacherName) ? teacherName : `${teacherName} 老师`;
+  return `请 ${studentName} 同学找 ${teacher}`;
+}
 
 /** Socket.IO 房间名生成规则：与后端保持一致，客户端订阅时复用 */
 export const SOCKET_ROOMS = {
