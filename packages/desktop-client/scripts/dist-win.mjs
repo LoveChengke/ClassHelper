@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveNodeRuntime } from '../../../scripts/lib/node-runtime.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(root, '..', '..');
@@ -52,7 +53,14 @@ if (!fs.existsSync(cli)) {
 const cliArgs = [cli, '--win', ...(dirOnly ? ['--dir'] : []), ...overrides, ...passthrough];
 console.log('[dist] electron-builder', cliArgs.slice(1).join(' '));
 
-const child = spawn(process.execPath, cliArgs, { cwd: root, stdio: 'inherit', env });
+// 必须用真正的 node 执行 electron-builder CLI：
+// 若宿主终端是 Electron（本机 pnpm 即如此），process.execPath 会指向 Electron，
+// 直接 spawn 会让 Electron 把 cli.js 当成应用入口，多出一个位置参数，
+// electron-builder 报 `Unknown argument: .../cli.js`。
+const runtime = resolveNodeRuntime();
+console.log(`[dist] Node 运行时：${runtime.path}（${runtime.version}）`);
+
+const child = spawn(runtime.path, cliArgs, { cwd: root, stdio: 'inherit', env });
 
 child.on('exit', (code) => {
   if (code === 0) {

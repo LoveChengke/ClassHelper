@@ -1,7 +1,8 @@
 /**
  * 主进程与渲染进程之间的桥接契约（preload 通过 contextBridge 暴露）。
- * 渲染进程只依赖这个最小 API，不接触 Node.js。
+ * 渲染进程只依赖这些最小 API，不接触 Node.js。
  */
+import type { IslandNotification, IslandState } from '@classhelper/shared';
 
 export interface DesktopStoredConfig {
   /** 后端服务地址，例如 http://127.0.0.1:4000 */
@@ -23,6 +24,21 @@ export interface DesktopAppInfo {
   smokeTest: boolean;
 }
 
+/** 投递通知到灵动岛时附带的上下文 */
+export interface IslandPushContext {
+  /** 当前是否处于上课时间段（上课期间非紧急通知会被暂存，下课后自动弹出） */
+  inClass?: boolean;
+  /** 当前这节课的结束时间（HH:mm） */
+  currentPeriodEnd?: string | null;
+  week?: number;
+}
+
+export interface IslandClassStatePayload {
+  inClass: boolean;
+  currentPeriodEnd?: string | null;
+  week?: number;
+}
+
 export interface DesktopBridge {
   /** 是否处于冒烟验证模式（由 ELECTRON_SMOKE_TEST=1 触发），同步可读 */
   smokeTest: boolean;
@@ -31,12 +47,29 @@ export interface DesktopBridge {
   clearConfig(): Promise<DesktopStoredConfig>;
   getAppInfo(): Promise<DesktopAppInfo>;
   openExternal(url: string): Promise<boolean>;
+
+  /* 灵动岛 */
+  /** 把一条通知投递到灵动岛 */
+  islandPush(payload: { notification: IslandNotification; context?: IslandPushContext }): void;
+  /** 同步上课状态：进入上课隐藏，下课后自动弹出暂存通知 */
+  islandSetClassState(payload: IslandClassStatePayload): void;
+  /** 读取灵动岛当前状态（设置页/冒烟验证用） */
+  islandGetState(): Promise<IslandState>;
+}
+
+/** 灵动岛窗口自身的桥接（只暴露订阅状态与发送操作） */
+export interface IslandRendererBridge {
+  onState(handler: (state: IslandState) => void): void;
+  sendAction(action: 'expand' | 'collapse' | 'dismiss' | 'mark-read' | 'open-app', id?: string): void;
+  getState(): Promise<IslandState>;
 }
 
 declare global {
   interface Window {
     /** 仅在 Electron 中注入；浏览器里为 undefined（渲染进程做了降级处理） */
     desktop?: DesktopBridge;
+    /** 灵动岛窗口专用桥接 */
+    island?: IslandRendererBridge;
     /** 冒烟验证钩子，仅在 ELECTRON_SMOKE_TEST=1 时由渲染进程注册 */
     __classhelperSmoke__?: {
       cacheSelfTest(): Promise<{ ok: boolean; detail: string }>;

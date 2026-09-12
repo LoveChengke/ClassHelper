@@ -8,9 +8,10 @@ import { spawn } from 'node:child_process';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import electronPath from 'electron';
+import { resolveElectronEnv, resolveElectronExecutable } from '../../../scripts/lib/electron-env.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const electronPath = resolveElectronExecutable(path.join(root, 'node_modules', 'electron'));
 const HOST = '127.0.0.1';
 const PORT = 5174;
 const DEV_URL = `http://${HOST}:${PORT}`;
@@ -53,7 +54,7 @@ function startElectron() {
   electron = spawn(electronPath, ['.'], {
     cwd: root,
     stdio: 'inherit',
-    env: { ...process.env, VITE_DEV_SERVER_URL: DEV_URL },
+    env: resolveElectronEnv({ VITE_DEV_SERVER_URL: DEV_URL }),
   });
   electron.on('exit', (code) => cleanup(code ?? 0));
 }

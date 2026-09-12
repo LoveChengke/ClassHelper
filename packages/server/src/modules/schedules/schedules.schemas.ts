@@ -13,6 +13,20 @@ export const gridQuerySchema = z.object({
   week: weekNumberSchema.optional(),
 });
 
+/**
+ * 上课状态查询。
+ * `at` 为诊断/联调用的时间覆盖（例如排查"为什么现在不认为是上课"），
+ * 不传则按服务器当前时间判定。
+ */
+export const classStatusQuerySchema = z.object({
+  classId: z.string().min(1).optional(),
+  at: z
+    .string()
+    .min(1)
+    .optional()
+    .refine((value) => value === undefined || !Number.isNaN(new Date(value).getTime()), 'at 需为合法时间'),
+});
+
 export const createScheduleSchema = z
   .object({
     classId: z.string().min(1, '请选择班级'),

@@ -17,6 +17,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveNodeRuntime } from './lib/node-runtime.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const serverDir = path.join(root, 'packages', 'server');
@@ -47,13 +48,49 @@ const run = (command, args, options = {}) => {
 function ensureBuilds() {
   const serverEntry = path.join(serverDir, 'dist', 'index.js');
   const webEntry = path.join(webDir, 'dist', 'index.html');
+  const sharedEntry = path.join(root, 'packages', 'shared', 'dist', 'index.js');
   const missing = [];
+  if (!fs.existsSync(sharedEntry)) missing.push('packages/shared/dist（请先 pnpm build:shared）');
   if (!fs.existsSync(serverEntry))
     missing.push('packages/server/dist（请先 pnpm --filter @classhelper/server build）');
   if (!fs.existsSync(webEntry))
     missing.push('packages/web-admin/dist（请先 pnpm --filter @classhelper/web-admin build）');
   if (missing.length > 0) {
-    throw new Error(`缺少构建产物：\n  - ${missing.join('\n  - ')}`);
+    throw new Error(`缺少构建产物：\n  - ${missing.join('\n  - ')}\n建议直接执行：pnpm dist:server`);
+  }
+
+  // 新鲜度校验：曾出现过"改动只重新构建了 server，却把旧的 shared/dist 打进安装包"，
+  // 结果安装后服务启动即报 "does not provide an export named ..."。这里直接拦住。
+  const newestSource = (dir) => {
+    let newest = 0;
+    const walk = (current) => {
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        const full = path.join(current, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else newest = Math.max(newest, fs.statSync(full).mtimeMs);
+      }
+    };
+    if (fs.existsSync(dir)) walk(dir);
+    return newest;
+  };
+
+  const stale = [];
+  const sharedSourceTime = newestSource(path.join(root, 'packages', 'shared', 'src'));
+  const sharedBuildTime = fs.statSync(path.join(root, 'packages', 'shared', 'dist', 'index.js')).mtimeMs;
+  if (sharedSourceTime > sharedBuildTime) stale.push('packages/shared（src 比 dist 新）');
+
+  const serverSourceTime = newestSource(path.join(serverDir, 'src'));
+  const serverBuildTime = fs.statSync(serverEntry).mtimeMs;
+  if (serverSourceTime > serverBuildTime) stale.push('packages/server（src 比 dist 新）');
+
+  const webSourceTime = newestSource(path.join(webDir, 'src'));
+  const webBuildTime = fs.statSync(webEntry).mtimeMs;
+  if (webSourceTime > webBuildTime) stale.push('packages/web-admin（src 比 dist 新）');
+
+  if (stale.length > 0) {
+    throw new Error(
+      `构建产物已过期：\n  - ${stale.join('\n  - ')}\n请重新构建（推荐直接执行：pnpm dist:server）`,
+    );
   }
 }
 
@@ -144,10 +181,10 @@ function buildRuntime() {
   // Web 管理端
   copyRecursive(path.join(webDir, 'dist'), path.join(staging, 'web'));
 
-  // Node 运行时
-  const nodeExe = process.execPath;
-  copyRecursive(nodeExe, path.join(staging, 'node.exe'));
-  log(`内置 Node 运行时：${nodeExe}`);
+  // Node 运行时（必须是真正的 node.exe，不能用宿主 Electron 可执行文件）
+  const nodeRuntime = resolveNodeRuntime();
+  copyRecursive(nodeRuntime.path, path.join(staging, 'node.exe'));
+  log(`内置 Node 运行时：${nodeRuntime.path}（${nodeRuntime.version}）`);
 
   // 数据目录：强制清空，避免把打包机上测试用的数据库带进安装包
   fs.rmSync(path.join(staging, 'data'), { recursive: true, force: true });

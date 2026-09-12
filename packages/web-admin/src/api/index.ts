@@ -2,6 +2,7 @@ import {
   API_PATHS,
   type ClassDetailDto,
   type ClassDto,
+  type ClassStatusDto,
   type CourseDto,
   type CreateClassRequest,
   type CreateCourseRequest,
@@ -76,6 +77,9 @@ export const scheduleApi = {
     api.get(API_PATHS.schedules, params),
   grid: (params: { classId?: string; week?: number }): Promise<ScheduleWeekView> =>
     api.get(`${API_PATHS.schedules}/grid`, params),
+  /** 班级当前上课状态：上课时段发布紧急通知时必须先二次确认 */
+  classStatus: (classId: string): Promise<ClassStatusDto> =>
+    api.get(`${API_PATHS.schedules}/current`, { classId }),
   create: (payload: CreateScheduleRequest): Promise<ScheduleDto> => api.post(API_PATHS.schedules, payload),
   update: (id: string, payload: Partial<CreateScheduleRequest>): Promise<ScheduleDto> =>
     api.patch(`${API_PATHS.schedules}/${id}`, payload),

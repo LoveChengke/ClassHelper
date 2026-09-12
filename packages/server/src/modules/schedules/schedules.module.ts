@@ -1,11 +1,13 @@
 import { Router } from 'express';
+import { resolveCurrentWeek } from '@classhelper/shared';
+import { env } from '../../config/env.js';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { resolveCurrentWeek } from '../../lib/term.js';
 import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
+  classStatusQuerySchema,
   createScheduleSchema,
   gridQuerySchema,
   listSchedulesQuerySchema,
@@ -31,9 +33,27 @@ router.get('/grid', validate({ query: gridQuerySchema }), async (req, res) => {
   const { classId, week } = validatedQuery<{ classId?: string; week?: number }>(req);
   sendOk(
     res,
-    await scheduleService.getScheduleGrid(user, { classId, week: week ?? resolveCurrentWeek() }),
+    await scheduleService.getScheduleGrid(user, {
+      classId,
+      week: week ?? resolveCurrentWeek(env.termStartDate),
+    }),
     '获取周视图成功',
   );
+});
+
+/**
+ * GET /api/schedules/current?classId=&at= - 班级当前上课状态。
+ * 客户端灵动岛（上课期间隐藏、下课后弹出）与 Web 端"上课时段发布紧急通知"
+ * 的全屏二次确认都基于它；`at` 为诊断/联调用时间覆盖。
+ */
+router.get('/current', validate({ query: classStatusQuerySchema }), async (req, res) => {
+  const user = getAuthUser(req);
+  const { classId, at } = validatedQuery<{ classId?: string; at?: string }>(req);
+  const status = await scheduleService.getClassStatus(user, {
+    classId,
+    at: at ? new Date(at) : undefined,
+  });
+  sendOk(res, status, status.inClass ? '当前处于上课时间段' : '当前不在上课时间段');
 });
 
 /** POST /api/schedules - 新增课表 */

@@ -10,11 +10,13 @@ import {
   relativeTime,
   truncate,
   type ClassDto,
+  type ClassPeriod,
   type NotificationDto,
   type NotificationPriority,
 } from '@classhelper/shared';
-import { classApi, notificationApi } from '@/api';
+import { classApi, notificationApi, scheduleApi } from '@/api';
 import { useRealtimeStore } from '@/stores/realtime';
+import UrgentClassWarning from '@/components/UrgentClassWarning.vue';
 
 const realtime = useRealtimeStore();
 
@@ -64,6 +66,13 @@ const rules: FormRules = {
   content: [{ required: true, message: '请输入通知内容', trigger: 'blur' }],
 };
 
+/** 上课时段发布紧急通知的全屏二次确认状态 */
+const urgentWarning = reactive({
+  visible: false,
+  period: null as ClassPeriod | null,
+  title: '',
+});
+
 function openCreate(): void {
   form.classId = filter.classId || classes.value[0]?.id || '';
   form.title = '';
@@ -76,15 +85,56 @@ async function submitForm(): Promise<void> {
   const valid = await formRef.value?.validate().catch(() => false);
   if (!valid) return;
 
-  const created = await notificationApi.create({
-    classId: form.classId,
-    title: form.title.trim(),
-    content: form.content,
-    priority: form.priority,
-  });
-  ElMessage.success(`通知已发布（${created.title}），已推送给学生客户端`);
-  formVisible.value = false;
-  await loadNotifications();
+  // 上课时段发布紧急通知：先查询班级上课状态，命中则弹全屏二次确认（3 秒倒计时）
+  if (form.priority === 'URGENT') {
+    const status = await scheduleApi.classStatus(form.classId).catch(() => null);
+    if (status?.inClass) {
+      urgentWarning.period = status.current;
+      urgentWarning.title = form.title.trim();
+      urgentWarning.visible = true;
+      return;
+    }
+  }
+
+  await doPublish(false);
+}
+
+/** 真正提交；confirmDuringClass 为 true 表示教师已在上课警告中确认 */
+async function doPublish(confirmDuringClass: boolean): Promise<void> {
+  try {
+    const created = await notificationApi.create({
+      classId: form.classId,
+      title: form.title.trim(),
+      content: form.content,
+      priority: form.priority,
+      ...(confirmDuringClass ? { confirmDuringClass: true } : {}),
+    });
+    ElMessage.success(`通知已发布（${created.title}），已推送给学生客户端`);
+    formVisible.value = false;
+    await loadNotifications();
+  } catch (error) {
+    // 兜底：并发场景下服务端仍可能拦截（例如刚好上课铃响），此时同样弹出警告
+    const response = (
+      error as {
+        response?: { status?: number; data?: { code?: string; details?: { current?: ClassPeriod | null } } };
+      }
+    ).response;
+    if (response?.status === 409 && response.data?.code === 'URGENT_DURING_CLASS') {
+      urgentWarning.period = response.data.details?.current ?? null;
+      urgentWarning.title = form.title.trim();
+      urgentWarning.visible = true;
+    }
+  }
+}
+
+function onUrgentConfirmed(): void {
+  urgentWarning.visible = false;
+  void doPublish(true);
+}
+
+function onUrgentCancelled(): void {
+  urgentWarning.visible = false;
+  ElMessage.info('已取消发布，紧急通知未发出');
 }
 
 async function removeNotification(row: NotificationDto): Promise<void> {
@@ -222,5 +272,14 @@ onUnmounted(() => {
         <el-button type="primary" @click="submitForm">立即发布</el-button>
       </template>
     </el-dialog>
+
+    <!-- 上课时段发布紧急通知的全屏二次确认（3 秒倒计时） -->
+    <UrgentClassWarning
+      :visible="urgentWarning.visible"
+      :period="urgentWarning.period"
+      :pending-title="urgentWarning.title"
+      @cancel="onUrgentCancelled"
+      @confirm="onUrgentConfirmed"
+    />
   </div>
 </template>

@@ -8,8 +8,10 @@ import {
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
+import { logger } from '../../lib/logger.js';
 import { toNotificationDto } from '../../lib/mappers.js';
 import { emitToClass } from '../../realtime/bus.js';
+import { computeClassStatus } from '../schedules/schedules.service.js';
 import type { CreateNotificationInput } from './notifications.schemas.js';
 
 const creatorSelect = { select: { id: true, name: true, username: true } } as const;
@@ -48,19 +50,42 @@ export async function listNotifications(
   return notifications.map((item) => toNotificationDto(item, { userId: user.sub, withStatus: isStaff }));
 }
 
-/** 发布通知并实时广播到 class:{classId} 房间 */
+/**
+ * 发布通知并实时广播到 class:{classId} 房间。
+ *
+ * 上课时段保护：若目标班级当前正在上课且优先级为"紧急"，必须由前端二次确认
+ * （`confirmDuringClass: true`）才允许发布，否则返回 409 URGENT_DURING_CLASS，
+ * 由 Web 端弹出全屏警告并倒计时 3 秒。
+ */
 export async function createNotification(
   user: TokenPayload,
   input: CreateNotificationInput,
 ): Promise<NotificationDto> {
   await assertClassWritable(user, input.classId);
 
+  const priority = input.priority ?? 'NORMAL';
+  if (priority === 'URGENT' && input.confirmDuringClass !== true) {
+    const status = await computeClassStatus(input.classId);
+    if (status.inClass) {
+      logger.warn(
+        `上课时段发布紧急通知被拦截：班级=${input.classId} 课程=${status.current?.courseName ?? '-'}（等待教师二次确认）`,
+      );
+      throw new ApiError(409, 'URGENT_DURING_CLASS', '现在为上课时间段，发布紧急通知会干扰上课，请再次确认', {
+        classId: input.classId,
+        current: status.current,
+        next: status.next,
+        week: status.week,
+        serverTime: status.serverTime,
+      });
+    }
+  }
+
   const created = await prisma.notification.create({
     data: {
       classId: input.classId,
       title: input.title,
       content: input.content,
-      priority: input.priority ?? 'NORMAL',
+      priority,
       createdBy: user.sub,
     },
     include: { creator: creatorSelect, reads: true },

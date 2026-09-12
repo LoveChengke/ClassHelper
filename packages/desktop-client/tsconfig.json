@@ -18,6 +18,8 @@
     "src/renderer/**/*.ts",
     "src/renderer/**/*.d.ts",
     "src/renderer/**/*.vue",
+    "src/island/**/*.ts",
+    "src/island/**/*.vue",
     "src/types/**/*.d.ts"
   ]
 }

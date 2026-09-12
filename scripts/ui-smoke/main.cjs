@@ -7,6 +7,10 @@
  *   3. 进入主布局
  *   4. **侧边栏 7 个菜单逐一点击**：断言路由路径变化 + 页面标题渲染
  *      —— 这是"点击左侧边栏没反应"的回归测试
+ *   5. **上课时段发布紧急通知**：全屏警告 + 3 秒倒计时 + 确认后才真正发布
+ *      —— 上课时段由 run.mjs 的探针（今天 00:00-23:59 的课表）真实制造
+ *   6. 前端路由深链直接访问
+ *   7. PWA manifest + Service Worker（浏览器可安装为应用）
  *
  * 用法（需要后端已启动，且 Web 管理端由其托管）：
  *   UI_SMOKE_URL=http://127.0.0.1:4000/ node scripts/ui-smoke/run.mjs
@@ -169,7 +173,133 @@ async function main() {
     `visited=[${visited.join(' ')}]${failures.length > 0 ? ` failures=${failures.join(';')}` : ''}`,
   );
 
-  // 5. SPA 深链刷新（生产环境静态托管必须支持）
+  // 5. 上课时段发布紧急通知：全屏警告 + 3 秒倒计时 + 教师确认后才真正发布
+  //    "上课时段"由 run.mjs 的探针提前用 HTTP 建好（今天 00:00-23:59 的课表）
+  const urgentTitle = process.env.UI_SMOKE_URGENT_TITLE ?? 'UI 冒烟紧急通知';
+  const inClass = process.env.UI_SMOKE_INCLASS === '1';
+  if (!inClass) {
+    record(
+      '上课时段发布紧急通知（全屏警告 + 3 秒倒计时）',
+      false,
+      `未能制造上课时段：${process.env.UI_SMOKE_PROBE_DETAIL || '未知原因'}`,
+    );
+  } else {
+    const urgent = await win.webContents.executeJavaScript(`(async () => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const waitFor = async (check, timeout = 8000) => {
+        const deadline = Date.now() + timeout;
+        while (Date.now() < deadline) {
+          const value = check();
+          if (value) return value;
+          await sleep(80);
+        }
+        return null;
+      };
+      const byText = (nodes, text) =>
+        Array.from(nodes).find((node) => (node.textContent ?? '').trim().includes(text));
+      const setValue = (element, value) => {
+        const proto = element.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value').set.call(element, value);
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      const formItem = (dialog, label) =>
+        Array.from(dialog.querySelectorAll('.el-form-item')).find((item) =>
+          (item.querySelector('.el-form-item__label')?.textContent ?? '').trim().startsWith(label),
+        );
+
+      const menu = byText(document.querySelectorAll('.el-menu-item'), '通知发布');
+      if (!menu) return { ok: false, detail: '侧边栏未找到"通知发布"菜单' };
+      menu.click();
+      if (!(await waitFor(() => location.pathname === '/notifications')))
+        return { ok: false, detail: '未跳转到 /notifications' };
+
+      const openButton = await waitFor(() => byText(document.querySelectorAll('button'), '发布通知'));
+      if (!openButton) return { ok: false, detail: '未找到"发布通知"按钮' };
+      openButton.click();
+
+      const dialog = await waitFor(() => document.querySelector('.el-dialog'));
+      if (!dialog) return { ok: false, detail: '发布通知弹窗未打开' };
+
+      const titleItem = formItem(dialog, '标题');
+      const contentItem = formItem(dialog, '内容');
+      if (!titleItem || !contentItem) return { ok: false, detail: '弹窗表单缺少标题/内容字段' };
+      setValue(titleItem.querySelector('input'), ${JSON.stringify(urgentTitle)});
+      setValue(contentItem.querySelector('textarea'), '自动化校验：本节课紧急通知二次确认流程');
+
+      const urgentRadio = byText(dialog.querySelectorAll('.el-radio-button'), '紧急');
+      if (!urgentRadio) return { ok: false, detail: '未找到"紧急"优先级选项' };
+      (urgentRadio.querySelector('.el-radio-button__inner') ?? urgentRadio).click();
+      const radioActive = await waitFor(() => {
+        const node = byText(dialog.querySelectorAll('.el-radio-button'), '紧急');
+        return Boolean(node && node.classList.contains('is-active'));
+      });
+      if (!radioActive) return { ok: false, detail: '"紧急"优先级未选中' };
+
+      const publish = byText(dialog.querySelectorAll('.el-dialog__footer button'), '立即发布');
+      if (!publish) return { ok: false, detail: '未找到"立即发布"按钮' };
+      publish.click();
+
+      const mask = await waitFor(() => document.querySelector('.urgent-mask'), 10000);
+      if (!mask) return { ok: false, detail: '上课时段发布紧急通知未弹出全屏警告' };
+
+      const maskText = (mask.textContent ?? '').replace(/\\s+/g, ' ').trim();
+      const periodText = (mask.querySelector('.urgent-period .period-value')?.textContent ?? '').trim();
+      const dangerButton = mask.querySelector('.urgent-actions button.el-button--danger');
+      if (!dangerButton) return { ok: false, detail: '全屏警告缺少确认按钮' };
+      const disabledAtStart = dangerButton.disabled === true;
+      const startText = (dangerButton.textContent ?? '').trim();
+
+      const startedAt = Date.now();
+      const enabled = await waitFor(() => {
+        const node = document.querySelector('.urgent-mask .urgent-actions button.el-button--danger');
+        return Boolean(node && node.disabled !== true);
+      }, 9000);
+      const countdownMs = Date.now() - startedAt;
+      if (!enabled) return { ok: false, detail: '倒计时结束后确认按钮仍未可用' };
+
+      document.querySelector('.urgent-mask .urgent-actions button.el-button--danger').click();
+
+      const closed = await waitFor(() => !document.querySelector('.urgent-mask'), 6000);
+      const listed = await waitFor(
+        () =>
+          Array.from(document.querySelectorAll('.el-table__body td')).some((cell) =>
+            (cell.textContent ?? '').includes(${JSON.stringify(urgentTitle)}),
+          ),
+        10000,
+      );
+
+      return {
+        ok: Boolean(closed && listed),
+        detail: closed
+          ? listed
+            ? ''
+            : '确认后警告已关闭，但通知列表未出现该通知'
+          : '点击确认后全屏警告未关闭',
+        maskText,
+        periodText,
+        disabledAtStart,
+        startText,
+        countdownMs,
+      };
+    })()`);
+
+    record(
+      '上课时段发布紧急通知（全屏警告 + 3 秒倒计时）',
+      Boolean(urgent?.ok) &&
+        Boolean(urgent?.maskText?.includes('现在为上课时间段')) &&
+        Boolean(urgent?.periodText) &&
+        urgent?.disabledAtStart === true &&
+        Number(urgent?.countdownMs) >= 1500,
+      urgent
+        ? `警告文案="${urgent.maskText?.slice(0, 60)}…" 上课时段=${urgent.periodText} ` +
+            `初始按钮="${urgent.startText}"(禁用=${urgent.disabledAtStart}) ` +
+            `倒计时=${urgent.countdownMs}ms${urgent.detail ? ` 问题=${urgent.detail}` : ''}`
+        : '未执行',
+    );
+  }
+
+  // 6. SPA 深链刷新（生产环境静态托管必须支持）
   await win.loadURL(`${TARGET_URL.replace(/\/$/, '')}/grades`);
   const deepLinkOk = await waitFor(
     win,
@@ -182,7 +312,7 @@ async function main() {
     `path=${await win.webContents.executeJavaScript('location.pathname')}`,
   );
 
-  // 6. PWA 可安装性：manifest 可获取 + Service Worker 已注册
+  // 7. PWA 可安装性：manifest 可获取 + Service Worker 已注册
   // 注意：注入代码里不要使用 ${} 插值，避免与宿主文件的模板字符串冲突
   const manifestInfo = await win.webContents.executeJavaScript(`(async () => {
     const link = document.querySelector('link[rel="manifest"]');

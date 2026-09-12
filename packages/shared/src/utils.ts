@@ -1,5 +1,5 @@
 import { WEEKDAY_LABELS, WEEKDAYS } from './constants.js';
-import type { GradeLevel, ScheduleDto, ScheduleWeekView } from './types.js';
+import type { ClassPeriod, GradeLevel, ScheduleDto, ScheduleWeekView } from './types.js';
 
 /* ------------------------------------------------------------------ 日期时间 */
 
@@ -206,4 +206,103 @@ export function truncate(text: string | null | undefined, max = 60): string {
 /** HH:mm 校验 */
 export function isValidTimeString(value: string): boolean {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+/* ------------------------------------------------------------------ 上课时段判定 */
+
+/** HH:mm -> 分钟数（非法输入返回 -1） */
+export function timeToMinutes(value: string): number {
+  const [hour, minute] = value.split(':').map(Number);
+  if (hour === undefined || minute === undefined || Number.isNaN(hour) || Number.isNaN(minute)) return -1;
+  return hour * 60 + minute;
+}
+
+const MS_PER_DAY = 86_400_000;
+export const MAX_TERM_WEEK = 30;
+
+/**
+ * 依据学期起始日（第 1 教学周的周一）计算当前教学周。
+ * 服务端与三端共用同一份实现，避免"周次"口径不一致。
+ */
+export function resolveCurrentWeek(
+  termStartDate: string,
+  now: Date = new Date(),
+  maxWeek: number = MAX_TERM_WEEK,
+): number {
+  if (!termStartDate) return 1;
+  const start = toDate(termStartDate);
+  if (Number.isNaN(start.getTime())) return 1;
+
+  const weekday = start.getDay() === 0 ? 7 : start.getDay();
+  const monday = new Date(start.getTime() - (weekday - 1) * MS_PER_DAY);
+  monday.setHours(0, 0, 0, 0);
+
+  const diffDays = Math.floor((now.getTime() - monday.getTime()) / MS_PER_DAY);
+  const week = Math.floor(diffDays / 7) + 1;
+  return clamp(week, 1, maxWeek);
+}
+
+/** 把课表条目转换成时段信息 */
+export function toClassPeriod(schedule: ScheduleDto): ClassPeriod {
+  return {
+    scheduleId: schedule.id,
+    courseId: schedule.courseId,
+    courseName: schedule.course?.name ?? '课程',
+    startTime: schedule.startTime,
+    endTime: schedule.endTime,
+    location: schedule.location,
+    dayOfWeek: schedule.dayOfWeek,
+  };
+}
+
+/**
+ * 判断某一时刻是否处于上课时间段，并给出正在上的课与下一节课。
+ *
+ * @param schedules 该班级的课表（可含全部周次）
+ * @param now       判定时刻
+ * @param week      当前教学周；传 0 / 省略表示不按周次过滤（仅按星期与时间）
+ */
+export function resolveClassStatus(
+  schedules: ScheduleDto[],
+  now: Date = new Date(),
+  week?: number,
+): { inClass: boolean; current: ClassPeriod | null; next: ClassPeriod | null } {
+  const weekday = weekdayOf(now);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  const weekFiltered =
+    week && week > 0 ? schedules.filter((item) => isScheduleActiveInWeek(item, week)) : schedules;
+  const today = weekFiltered.filter((item) => item.dayOfWeek === weekday);
+
+  const current = today
+    .filter((item) => {
+      const start = timeToMinutes(item.startTime);
+      const end = timeToMinutes(item.endTime);
+      return start >= 0 && end > start && nowMinutes >= start && nowMinutes < end;
+    })
+    .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime))[0];
+
+  const next = today
+    .filter((item) => timeToMinutes(item.startTime) > nowMinutes)
+    .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime))[0];
+
+  return {
+    inClass: Boolean(current),
+    current: current ? toClassPeriod(current) : null,
+    next: next ? toClassPeriod(next) : null,
+  };
+}
+
+/** 时段的可读文案，例如 "08:00-08:45 · 数学 · 教学楼 A301" */
+export function formatClassPeriod(period: ClassPeriod | null): string {
+  if (!period) return '';
+  const location = period.location ? ` · ${period.location}` : '';
+  return `${period.startTime}-${period.endTime} · ${period.courseName}${location}`;
+}
+
+/** 距离某个 HH:mm 还有多少分钟（已过则为负） */
+export function minutesUntil(time: string, now: Date = new Date()): number {
+  const target = timeToMinutes(time);
+  if (target < 0) return 0;
+  return target - (now.getHours() * 60 + now.getMinutes());
 }

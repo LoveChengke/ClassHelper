@@ -11,6 +11,7 @@ import {
   type ServerToClientEvents,
 } from '@classhelper/shared';
 import { socketUrlOf } from '../config.js';
+import { pushNotificationToIsland } from '../island/bridge.js';
 
 type RealtimeEventName = keyof ServerToClientEvents;
 type EventHandler = (payload: unknown) => void;
@@ -70,6 +71,8 @@ export const useRealtimeStore = defineStore('realtime', () => {
         duration: 5000,
         showClose: true,
       });
+      // 投递到桌面灵动岛：紧急通知立即展开；上课期间的非紧急通知会暂存，下课后自动弹出
+      pushNotificationToIsland(payload);
       dispatch(SOCKET_EVENTS.notificationNew, payload);
     });
 

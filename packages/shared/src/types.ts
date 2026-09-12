@@ -247,6 +247,11 @@ export interface CreateNotificationRequest {
   title: string;
   content: string;
   priority?: NotificationPriority;
+  /**
+   * 上课时间段内发布"紧急"通知时必须显式置为 true（表示教师已确认会干扰上课）。
+   * 否则服务端返回 409 URGENT_DURING_CLASS，由前端弹出全屏二次确认。
+   */
+  confirmDuringClass?: boolean;
 }
 
 export interface NotificationQueryParams {
@@ -298,6 +303,69 @@ export interface GradeStats {
   averagePercent: number;
   byCourse: Array<{ courseId: string | null; courseName: string; count: number; averagePercent: number }>;
   distribution: Array<{ level: GradeLevel; count: number }>;
+}
+
+/* ------------------------------------------------------------------ 上课时段（灵动岛 / 紧急通知确认共用） */
+
+/** 一节课的时段信息 */
+export interface ClassPeriod {
+  scheduleId: string;
+  courseId: string;
+  courseName: string;
+  /** HH:mm */
+  startTime: string;
+  /** HH:mm */
+  endTime: string;
+  location: string | null;
+  /** 1=周一 ... 7=周日 */
+  dayOfWeek: number;
+}
+
+/** 班级当前上课状态 */
+export interface ClassStatusDto {
+  classId: string;
+  /** 当前是否处于上课时间段 */
+  inClass: boolean;
+  /** 正在上的这节课（inClass=true 时非空） */
+  current: ClassPeriod | null;
+  /** 下一节课（用于"下课后自动弹出"的提示与倒计时） */
+  next: ClassPeriod | null;
+  /** 服务器判定所用的时间（客户端可据此校正本地时钟偏差） */
+  serverTime: string;
+  /** 判定所用的教学周 */
+  week: number;
+}
+
+/* ------------------------------------------------------------------ 灵动岛 */
+
+/** 灵动岛显示状态 */
+export type IslandMode = 'hidden' | 'pill' | 'expanded';
+
+/** 投递到灵动岛的通知载荷（服务端 NotificationDto 的精简版） */
+export interface IslandNotification {
+  id: string;
+  title: string;
+  content: string;
+  priority: NotificationPriority;
+  createdAt: string;
+  courseName?: string | null;
+  teacherName?: string | null;
+}
+
+/** 灵动岛当前状态（主进程持有，渲染进程与冒烟测试读取） */
+export interface IslandState {
+  mode: IslandMode;
+  /** 正在展示的通知（展开态或胶囊态） */
+  active: IslandNotification | null;
+  /** 上课期间被暂存、待下课后弹出的通知 */
+  queued: IslandNotification[];
+  /** 当前是否处于上课时间段 */
+  inClass: boolean;
+  /** 当前课的结束时间（HH:mm），用于"下课后自动弹出" */
+  currentPeriodEnd: string | null;
+  /** 本轮展示原因：新消息 / 下课后补发 / 紧急插播 */
+  reason: 'new' | 'after-class' | 'urgent' | null;
+  updatedAt: number;
 }
 
 /* ------------------------------------------------------------------ 仪表盘 */

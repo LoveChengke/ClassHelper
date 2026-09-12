@@ -1,15 +1,25 @@
 import {
   SOCKET_EVENTS,
   buildScheduleWeekView,
+  resolveClassStatus,
+  resolveCurrentWeek,
+  type ClassStatusDto,
   type ScheduleDto,
   type ScheduleWeekView,
 } from '@classhelper/shared';
-import { assertClassWritable, classScopeWhere, resolveClassScope } from '../../lib/access.js';
+import {
+  assertClassAccess,
+  assertClassWritable,
+  classScopeWhere,
+  isStudent,
+  requireStudentClassId,
+  resolveClassScope,
+} from '../../lib/access.js';
+import { env } from '../../config/env.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { toScheduleDto } from '../../lib/mappers.js';
-import { resolveCurrentWeek } from '../../lib/term.js';
 import { emitToClass } from '../../realtime/bus.js';
 import type { CreateScheduleInput, UpdateScheduleInput } from './schedules.schemas.js';
 
@@ -47,9 +57,48 @@ export async function getScheduleGrid(
   user: TokenPayload,
   options: { classId?: string; week?: number },
 ): Promise<ScheduleWeekView> {
-  const week = options.week ?? resolveCurrentWeek();
+  const week = options.week ?? resolveCurrentWeek(env.termStartDate);
   const items = await listSchedules(user, { classId: options.classId, week });
   return buildScheduleWeekView(items, week);
+}
+
+/**
+ * 计算指定班级在某时刻的上课状态（不做权限校验，供服务端内部复用）。
+ * @param at 判定时刻，默认当前时间（接口层可传入用于诊断/测试）
+ */
+export async function computeClassStatus(classId: string, at?: Date): Promise<ClassStatusDto> {
+  const now = at ?? new Date();
+  const week = resolveCurrentWeek(env.termStartDate, now);
+  const schedules = await prisma.schedule.findMany({
+    where: { classId },
+    include: { course: courseSelect },
+    orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+  });
+  const status = resolveClassStatus(schedules.map(toScheduleDto), now, week);
+
+  return {
+    classId,
+    inClass: status.inClass,
+    current: status.current,
+    next: status.next,
+    serverTime: now.toISOString(),
+    week,
+  };
+}
+
+/**
+ * 班级上课状态（带权限校验）。
+ * - 学生：固定为自己所在班级
+ * - 教师/管理员：需要显式 classId（前端发布通知时使用）
+ */
+export async function getClassStatus(
+  user: TokenPayload,
+  options: { classId?: string; at?: Date } = {},
+): Promise<ClassStatusDto> {
+  const classId = isStudent(user) ? requireStudentClassId(user) : options.classId;
+  if (!classId) throw ApiError.badRequest('请指定班级（classId）');
+  await assertClassAccess(user, classId);
+  return computeClassStatus(classId, options.at);
 }
 
 export async function createSchedule(user: TokenPayload, input: CreateScheduleInput): Promise<ScheduleDto> {

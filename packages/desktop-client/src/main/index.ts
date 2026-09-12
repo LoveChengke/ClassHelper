@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { BrowserWindow, app, shell } from 'electron';
 import { registerIpcHandlers } from './ipc.js';
+import { island, registerIslandIpc } from './island.js';
+import { logger } from './logger.js';
 import { runSmokeTest } from './smoke.js';
 
 // 主进程由 esbuild 打包为 CommonJS，因此这里可以直接使用 __dirname
@@ -75,9 +77,24 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     registerIpcHandlers();
+    registerIslandIpc();
 
     mainWindow = createWindow();
     await loadRenderer(mainWindow);
+
+    // 灵动岛：独立的置顶透明小窗口（桌面中上方）
+    try {
+      await island.init(devServerUrl ? `${devServerUrl.replace(/\/+$/, '')}/island.html` : null);
+      // 点击灵动岛里的"打开应用"时把主窗口拉到前台
+      island.setOpenAppHandler(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      });
+    } catch (error) {
+      logger.error('灵动岛初始化失败（不影响主功能）', error);
+    }
 
     if (isSmokeTest) {
       try {
@@ -90,7 +107,12 @@ if (!gotLock) {
   });
 
   app.on('window-all-closed', () => {
+    island.destroy();
     if (process.platform !== 'darwin') app.quit();
+  });
+
+  app.on('before-quit', () => {
+    island.destroy();
   });
 
   app.on('activate', async () => {

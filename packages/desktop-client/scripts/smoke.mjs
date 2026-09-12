@@ -9,9 +9,10 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import electronPath from 'electron';
+import { resolveElectronEnv, resolveElectronExecutable } from '../../../scripts/lib/electron-env.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const electronPath = resolveElectronExecutable(path.join(root, 'node_modules', 'electron'));
 const required = [path.join(root, 'dist/main/index.js'), path.join(root, 'dist/renderer/index.html')];
 const missing = required.filter((file) => !fs.existsSync(file));
 
@@ -47,7 +48,7 @@ if (online === undefined) {
 const child = spawn(electronPath, ['.'], {
   cwd: root,
   stdio: 'inherit',
-  env: { ...process.env, ELECTRON_SMOKE_TEST: '1', ELECTRON_SMOKE_ONLINE: online },
+  env: resolveElectronEnv({ ELECTRON_SMOKE_TEST: '1', ELECTRON_SMOKE_ONLINE: online }),
 });
 
 child.on('exit', (code) => {

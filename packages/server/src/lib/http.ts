@@ -19,6 +19,9 @@ export type ApiErrorCode =
   | 'FORBIDDEN'
   | 'NOT_FOUND'
   | 'CONFLICT'
+  | 'TOO_MANY_REQUESTS'
+  /** 上课时间段发布紧急通知需要二次确认（前端据此弹出全屏警告 + 3 秒倒计时） */
+  | 'URGENT_DURING_CLASS'
   | 'INTERNAL_ERROR';
 
 /** 业务异常：中间件会把它转换成统一错误响应体 */

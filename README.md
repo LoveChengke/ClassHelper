@@ -20,10 +20,11 @@
 | 1    | pnpm monorepo 脚手架、TypeScript / ESLint / Prettier / 环境变量                                            | ✅ 已完成                                                  |
 | 2    | 后端：Prisma schema + 迁移 + 种子数据 + JWT 认证 + RBAC + 模块化 REST API + Socket.IO                      | ✅ 已完成                                                  |
 | 3    | Web 管理端：登录、主布局、仪表盘、班级/学生/课表/作业/通知/成绩页面、Axios 封装、实时提示                  | ✅ 已完成                                                  |
-| 4    | EXE 客户端：Electron 主进程/preload/渲染进程、登录、课表/作业/通知/成绩/设置、实时推送、IndexedDB 离线缓存 | ✅ 已完成（冒烟验证 11/11）                                |
+| 4    | EXE 客户端：Electron 主进程/preload/渲染进程、登录、课表/作业/通知/成绩/设置、实时推送、IndexedDB 离线缓存 | ✅ 已完成（冒烟验证 18/18）                                |
 | 5    | 三端联调脚本、打包命令、完整 README                                                                        | ✅ 已完成（三套安装包 + 两套 UI 回归测试）                 |
 | 6    | 测试账号与种子数据说明                                                                                     | ✅ 已完成（见下文）                                        |
 | 7    | 生产化：服务端安装程序（内置 Node）、Web 端 PWA 可安装、Docker + Nginx 部署、生产加固与运维文档            | ✅ 已完成（见 [`docs/production.md`](docs/production.md)） |
+| 8    | 客户端灵动岛（通知浮窗，上课隐藏 / 下课弹出 / 紧急立即展开）与上课时段紧急通知二次确认                     | ✅ 已完成（见"上课时段策略"）                              |
 
 > **与原始提示词的两处偏差（已与你确认）**
 >
@@ -59,8 +60,9 @@ class-helper/
 │   ├── use-database.mjs         # SQLite ⇄ MySQL provider 切换助手
 │   ├── generate-icons.mjs       # 用 Electron 渲染 SVG 生成 PNG/ICO 图标
 │   ├── dist-server.mjs          # 服务端 + Web 管理端 打包（免安装目录 + NSIS 安装程序）
+│   ├── lib/electron-env.mjs     # 启动 Electron 的公共处理（清理 RUN_AS_NODE + 定位可执行文件）
 │   ├── nsis/server-installer.nsi# 安装程序脚本模板
-│   └── ui-smoke/                # Web 管理端 UI 真实点击回归测试（Electron 驱动）
+│   └── ui-smoke/                # Web 管理端 UI 真实点击回归测试（Electron 驱动 + 上课时段探针）
 ├── deploy/                      # 生产部署：Dockerfile / docker-compose.yml / nginx.conf
 ├── docs/
 │   ├── production.md            # 生产部署指南（三种形态 + 运维 + 安全清单）
@@ -73,7 +75,7 @@ class-helper/
     │   ├── prisma/migrations/           # 迁移历史（已生成并应用）
     │   ├── prisma/seed.ts               # 种子数据
     │   ├── prisma.config.ts             # Prisma 7 配置（迁移/种子/连接串）
-    │   ├── scripts/verify-e2e.mjs       # 后端端到端验收脚本（54 项）
+    │   ├── scripts/verify-e2e.mjs       # 后端端到端验收脚本（62 项）
     │   └── src/
     │       ├── app.ts                   # Express 装配（静态托管 + 探针 + 限流 + 模块挂载）
     │       ├── index.ts                 # 启动入口（自检/初始化 + HTTP + Socket.IO + 优雅退出）
@@ -91,8 +93,9 @@ class-helper/
         ├── vite.config.mts              # 渲染进程构建（base: './'，hash 路由）
         ├── scripts/{build-main,dev,smoke,dist-win}.mjs
         └── src/
-            ├── main/                    # 主进程：窗口/单实例/配置持久化(IPC)/冒烟验证
+            ├── main/                    # 主进程：窗口/单实例/配置持久化(IPC)/冒烟验证/灵动岛
             ├── preload/                 # contextBridge 安全桥（不暴露 ipcRenderer 本体）
+            ├── island/                  # 灵动岛渲染进程（独立透明置顶窗口）
             ├── types/desktop.d.ts       # 主进程 <-> 渲染进程契约
             └── renderer/                # 渲染进程：api / stores / cache / router / layouts / views
 ```
@@ -168,13 +171,15 @@ pnpm verify:desktop
 
 ```bash
 # 另开一个终端先启动后端：pnpm dev:server
-pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC：54 项
-pnpm verify:desktop      # Electron 客户端（含联网集成）：9 项
+pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC + 上课时段拦截：62 项
+pnpm verify:web          # Web 管理端真实点击（含上课时段紧急通知全屏警告）：8 项
+pnpm verify:desktop      # Electron 客户端（含灵动岛与联网集成）：18 项
 ```
 
-后端脚本验证**实时推送时延、作业完成、成绩下发、权限隔离**等 54 项，实测通知 37ms、作业 26ms、
-成绩 25ms 到达（要求 < 5 秒）；客户端脚本验证 preload 桥接、渲染进程、IndexedDB 读写、
-断网回退与联网集成（登录 + 四类数据 + Socket.IO），实测 9/9 通过。
+后端脚本验证**实时推送时延、作业完成、成绩下发、权限隔离、上课时段紧急通知拦截**等 62 项，
+实测通知 37ms、作业 26ms、成绩 25ms 到达（要求 < 5 秒），紧急通知 409 拦截与二次确认后发布均通过；
+客户端脚本验证 preload 桥接、渲染进程、IndexedDB 读写、断网回退、**灵动岛四种状态切换**与联网集成
+（登录 + 四类数据 + Socket.IO），实测 18/18 通过。
 
 ## 默认账号与种子数据
 
@@ -209,9 +214,9 @@ pnpm verify:desktop      # Electron 客户端（含联网集成）：9 项
 | `pnpm dist:dir`                             | 打包客户端免安装目录 `release/win-unpacked`（含可执行文件，最快）    |
 | `pnpm dist:win`                             | 打包客户端 nsis 安装包 + portable 单文件 EXE                         |
 | `pnpm dist:all`                             | 服务端安装程序 + 客户端安装程序一起打                                |
-| `pnpm verify:e2e`                           | 后端端到端验收（54 项，需服务端已启动）                              |
-| `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，7 项）                    |
-| `pnpm verify:desktop`                       | EXE 客户端冒烟验证（11 项，含侧边栏点击与离线回退）                  |
+| `pnpm verify:e2e`                           | 后端端到端验收（62 项，需服务端已启动）                              |
+| `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，8 项）                    |
+| `pnpm verify:desktop`                       | EXE 客户端冒烟验证（18 项，含灵动岛、侧边栏点击与离线回退）          |
 | `pnpm typecheck`                            | 全仓库类型检查（含 `vue-tsc`）                                       |
 | `pnpm lint` / `pnpm lint:fix`               | ESLint 检查 / 自动修复                                               |
 | `pnpm format` / `pnpm format:check`         | Prettier 格式化 / 检查                                               |
@@ -245,6 +250,29 @@ pnpm verify:desktop      # Electron 客户端（含联网集成）：9 项
 | 通知 | 未读红点（侧边栏徽标）、优先级标签、点击自动标为已读、全部已读、未读过滤、详情抽屉        |
 | 成绩 | 表格（分数/得分率进度条/等级）+ ECharts 柱状图（各次考试平均得分率）+ 等级分布 + 最近更新 |
 | 设置 | 服务器地址（保存并测试）、账号信息、离线缓存条目统计与清空、客户端版本信息、退出登录      |
+
+> 通知到达时还会由**灵动岛**在桌面中上方浮出提醒（见上一节），上课时段自动隐藏、紧急通知立即展开。
+
+### 灵动岛（桌面通知浮窗）
+
+客户端有一个独立于主窗口的**灵动岛**：一个无边框、透明、置顶、不占任务栏的窄条窗口，
+常驻桌面**中上方**（屏幕工作区顶部居中，`y = workArea.y + 8`）。它是"消息到达"的第一现场：
+
+| 场景                       | 灵动岛行为                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 收到通知（非上课时段）     | 从隐藏态淡入为**胶囊**：`新消息 · 共 N 条` + 发送人 + `点击查看`，15 秒后自动收起                      |
+| 点击胶囊                   | 展开为**详情卡**：标题、内容、时间、`打开应用 / 标为已读 / 知道了`，20 秒后收起                        |
+| 上课时间段收到普通通知     | **自动隐藏**（不打扰课堂），进入待发队列；下课后自动在桌面中上方弹出详情（14 秒）→ 收起为胶囊（25 秒） |
+| 上课时间段收到**紧急**通知 | **无论是否上课立刻展开**显示详情（带红色呼吸光晕与"紧急"角标，无需点击），45 秒后收起                  |
+| 多条约谈                   | 队列按时间排序，紧急通知优先插播；卡片底部提示"还有 N 条通知"                                          |
+| 退出/断开                  | 主窗口退出时灵动岛一并关闭；上课状态来自 `GET /api/schedules/current`（10 秒心跳 + 下课时长定时器）    |
+
+- 动画：窗口尺寸用 `easeOutCubic` 260ms 逐帧缓动（胶囊 ↔ 详情 形变），透明度单独淡入淡出；
+  两套动画使用**独立令牌**，互不打断（早前"淡入取消形变导致窗口卡在胶囊尺寸"的问题已修复）。
+- 事件流：`notification:new` → `renderer/stores/realtime.ts` → `pushNotificationToIsland()` →
+  主进程 `IslandController`（决定隐藏/胶囊/详情）→ 灵动岛渲染进程 `src/island/IslandApp.vue`。
+- 相关文件：`src/main/island.ts`（控制器 + IPC）、`src/preload/island.ts`、`src/island/IslandApp.vue`、
+  `src/renderer/island/bridge.ts`（上课状态轮询与通知转发）。
 
 ### 离线缓存与自动同步
 
@@ -285,62 +313,98 @@ pnpm dist:win     # nsis 安装包 + portable 单文件（需联网下载 NSIS �
 
 `pnpm verify:desktop` 以 `ELECTRON_SMOKE_TEST=1` 启动应用（不弹窗），主进程依次校验后自动退出：
 
-| 校验项                                | 实测结果                                                                            |
-| ------------------------------------- | ----------------------------------------------------------------------------------- |
-| 渲染进程挂载 + 窗口标题               | ✅ `children=1` / `title=班级小助手`                                                |
-| 登录页渲染（三个输入框）              | ✅ 服务器地址 / 用户名 / 密码                                                       |
-| preload contextBridge 注入            | ✅ 6 个方法                                                                         |
-| IPC 往返（getAppInfo/saveConfig）     | ✅ Electron 44.3.0                                                                  |
-| 配置文件写入用户目录                  | ✅ `%APPDATA%\@classhelper\desktop-client\config.json`                              |
-| IndexedDB 缓存读写                    | ✅ 读写/统计/删除 + 6 个 store                                                      |
-| 断网时回退本地缓存                    | ✅ `fromCache=true`（请求不可达端口）                                               |
-| 联网集成（`ELECTRON_SMOKE_ONLINE=1`） | ✅ 登录王小明 / 1 班级 / 5 作业 / 4 通知 / 6 成绩 / 第29周29节课 / Socket.IO 已连接 |
+| 校验项                                 | 实测结果                                                                           |
+| -------------------------------------- | ---------------------------------------------------------------------------------- |
+| 渲染进程挂载 + 窗口标题                | ✅ `children=1` / `title=班级小助手`                                               |
+| 登录页渲染（三个输入框）               | ✅ 服务器地址 / 用户名 / 密码                                                      |
+| preload contextBridge 注入             | ✅ 9 个方法（含灵动岛 3 个）                                                       |
+| IPC 往返（getAppInfo/saveConfig）      | ✅ Electron 44.3.0                                                                 |
+| 配置文件写入用户目录                   | ✅ `%APPDATA%\@classhelper\desktop-client\config.json`                             |
+| IndexedDB 缓存读写                     | ✅ 读写/统计/删除 + 6 个 store                                                     |
+| 断网时回退本地缓存                     | ✅ `fromCache=true`（请求不可达端口）                                              |
+| 灵动岛窗口创建（置顶/透明/不占任务栏） | ✅ `ready=true`                                                                    |
+| 上课期间普通通知自动隐藏（暂存）       | ✅ `mode=hidden queued=1`                                                          |
+| 下课后自动弹出暂存通知详情             | ✅ `mode=expanded reason=after-class`                                              |
+| 上课期间紧急通知立即展开（无需点击）   | ✅ `mode=expanded reason=urgent`                                                   |
+| 胶囊 → 点击 → 展开详情                 | ✅ `新消息 · 共 2 条` → `expanded`（含真实 DOM 断言与截图）                        |
+| 联网集成（`ELECTRON_SMOKE_ONLINE=1`）  | ✅ 登录王小明 / 1 班级 / 6 作业 / 9 通知 / 8 成绩 / 第1周30节课 / Socket.IO 已连接 |
 
 该验证对**开发产物与打包后的 EXE 都适用**（打包后用 `ELECTRON_SMOKE_RESULT=<file>` 写出 JSON 结果，
-已实测 `packaged: true`、9/9 通过、退出码 0）。
+已实测 `packaged: true`、18/18 通过、退出码 0）。灵动岛各状态的窗口截图会写到
+`ISLAND_SHOTS_DIR`（默认 `.cache/island-shots/`），便于人工确认视觉效果。
+
+## 上课时段策略（紧急通知二次确认）
+
+"上课时段"由课表实时判定：`GET /api/schedules/current?classId=` 返回
+`{ inClass, current, next, week, serverTime }`（`at` 参数可覆盖判定时刻，便于联调与测试）。
+
+**服务端强制拦截**（不是只靠前端提醒）：
+
+```
+POST /api/notifications  { classId, title, content, priority: "URGENT" }        → 409 URGENT_DURING_CLASS
+POST /api/notifications  { …, priority: "URGENT", confirmDuringClass: true }    → 201
+POST /api/notifications  { …, priority: "NORMAL" }（上课时段）                   → 201（不受限）
+```
+
+409 响应体携带 `details: { classId, current, next, week, serverTime }`，前端据此渲染"正在上的课"。
+这样即使有人绕过界面直接调接口，也一定会被拦下来。
+
+**Web 管理端**：教师在通知发布弹窗选择"紧急"并提交时，先查询班级上课状态，命中则弹出**全屏二次确认**
+（`packages/web-admin/src/components/UrgentClassWarning.vue`）：
+
+- 全屏遮罩 + 强警示配色，文案"现在为上课时间段……" + 正在上的课时段 + 待发布标题；
+- 确认按钮带 **3 秒倒计时**（圆环进度 + 每秒钟数提示），倒计时结束前不可点击，防止误触；
+- 取消则不发；确认后带 `confirmDuringClass: true` 重新提交并成功发布；
+- 兜底：并发场景（提交瞬间刚好打铃）仍会收到 409，此时同样弹出该警告。
+
+**EXE 客户端**：上课时段非紧急通知自动隐藏、下课后自动弹出；紧急通知无论是否上课都立即展开（见"灵动岛"一节）。
+
+回归测试：`verify:e2e` 覆盖 409 拦截 / 二次确认后 201 / 普通通知不受限（用 `at` 固定时刻，结果可复现）；
+`verify:web` 用真实点击构造"正在上课"场景并断言全屏警告文案、按钮禁用与倒计时时长（实测 ~2.96s）。
 
 ## REST API 一览
 
 统一响应体：`{ "success": true, "data": {}, "message": "" }`（错误为 `success:false` + `code`）。
 所有接口前缀 `/api`，除登录外均需 `Authorization: Bearer <token>`。
 
-| 方法                        | 路径                                                     | 权限            | 说明                                                       |
-| --------------------------- | -------------------------------------------------------- | --------------- | ---------------------------------------------------------- |
-| POST                        | `/auth/login`                                            | 公开            | 登录，返回 token + 用户信息                                |
-| GET                         | `/auth/me`                                               | 登录            | 当前用户（学生附带班级/年级）                              |
-| PATCH                       | `/auth/password`                                         | 登录            | 修改自己的密码                                             |
-| POST                        | `/auth/logout`                                           | 登录            | 退出（无状态，客户端丢弃 token）                           |
-| GET                         | `/classes`                                               | 登录            | 班级列表（按权限收敛）                                     |
-| GET                         | `/classes/:id`                                           | 班级可见        | 班级详情（学生/课程/协作教师）                             |
-| POST / PATCH / DELETE       | `/classes` `/classes/:id`                                | 教师/管理员     | 班级增删改                                                 |
-| GET / POST                  | `/classes/:id/students`                                  | 班级可见 / 可写 | 学生名单 / 添加学生（已存在账号直接转入）                  |
-| DELETE                      | `/classes/:id/students/:userId`                          | 教师/管理员     | 移出学生                                                   |
-| POST / DELETE               | `/classes/:id/teachers[/:teacherId]`                     | 教师/管理员     | 分配 / 取消协作教师                                        |
-| GET / POST / PATCH / DELETE | `/courses`                                               | 登录 / 教师     | 课程管理                                                   |
-| GET                         | `/schedules?classId=&week=&dayOfWeek=`                   | 登录            | 课表列表（week 过滤周次范围）                              |
-| GET                         | `/schedules/grid?classId=&week=`                         | 登录            | 周视图（7 列结构，供客户端直接渲染）                       |
-| POST / PATCH / DELETE       | `/schedules`                                             | 教师/管理员     | 课表增删改（广播 `schedule:updated`）                      |
-| GET                         | `/homeworks?classId=&courseId=&pendingOnly=&keyword=`    | 登录            | 作业列表（学生带完成状态，教师带完成人数）                 |
-| GET                         | `/homeworks/:id`                                         | 班级可见        | 作业详情                                                   |
-| POST / PATCH / DELETE       | `/homeworks`                                             | 教师/管理员     | 发布/修改/删除（广播 `homework:new` / `homework:updated`） |
-| PATCH                       | `/homeworks/:id/status`                                  | 登录            | 标记完成/取消（广播 `homework:status`）                    |
-| GET                         | `/notifications?classId=&priority=&unreadOnly=&keyword=` | 登录            | 通知列表（带已读状态）                                     |
-| GET                         | `/notifications/unread-count`                            | 登录            | 未读数（红点）                                             |
-| POST                        | `/notifications`                                         | 教师/管理员     | 发布通知（广播 `notification:new`）                        |
-| POST                        | `/notifications/:id/read`、`/notifications/read-all`     | 登录            | 标记已读                                                   |
-| DELETE                      | `/notifications/:id`                                     | 教师/管理员     | 删除通知                                                   |
-| GET                         | `/grades/my`                                             | 登录            | 个人成绩                                                   |
-| GET                         | `/grades?classId=&courseId=&userId=&examName=`           | 教师/管理员     | 班级成绩                                                   |
-| GET                         | `/grades/stats?classId=&courseId=&examName=`             | 教师/管理员     | 等级分布 + 各课程平均得分率                                |
-| POST                        | `/grades`、`/grades/bulk`                                | 教师/管理员     | 单条 / 批量录入（广播 `grade:updated`）                    |
-| PATCH / DELETE              | `/grades/:id`                                            | 教师/管理员     | 修改 / 删除成绩                                            |
-| GET                         | `/students?classId=&keyword=`                            | 教师/管理员     | 学生名单                                                   |
-| POST / PATCH / DELETE       | `/students`                                              | 教师/管理员     | 学生账号增删改                                             |
-| POST                        | `/students/:id/reset-password`                           | 教师/管理员     | 重置密码                                                   |
-| GET                         | `/teachers?keyword=`                                     | 教师/管理员     | 教师列表（分配协作教师用）                                 |
-| POST                        | `/teachers`                                              | 管理员          | 新建教师账号                                               |
-| GET                         | `/dashboard/summary` / `/dashboard/term`                 | 登录            | 仪表盘汇总 / 学期周次                                      |
-| GET                         | `/health`                                                | 公开            | 健康检查（含已挂载模块列表）                               |
+| 方法                        | 路径                                                     | 权限            | 说明                                                                             |
+| --------------------------- | -------------------------------------------------------- | --------------- | -------------------------------------------------------------------------------- |
+| POST                        | `/auth/login`                                            | 公开            | 登录，返回 token + 用户信息                                                      |
+| GET                         | `/auth/me`                                               | 登录            | 当前用户（学生附带班级/年级）                                                    |
+| PATCH                       | `/auth/password`                                         | 登录            | 修改自己的密码                                                                   |
+| POST                        | `/auth/logout`                                           | 登录            | 退出（无状态，客户端丢弃 token）                                                 |
+| GET                         | `/classes`                                               | 登录            | 班级列表（按权限收敛）                                                           |
+| GET                         | `/classes/:id`                                           | 班级可见        | 班级详情（学生/课程/协作教师）                                                   |
+| POST / PATCH / DELETE       | `/classes` `/classes/:id`                                | 教师/管理员     | 班级增删改                                                                       |
+| GET / POST                  | `/classes/:id/students`                                  | 班级可见 / 可写 | 学生名单 / 添加学生（已存在账号直接转入）                                        |
+| DELETE                      | `/classes/:id/students/:userId`                          | 教师/管理员     | 移出学生                                                                         |
+| POST / DELETE               | `/classes/:id/teachers[/:teacherId]`                     | 教师/管理员     | 分配 / 取消协作教师                                                              |
+| GET / POST / PATCH / DELETE | `/courses`                                               | 登录 / 教师     | 课程管理                                                                         |
+| GET                         | `/schedules?classId=&week=&dayOfWeek=`                   | 登录            | 课表列表（week 过滤周次范围）                                                    |
+| GET                         | `/schedules/grid?classId=&week=`                         | 登录            | 周视图（7 列结构，供客户端直接渲染）                                             |
+| GET                         | `/schedules/current?classId=&at=`                        | 登录            | 当前上课状态（`inClass` / `current` / `next`；`at` 为诊断用时间覆盖）            |
+| POST / PATCH / DELETE       | `/schedules`                                             | 教师/管理员     | 课表增删改（广播 `schedule:updated`）                                            |
+| GET                         | `/homeworks?classId=&courseId=&pendingOnly=&keyword=`    | 登录            | 作业列表（学生带完成状态，教师带完成人数）                                       |
+| GET                         | `/homeworks/:id`                                         | 班级可见        | 作业详情                                                                         |
+| POST / PATCH / DELETE       | `/homeworks`                                             | 教师/管理员     | 发布/修改/删除（广播 `homework:new` / `homework:updated`）                       |
+| PATCH                       | `/homeworks/:id/status`                                  | 登录            | 标记完成/取消（广播 `homework:status`）                                          |
+| GET                         | `/notifications?classId=&priority=&unreadOnly=&keyword=` | 登录            | 通知列表（带已读状态）                                                           |
+| GET                         | `/notifications/unread-count`                            | 登录            | 未读数（红点）                                                                   |
+| POST                        | `/notifications`                                         | 教师/管理员     | 发布通知（广播 `notification:new`）；上课时段发布紧急通知需 `confirmDuringClass` |
+| POST                        | `/notifications/:id/read`、`/notifications/read-all`     | 登录            | 标记已读                                                                         |
+| DELETE                      | `/notifications/:id`                                     | 教师/管理员     | 删除通知                                                                         |
+| GET                         | `/grades/my`                                             | 登录            | 个人成绩                                                                         |
+| GET                         | `/grades?classId=&courseId=&userId=&examName=`           | 教师/管理员     | 班级成绩                                                                         |
+| GET                         | `/grades/stats?classId=&courseId=&examName=`             | 教师/管理员     | 等级分布 + 各课程平均得分率                                                      |
+| POST                        | `/grades`、`/grades/bulk`                                | 教师/管理员     | 单条 / 批量录入（广播 `grade:updated`）                                          |
+| PATCH / DELETE              | `/grades/:id`                                            | 教师/管理员     | 修改 / 删除成绩                                                                  |
+| GET                         | `/students?classId=&keyword=`                            | 教师/管理员     | 学生名单                                                                         |
+| POST / PATCH / DELETE       | `/students`                                              | 教师/管理员     | 学生账号增删改                                                                   |
+| POST                        | `/students/:id/reset-password`                           | 教师/管理员     | 重置密码                                                                         |
+| GET                         | `/teachers?keyword=`                                     | 教师/管理员     | 教师列表（分配协作教师用）                                                       |
+| POST                        | `/teachers`                                              | 管理员          | 新建教师账号                                                                     |
+| GET                         | `/dashboard/summary` / `/dashboard/term`                 | 登录            | 仪表盘汇总 / 学期周次                                                            |
+| GET                         | `/health`                                                | 公开            | 健康检查（含已挂载模块列表）                                                     |
 
 ## WebSocket 事件
 
@@ -422,36 +486,38 @@ pnpm db:migrate && pnpm db:seed
 
 ## 验收标准对照
 
-| 验收项                                        | 结果 | 证据                                                                                        |
-| --------------------------------------------- | ---- | ------------------------------------------------------------------------------------------- |
-| 教师 Web 端发布通知，学生端 5 秒内收到        | ✅   | `verify:e2e`：`notification:new` **37–44ms**                                                |
-| 教师发布作业，学生能查看并标记完成            | ✅   | `homework:new` **26–40ms**，`PATCH /homeworks/:id/status` 200 且列表回显 `completed=true`   |
-| 教师录入成绩，学生能查看个人成绩              | ✅   | `grade:updated` **21–25ms**，`/grades/my` 返回记录；批量录入与统计接口通过                  |
-| 学生能查看课表，支持按周切换                  | ✅   | `/schedules/grid?week=1` 返回 30 节，`week` 过滤 `weekStart ≤ week ≤ weekEnd`               |
-| 断网后客户端可查看缓存数据                    | ✅   | 客户端冒烟：`断网时回退到本地缓存 → fromCache=true items=1`；离线横幅 + 缓存统计页可用      |
-| 权限隔离：学生不能访问其他班级数据            | ✅   | 10 项越权断言全部 403/401（学生跨班/跨班作业/跨班课表、教师跨班发布、未登录访问…）          |
-| 能成功打包 Windows EXE                        | ✅   | `班级小助手-0.1.0-x64-setup.exe`(106.9MB) / `-portable.exe`(106.7MB) / `win-unpacked/*.exe` |
-| 提供完整 README（启动、构建、打包、默认账号） | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、MySQL 切换、打包与常见问题          |
+| 验收项                                           | 结果 | 证据                                                                                         |
+| ------------------------------------------------ | ---- | -------------------------------------------------------------------------------------------- |
+| 教师 Web 端发布通知，学生端 5 秒内收到           | ✅   | `verify:e2e`：`notification:new` **37–44ms**                                                 |
+| 教师发布作业，学生能查看并标记完成               | ✅   | `homework:new` **26–40ms**，`PATCH /homeworks/:id/status` 200 且列表回显 `completed=true`    |
+| 教师录入成绩，学生能查看个人成绩                 | ✅   | `grade:updated` **21–25ms**，`/grades/my` 返回记录；批量录入与统计接口通过                   |
+| 学生能查看课表，支持按周切换                     | ✅   | `/schedules/grid?week=1` 返回 30 节，`week` 过滤 `weekStart ≤ week ≤ weekEnd`                |
+| 断网后客户端可查看缓存数据                       | ✅   | 客户端冒烟：`断网时回退到本地缓存 → fromCache=true items=1`；离线横幅 + 缓存统计页可用       |
+| 权限隔离：学生不能访问其他班级数据               | ✅   | 10 项越权断言全部 403/401（学生跨班/跨班作业/跨班课表、教师跨班发布、未登录访问…）           |
+| 上课时段发布紧急通知必须二次确认                 | ✅   | 服务端 409 `URGENT_DURING_CLASS`（`confirmDuringClass` 后 201）；Web 端全屏警告 + 3 秒倒计时 |
+| 客户端灵动岛：上课隐藏 / 下课弹出 / 紧急立即展开 | ✅   | `verify:desktop` 四种状态断言 + 截图（`.cache/island-shots/`）                               |
+| 能成功打包 Windows EXE                           | ✅   | `班级小助手-0.1.0-x64-setup.exe` / `-portable.exe` / `win-unpacked/*.exe`（见下表）          |
+| 提供完整 README（启动、构建、打包、默认账号）    | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、MySQL 切换、打包与常见问题           |
 
 打包产物验证（对最终 EXE 实测，非仅开发产物）：
 
-| 产物                                   | 大小    | 冒烟结果                                                                             |
-| -------------------------------------- | ------- | ------------------------------------------------------------------------------------ |
-| 服务端安装程序（内置 Node + Web 端）   | 33.9MB  | ✅ 静默安装 10s → 自动建库建号 → 服务 34s 就绪 → **对安装实例跑 54/54 e2e + 7/7 UI** |
-| `release/win-unpacked/班级小助手.exe`  | 234.7MB | ✅ 11/11，`packaged: true`，退出码 0                                                 |
-| `release/…-x64-portable.exe`（单文件） | 106.9MB | ✅ 9/9（含联网集成：登录王小明 / Socket.IO 已连接 / 四类数据）                       |
-| `release/…-x64-setup.exe`（客户端）    | 107.2MB | ✅ 构建成功，已嵌入自定义图标                                                        |
+| 产物                                   | 大小    | 冒烟结果                                                                                               |
+| -------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------ |
+| 服务端安装程序（内置 Node + Web 端）   | 34MB    | ✅ 静默安装（升级保留 `.env` 与数据库）→ 自动建库建号 → 服务就绪 → **对安装实例跑 62/62 e2e + 8/8 UI** |
+| `release/win-unpacked/班级小助手.exe`  | 234.7MB | ✅ 18/18，`packaged: true`，退出码 0                                                                   |
+| `release/…-x64-portable.exe`（单文件） | ~107MB  | ✅（含联网集成：登录王小明 / Socket.IO 已连接 / 四类数据）                                             |
+| `release/…-x64-setup.exe`（客户端）    | ~107MB  | ✅ 构建成功，已嵌入自定义图标；包含灵动岛                                                              |
 
 当前实测：
 
-| 验证                                                        | 结果                                |
-| ----------------------------------------------------------- | ----------------------------------- |
-| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次） | **54/54** ✅                        |
-| `pnpm verify:web`（Web 管理端真实点击 + PWA）               | **7/7** ✅                          |
-| `pnpm verify:desktop`（客户端冒烟 + 侧边栏点击 + 离线回退） | **11/11** ✅                        |
-| `pnpm typecheck` / `pnpm lint` / `pnpm format:check`        | 全部通过 ✅                         |
-| 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）          | 通过 ✅                             |
-| Docker / Nginx 部署样例                                     | 文件已提供，本机无 Docker 未实测 ⚠️ |
+| 验证                                                                     | 结果                                |
+| ------------------------------------------------------------------------ | ----------------------------------- |
+| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）              | **62/62** ✅                        |
+| `pnpm verify:web`（Web 管理端真实点击 + 上课时段紧急通知 + PWA）         | **8/8** ✅                          |
+| `pnpm verify:desktop`（客户端冒烟 + 灵动岛四态 + 侧边栏点击 + 离线回退） | **18/18** ✅                        |
+| `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                     | 全部通过 ✅                         |
+| 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）                       | 通过 ✅                             |
+| Docker / Nginx 部署样例                                                  | 文件已提供，本机无 Docker 未实测 ⚠️ |
 
 ## 常见问题（本机环境已知坑）
 
@@ -463,6 +529,21 @@ pnpm db:migrate && pnpm db:seed
    `node packages/server/node_modules/prisma/build/index.js generate`、
    `node packages/web-admin/node_modules/vite/bin/vite.js build`。
    在普通终端（非 Electron 宿主）中 `pnpm <script>` 一切正常。
+
+1.5 **脚本里启动 Electron 时必须清掉 `ELECTRON_RUN_AS_NODE`，并且不要 `import 'electron'` 取路径**
+现象（两种，都只在本机这种"宿主终端本身是 Electron"的环境里出现）：
+① `node scripts/smoke.mjs` 正常，但 `pnpm verify:desktop` 报
+`Cannot find module 'electron'`（Electron 退化成纯 Node 运行）；
+② `pnpm dist:win` 报 `Unknown argument: .../electron-builder/out/cli/cli.js`。
+原因：本机 `pnpm` 运行在 Electron 内置 Node 上，会给子进程带上 `ELECTRON_RUN_AS_NODE=1`；
+同时 `process.versions.electron` 存在时，`require('electron')` 返回的是 **API 对象而非可执行文件路径**，
+`spawn(process.execPath, [cli.js, …])` 会被 Electron 当成"启动应用"而多出一个位置参数。
+规避（已内置到代码里）：
+
+- `scripts/lib/electron-env.mjs`：`resolveElectronEnv()` 清理变量、`resolveElectronExecutable()` 从
+  `node_modules/electron/path.txt` 定位 electron.exe；
+- `scripts/lib/node-runtime.mjs`：`resolveNodeRuntime()` 明确找一个**真正的 node.exe**，
+  供 electron-builder CLI 与"内置 Node 运行时"打包使用。
 
 2. **不要用 PowerShell 管道调用 `start.cmd`**
    现象：`& "$install\start.cmd" | Select-Object -First 20` 会一直不返回。
@@ -521,9 +602,22 @@ pnpm db:migrate && pnpm db:seed
 | `deploy/{Dockerfile,docker-compose.yml,nginx.conf}` | 云部署与 HTTPS 反代样例                                          |
 | `docs/production.md`                                | 生产部署指南（三种形态 + 运维 + 安全清单 + 故障排查）            |
 
+阶段 8（灵动岛 + 上课时段策略）新增文件：
+
+| 路径                                                         | 说明                                                                 |
+| ------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `packages/desktop-client/src/main/island.ts`                 | 灵动岛控制器（窗口/状态机/动画/超时/IPC）                            |
+| `packages/desktop-client/src/preload/island.ts`              | 灵动岛 preload 桥（`islandGetState/islandPush/islandSetClassState`） |
+| `packages/desktop-client/src/island/IslandApp.vue`           | 灵动岛界面（胶囊 / 详情 / 紧急三种形态 + 动画）                      |
+| `packages/desktop-client/src/renderer/island/bridge.ts`      | 上课状态轮询（10s）与通知转发                                        |
+| `packages/server/src/modules/schedules/schedules.service.ts` | `computeClassStatus` / `getClassStatus`（上课时段判定）              |
+| `packages/web-admin/src/components/UrgentClassWarning.vue`   | 上课时段发布紧急通知的全屏二次确认（3 秒倒计时）                     |
+| `scripts/ui-smoke/live-probe.mjs`                            | UI 回归测试的"真实上课时段"探针（自建课表 + 用后清理）               |
+| `scripts/lib/{electron-env,node-runtime}.mjs`                | Electron/Node 运行时定位与宿主环境兼容处理                           |
+
 ## 后续可选增强
 
 1. 代码签名证书（消除 SmartScreen 提示）。
 2. 客户端"提交类操作离线队列"（当前离线为只读，联网后自动同步读取的数据）。
 3. Socket.IO 多实例广播（引入 `@socket.io/redis-adapter`）与 CI 流水线。
-4. 课表按当前时间高亮"正在上的课"与上课提醒（可参考 ClassIsland 的课程提醒设计）。
+4. 灵动岛位置/尺寸可配置（多显示器时跟随当前活动屏幕，而非固定主屏）。

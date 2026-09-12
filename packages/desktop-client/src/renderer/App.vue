@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { startIslandBridge, stopIslandBridge } from './island/bridge.js';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useRealtimeStore } from './stores/realtime.js';
@@ -29,11 +30,18 @@ onMounted(async () => {
 
     if (auth.token) realtime.connect(appStore.serverUrl, auth.token);
 
+    // 灵动岛：开始按课表计算上课状态（上课隐藏、下课自动弹出）
+    if (auth.token) startIslandBridge();
+
     if (auth.isAuthenticated) await router.replace('/schedule');
     else await router.replace('/login');
   } finally {
     booting.value = false;
   }
+});
+
+onUnmounted(() => {
+  stopIslandBridge();
 });
 </script>
 

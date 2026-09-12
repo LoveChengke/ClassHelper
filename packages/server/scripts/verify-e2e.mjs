@@ -440,6 +440,114 @@ async function main() {
     `可见班级 ${dashboardForStudent.payload?.data?.classCount ?? 0} 个`,
   );
 
+  // ---------------------------------------------------------------- 6.2 上课时段与紧急通知二次确认
+  // 诊断参数 at：2026-09-07 是周一，种子数据里周一 08:00-08:45 有课
+  const mondayInClass = await api(`/schedules/current?classId=${classId}&at=2026-09-07T08:10:00`, {
+    token: teacherToken,
+  });
+  record(
+    '上课状态接口（at=周一 08:10 判定为上课）',
+    mondayInClass.status === 200 && mondayInClass.payload?.data?.inClass === true,
+    `course=${mondayInClass.payload?.data?.current?.courseName ?? '-'} week=${mondayInClass.payload?.data?.week ?? '-'}`,
+  );
+
+  const sundayFree = await api(`/schedules/current?classId=${classId}&at=2026-09-06T03:00:00`, {
+    token: teacherToken,
+  });
+  record(
+    '上课状态接口（at=周日 03:00 判定为不在上课）',
+    sundayFree.status === 200 && sundayFree.payload?.data?.inClass === false,
+    `inClass=${sundayFree.payload?.data?.inClass}`,
+  );
+
+  // 造一节覆盖"此刻"的课，让紧急通知拦截用例与运行时刻无关
+  const nowDate = new Date();
+  const toHHmm = (minutes) => {
+    const clamped = Math.min(23 * 60 + 59, Math.max(0, minutes));
+    return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`;
+  };
+  const nowMinutes = nowDate.getHours() * 60 + nowDate.getMinutes();
+  const probeStart = toHHmm(nowMinutes - 30);
+  const probeEnd = toHHmm(nowMinutes + 30);
+  const todayWeekday = nowDate.getDay() === 0 ? 7 : nowDate.getDay();
+
+  const probeSchedule = await api('/schedules', {
+    method: 'POST',
+    token: teacherToken,
+    body: {
+      classId,
+      courseId,
+      dayOfWeek: todayWeekday,
+      startTime: probeStart,
+      endTime: probeEnd,
+      location: '联调验证教室',
+      weekStart: 1,
+      weekEnd: 30,
+    },
+  });
+  const probeScheduleId = probeSchedule.payload?.data?.id;
+  record('创建覆盖当前时刻的课表（构造上课场景）', probeSchedule.status === 201, `${probeStart}-${probeEnd}`);
+
+  const realTimeStatus = await api(`/schedules/current?classId=${classId}`, { token: teacherToken });
+  record(
+    '当前时刻被判定为上课时间段',
+    realTimeStatus.status === 200 && realTimeStatus.payload?.data?.inClass === true,
+    `course=${realTimeStatus.payload?.data?.current?.courseName ?? '-'}`,
+  );
+
+  const blockedUrgent = await api('/notifications', {
+    method: 'POST',
+    token: teacherToken,
+    body: {
+      classId,
+      title: '上课时段紧急通知（未确认）',
+      content: '这条应当被服务端拦截',
+      priority: 'URGENT',
+    },
+  });
+  record(
+    '上课时段发布紧急通知被拦截（409 URGENT_DURING_CLASS）',
+    blockedUrgent.status === 409 && blockedUrgent.payload?.code === 'URGENT_DURING_CLASS',
+    `status=${blockedUrgent.status} code=${blockedUrgent.payload?.code ?? '-'} 当前课程=${blockedUrgent.payload?.details?.current?.courseName ?? '-'}`,
+  );
+
+  const confirmedUrgent = await api('/notifications', {
+    method: 'POST',
+    token: teacherToken,
+    body: {
+      classId,
+      title: `上课时段紧急通知（已二次确认）${Date.now()}`,
+      content: '教师已在上课警告中确认，允许发布',
+      priority: 'URGENT',
+      confirmDuringClass: true,
+    },
+  });
+  record('二次确认后允许发布紧急通知', confirmedUrgent.status === 201, `status=${confirmedUrgent.status}`);
+
+  const normalDuringClass = await api('/notifications', {
+    method: 'POST',
+    token: teacherToken,
+    body: {
+      classId,
+      title: `上课时段普通通知${Date.now()}`,
+      content: '普通通知不受上课时段限制',
+      priority: 'NORMAL',
+    },
+  });
+  record(
+    '上课时段发布普通通知不受限制',
+    normalDuringClass.status === 201,
+    `status=${normalDuringClass.status}`,
+  );
+
+  if (probeScheduleId) {
+    const removedProbe = await api(`/schedules/${probeScheduleId}`, {
+      method: 'DELETE',
+      token: teacherToken,
+    });
+    record('清理探测课表', removedProbe.status === 200, `status=${removedProbe.status}`);
+  }
+
   // ---------------------------------------------------------------- 7. 权限隔离
   if (foreignClass) {
     const studentCrossClass = await api(`/classes/${foreignClass.id}`, { token: studentToken });

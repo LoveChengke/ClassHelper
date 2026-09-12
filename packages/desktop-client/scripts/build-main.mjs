@@ -34,4 +34,11 @@ await build({
   outfile: path.join(root, 'dist/preload/index.js'),
 });
 
-console.log('[build:main] dist/main/index.js 与 dist/preload/index.js 构建完成');
+// 灵动岛窗口的独立 preload（只暴露状态订阅与操作转发）
+await build({
+  ...shared,
+  entryPoints: [path.join(root, 'src/preload/island.ts')],
+  outfile: path.join(root, 'dist/preload/island.js'),
+});
+
+console.log('[build:main] dist/main/index.js、dist/preload/index.js、dist/preload/island.js 构建完成');

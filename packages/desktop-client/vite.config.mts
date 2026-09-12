@@ -23,6 +23,14 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: false,
     chunkSizeWarningLimit: 2000,
+    rollupOptions: {
+      input: {
+        // 主窗口
+        index: fileURLToPath(new URL('./index.html', import.meta.url)),
+        // 灵动岛（独立的置顶透明小窗口）
+        island: fileURLToPath(new URL('./island.html', import.meta.url)),
+      },
+    },
   },
   server: {
     host: '127.0.0.1',

@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveElectronEnv, resolveElectronExecutable } from './lib/electron-env.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const electronDir = path.join(root, 'packages', 'desktop-client', 'node_modules', 'electron');
@@ -15,15 +16,12 @@ if (!fs.existsSync(electronDir)) {
   process.exit(2);
 }
 
-const pathFile = path.join(electronDir, 'path.txt');
-const executable = fs.existsSync(pathFile)
-  ? path.join(electronDir, 'dist', fs.readFileSync(pathFile, 'utf8').trim())
-  : path.join(electronDir, 'dist', 'electron.exe');
+const executable = resolveElectronExecutable(electronDir);
 
 const child = spawn(executable, [path.join(root, 'scripts', 'icons', 'render.cjs')], {
   cwd: root,
   stdio: 'inherit',
-  env: process.env,
+  env: resolveElectronEnv(),
 });
 
 child.on('exit', (code) => process.exit(code ?? 1));
