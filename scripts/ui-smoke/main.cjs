@@ -331,7 +331,252 @@ async function main() {
   })()`);
   record('Service Worker 已注册（浏览器可安装为应用）', Boolean(swInfo?.ok), String(swInfo?.detail ?? ''));
 
+  // 8. 手机小屏适配（390×844，1Panel 风格：侧边栏收进抽屉 + 卡片内横向滚动）
+  await runMobileChecks(win);
+
   await finish(win);
+}
+
+/** 移动端截图留档目录（可用 UI_SMOKE_SHOTS_DIR 覆盖） */
+const SHOTS_DIR = process.env.UI_SMOKE_SHOTS_DIR ?? '';
+
+async function captureMobileShot(win, name) {
+  if (!SHOTS_DIR) return '';
+  try {
+    const image = await win.webContents.capturePage();
+    fs.mkdirSync(SHOTS_DIR, { recursive: true });
+    const file = path.join(SHOTS_DIR, `${name}.png`);
+    fs.writeFileSync(file, image.toPNG());
+    console.log(`[ui-smoke] 移动端截图：${file}`);
+    return file;
+  } catch (error) {
+    console.warn('[ui-smoke] 移动端截图失败', error);
+    return '';
+  }
+}
+
+/**
+ * 手机小屏适配验证（真实点击）：
+ *   1. 侧边栏收起 → 顶栏出现汉堡按钮（桌面侧边栏不渲染）
+ *   2. 点汉堡 → 抽屉菜单打开并渲染全部菜单项
+ *   3. 抽屉里点"通知发布" → 路由跳转且抽屉自动收起
+ *   4. 页面无横向溢出（scrollWidth <= innerWidth，表格自身滚动不计入）
+ *   5. 表格在卡片内横向滚动（卡片可滚动，页面不滚动）
+ *   6. 弹窗宽度自适应（不超出视口且接近整屏宽）
+ *   7. 工具栏控件铺满整行
+ *
+ * 注意：这套检查必须让窗口真正可见（showInactive）。
+ * Chromium 对隐藏的页面会冻结 CSS transition，Vue 的 <Transition> 收不到
+ * transitionend，抽屉会一直停在 enter-from（表现为"点了没反应"）。
+ */
+async function runMobileChecks(win) {
+  const MOBILE = { width: 390, height: 844 };
+  win.showInactive();
+  await sleep(500);
+  win.setBounds({ ...win.getBounds(), width: MOBILE.width, height: MOBILE.height });
+  await sleep(600);
+  await waitFor(win, `window.innerWidth <= 768`, 8000);
+
+  const layout = await win.webContents.executeJavaScript(`(() => {
+    const toggle = document.querySelector('.nav-toggle');
+    const aside = document.querySelector('.layout-aside');
+    const drawer = document.querySelector('.ch-nav-drawer');
+    return {
+      innerWidth: window.innerWidth,
+      hasToggle: Boolean(toggle),
+      toggleVisible: Boolean(toggle && toggle.getBoundingClientRect().width > 0),
+      asideRendered: Boolean(aside),
+      drawerOpen: Boolean(drawer && drawer.getBoundingClientRect().width > 0),
+      title: document.querySelector('.header-title')?.textContent?.trim() ?? '',
+    };
+  })()`);
+  record(
+    '手机端布局：侧边栏收起、顶栏汉堡按钮出现',
+    layout?.innerWidth <= 768 && layout?.toggleVisible && layout?.asideRendered === false,
+    `innerWidth=${layout?.innerWidth} 汉堡=${layout?.toggleVisible} 桌面侧边栏渲染=${layout?.asideRendered} 顶栏标题=${layout?.title}`,
+  );
+
+  await win.webContents.executeJavaScript(
+    `(() => { const button = document.querySelector('.nav-toggle'); if (button) button.click(); return true; })()`,
+  );
+  // 等抽屉真的滑出来（左边缘回到 0），而不是只等元素出现
+  await waitFor(
+    win,
+    `(() => { const node = document.querySelector('.ch-nav-drawer'); const rect = node && node.getBoundingClientRect(); return Boolean(rect && rect.left >= -1 && rect.width > 0); })()`,
+    5000,
+  );
+  const drawerInfo = await win.webContents.executeJavaScript(`(() => {
+    const drawer = document.querySelector('.ch-nav-drawer');
+    const overlay = document.querySelector('.el-overlay.is-drawer, .el-overlay.is-modal-drawer');
+    const toggle = document.querySelector('.nav-toggle');
+    const rect = drawer ? drawer.getBoundingClientRect() : null;
+    return {
+      open: Boolean(rect && rect.left >= -1 && rect.width > 0),
+      left: rect ? Math.round(rect.left) : null,
+      right: rect ? Math.round(rect.right) : null,
+      expandAttr: toggle ? toggle.getAttribute('aria-expanded') : null,
+      transform: drawer ? getComputedStyle(drawer).transform : '',
+      overlayClass: overlay ? overlay.className : '',
+      items: document.querySelectorAll('.ch-nav-drawer .el-menu-item').length,
+      labels: Array.from(document.querySelectorAll('.ch-nav-drawer .el-menu-item')).map((n) => n.textContent.trim()).join('|'),
+    };
+  })()`);
+  await captureMobileShot(win, 'mobile-1-drawer');
+  record(
+    '手机端抽屉菜单（点汉堡滑出，菜单项完整）',
+    drawerInfo?.open === true && drawerInfo?.items >= 7 && !/enter-from/.test(drawerInfo?.overlayClass ?? ''),
+    `菜单项=${drawerInfo?.items} left=${drawerInfo?.left} aria-expanded=${drawerInfo?.expandAttr} ` +
+      `transform=${drawerInfo?.transform} 遮罩类=${drawerInfo?.overlayClass}`,
+  );
+
+  const drawerNav = await win.webContents.executeJavaScript(`(async () => {
+    const item = Array.from(document.querySelectorAll('.ch-nav-drawer .el-menu-item')).find((node) =>
+      (node.textContent ?? '').trim().startsWith('通知发布'),
+    );
+    if (!item) return { ok: false, reason: '抽屉里未找到"通知发布"' };
+    item.click();
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && location.pathname !== '/notifications') {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    return { ok: location.pathname === '/notifications', path: location.pathname };
+  })()`);
+  // 等抽屉收起动画结束（右边缘回到 0 以内）
+  await waitFor(
+    win,
+    `(() => { const node = document.querySelector('.ch-nav-drawer'); const rect = node && node.getBoundingClientRect(); return Boolean(rect && rect.right <= 1); })()`,
+    5000,
+  );
+  const drawerClosed = await win.webContents.executeJavaScript(`(() => {
+    const drawer = document.querySelector('.ch-nav-drawer');
+    const rect = drawer ? drawer.getBoundingClientRect() : null;
+    const overlay = document.querySelector('.el-overlay');
+    return {
+      left: rect ? Math.round(rect.left) : null,
+      right: rect ? Math.round(rect.right) : null,
+      overlayDisplay: overlay ? getComputedStyle(overlay).display : 'none',
+      path: location.pathname,
+    };
+  })()`);
+  await captureMobileShot(win, 'mobile-2-notifications');
+  record(
+    '手机端抽屉菜单真实点击导航（通知发布并自动收起抽屉）',
+    Boolean(drawerNav?.ok) && drawerClosed?.right <= 1,
+    `path=${drawerNav?.path}/${drawerClosed?.path} 抽屉 right=${drawerClosed?.right}（<=1 表示已收起）遮罩=${drawerClosed?.overlayDisplay}`,
+  );
+
+  const overflow = await win.webContents.executeJavaScript(`(() => {
+    const doc = document.documentElement;
+    // 只统计"真正把页面撑宽"的元素：祖先里有横向可滚动容器（表格卡片）的属于正常设计
+    const insideScroller = (node) => {
+      let parent = node.parentElement;
+      while (parent && parent !== document.body) {
+        const style = getComputedStyle(parent);
+        const scrollable = /(auto|scroll)/.test(style.overflowX);
+        if (scrollable && parent.scrollWidth > parent.clientWidth + 1) return true;
+        parent = parent.parentElement;
+      }
+      return false;
+    };
+    let worst = null;
+    for (const node of document.querySelectorAll('.page *')) {
+      const rect = node.getBoundingClientRect();
+      if (rect.width === 0 || rect.right <= window.innerWidth + 1) continue;
+      if (insideScroller(node)) continue;
+      worst = (node.className || node.tagName) + '@' + Math.round(rect.left) + '..' + Math.round(rect.right);
+      break;
+    }
+    return {
+      innerWidth: window.innerWidth,
+      docScrollWidth: doc.scrollWidth,
+      bodyScrollWidth: document.body.scrollWidth,
+      widest: worst,
+    };
+  })()`);
+  record(
+    '手机端无页面横向溢出（表格滚动不计入）',
+    overflow?.docScrollWidth <= overflow?.innerWidth + 1 && !overflow?.widest,
+    `scrollWidth=${overflow?.docScrollWidth} body=${overflow?.bodyScrollWidth} innerWidth=${overflow?.innerWidth} 越界元素=${overflow?.widest ?? '无'}`,
+  );
+
+  const tableScroll = await win.webContents.executeJavaScript(`(() => {
+    const body = document.querySelector('.table-card .el-card__body');
+    const table = document.querySelector('.table-card .el-table');
+    return {
+      hasCard: Boolean(body),
+      cardClientWidth: body ? body.clientWidth : 0,
+      cardScrollWidth: body ? body.scrollWidth : 0,
+      tableWidth: table ? Math.round(table.getBoundingClientRect().width) : 0,
+    };
+  })()`);
+  record(
+    '手机端表格在卡片内横向滚动（页面不横向滚动）',
+    Boolean(tableScroll?.hasCard) && tableScroll.cardScrollWidth > tableScroll.cardClientWidth,
+    `卡片可视=${tableScroll?.cardClientWidth} 内容宽=${tableScroll?.cardScrollWidth} 表格宽=${tableScroll?.tableWidth}`,
+  );
+
+  const toolbar = await win.webContents.executeJavaScript(
+    `(() => {
+       const control = document.querySelector('.toolbar .el-select') ?? document.querySelector('.toolbar .el-input');
+       return {
+         innerWidth: window.innerWidth,
+         width: control ? Math.round(control.getBoundingClientRect().width) : 0,
+       };
+     })()`,
+  );
+  record(
+    '手机端工具栏控件铺满整行',
+    toolbar?.width >= toolbar?.innerWidth - 48,
+    `控件宽=${toolbar?.width} 视口宽=${toolbar?.innerWidth}`,
+  );
+
+  const dialog = await win.webContents.executeJavaScript(`(async () => {
+    const open = Array.from(document.querySelectorAll('button')).find((node) =>
+      (node.textContent ?? '').trim().includes('发布通知'),
+    );
+    if (!open) return { ok: false, reason: '未找到"发布通知"按钮' };
+    open.click();
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && !document.querySelector('.el-dialog')) {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const node = document.querySelector('.el-dialog');
+    if (!node) return { ok: false, reason: '弹窗未打开' };
+    const rect = node.getBoundingClientRect();
+    return {
+      ok: true,
+      width: Math.round(rect.width),
+      innerWidth: window.innerWidth,
+      left: Math.round(rect.left),
+      formItemWidth: Math.round(
+        document.querySelector('.el-dialog .el-form-item')?.getBoundingClientRect().width ?? 0,
+      ),
+    };
+  })()`);
+  await captureMobileShot(win, 'mobile-3-dialog');
+  record(
+    '手机端弹窗宽度自适应（不超出视口且接近整屏）',
+    Boolean(dialog?.ok) &&
+      dialog.width <= dialog.innerWidth &&
+      dialog.width >= dialog.innerWidth - 32 &&
+      dialog.left >= 0,
+    `弹窗宽=${dialog?.width} 视口宽=${dialog?.innerWidth} left=${dialog?.left}`,
+  );
+
+  await win.webContents.executeJavaScript(`(() => {
+    const cancel = Array.from(document.querySelectorAll('.el-dialog__footer button')).find((node) =>
+      (node.textContent ?? '').trim() === '取消',
+    );
+    if (cancel) cancel.click();
+    return true;
+  })()`);
+  await sleep(300);
+
+  // 恢复桌面尺寸并隐藏窗口，避免影响后续（结果已全部记录）
+  win.setBounds({ ...win.getBounds(), width: 1440, height: 900 });
+  await sleep(300);
+  win.hide();
 }
 
 async function finish(win) {

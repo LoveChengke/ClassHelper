@@ -2,6 +2,9 @@
   --ch-bg: #f5f7fa;
   --ch-card-radius: 10px;
   --ch-border: #e4e7ed;
+  /* 1Panel 风格：固定顶栏 + 深色侧栏 */
+  --ch-header-height: 56px;
+  --ch-aside-width: 210px;
 }
 
 * {
@@ -20,6 +23,8 @@ body {
   font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
   background: var(--ch-bg);
   color: #303133;
+  /* 小屏上禁止整页横向滚动（内容用卡片内滚动承载） */
+  overflow-x: hidden;
 }
 
 .page {
@@ -116,4 +121,144 @@ body {
   border-radius: 50%;
   background: #f56c6c;
   margin-right: 6px;
+}
+
+/* ---------------------------------------------------------------- 小屏适配 */
+
+/*
+ * 断点：<=768px 手机（侧边栏抽屉化、工具栏铺满、表格卡片内横向滚动），
+ *       769-992px 平板（保留侧边栏，适度压缩），>992px 桌面（保持原样）。
+ */
+
+/* 平板：内容区收紧一点，避免横向滚动 */
+@media (max-width: 992px) {
+  .page {
+    padding: 14px 14px 20px;
+  }
+
+  .page-header {
+    margin-bottom: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .page {
+    padding: 12px 12px calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .page-header {
+    margin-bottom: 10px;
+    gap: 8px;
+  }
+
+  .page-title {
+    font-size: 16px;
+  }
+
+  .page-subtitle {
+    font-size: 12px;
+  }
+
+  /* 工具栏：控件纵向铺满，方便拇指点击 */
+  .toolbar {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .toolbar > .el-select,
+  .toolbar > .el-input,
+  .toolbar > .el-date-editor,
+  .toolbar > .el-input-number,
+  .toolbar > .el-dropdown,
+  .toolbar > .el-button {
+    width: 100% !important;
+  }
+
+  .toolbar > .el-button {
+    justify-content: center;
+  }
+
+  /* 统计卡片：小屏两列 */
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .stat-card {
+    padding: 12px;
+  }
+
+  .stat-value {
+    font-size: 22px;
+  }
+
+  /* 表格：放进卡片内横向滚动，避免整页左右晃动 */
+  .table-card > .el-card__body {
+    padding: 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table-card .el-table {
+    min-width: 560px;
+  }
+
+  .table-card .el-table__inner-wrapper {
+    min-width: 100%;
+  }
+
+  /* 弹窗 / 消息框 / 抽屉：小屏自适应宽度 */
+  .el-dialog {
+    width: calc(100vw - 24px) !important;
+    max-width: 560px;
+    margin: 10px auto !important;
+  }
+
+  .el-dialog__body {
+    padding: 12px 14px !important;
+  }
+
+  .el-dialog__header {
+    padding: 14px 14px 6px !important;
+  }
+
+  .el-message-box {
+    width: calc(100vw - 40px) !important;
+  }
+
+  .el-drawer.ltr,
+  .el-drawer.rtl {
+    width: 86vw !important;
+  }
+
+  /* 侧边栏抽屉固定宽度（选择器与 .el-drawer.ltr 同权重，靠后生效） */
+  .el-drawer.ch-nav-drawer {
+    width: 240px !important;
+    max-width: 82vw;
+  }
+
+  /* 表单标签顶部对齐，输入框占满整行 */
+  .el-form-item {
+    margin-bottom: 14px;
+  }
+
+  .page .el-descriptions__label {
+    width: 76px;
+  }
+
+  .el-pagination {
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  /* 标签页在窄屏下可横向滚动，避免换行挤压 */
+  .el-tabs__nav-wrap {
+    overflow-x: auto;
+  }
+
+  .el-message {
+    min-width: 0;
+    width: calc(100vw - 32px);
+  }
 }

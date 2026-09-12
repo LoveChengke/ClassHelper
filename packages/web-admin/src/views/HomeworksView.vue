@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
@@ -13,8 +13,13 @@ import {
 } from '@classhelper/shared';
 import { classApi, courseApi, homeworkApi } from '@/api';
 import { useRealtimeStore } from '@/stores/realtime';
+import { useResponsive } from '@/composables/useResponsive';
 
 const realtime = useRealtimeStore();
+const { isMobile } = useResponsive();
+
+/** 小屏下详情描述改为单列，避免文字被压成竖排 */
+const detailColumns = computed(() => (isMobile.value ? 1 : 2));
 
 const loading = ref(false);
 const classes = ref<ClassDto[]>([]);
@@ -196,7 +201,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <el-card shadow="never">
+    <el-card shadow="never" class="table-card">
       <el-table v-loading="loading" :data="homeworks" empty-text="暂无作业">
         <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
         <el-table-column label="课程" width="110">
@@ -267,7 +272,7 @@ onUnmounted(() => {
 
     <el-drawer v-model="detailVisible" size="46%" :title="current?.title ?? '作业详情'">
       <template v-if="current">
-        <el-descriptions :column="2" border size="small">
+        <el-descriptions :column="detailColumns" border size="small">
           <el-descriptions-item label="课程">{{ current.course?.name ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="发布人">{{ current.creator?.name ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="截止时间">

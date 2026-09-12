@@ -90,19 +90,42 @@ async function submit(): Promise<void> {
 
 <style scoped>
 .login-page {
-  height: 100vh;
+  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 16px;
   background: linear-gradient(135deg, #1f2d3d 0%, #3a5169 55%, #409eff 100%);
 }
 
 .login-card {
   width: 400px;
+  max-width: 100%;
   background: #fff;
   border-radius: 14px;
   padding: 30px 28px 22px;
   box-shadow: 0 18px 40px rgba(15, 30, 50, 0.28);
+}
+
+@media (max-width: 768px) {
+  .login-card {
+    padding: 22px 18px 18px;
+    border-radius: 12px;
+  }
+
+  .login-title {
+    font-size: 18px;
+  }
+
+  .login-brand {
+    margin-bottom: 16px;
+  }
+
+  .demo-tag {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 .login-brand {

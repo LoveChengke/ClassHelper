@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import {
@@ -148,7 +148,7 @@ function openNotification(item: NotificationDto): void {
       </el-col>
     </el-row>
 
-    <el-card shadow="never" class="mt-16">
+    <el-card shadow="never" class="mt-16 table-card">
       <template #header>
         <div class="card-header">
           <span>最近作业</span>

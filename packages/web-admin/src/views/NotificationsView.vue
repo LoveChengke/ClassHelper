@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
@@ -206,7 +206,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <el-card shadow="never">
+    <el-card shadow="never" class="table-card">
       <el-table v-loading="loading" :data="notifications" empty-text="暂无通知">
         <el-table-column label="优先级" width="90">
           <template #default="{ row }">

@@ -71,6 +71,13 @@ Section "主程序" SecMain
   IfFileExists "$INSTDIR\.env" 0 +2
     Rename "$INSTDIR\.env" "$INSTDIR\.env.previous"
 
+  ; 先清掉旧版本的代码目录再铺新文件：
+  ; 否则 web/assets 里的旧 hash 分片、server/dist 旧模块、node_modules 旧依赖会残留，
+  ; 出现"新旧版本混装"（例如 shared/dist 是旧的，服务启动直接报找不到导出）。
+  RMDir /r "$INSTDIR\web"
+  RMDir /r "$INSTDIR\server"
+  RMDir /r "$INSTDIR\node_modules"
+
   File /r "${STAGING}\*.*"
 
   IfFileExists "$INSTDIR\.env.previous" 0 +3

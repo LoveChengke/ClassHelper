@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import * as echarts from 'echarts';
@@ -305,7 +305,7 @@ onUnmounted(() => {
       </el-col>
     </el-row>
 
-    <el-card shadow="never" class="mt-16">
+    <el-card shadow="never" class="mt-16 table-card">
       <el-table v-loading="loading" :data="grades" empty-text="暂无成绩记录" max-height="520">
         <el-table-column label="学生" width="140">
           <template #default="{ row }">{{ row.student?.name ?? '-' }}</template>

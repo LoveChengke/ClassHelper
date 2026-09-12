@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import { ROLE_LABELS, formatDate, type ClassDto, type StudentDto } from '@classhelper/shared';
@@ -132,7 +132,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <el-card shadow="never">
+    <el-card shadow="never" class="table-card">
       <el-table v-loading="loading" :data="students" empty-text="暂无学生数据">
         <el-table-column prop="username" label="用户名" width="140" />
         <el-table-column prop="name" label="姓名" width="120" />

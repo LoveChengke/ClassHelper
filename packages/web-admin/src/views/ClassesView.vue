@@ -1,5 +1,5 @@
-<script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref } from 'vue';
+﻿<script setup lang="ts">
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
   SOCKET_EVENTS,
@@ -12,8 +12,13 @@ import {
 } from '@classhelper/shared';
 import { classApi, courseApi, teacherApi } from '@/api';
 import { useRealtimeStore } from '@/stores/realtime';
+import { useResponsive } from '@/composables/useResponsive';
 
 const realtime = useRealtimeStore();
+const { isMobile } = useResponsive();
+
+/** 小屏下详情描述改为单列，避免文字被压成竖排 */
+const detailColumns = computed(() => (isMobile.value ? 1 : 3));
 
 const loading = ref(false);
 const classes = ref<ClassDto[]>([]);
@@ -238,7 +243,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <el-card shadow="never">
+    <el-card shadow="never" class="table-card">
       <el-table v-loading="loading" :data="classes" empty-text="暂无班级，点击右上角新建">
         <el-table-column prop="name" label="班级" min-width="140" />
         <el-table-column prop="grade" label="年级" width="100" />
@@ -289,7 +294,7 @@ onUnmounted(() => {
     <!-- 班级详情 -->
     <el-drawer v-model="detailVisible" size="60%" :title="detail ? `${detail.name} · 详情` : '班级详情'">
       <div v-loading="detailLoading">
-        <el-descriptions v-if="detail" :column="3" border size="small">
+        <el-descriptions v-if="detail" :column="detailColumns" border size="small">
           <el-descriptions-item label="年级">{{ detail.grade }}</el-descriptions-item>
           <el-descriptions-item label="班主任">{{ detail.teacher?.name ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="学生数">{{ detail.students.length }}</el-descriptions-item>

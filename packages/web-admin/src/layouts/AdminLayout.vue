@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import { authApi } from '@/api';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
+import { useResponsive } from '@/composables/useResponsive';
 import { APP_TITLE } from '@/config';
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const realtime = useRealtimeStore();
+const { isMobile } = useResponsive();
 
 const menuItems = [
   { path: '/dashboard', title: '仪表盘', icon: 'Odometer' },
@@ -25,6 +27,23 @@ const menuItems = [
 /** 高亮当前菜单：直接比较路由路径，避免依赖路由名 */
 const activeMenu = computed(() => route.path);
 
+/** 顶栏显示的当前页面标题（小屏下替代侧边栏的"我在哪"提示，1Panel 同款做法） */
+const currentTitle = computed(() => menuItems.find((item) => item.path === route.path)?.title ?? APP_TITLE);
+
+/** 小屏：侧边栏收进抽屉，由顶栏汉堡按钮唤出 */
+const drawerVisible = ref(false);
+
+watch(
+  () => route.path,
+  () => {
+    drawerVisible.value = false;
+  },
+);
+
+watch(isMobile, (mobile) => {
+  if (!mobile) drawerVisible.value = false;
+});
+
 /**
  * 菜单点击回调。
  * 注意：el-menu 的 @select 抛出的是 el-menu-item 的 index（这里即路由路径），
@@ -32,6 +51,7 @@ const activeMenu = computed(() => route.path);
  */
 function handleMenuSelect(index: string): void {
   void router.push(index);
+  drawerVisible.value = false;
 }
 
 /** 开发期自检：菜单路径必须存在于路由表中，防止再次出现"点了没反应" */
@@ -102,7 +122,8 @@ async function submitPassword(): Promise<void> {
 
 <template>
   <el-container class="layout">
-    <el-aside width="210px" class="layout-aside">
+    <!-- 桌面/平板：常驻深色侧边栏 -->
+    <el-aside v-if="!isMobile" width="210px" class="layout-aside ch-sidebar">
       <div class="brand">
         <el-icon :size="22"><School /></el-icon>
         <span class="brand-text">班级小助手</span>
@@ -115,14 +136,35 @@ async function submitPassword(): Promise<void> {
       </el-menu>
     </el-aside>
 
-    <el-container>
+    <el-container class="layout-body">
       <el-header class="layout-header">
         <div class="header-left">
-          <span class="header-title">{{ APP_TITLE }}</span>
-          <el-tag :type="connectionType" size="small" effect="light">
+          <!-- 小屏：汉堡按钮唤出抽屉菜单 -->
+          <button
+            v-if="isMobile"
+            type="button"
+            class="nav-toggle"
+            aria-label="打开菜单"
+            :aria-expanded="drawerVisible ? 'true' : 'false'"
+            @click="drawerVisible = true"
+          >
+            <el-icon :size="20"><Menu /></el-icon>
+          </button>
+          <span class="header-title">{{ isMobile ? currentTitle : APP_TITLE }}</span>
+          <el-tag v-if="!isMobile" :type="connectionType" size="small" effect="light">
             <span class="header-conn">{{ connectionText }}</span>
           </el-tag>
-          <el-tag v-if="realtime.eventCount > 0" size="small" type="info" effect="plain">
+          <el-tag
+            v-else
+            :type="connectionType"
+            size="small"
+            effect="light"
+            class="header-conn-dot"
+            :title="connectionText"
+          >
+            <span class="conn-dot" :class="`conn-${connectionType}`"></span>
+          </el-tag>
+          <el-tag v-if="realtime.eventCount > 0 && !isMobile" size="small" type="info" effect="plain">
             已接收 {{ realtime.eventCount }} 条实时事件
           </el-tag>
         </div>
@@ -131,13 +173,16 @@ async function submitPassword(): Promise<void> {
           <el-dropdown trigger="click">
             <span class="user-chip">
               <el-icon><UserFilled /></el-icon>
-              {{ auth.displayName }}
-              <el-tag size="small" type="info" effect="plain">{{ auth.roleLabel }}</el-tag>
+              <template v-if="!isMobile">
+                {{ auth.displayName }}
+                <el-tag size="small" type="info" effect="plain">{{ auth.roleLabel }}</el-tag>
+              </template>
               <el-icon><ArrowDown /></el-icon>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item @click="passwordVisible = true">
+                <el-dropdown-item disabled>{{ auth.displayName }} · {{ auth.roleLabel }}</el-dropdown-item>
+                <el-dropdown-item divided @click="passwordVisible = true">
                   <el-icon><Lock /></el-icon>
                   修改密码
                 </el-dropdown-item>
@@ -157,6 +202,28 @@ async function submitPassword(): Promise<void> {
         </router-view>
       </el-main>
     </el-container>
+
+    <!-- 小屏抽屉菜单（1Panel 风格：深色侧栏内容与桌面端完全一致） -->
+    <el-drawer
+      v-model="drawerVisible"
+      direction="ltr"
+      size="240px"
+      :with-header="false"
+      class="ch-nav-drawer"
+    >
+      <div class="ch-sidebar ch-sidebar-drawer">
+        <div class="brand">
+          <el-icon :size="22"><School /></el-icon>
+          <span class="brand-text">班级小助手</span>
+        </div>
+        <el-menu :default-active="activeMenu" class="layout-menu" @select="handleMenuSelect">
+          <el-menu-item v-for="item in menuItems" :key="item.path" :index="item.path">
+            <el-icon><component :is="item.icon" /></el-icon>
+            <span>{{ item.title }}</span>
+          </el-menu-item>
+        </el-menu>
+      </div>
+    </el-drawer>
 
     <el-dialog v-model="passwordVisible" title="修改密码" width="420px">
       <el-form ref="passwordFormRef" :model="passwordForm" :rules="passwordRules" label-width="90px">
@@ -181,11 +248,14 @@ async function submitPassword(): Promise<void> {
 <style scoped>
 .layout {
   height: 100vh;
+  height: 100dvh;
+}
+
+.layout-body {
+  min-width: 0;
 }
 
 .layout-aside {
-  background: #1f2d3d;
-  color: #fff;
   display: flex;
   flex-direction: column;
 }
@@ -232,16 +302,40 @@ async function submitPassword(): Promise<void> {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding: 0 16px;
+}
+
+.nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-right: 2px;
+  border: none;
+  border-radius: 8px;
+  background: #f2f3f5;
+  color: #303133;
+  cursor: pointer;
+  transition: background 0.18s ease;
+}
+
+.nav-toggle:hover {
+  background: #e6e8eb;
 }
 
 .header-left {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .header-title {
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header-conn {
@@ -251,6 +345,7 @@ async function submitPassword(): Promise<void> {
 .header-right {
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
 }
 
 .user-chip {
@@ -265,5 +360,38 @@ async function submitPassword(): Promise<void> {
   background: var(--ch-bg);
   padding: 0;
   overflow-y: auto;
+}
+
+/* 小屏：顶栏更紧凑，正文留出安全区 */
+@media (max-width: 768px) {
+  .layout-header {
+    height: var(--ch-header-height);
+    padding: 0 10px;
+    gap: 8px;
+  }
+
+  .header-title {
+    font-size: 15px;
+  }
+}
+</style>
+
+<style>
+/* 侧边栏配色放在全局：桌面 asider 与移动端抽屉复用同一套样式（抽屉内容在 teleport 中，scoped 样式不生效） */
+.ch-sidebar {
+  background: #1f2d3d;
+  color: #fff;
+}
+
+.ch-sidebar-drawer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 小屏抽屉：去掉 Element Plus 默认内边距，让深色侧栏铺满 */
+.ch-nav-drawer .el-drawer__body {
+  padding: 0;
+  overflow: hidden;
 }
 </style>
