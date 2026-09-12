@@ -38,3 +38,6 @@ eslint-report.json
 .idea/
 .DS_Store
 Thumbs.db
+
+# 参考用的第三方源码包（设计 token 已提取到 docs/winisland-design-tokens.md）
+WinIsland-master.zip
