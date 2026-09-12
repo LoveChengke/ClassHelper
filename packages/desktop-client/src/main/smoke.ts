@@ -908,10 +908,13 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
 
   // 可选：对真实后端做联网集成自检（ELECTRON_SMOKE_ONLINE=1 时启用）
   if (process.env.ELECTRON_SMOKE_ONLINE === '1') {
+    // 班级账号凭据由 scripts/smoke.mjs 通过管理端接口准备（渲染进程读不到 process.env）
+    const classCode = process.env.ELECTRON_SMOKE_CLASS_CODE ?? '';
+    const classPassword = process.env.ELECTRON_SMOKE_CLASS_PASSWORD ?? '';
     const online = await win.webContents.executeJavaScript(
       `(async () => {
          if (!window.__classhelperSmoke__) return { ok: false, detail: '渲染进程未注册冒烟钩子' };
-         return await window.__classhelperSmoke__.onlineScenario();
+         return await window.__classhelperSmoke__.onlineScenario(${JSON.stringify({ code: classCode, password: classPassword })});
        })()`,
     );
     record(

@@ -25,6 +25,16 @@ import type {
 const toIso = (value: Date): string => value.toISOString();
 const toIsoOrNull = (value: Date | null | undefined): string | null => (value ? value.toISOString() : null);
 
+/**
+ * "个人记录"归属范围解析：
+ * - 传入 userIds（班级账号 = 全班学生）时优先使用；
+ * - 否则退化为单个 userId（普通学生账号 = 自己）。
+ */
+function resolvePool(options: { userId?: string | null; userIds?: string[] }): string[] {
+  if (options.userIds && options.userIds.length > 0) return options.userIds;
+  return options.userId ? [options.userId] : [];
+}
+
 export interface UserLike {
   id: string;
   username: string;
@@ -200,14 +210,16 @@ export function toHomeworkStatusDto(item: HomeworkStatusLike): HomeworkStatusDto
 
 /**
  * @param options.userId 指定当前用户，用于填充 completed / homeworkStatus
+ * @param options.userIds 班级账号（班级设备）场景：以"全班学生"为范围找完成状态
  * @param options.withStatus 是否统计完成人数（教师视角）
  */
 export function toHomeworkDto(
   item: HomeworkLike,
-  options: { userId?: string | null; withStatus?: boolean } = {},
+  options: { userId?: string | null; userIds?: string[]; withStatus?: boolean } = {},
 ): HomeworkDto {
   const statuses = item.statuses ?? [];
-  const own = options.userId ? statuses.find((status) => status.userId === options.userId) : undefined;
+  const pool = resolvePool(options);
+  const own = pool.length > 0 ? statuses.find((status) => pool.includes(status.userId)) : undefined;
 
   return {
     id: item.id,
@@ -248,12 +260,18 @@ export interface NotificationLike {
   reads?: NotificationReadLike[];
 }
 
+/**
+ * @param options.userId 指定当前用户（普通学生账号）
+ * @param options.userIds 班级账号（班级设备）场景：以"全班学生"为范围找已读状态
+ * @param options.withStatus 是否统计已读人数（教师视角）
+ */
 export function toNotificationDto(
   item: NotificationLike,
-  options: { userId?: string | null; withStatus?: boolean } = {},
+  options: { userId?: string | null; userIds?: string[]; withStatus?: boolean } = {},
 ): NotificationDto {
   const reads = item.reads ?? [];
-  const own = options.userId ? reads.find((read) => read.userId === options.userId) : undefined;
+  const pool = resolvePool(options);
+  const own = pool.length > 0 ? reads.find((read) => pool.includes(read.userId)) : undefined;
 
   return {
     id: item.id,

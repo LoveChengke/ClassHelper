@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
 import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
@@ -11,9 +11,11 @@ import {
   classTeacherParamSchema,
   createClassSchema,
   listClassesQuerySchema,
+  updateClassAccountSchema,
   updateClassSchema,
   type AddStudentInput,
   type CreateClassInput,
+  type UpdateClassAccountInput,
   type UpdateClassInput,
 } from './classes.schemas.js';
 import * as classService from './classes.service.js';
@@ -65,6 +67,25 @@ router.delete(
     const { id } = validatedParams<{ id: string }>(req);
     await classService.deleteClass(user, id);
     sendOk(res, { id }, '班级已删除');
+  },
+);
+
+/**
+ * PATCH /api/classes/:id/class-account - 设置 / 重置班级账号（班级码 + 班级密码）
+ * 仅管理员：学生端「班级登录」用的就是这个班级码
+ */
+router.patch(
+  '/:id/class-account',
+  requireRole('ADMIN'),
+  validate({ params: idParamSchema, body: updateClassAccountSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { id } = validatedParams<{ id: string }>(req);
+    sendOk(
+      res,
+      await classService.updateClassAccount(user, id, req.body as UpdateClassAccountInput),
+      '班级账号已更新',
+    );
   },
 );
 

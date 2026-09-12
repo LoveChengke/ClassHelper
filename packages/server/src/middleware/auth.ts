@@ -15,6 +15,31 @@ export function authenticate(): RequestHandler {
       if (!token) throw ApiError.unauthorized('缺少 Authorization 头');
 
       const payload = verifyToken(token);
+
+      // 班级账号（班级设备）：主体是班级而不是某个学生账号，回查 Class 表
+      if (payload.classSession) {
+        const record = await prisma.class.findUnique({
+          where: { id: payload.classId ?? payload.sub },
+          select: { id: true, name: true, code: true },
+        });
+        if (!record) throw ApiError.unauthorized('班级不存在或已被删除');
+
+        req.auth = {
+          token,
+          user: {
+            sub: record.id,
+            username: record.code,
+            name: record.name,
+            role: 'STUDENT',
+            classId: record.id,
+            classSession: true,
+            classCode: record.code,
+          },
+        };
+        next();
+        return;
+      }
+
       const user = await prisma.user.findUnique({
         where: { id: payload.sub },
         select: { id: true, username: true, name: true, role: true, classId: true },

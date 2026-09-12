@@ -1,4 +1,4 @@
-﻿import { SOCKET_EVENTS, type HomeworkDto, type HomeworkStatusDto } from '@classhelper/shared';
+import { SOCKET_EVENTS, type HomeworkDto, type HomeworkStatusDto } from '@classhelper/shared';
 import {
   assertCanPublishContent,
   assertClassAccess,
@@ -11,6 +11,7 @@ import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { toHomeworkDto, toHomeworkStatusDto } from '../../lib/mappers.js';
 import { parseOptionalDate } from '../../lib/schemas.js';
+import { personalIdWhere, resolvePersonalIds } from '../../lib/session.js';
 import { emitToClass } from '../../realtime/bus.js';
 import type {
   CreateHomeworkInput,
@@ -39,6 +40,9 @@ export async function listHomeworks(
 ): Promise<HomeworkDto[]> {
   const scope = await resolveClassScope(user, options.classId);
   const student = isStudent(user);
+  // 班级账号（班级设备）以全班学生为范围；普通学生即自己
+  const personalIds = student ? await resolvePersonalIds(user) : [];
+  const personalWhere = personalIdWhere(personalIds);
 
   const homeworks = await prisma.homework.findMany({
     where: {
@@ -48,36 +52,41 @@ export async function listHomeworks(
         ? { OR: [{ title: { contains: options.keyword } }, { content: { contains: options.keyword } }] }
         : {}),
       ...(student && options.pendingOnly
-        ? { statuses: { none: { userId: user.sub, completed: true } } }
+        ? { statuses: { none: { ...personalWhere, completed: true } } }
         : {}),
     },
     include: {
       course: courseSelect,
       creator: creatorSelect,
-      statuses: student ? { where: { userId: user.sub } } : true,
+      statuses: student ? { where: personalWhere } : true,
     },
     orderBy: { createdAt: 'desc' },
     take: 200,
   });
 
   return homeworks.map((item) =>
-    toHomeworkDto(item, { userId: student ? user.sub : null, withStatus: !student }),
+    toHomeworkDto(item, { userIds: student ? personalIds : [], withStatus: !student }),
   );
 }
 
 export async function getHomework(user: TokenPayload, homeworkId: string): Promise<HomeworkDto> {
+  const student = isStudent(user);
+  const personalIds = student ? await resolvePersonalIds(user) : [];
   const homework = await prisma.homework.findUnique({
     where: { id: homeworkId },
     include: {
       course: courseSelect,
       creator: creatorSelect,
-      statuses: isStudent(user) ? { where: { userId: user.sub } } : true,
+      statuses: student ? { where: personalIdWhere(personalIds) } : true,
     },
   });
   if (!homework) throw ApiError.notFound('作业不存在');
   await assertClassAccess(user, homework.classId);
 
-  return toHomeworkDto(homework, { userId: isStudent(user) ? user.sub : null, withStatus: !isStudent(user) });
+  return toHomeworkDto(homework, {
+    userIds: student ? personalIds : [],
+    withStatus: !student,
+  });
 }
 
 /** 发布作业并实时推送到班级房间 */
@@ -146,7 +155,12 @@ export async function deleteHomework(user: TokenPayload, homeworkId: string): Pr
   });
 }
 
-/** 标记完成 / 取消完成（学生标记自己；教师可代标记） */
+/**
+ * 标记完成 / 取消完成。
+ * - 普通学生：标记自己；
+ * - 班级账号（班级设备）：为全班学生写入完成状态（代全班操作）；
+ * - 教师 / 管理员：可代指定学生标记。
+ */
 export async function updateHomeworkStatus(
   user: TokenPayload,
   homeworkId: string,
@@ -155,10 +169,36 @@ export async function updateHomeworkStatus(
   const homework = await prisma.homework.findUnique({ where: { id: homeworkId } });
   if (!homework) throw ApiError.notFound('作业不存在');
 
-  const targetUserId = isStudent(user) ? user.sub : (input.userId ?? user.sub);
   await assertClassAccess(user, homework.classId);
 
-  if (!isStudent(user) && input.userId) {
+  if (isStudent(user)) {
+    const personalIds = await resolvePersonalIds(user);
+    let result: {
+      id: string;
+      homeworkId: string;
+      userId: string;
+      completed: boolean;
+      updatedAt: Date;
+    } | null = null;
+
+    for (const userId of personalIds) {
+      const status = await prisma.homeworkStatus.upsert({
+        where: { homeworkId_userId: { homeworkId, userId } },
+        create: { homeworkId, userId, completed: input.completed },
+        update: { completed: input.completed },
+      });
+      result ??= status;
+    }
+
+    if (!result) throw ApiError.forbidden('当前班级还没有学生账号，无法标记作业完成状态');
+
+    const dto = toHomeworkStatusDto(result);
+    emitToClass(homework.classId, SOCKET_EVENTS.homeworkStatus, { ...dto, classId: homework.classId });
+    return dto;
+  }
+
+  const targetUserId = input.userId ?? user.sub;
+  if (input.userId) {
     const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { classId: true } });
     if (!target || target.classId !== homework.classId) {
       throw ApiError.badRequest('目标学生不属于该作业所在班级');

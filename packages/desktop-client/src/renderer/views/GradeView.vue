@@ -12,9 +12,12 @@ import {
 import { gradeApi } from '../api/index.js';
 import { fetchWithCache } from '../cache/index.js';
 import { useAppStore } from '../stores/app.js';
+import { useAuthStore } from '../stores/auth.js';
 import { useRealtimeStore } from '../stores/realtime.js';
 
 const appStore = useAppStore();
+/** 班级账号（班级设备）看到的是全班成绩总览，标题与副标题随会话类型变化 */
+const auth = useAuthStore();
 const realtime = useRealtimeStore();
 
 const loading = ref(false);
@@ -130,9 +133,10 @@ onUnmounted(() => {
   <div class="page">
     <div class="page-header">
       <div>
-        <h2 class="page-title">我的成绩</h2>
+        <h2 class="page-title">{{ auth.isClassSession ? '本班成绩' : '我的成绩' }}</h2>
         <p class="page-subtitle">
           共 {{ grades.length }} 条记录 · 平均得分率 {{ averagePercent }}%
+          <span v-if="auth.isClassSession">· 班级账号：显示全班成绩总览</span>
           <el-tag v-if="fromCache" size="small" type="warning" effect="plain">离线缓存</el-tag>
         </p>
       </div>

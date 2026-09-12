@@ -1234,6 +1234,246 @@ async function main() {
     record('时间配置可删除（清理验证数据）', layoutDeleted.status === 200, `status=${layoutDeleted.status}`);
   }
 
+  // ---------------------------------------------------------------- 9. 班级账号（学生端主体 = 班级）
+  // 设计：班级码 + 班级密码 → classSession 的 JWT；个人数据（作业完成 / 通知已读 / 成绩）
+  //      由服务端按"全班"范围读写，个人学生不再是登录主体（个人账号接口仍向后兼容）。
+  const classCode = `E2E${Date.now().toString(36).slice(-4).toUpperCase()}`;
+  const setAccount = await api(`/classes/${classId}/class-account`, {
+    method: 'PATCH',
+    token: adminToken,
+    body: { code: classCode, password: 'class123' },
+  });
+  record(
+    '管理员设置班级账号（班级码 + 班级密码）',
+    setAccount.status === 200 && setAccount.payload?.data?.code === classCode,
+    `status=${setAccount.status} code=${setAccount.payload?.data?.code}`,
+  );
+
+  const classLogin = await api('/auth/class-login', {
+    method: 'POST',
+    body: { code: classCode, password: 'class123' },
+  });
+  const classToken = classLogin.payload?.data?.token;
+  const classUser = classLogin.payload?.data?.user;
+  record(
+    '班级账号登录成功（主体为班级）',
+    classLogin.status === 200 &&
+      Boolean(classToken) &&
+      classUser?.classSession === true &&
+      classUser?.id === classId &&
+      classUser?.classId === classId,
+    `status=${classLogin.status} classSession=${classUser?.classSession} name=${classUser?.name}`,
+  );
+
+  const lowerLogin = await api('/auth/class-login', {
+    method: 'POST',
+    body: { code: classCode.toLowerCase(), password: 'class123' },
+  });
+  record('班级码大小写不敏感', lowerLogin.status === 200, `status=${lowerLogin.status}`);
+
+  const wrongClassPassword = await api('/auth/class-login', {
+    method: 'POST',
+    body: { code: classCode, password: 'bad-class-password' },
+  });
+  record(
+    '班级密码错误被拒绝（401）',
+    wrongClassPassword.status === 401,
+    `status=${wrongClassPassword.status}`,
+  );
+
+  const unknownCode = await api('/auth/class-login', {
+    method: 'POST',
+    body: { code: 'NOSUCHCODE', password: 'class123' },
+  });
+  record('未知班级码被拒绝（401）', unknownCode.status === 401, `status=${unknownCode.status}`);
+
+  const classMe = await api('/auth/me', { token: classToken });
+  record(
+    '班级会话 /auth/me 返回班级信息',
+    classMe.status === 200 &&
+      classMe.payload?.data?.classSession === true &&
+      classMe.payload?.data?.id === classId,
+    `status=${classMe.status} name=${classMe.payload?.data?.name}`,
+  );
+
+  const classClasses = await api('/classes', { token: classToken });
+  const classVisible = classClasses.payload?.data ?? [];
+  record(
+    '班级账号只能看到自己班级',
+    classVisible.length === 1 && classVisible[0]?.id === classId,
+    `共 ${classVisible.length} 个（${classVisible.map((item) => item.name).join(',')}）`,
+  );
+
+  if (foreignClass) {
+    const classCrossHomework = await api(`/homeworks?classId=${foreignClass.id}`, { token: classToken });
+    record(
+      '班级账号跨班查询被拒绝（403）',
+      classCrossHomework.status === 403,
+      `status=${classCrossHomework.status}`,
+    );
+  }
+
+  const classPublish = await api('/notifications', {
+    method: 'POST',
+    token: classToken,
+    body: { classId, title: '班级账号越权发布', content: '不应成功' },
+  });
+  record('班级账号发布通知被拒绝（403）', classPublish.status === 403, `status=${classPublish.status}`);
+
+  const classGradesWrite = await api('/grades', {
+    method: 'POST',
+    token: classToken,
+    body: { classId, userId: studentUser?.id, examName: '班级账号越权成绩', score: 90, totalScore: 100 },
+  });
+  record(
+    '班级账号录入成绩被拒绝（403）',
+    classGradesWrite.status === 403,
+    `status=${classGradesWrite.status}`,
+  );
+
+  const classScheduleWrite = await api('/schedules', {
+    method: 'POST',
+    token: classToken,
+    body: { classId, courseId, dayOfWeek: 4, startTime: '14:00', endTime: '14:45' },
+  });
+  record(
+    '班级账号修改课表被拒绝（403）',
+    classScheduleWrite.status === 403,
+    `status=${classScheduleWrite.status}`,
+  );
+
+  // 班级设备代全班操作：通知已读
+  const classNameNotice = await api('/notifications', {
+    method: 'POST',
+    token: teacherToken,
+    body: { classId, title: '班级账号已读回归', content: '验证班级设备代全班标记已读' },
+  });
+  const classNameNoticeId = classNameNotice.payload?.data?.id;
+  const beforeUnread = await api(`/notifications/unread-count?classId=${classId}`, { token: classToken });
+  const classRead = await api(`/notifications/${classNameNoticeId}/read`, {
+    method: 'POST',
+    token: classToken,
+  });
+  const afterUnread = await api(`/notifications/unread-count?classId=${classId}`, { token: classToken });
+  const unreadBefore = beforeUnread.payload?.data?.count ?? 0;
+  const unreadAfter = afterUnread.payload?.data?.count ?? -1;
+  record(
+    '班级设备标记已读 = 全班已读（未读数 -1）',
+    classRead.status === 200 &&
+      (classRead.payload?.data?.marked ?? 0) === classmates.length &&
+      unreadBefore > 0 &&
+      unreadAfter === unreadBefore - 1,
+    `写入 ${classRead.payload?.data?.marked} 条（班级 ${classmates.length} 人）未读 ${unreadBefore} → ${unreadAfter}`,
+  );
+
+  const classReadAll = await api('/notifications/read-all', {
+    method: 'POST',
+    token: classToken,
+    body: { classId },
+  });
+  const unreadAfterAll = await api(`/notifications/unread-count?classId=${classId}`, { token: classToken });
+  record(
+    '班级设备全部已读 = 全班全部已读（未读归零）',
+    classReadAll.status === 200 && (unreadAfterAll.payload?.data?.count ?? -1) === 0,
+    `标记 ${classReadAll.payload?.data?.marked} 条，剩余未读 ${unreadAfterAll.payload?.data?.count}`,
+  );
+
+  const staffNotice = await api(
+    `/notifications?classId=${classId}&keyword=${encodeURIComponent('班级账号已读回归')}`,
+    { token: teacherToken },
+  );
+  const staffNoticeView = (staffNotice.payload?.data ?? [])[0];
+  record(
+    '教师端看到的已读人数与全班一致',
+    staffNoticeView?.readCount === classmates.length,
+    `readCount=${staffNoticeView?.readCount} / 学生数=${classmates.length}`,
+  );
+
+  // 班级设备代全班操作：作业完成
+  const classHomework = await api('/homeworks', {
+    method: 'POST',
+    token: teacherToken,
+    body: { classId, title: '班级账号完成回归', content: '验证班级设备代全班标记完成' },
+  });
+  const classHomeworkId = classHomework.payload?.data?.id;
+  const classDone = await api(`/homeworks/${classHomeworkId}/status`, {
+    method: 'PATCH',
+    token: classToken,
+    body: { completed: true },
+  });
+  const teacherHomeworkView = await api(`/homeworks/${classHomeworkId}`, { token: teacherToken });
+  const classPending = await api(`/homeworks?classId=${classId}&pendingOnly=true`, { token: classToken });
+  const stillPending = (classPending.payload?.data ?? []).some((item) => item.id === classHomeworkId);
+  record(
+    '班级设备标记完成 = 全班完成（教师端完成人数一致）',
+    classDone.status === 200 &&
+      teacherHomeworkView.payload?.data?.completedCount === classmates.length &&
+      !stillPending,
+    `completedCount=${teacherHomeworkView.payload?.data?.completedCount} / 学生数=${classmates.length} 仍在待完成=${stillPending}`,
+  );
+
+  // 班级账号的成绩视图 = 全班总览
+  const classNameGrade = await api('/grades', {
+    method: 'POST',
+    token: adminToken,
+    body: { classId, userId: studentUser?.id, examName: '班级总览回归', score: 77, totalScore: 100 },
+  });
+  const classMyGrades = await api('/grades/my', { token: classToken });
+  const gradeStudentIds = new Set((classMyGrades.payload?.data ?? []).map((item) => item.userId));
+  record(
+    '班级账号查看成绩 = 全班总览',
+    classMyGrades.status === 200 &&
+      (classMyGrades.payload?.data ?? []).some((item) => item.id === classNameGrade.payload?.data?.id),
+    `成绩条数=${(classMyGrades.payload?.data ?? []).length} 涉及学生=${gradeStudentIds.size}`,
+  );
+
+  // 管理员重置班级密码后：新密码可用、旧密码失效
+  const resetClassPassword = await api(`/classes/${classId}/class-account`, {
+    method: 'PATCH',
+    token: adminToken,
+    body: { password: 'class456' },
+  });
+  const newPasswordLogin = await api('/auth/class-login', {
+    method: 'POST',
+    body: { code: classCode, password: 'class456' },
+  });
+  const oldPasswordLogin = await api('/auth/class-login', {
+    method: 'POST',
+    body: { code: classCode, password: 'class123' },
+  });
+  record(
+    '重置班级密码后旧密码失效 / 新密码可用',
+    resetClassPassword.status === 200 && newPasswordLogin.status === 200 && oldPasswordLogin.status === 401,
+    `重置=${resetClassPassword.status} 新密码=${newPasswordLogin.status} 旧密码=${oldPasswordLogin.status}`,
+  );
+
+  const occupiedCode = await api(`/classes/${classId}/class-account`, {
+    method: 'PATCH',
+    token: adminToken,
+    body: { code: classes[1]?.code ?? 'G102' },
+  });
+  record(
+    '班级码重复被拒绝（400）',
+    occupiedCode.status === 400,
+    `status=${occupiedCode.status} message=${occupiedCode.payload?.message ?? ''}`,
+  );
+
+  // 清理：删除回归用的通知 / 作业 / 成绩，并把班级密码恢复为默认
+  if (classNameNoticeId) {
+    await api(`/notifications/${classNameNoticeId}`, { method: 'DELETE', token: teacherToken });
+  }
+  if (classHomeworkId) {
+    await api(`/homeworks/${classHomeworkId}`, { method: 'DELETE', token: teacherToken });
+  }
+  if (classNameGrade.payload?.data?.id) {
+    await api(`/grades/${classNameGrade.payload.data.id}`, { method: 'DELETE', token: adminToken });
+  }
+  await api(`/classes/${classId}/class-account`, {
+    method: 'PATCH',
+    token: adminToken,
+    body: { password: '123456' },
+  });
+
   socket.close();
 
   // ---------------------------------------------------------------- 汇总

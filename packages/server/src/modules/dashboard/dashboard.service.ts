@@ -9,6 +9,7 @@ import {
 import { prisma } from '../../lib/db.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { toHomeworkDto, toNotificationDto } from '../../lib/mappers.js';
+import { personalIdWhere, resolvePersonalIds } from '../../lib/session.js';
 
 const courseSelect = { select: { id: true, name: true } } as const;
 const creatorSelect = { select: { id: true, name: true, username: true } } as const;
@@ -25,6 +26,9 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
   const where = classScopeWhere(scope);
   const classWhere = classScopeIdFilter(scope);
   const now = new Date();
+  // 班级账号（班级设备）以全班学生为范围；普通学生即自己
+  const personalIds = await resolvePersonalIds(user);
+  const personalWhere = personalIdWhere(personalIds);
 
   const [
     classCount,
@@ -47,15 +51,15 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
     prisma.homework.count({ where }),
     prisma.notification.count({ where }),
     prisma.grade.count({ where }),
-    prisma.notification.count({ where: { ...where, reads: { none: { userId: user.sub } } } }),
+    prisma.notification.count({ where: { ...where, reads: { none: personalWhere } } }),
     student
       ? prisma.homework.count({
-          where: { ...where, statuses: { none: { userId: user.sub, completed: true } } },
+          where: { ...where, statuses: { none: { ...personalWhere, completed: true } } },
         })
       : prisma.homework.count({ where: { ...where, dueAt: { gte: now } } }),
     prisma.notification.findMany({
       where,
-      include: { creator: creatorSelect, reads: { where: { userId: user.sub } } },
+      include: { creator: creatorSelect, reads: { where: personalWhere } },
       orderBy: { createdAt: 'desc' },
       take: 5,
     }),
@@ -64,7 +68,7 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
       include: {
         course: courseSelect,
         creator: creatorSelect,
-        statuses: student ? { where: { userId: user.sub } } : true,
+        statuses: student ? { where: personalWhere } : true,
       },
       orderBy: { createdAt: 'desc' },
       take: 5,
@@ -74,7 +78,7 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
       include: {
         course: courseSelect,
         creator: creatorSelect,
-        statuses: student ? { where: { userId: user.sub } } : true,
+        statuses: student ? { where: personalWhere } : true,
       },
       orderBy: { dueAt: 'asc' },
       take: 5,
@@ -92,13 +96,13 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
     unreadNotificationCount,
     pendingHomeworkCount,
     recentNotifications: recentNotifications.map((item): NotificationDto =>
-      toNotificationDto(item, { userId: user.sub }),
+      toNotificationDto(item, { userIds: personalIds }),
     ),
     recentHomeworks: recentHomeworks.map((item): HomeworkDto =>
-      toHomeworkDto(item, { userId: student ? user.sub : null, withStatus: !student }),
+      toHomeworkDto(item, { userIds: student ? personalIds : [], withStatus: !student }),
     ),
     upcomingDeadlines: upcoming.map((item): HomeworkDto =>
-      toHomeworkDto(item, { userId: student ? user.sub : null, withStatus: !student }),
+      toHomeworkDto(item, { userIds: student ? personalIds : [], withStatus: !student }),
     ),
   };
 }

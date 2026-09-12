@@ -26,6 +26,7 @@ import {
   type TimeLayoutDto,
   type TimeLayoutImportResult,
   type TimeLayoutParsePreview,
+  type UpdateClassAccountRequest,
   type UpdateClassRequest,
   type UserDto,
 } from '@classhelper/shared';
@@ -63,6 +64,9 @@ export const classApi = {
     api.post(`${API_PATHS.classes}/${id}/teachers`, { teacherId }),
   removeTeacher: (id: string, teacherId: string): Promise<unknown> =>
     api.delete(`${API_PATHS.classes}/${id}/teachers/${teacherId}`),
+  /** 设置 / 重置班级账号（班级码 + 班级密码）：仅管理员 */
+  updateAccount: (id: string, payload: UpdateClassAccountRequest): Promise<ClassDto> =>
+    api.patch(`${API_PATHS.classes}/${id}/class-account`, payload),
 };
 
 /* ------------------------------------------------------------------ 课程 */

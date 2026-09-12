@@ -11,6 +11,10 @@ export interface TokenPayload {
   name: string;
   role: UserRole;
   classId: string | null;
+  /** true 表示"班级账号（班级设备）"登录：sub 是班级 id，而非某个学生账号 */
+  classSession?: boolean;
+  /** 班级账号的班级码（便于日志/审计） */
+  classCode?: string;
 }
 
 export function signToken(payload: TokenPayload): string {
@@ -37,6 +41,8 @@ export function verifyToken(token: string): TokenPayload {
       name: String(record.name ?? ''),
       role,
       classId: record.classId ? String(record.classId) : null,
+      classSession: record.classSession === true,
+      classCode: record.classCode ? String(record.classCode) : undefined,
     };
   } catch {
     throw ApiError.unauthorized('登录状态已失效，请重新登录');

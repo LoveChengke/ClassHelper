@@ -1,4 +1,4 @@
-﻿import type { ClassDetailDto, ClassDto, StudentDto } from '@classhelper/shared';
+import type { ClassDetailDto, ClassDto, StudentDto } from '@classhelper/shared';
 import { env } from '../../config/env.js';
 import {
   assertClassAccess,
@@ -8,6 +8,10 @@ import {
   classScopeIdFilter,
   resolveClassScope,
 } from '../../lib/access.js';
+import {
+  buildClassAccountCreateData,
+  updateClassAccount as updateClassAccountRecord,
+} from '../../lib/class-account.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -23,6 +27,36 @@ const countSelect = {
   homeworks: true,
   notifications: true,
 } as const;
+
+/**
+ * 说明：班级码 code 与班级密码哈希 passwordHash 是 Class 的标量字段，
+ * 使用 include 查询时会默认返回，无需（也不能）写进 include 里。
+ * 是否把它们放进 DTO 由 canSeeClassAccount() 决定，哈希永不外泄。
+ */
+
+/**
+ * 是否可以看到该班级的班级账号信息：
+ * 管理员（管理全部班级）或该班级的班主任（要发给学生用，只读展示）。
+ * 科任老师与学生都看不到班级码。
+ */
+function canSeeClassAccount(user: TokenPayload, item: { teacherId: string }): boolean {
+  if (user.role === 'ADMIN') return true;
+  return user.role === 'TEACHER' && item.teacherId === user.sub;
+}
+
+/** 把班级记录转换为 DTO，并按权限附带班级码 */
+function toClassDtoWithAccount(
+  user: TokenPayload,
+  item: Parameters<typeof toClassDto>[0] & { code?: string; passwordHash?: string | null },
+): ClassDto {
+  const dto = toClassDto(item);
+  if (!canSeeClassAccount(user, item)) return dto;
+  return {
+    ...dto,
+    code: item.code,
+    hasPassword: Boolean(item.passwordHash),
+  };
+}
 
 /** 班级列表（按权限过滤） */
 export async function listClasses(user: TokenPayload, keyword?: string): Promise<ClassDto[]> {
@@ -42,7 +76,7 @@ export async function listClasses(user: TokenPayload, keyword?: string): Promise
     orderBy: [{ grade: 'asc' }, { name: 'asc' }],
   });
 
-  return classes.map(toClassDto);
+  return classes.map((item) => toClassDtoWithAccount(user, item));
 }
 
 /** 班级详情：学生名单 + 课程 + 协作教师 */
@@ -68,7 +102,7 @@ export async function getClassDetail(user: TokenPayload, classId: string): Promi
   if (!item) throw ApiError.notFound('班级不存在');
 
   return {
-    ...toClassDto(item),
+    ...toClassDtoWithAccount(user, item),
     students: item.students.map((student) => toStudentDto(student)),
     courses: item.courses.map(toCourseDto),
     teachers: item.teachers.map((assignment) => toTeacherBrief(assignment.teacher)),
@@ -87,15 +121,47 @@ export async function createClass(user: TokenPayload, input: CreateClassInput): 
     teacherId = teacher.id;
   }
 
+  // 班级账号：自动生成班级码（也可由管理员指定）+ 默认班级密码
+  const account = await buildClassAccountCreateData(env.defaultClassPassword, input.code);
+
   const created = await prisma.class.create({
-    data: { name: input.name, grade: input.grade, teacherId },
+    data: {
+      name: input.name,
+      grade: input.grade,
+      teacherId,
+      code: account.code,
+      passwordHash: account.passwordHash,
+    },
     include: {
       teacher: { select: { id: true, name: true, username: true } },
       _count: { select: countSelect },
     },
   });
 
-  return toClassDto(created);
+  return toClassDtoWithAccount(user, created);
+}
+
+/**
+ * 设置 / 重置班级账号（班级码 + 班级密码）：仅管理员。
+ * 班级码即学生端"班级登录"的账号；密码留空表示不修改。
+ */
+export async function updateClassAccount(
+  user: TokenPayload,
+  classId: string,
+  input: { code?: string; password?: string },
+): Promise<ClassDto> {
+  assertCanManageClasses(user);
+  await updateClassAccountRecord(classId, input);
+
+  const updated = await prisma.class.findUnique({
+    where: { id: classId },
+    include: {
+      teacher: { select: { id: true, name: true, username: true } },
+      _count: { select: countSelect },
+    },
+  });
+  if (!updated) throw ApiError.notFound('班级不存在');
+  return toClassDtoWithAccount(user, updated);
 }
 
 /** 编辑班级 */

@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import { STORAGE_KEYS, type LoginResponse, type StudentDto } from '@classhelper/shared';
+import { STORAGE_KEYS, type LoginResponse, type SessionUser } from '@classhelper/shared';
 import { authApi } from '../api/index.js';
 import { setApiBaseUrl, setTokenProvider } from '../api/http.js';
 import { cacheGet, cacheSet } from '../cache/db.js';
@@ -15,13 +15,17 @@ const PROFILE_KEY = 'me';
  */
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(null);
-  const user = ref<StudentDto | null>(null);
+  const user = ref<SessionUser | null>(null);
   const loading = ref(false);
   const offlineSession = ref(false);
 
   const isAuthenticated = computed(() => Boolean(token.value));
   const displayName = computed(() => user.value?.name ?? '未登录');
   const classId = computed(() => user.value?.classId ?? null);
+  /** true 表示当前是「班级账号（班级设备）」会话：个人数据按全班读写 */
+  const isClassSession = computed(() => user.value?.classSession === true);
+  /** 班级码（登录账号，便于设置页展示） */
+  const classCode = computed(() => user.value?.classCode ?? '');
 
   setTokenProvider(() => token.value);
 
@@ -39,20 +43,26 @@ export const useAuthStore = defineStore('auth', () => {
     await window.desktop.saveConfig({ serverUrl, username, token: nextToken });
   }
 
-  /** 登录：写主进程配置 + 缓存资料 */
-  async function login(serverUrl: string, username: string, password: string): Promise<void> {
+  /**
+   * 班级账号登录（学生端主入口）：班级码 + 班级密码。
+   *
+   * 需求 1：学生端以「班级」为主体，个人学生不再是登录主体；
+   * 服务端据此把作业完成 / 通知已读等个人数据按"全班"范围读写。
+   * 保存的 username 字段记录班级码，便于下次预填。
+   */
+  async function login(serverUrl: string, code: string, password: string): Promise<void> {
     const normalized = normalizeServerUrl(serverUrl);
     if (!normalized) throw new Error('服务器地址格式不正确，例如 http://127.0.0.1:4000');
 
     setApiBaseUrl(normalized);
     loading.value = true;
     try {
-      const payload: LoginResponse = await authApi.login({ username, password });
+      const payload: LoginResponse = await authApi.classLogin({ code, password });
       applyToken(payload.token);
-      user.value = payload.user as StudentDto;
+      user.value = payload.user;
       offlineSession.value = false;
       await cacheSet('profile', PROFILE_KEY, user.value);
-      await persistSession(normalized, username, payload.token);
+      await persistSession(normalized, code, payload.token);
     } finally {
       loading.value = false;
     }
@@ -80,7 +90,7 @@ export const useAuthStore = defineStore('auth', () => {
       }
     }
 
-    const cachedProfile = await cacheGet<StudentDto>('profile', PROFILE_KEY).catch(() => null);
+    const cachedProfile = await cacheGet<SessionUser>('profile', PROFILE_KEY).catch(() => null);
     if (cachedProfile) user.value = cachedProfile.value;
 
     // 服务器刷新放到后台，绝不阻塞启动：离线时也能立刻进入界面看缓存数据
@@ -122,6 +132,8 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     displayName,
     classId,
+    isClassSession,
+    classCode,
     login,
     restore,
     refreshProfile,

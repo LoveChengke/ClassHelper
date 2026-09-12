@@ -8,6 +8,7 @@ import {
   type ClassDto,
   type CourseDto,
   type StudentDto,
+  type UpdateClassAccountRequest,
   type UserDto,
 } from '@classhelper/shared';
 import { classApi, courseApi, teacherApi } from '@/api';
@@ -43,7 +44,7 @@ async function loadClasses(): Promise<void> {
 const formVisible = ref(false);
 const formRef = ref<FormInstance>();
 const editingId = ref<string | null>(null);
-const form = reactive({ name: '', grade: '' });
+const form = reactive({ name: '', grade: '', code: '' });
 const rules: FormRules = {
   name: [{ required: true, message: '请输入班级名称', trigger: 'blur' }],
   grade: [{ required: true, message: '请输入年级', trigger: 'blur' }],
@@ -53,6 +54,7 @@ function openCreate(): void {
   editingId.value = null;
   form.name = '';
   form.grade = '';
+  form.code = '';
   formVisible.value = true;
 }
 
@@ -60,6 +62,7 @@ function openEdit(row: ClassDto): void {
   editingId.value = row.id;
   form.name = row.name;
   form.grade = row.grade;
+  form.code = '';
   formVisible.value = true;
 }
 
@@ -71,11 +74,67 @@ async function submitForm(): Promise<void> {
     await classApi.update(editingId.value, { name: form.name, grade: form.grade });
     ElMessage.success('班级已更新');
   } else {
-    await classApi.create({ name: form.name, grade: form.grade });
+    await classApi.create({
+      name: form.name,
+      grade: form.grade,
+      ...(form.code.trim() ? { code: form.code.trim().toUpperCase() } : {}),
+    });
     ElMessage.success('班级创建成功');
   }
   formVisible.value = false;
   await loadClasses();
+}
+
+/* ------------------------------------------------------------ 班级账号（班级码 + 班级密码） */
+
+const accountVisible = ref(false);
+const accountSaving = ref(false);
+const accountTarget = ref<ClassDto | null>(null);
+const accountForm = reactive({ code: '', password: '' });
+
+/** 打开班级账号设置：班级码即学生端「班级登录」的账号 */
+function openAccount(row: ClassDto): void {
+  accountTarget.value = row;
+  accountForm.code = row.code ?? '';
+  accountForm.password = '';
+  accountVisible.value = true;
+}
+
+/** 一键生成一个易读的班级码（避开 0/O/1/I 等易混字符） */
+function suggestCode(): void {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let body = '';
+  for (let index = 0; index < 6; index += 1) {
+    body += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  accountForm.code = body;
+}
+
+async function submitAccount(): Promise<void> {
+  const target = accountTarget.value;
+  if (!target) return;
+  if (!accountForm.code.trim() && !accountForm.password) {
+    ElMessage.warning('请填写新的班级码或班级密码');
+    return;
+  }
+
+  accountSaving.value = true;
+  try {
+    const payload: UpdateClassAccountRequest = {};
+    if (accountForm.code.trim() && accountForm.code.trim() !== target.code) {
+      payload.code = accountForm.code.trim().toUpperCase();
+    }
+    if (accountForm.password) payload.password = accountForm.password;
+
+    const updated = await classApi.updateAccount(target.id, payload);
+    ElMessage.success(
+      `班级账号已更新：班级码 ${updated.code ?? '-'}${accountForm.password ? '，班级密码已重置' : ''}`,
+    );
+    accountVisible.value = false;
+    await loadClasses();
+  } finally {
+    accountSaving.value = false;
+  }
 }
 
 async function removeClass(row: ClassDto): Promise<void> {
@@ -267,18 +326,62 @@ onUnmounted(() => {
         <el-table-column label="通知" width="80">
           <template #default="{ row }">{{ row.notificationCount ?? 0 }}</template>
         </el-table-column>
+        <el-table-column label="班级账号（学生端登录）" width="220">
+          <template #default="{ row }">
+            <template v-if="row.code">
+              <el-tag type="info" effect="plain">{{ row.code }}</el-tag>
+              <el-tag :type="row.hasPassword ? 'success' : 'warning'" size="small" class="account-tag">
+                {{ row.hasPassword ? '已设密码' : '未设密码' }}
+              </el-tag>
+            </template>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ formatDate(row.createdAt, true) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="230" fixed="right">
+        <el-table-column label="操作" width="310" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+            <el-button v-if="isAdmin" link type="warning" @click="openAccount(row)">班级账号</el-button>
             <el-button v-if="isAdmin" link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button v-if="isAdmin" link type="danger" @click="removeClass(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 班级账号：班级码 + 班级密码（学生端「班级登录」凭据） -->
+    <el-dialog v-model="accountVisible" title="班级账号（学生端登录）" width="460px">
+      <el-alert type="info" :closable="false" show-icon class="mb-12">
+        <template #title>
+          学生端以「班级」为主体登录：班级码 + 班级密码。登录后本机代表整个班级，
+          作业完成、通知已读都会按全班记录。
+        </template>
+      </el-alert>
+      <el-form label-width="90px">
+        <el-form-item label="班级">
+          <el-input :model-value="accountTarget?.name ?? ''" disabled />
+        </el-form-item>
+        <el-form-item label="班级码">
+          <el-input v-model="accountForm.code" placeholder="4~16 位字母或数字" style="width: 220px" />
+          <el-button link type="primary" class="ml-8" @click="suggestCode">随机生成</el-button>
+        </el-form-item>
+        <el-form-item label="新密码">
+          <el-input
+            v-model="accountForm.password"
+            type="password"
+            show-password
+            placeholder="留空表示不修改（至少 6 位）"
+            style="width: 220px"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="accountVisible = false">取消</el-button>
+        <el-button type="primary" :loading="accountSaving" @click="submitAccount">保存</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 新建 / 编辑 -->
     <el-dialog v-model="formVisible" :title="editingId ? '编辑班级' : '新建班级'" width="420px">
@@ -288,6 +391,9 @@ onUnmounted(() => {
         </el-form-item>
         <el-form-item label="年级" prop="grade">
           <el-input v-model="form.grade" placeholder="例如 高一" />
+        </el-form-item>
+        <el-form-item v-if="!editingId" label="班级码">
+          <el-input v-model="form.code" placeholder="留空自动生成（4~16 位字母数字）" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -393,3 +499,15 @@ onUnmounted(() => {
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.account-tag {
+  margin-left: 6px;
+}
+.mb-12 {
+  margin-bottom: 12px;
+}
+.ml-8 {
+  margin-left: 8px;
+}
+</style>

@@ -84,10 +84,12 @@ async function main(): Promise<void> {
   const random = createRandom(20260901);
 
   // 同一角色共用密码，只需各哈希一次
-  const [adminHash, teacherHash, studentHash] = await Promise.all([
+  const [adminHash, teacherHash, studentHash, classPasswordHash] = await Promise.all([
     hashPassword('admin123'),
     hashPassword('teacher123'),
     hashPassword('student123'),
+    // 班级账号默认密码（学生端「班级登录」）
+    hashPassword('123456'),
   ]);
 
   const admin = await prisma.user.create({
@@ -101,16 +103,23 @@ async function main(): Promise<void> {
     data: { username: 'teacher2', name: '李老师', role: 'TEACHER', passwordHash: teacherHash },
   });
 
+  // 班级账号：班级码（学生端「班级登录」的账号）+ 班级密码（默认 123456，可在班级管理里重置）
   const classSeeds = [
-    { name: '高一(1)班', grade: '高一', teacherId: teacher1.id },
-    { name: '高一(2)班', grade: '高一', teacherId: teacher2.id },
-    { name: '高二(3)班', grade: '高二', teacherId: teacher1.id },
+    { name: '高一(1)班', grade: '高一', teacherId: teacher1.id, code: 'G101' },
+    { name: '高一(2)班', grade: '高一', teacherId: teacher2.id, code: 'G102' },
+    { name: '高二(3)班', grade: '高二', teacherId: teacher1.id, code: 'G203' },
   ];
 
   const classes = [];
   for (const [index, seed] of classSeeds.entries()) {
     const created = await prisma.class.create({
-      data: { name: seed.name, grade: seed.grade, teacherId: seed.teacherId },
+      data: {
+        name: seed.name,
+        grade: seed.grade,
+        teacherId: seed.teacherId,
+        code: seed.code,
+        passwordHash: classPasswordHash,
+      },
     });
     classes.push({ ...created, room: CLASS_ROOMS[index] ?? '教学楼 A101' });
   }

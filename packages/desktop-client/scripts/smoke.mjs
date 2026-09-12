@@ -57,6 +57,57 @@ if (online === undefined) {
   );
 }
 
+/**
+ * 准备一个已知可用的班级账号（学生端已改为班级码 + 班级密码登录）：
+ * 用管理员账号登录 → 取第一个班级 → 重置成冒烟专用密码（必要时补一个班级码）。
+ * 这样无论被测实例是全新安装还是升级安装，冒烟都能拿到可用凭据。
+ */
+async function provisionClassAccount() {
+  const base = process.env.ELECTRON_SMOKE_API ?? 'http://127.0.0.1:4000/api';
+  const username = process.env.ELECTRON_SMOKE_ADMIN ?? 'admin';
+  const adminPassword = process.env.ELECTRON_SMOKE_ADMIN_PASSWORD ?? 'admin123';
+  const password = process.env.ELECTRON_SMOKE_CLASS_PASSWORD ?? 'smoke123456';
+  try {
+    const loginResponse = await fetch(`${base}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password: adminPassword }),
+    });
+    const login = await loginResponse.json();
+    const token = login?.data?.token;
+    if (!token) return null;
+
+    const authHeaders = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    const classesResponse = await fetch(`${base}/classes`, { headers: authHeaders });
+    const classes = (await classesResponse.json())?.data ?? [];
+    const target = classes[0];
+    if (!target) return null;
+
+    const code = target.code || `SMOKE${Math.floor(Math.random() * 9000 + 1000)}`;
+    const patchResponse = await fetch(`${base}/classes/${target.id}/class-account`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ code, password }),
+    });
+    if (!patchResponse.ok) return null;
+
+    const patched = (await patchResponse.json())?.data;
+    return { code: patched?.code ?? code, password, className: target.name };
+  } catch {
+    return null;
+  }
+}
+
+let classCredentials = null;
+if (online === '1') {
+  classCredentials = await provisionClassAccount();
+  console.log(
+    classCredentials
+      ? `[smoke] 班级账号就绪：${classCredentials.code}（${classCredentials.className}）`
+      : '[smoke] 未能准备班级账号，联网集成将使用种子默认凭据',
+  );
+}
+
 const child = spawn(electronPath, ['.'], {
   cwd: root,
   stdio: 'inherit',
@@ -64,6 +115,8 @@ const child = spawn(electronPath, ['.'], {
     ELECTRON_SMOKE_TEST: '1',
     ELECTRON_SMOKE_ONLINE: online,
     ELECTRON_SMOKE_PROFILE: profileDir,
+    ELECTRON_SMOKE_CLASS_CODE: classCredentials?.code ?? '',
+    ELECTRON_SMOKE_CLASS_PASSWORD: classCredentials?.password ?? '',
   }),
 });
 

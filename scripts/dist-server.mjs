@@ -375,7 +375,8 @@ function writeReadme() {
 二、默认账号（首次安装后请立即修改密码）
   管理员  admin / admin123
   教师    teacher1 / teacher123、teacher2 / teacher123
-  学生    student01 ~ student15 / student123（桌面客户端使用）
+  班级    班级码 G101/G102/G203 + 班级密码 123456（学生端桌面客户端使用）
+  个人    student01 ~ student15 / student123（个人学生账号，接口向后兼容）
 
 三、目录说明
   server\\        后端程序（server\\dist\\index.js 为入口）

@@ -163,7 +163,7 @@ pnpm build:desktop
 pnpm verify:desktop
 ```
 
-客户端首次启动会带上默认服务器地址 `http://127.0.0.1:4000`，可用学生账号 `student01 / student123` 登录。
+客户端首次启动会带上默认服务器地址 `http://127.0.0.1:4000`，输入**班级码 + 班级密码**（种子数据：`G101` / `123456`）即可进入班级。
 若要验证"断网可查看缓存"，登录并浏览过程序后关闭后端（`Ctrl+C` 停掉 `pnpm dev:server`），
 客户端会在顶部提示「当前处于离线状态」，页面继续显示本地缓存数据；重新启动后端后会自动同步。
 
@@ -171,33 +171,39 @@ pnpm verify:desktop
 
 ```bash
 # 另开一个终端先启动后端：pnpm dev:server
-pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC + 上课时段拦截 + 叫人 + 导入：107 项
+pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC + 上课时段拦截 + 叫人 + 导入 + 班级账号：125 项
 pnpm verify:web          # Web 管理端真实点击（含权限入口隐藏、手机适配、叫人入口、紧急通知 + 导入弹窗）：18 项
 pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读/作业/叫人、真实链路、课表时间轴、个性化与托盘）：40 项
 ```
 
-后端脚本验证**实时推送时延、作业完成、成绩下发、权限隔离、上课时段紧急通知拦截、导入与失败回滚**等 107 项，
+后端脚本验证**实时推送时延、作业完成、成绩下发、权限隔离、上课时段紧急通知拦截、导入与失败回滚、班级账号代全班操作**等 125 项，
 实测通知 37ms、作业 26ms、成绩 25ms 到达（要求 < 5 秒），紧急通知 409 拦截与二次确认后发布均通过；
 客户端脚本验证 preload 桥接、渲染进程、IndexedDB 读写、断网回退、**灵动岛四种状态切换**与联网集成
-（登录 + 四类数据 + Socket.IO），实测 26/26 通过。
+（**班级账号登录** + 四类数据 + Socket.IO），实测 40/40 通过。
 
 ## 默认账号与种子数据
 
 `pnpm db:seed` 会清空业务表并写入一套完整演示数据（1 管理员 / 2 教师 / 3 班级 / 15 学生 /
 15 课程 / 90 条课表 / 15 份作业 / 12 条通知 / 90 条成绩）。
 
-| 角色   | 用户名                    | 密码         | 说明                                       |
-| ------ | ------------------------- | ------------ | ------------------------------------------ |
-| 管理员 | `admin`                   | `admin123`   | 可访问全部班级                             |
-| 教师   | `teacher1`                | `teacher123` | 张老师：高一(1)班、高二(3)班班主任         |
-| 教师   | `teacher2`                | `teacher123` | 李老师：高一(2)班班主任，高二(3)班协作教师 |
-| 学生   | `student01`               | `student123` | 高一(1)班                                  |
-| 学生   | `student02` … `student05` | `student123` | 高一(1)班                                  |
-| 学生   | `student06` … `student10` | `student123` | 高一(2)班                                  |
-| 学生   | `student11` … `student15` | `student123` | 高二(3)班                                  |
+| 角色   | 用户名                    | 密码         | 说明                                        |
+| ------ | ------------------------- | ------------ | ------------------------------------------- |
+| 管理员 | `admin`                   | `admin123`   | 可访问全部班级                              |
+| 教师   | `teacher1`                | `teacher123` | 张老师：高一(1)班、高二(3)班班主任          |
+| 教师   | `teacher2`                | `teacher123` | 李老师：高一(2)班班主任，高二(3)班协作教师  |
+| 学生   | `student01`               | `student123` | 高一(1)班                                   |
+| 学生   | `student02` … `student05` | `student123` | 高一(1)班                                   |
+| 学生   | `student06` … `student10` | `student123` | 高一(2)班                                   |
+| 学生   | `student11` … `student15` | `student123` | 高二(3)班                                   |
+| 班级   | 班级码 `G101`             | `123456`     | 高一(1)班（**学生端班级登录**，非个人账号） |
+| 班级   | 班级码 `G102`             | `123456`     | 高一(2)班                                   |
+| 班级   | 班级码 `G203`             | `123456`     | 高二(3)班                                   |
 
 - 学生初始密码可用 `DEFAULT_STUDENT_PASSWORD` 配置（默认 `123456`），
   教师也可在「学生管理」里一键重置为默认密码。
+- **班级账号**（学生端主入口）用班级码 + 班级密码登录，默认密码由 `DEFAULT_CLASS_PASSWORD` 配置（默认 `123456`）；
+  管理员可在「班级管理 → 班级账号」里改班级码或重置密码，详见
+  [学生端班级账号](#学生端班级账号学生端主体--班级)。
 - 教学周由 `TERM_START_DATE`（第 1 教学周的周一）换算，当前周次用于课表默认视图。
 
 ## 常用命令
@@ -531,6 +537,49 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 回归测试：`verify:e2e` 覆盖 409 拦截 / 二次确认后 201 / 普通通知不受限（用 `at` 固定时刻，结果可复现）；
 `verify:web` 用真实点击构造"正在上课"场景并断言全屏警告文案、按钮禁用与倒计时时长（实测 ~2.96s）。
 
+## 学生端班级账号（学生端主体 = 班级）
+
+需求：学生端不再以"个人学生"为登录主体，改为**班级账号（班级设备）**登录，数据按班级隔离。
+
+### 账号模型
+
+| 项目     | 说明                                                                                 |
+| -------- | ------------------------------------------------------------------------------------ |
+| 登录凭据 | 班级码（`Class.code`，唯一、4~16 位字母数字、大小写不敏感）+ 班级密码（bcrypt 哈希） |
+| 会话形态 | JWT `{ sub: <classId>, classId: <classId>, role: 'STUDENT', classSession: true }`    |
+| 未设密码 | `passwordHash = null` → 班级登录被拒（403 `CLASS_PASSWORD_NOT_SET`），提示管理员设置 |
+| 管理入口 | Web 管理端「班级管理」→ 行内「班级账号」按钮（改班级码 / 重置密码），仅管理员        |
+| 向后兼容 | 个人学生账号（`student01`…）与 `/auth/login` 完全保留，接口层不受影响                |
+
+### 数据按班级隔离
+
+- `GET /classes`：班级会话只返回自己所在班级（跨班请求一律 403）；
+- 作业 / 通知 / 课表 / 成绩：全部按班级收敛，班级会话无法访问其他班级；
+- 发布类接口（通知、作业、成绩、课表、叫人）：班级会话是 `STUDENT`，一律 403；
+- 成绩：`GET /grades/my` 对班级会话返回**全班成绩总览**（客户端标题自动变为「本班成绩」）。
+
+### 班级设备代全班操作（个人数据语义）
+
+班级设备代表整个班级，因此"个人记账"类操作由服务端一次性写入**全班学生**：
+
+| 操作                          | 行为                                              | 教师端看到的结果      |
+| ----------------------------- | ------------------------------------------------- | --------------------- |
+| 通知「标为已读」/「全部已读」 | 为全班学生写入 `NotificationRead`（已存在的跳过） | 已读人数 = 班级学生数 |
+| 作业「全班标记完成」          | 为全班学生 upsert `HomeworkStatus.completed`      | 完成人数 = 班级学生数 |
+| 叫人「收到」                  | 复用通知已读机制（同上）                          | 该生已读              |
+
+读状态判定统一使用 `userId in 全班学生`（`packages/server/src/lib/session.ts` 的 `resolvePersonalIds()`），
+因此普通学生账号仍然只影响自己，行为与改造前完全一致。
+
+### 实现位置
+
+- `packages/server/src/lib/class-account.ts`：班级码校验/生成、密码设置与重置、登录校验、自助改密码；
+- `packages/server/src/lib/session.ts`：`isClassSession` / `resolvePersonalIds` / `personalIdWhere`；
+- `packages/server/src/middleware/auth.ts`：班级会话回查 `Class` 表（而不是 `User` 表）；
+- `packages/server/src/realtime/socket.ts`：班级会话以班级 id 加入 `user:{classId}` 房间，叫人消息直达班级设备；
+- `packages/web-admin/src/views/ClassesView.vue`：班级账号列 + 设置/重置弹窗；
+- `packages/desktop-client/src/renderer/views/LoginView.vue`：班级码 + 班级密码登录页（不再展示个人账号入口）。
+
 ## 导入（成绩 / 名单表格 + ClassIsland 时间配置）
 
 三条导入链路都在服务端完成解析、校验与去重，前端只负责收集文件与展示结果，
@@ -586,13 +635,15 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 
 | 方法                        | 路径                                                     | 权限              | 说明                                                                             |
 | --------------------------- | -------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------- |
-| POST                        | `/auth/login`                                            | 公开              | 登录，返回 token + 用户信息                                                      |
+| POST                        | `/auth/login`                                            | 公开              | 登录（教师 / 管理员 / 个人学生），返回 token + 用户信息                          |
+| POST                        | `/auth/class-login`                                      | 公开              | **班级账号登录**：班级码 + 班级密码 → `classSession` 会话                        |
 | GET                         | `/auth/me`                                               | 登录              | 当前用户（学生附带班级/年级）                                                    |
 | PATCH                       | `/auth/password`                                         | 登录              | 修改自己的密码                                                                   |
 | POST                        | `/auth/logout`                                           | 登录              | 退出（无状态，客户端丢弃 token）                                                 |
 | GET                         | `/classes`                                               | 登录              | 班级列表（按权限收敛）                                                           |
 | GET                         | `/classes/:id`                                           | 班级可见          | 班级详情（学生/课程/协作教师）                                                   |
-| POST / PATCH / DELETE       | `/classes` `/classes/:id`                                | 教师/管理员       | 班级增删改                                                                       |
+| POST / PATCH / DELETE       | `/classes` `/classes/:id`                                | 管理员            | 班级增删改（创建时自动生成班级码 = 班级账号）                                    |
+| PATCH                       | `/classes/:id/class-account`                             | 管理员            | 设置 / 重置班级账号（班级码 + 班级密码）                                         |
 | GET / POST                  | `/classes/:id/students`                                  | 班级可见 / 可写   | 学生名单 / 添加学生（已存在账号直接转入）                                        |
 | DELETE                      | `/classes/:id/students/:userId`                          | 教师/管理员       | 移出学生                                                                         |
 | POST / DELETE               | `/classes/:id/teachers[/:teacherId]`                     | 教师/管理员       | 分配 / 取消协作教师                                                              |
@@ -732,7 +783,7 @@ pnpm db:migrate && pnpm db:seed
 
 数据库表：`User` / `Class` / `ClassTeacher` / `Enrollment` / `Course` / `Schedule` /
 `Homework` / `HomeworkStatus` / `Notification` / `NotificationRead` / `Grade` /
-`TimeLayout`（共 12 张）。
+`TimeLayout`（共 12 张）；`Class.code` / `Class.passwordHash` 是班级账号字段。
 
 ### 启动时迁移（安装版自动升级）
 
@@ -747,25 +798,28 @@ pnpm db:migrate && pnpm db:seed
 
 ## 验收标准对照
 
-| 验收项                                           | 结果 | 证据                                                                                           |
-| ------------------------------------------------ | ---- | ---------------------------------------------------------------------------------------------- |
-| 教师 Web 端发布通知，学生端 5 秒内收到           | ✅   | `verify:e2e`：`notification:new` **37–44ms**                                                   |
-| 教师发布作业，学生能查看并标记完成               | ✅   | `homework:new` **26–40ms**，`PATCH /homeworks/:id/status` 200 且列表回显 `completed=true`      |
-| 教师录入成绩，学生能查看个人成绩                 | ✅   | `grade:updated` **21–25ms**，`/grades/my` 返回记录；批量录入与统计接口通过                     |
-| 学生能查看课表，支持按周切换                     | ✅   | `/schedules/grid?week=1` 返回 30 节，`week` 过滤 `weekStart ≤ week ≤ weekEnd`                  |
-| 断网后客户端可查看缓存数据                       | ✅   | 客户端冒烟：`断网时回退到本地缓存 → fromCache=true items=1`；离线横幅 + 缓存统计页可用         |
-| 权限隔离：学生不能访问其他班级数据               | ✅   | 10 项越权断言全部 403/401（学生跨班/跨班作业/跨班课表、教师跨班发布、未登录访问…）             |
-| 上课时段发布紧急通知必须二次确认                 | ✅   | 服务端 409 `URGENT_DURING_CLASS`（`confirmDuringClass` 后 201）；Web 端全屏警告 + 3 秒倒计时   |
-| 客户端灵动岛：上课隐藏 / 下课弹出 / 紧急立即展开 | ✅   | `verify:desktop` 状态断言 + 像素级截图（`docs/screenshots/island/`）                           |
-| 灵动岛：收回无"方框"闪烁 / 点击屏幕任意处收回    | ✅   | 采样卡片尺寸恒为固定值（396×308、260×38）+ 失焦自动收回                                        |
-| 灵动岛"标为已读"同步通知中心                     | ✅   | 真实链路：点击后 `read=false → true`、未读数 `1 → 0`                                           |
-| 作业发布也上岛（"新作业"胶囊 + 截止时间）        | ✅   | `kind=homework` + 展开显示"截止时间：…"                                                        |
-| 叫人（老师点名 → 学生灵动岛立即跳出）            | ✅   | `verify:e2e` 6 项 + `verify:desktop` 上课中也立即展开（徽标"叫人"、按钮"收到"）                |
-| 成绩 / 名单表格导入（xlsx·xls·csv）              | ✅   | 模板下载 + 预览映射 + 重复处理 + 行号级错误：`verify:e2e` 导入 22 项、`verify:web` 弹窗实测    |
-| ClassIsland 时间配置导入（覆盖 / 合并 / 回滚）   | ✅   | 合法 200、非法 400 `IMPORT_INVALID` 且原配置仍为 3 节、merge 覆盖 1 新增 1 共 4 节             |
-| 安装版覆盖升级自动补迁移                         | ✅   | 真实旧库升级日志：`升级安装：已应用 2 个迁移文件，跳过 34 个已存在对象`，`TimeLayout` 自动建表 |
-| 能成功打包 Windows EXE                           | ✅   | `班级小助手-0.1.0-x64-setup.exe` / `-portable.exe` / `win-unpacked/*.exe`（见下表）            |
-| 提供完整 README（启动、构建、打包、默认账号）    | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、MySQL 切换、打包与常见问题             |
+| 验收项                                           | 结果 | 证据                                                                                               |
+| ------------------------------------------------ | ---- | -------------------------------------------------------------------------------------------------- |
+| 教师 Web 端发布通知，学生端 5 秒内收到           | ✅   | `verify:e2e`：`notification:new` **37–44ms**                                                       |
+| 教师发布作业，学生能查看并标记完成               | ✅   | `homework:new` **26–40ms**，`PATCH /homeworks/:id/status` 200 且列表回显 `completed=true`          |
+| 教师录入成绩，学生能查看个人成绩                 | ✅   | `grade:updated` **21–25ms**，`/grades/my` 返回记录；批量录入与统计接口通过                         |
+| 学生能查看课表，支持按周切换                     | ✅   | `/schedules/grid?week=1` 返回 30 节，`week` 过滤 `weekStart ≤ week ≤ weekEnd`                      |
+| 断网后客户端可查看缓存数据                       | ✅   | 客户端冒烟：`断网时回退到本地缓存 → fromCache=true items=1`；离线横幅 + 缓存统计页可用             |
+| 权限隔离：学生不能访问其他班级数据               | ✅   | 10 项越权断言全部 403/401（学生跨班/跨班作业/跨班课表、教师跨班发布、未登录访问…）                 |
+| 上课时段发布紧急通知必须二次确认                 | ✅   | 服务端 409 `URGENT_DURING_CLASS`（`confirmDuringClass` 后 201）；Web 端全屏警告 + 3 秒倒计时       |
+| 客户端灵动岛：上课隐藏 / 下课弹出 / 紧急立即展开 | ✅   | `verify:desktop` 状态断言 + 像素级截图（`docs/screenshots/island/`）                               |
+| 灵动岛：收回无"方框"闪烁 / 点击屏幕任意处收回    | ✅   | 采样卡片尺寸恒为固定值（396×308、260×38）+ 失焦自动收回                                            |
+| 灵动岛"标为已读"同步通知中心                     | ✅   | 真实链路：点击后 `read=false → true`、未读数 `1 → 0`                                               |
+| 作业发布也上岛（"新作业"胶囊 + 截止时间）        | ✅   | `kind=homework` + 展开显示"截止时间：…"                                                            |
+| 叫人（老师点名 → 学生灵动岛立即跳出）            | ✅   | `verify:e2e` 6 项 + `verify:desktop` 上课中也立即展开（徽标"叫人"、按钮"收到"）                    |
+| 成绩 / 名单表格导入（xlsx·xls·csv）              | ✅   | 模板下载 + 预览映射 + 重复处理 + 行号级错误：`verify:e2e` 导入 22 项、`verify:web` 弹窗实测        |
+| ClassIsland 时间配置导入（覆盖 / 合并 / 回滚）   | ✅   | 合法 200、非法 400 `IMPORT_INVALID` 且原配置仍为 3 节、merge 覆盖 1 新增 1 共 4 节                 |
+| 安装版覆盖升级自动补迁移                         | ✅   | 真实旧库升级日志：`升级安装：已应用 2 个迁移文件，跳过 34 个已存在对象`，`TimeLayout` 自动建表     |
+| 学生端主体 = 班级（班级码 + 班级密码登录）       | ✅   | `verify:e2e` 班级账号 18 项：登录 / 错误密码 401 / 跨班 403 / 发布 403 / 班级码重复 400 / 密码重置 |
+| 班级设备代全班操作（已读 · 完成 · 成绩总览）     | ✅   | 标记已读写入 6 条（全班 6 人）、教师端 `readCount=6`、`completedCount=6`、`/grades/my` 全班成绩    |
+| 客户端只保留班级登录入口                         | ✅   | `verify:desktop`：`login=高一(1)班 classSession=true`，导航「成绩」标题变为「本班成绩」            |
+| 能成功打包 Windows EXE                           | ✅   | `班级小助手-0.1.0-x64-setup.exe` / `-portable.exe` / `win-unpacked/*.exe`（见下表）                |
+| 提供完整 README（启动、构建、打包、默认账号）    | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、MySQL 切换、打包与常见问题                 |
 
 打包产物验证（对最终 EXE 实测，非仅开发产物）：
 
@@ -780,7 +834,7 @@ pnpm db:migrate && pnpm db:seed
 
 | 验证                                                                                      | 结果                                |
 | ----------------------------------------------------------------------------------------- | ----------------------------------- |
-| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                               | **107/107** ✅                      |
+| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                               | **125/125** ✅                      |
 | `pnpm verify:web`（Web 管理端真实点击 + 权限入口隐藏 + 手机适配 + 叫人 + 导入弹窗 + PWA） | **18/18** ✅                        |
 | `pnpm verify:desktop`（客户端冒烟 + 灵动岛动画/收回/已读/作业/叫人 + 课表时间轴）         | **40/40** ✅                        |
 | `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                                      | 全部通过 ✅                         |
@@ -896,6 +950,17 @@ pnpm db:migrate && pnpm db:seed
 | `packages/web-admin/src/components/TableImportDialog.vue`           | 成绩 / 名单导入弹窗（模板、预览、字段映射、模式、结果与错误行）            |
 | `packages/web-admin/src/components/TimeLayoutImportDialog.vue`      | ClassIsland 时间配置导入弹窗（粘贴/选文件、解析预览、覆盖/合并、已存列表） |
 | `packages/shared/src/types.ts` 的导入 DTO                           | `TableImportPreview` / `TableImportResult` / `TimeLayoutDto` 等前后端共用  |
+
+阶段 10（学生端班级账号）新增文件：
+
+| 路径                                                                  | 说明                                                                    |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `packages/server/src/lib/class-account.ts`                            | 班级码校验/生成、班级密码设置与重置、登录校验、班级账号自助改密码       |
+| `packages/server/src/lib/session.ts`                                  | `isClassSession` / `resolvePersonalIds` / `personalIdWhere`（全班范围） |
+| `packages/server/prisma/migrations/20260912130000_add_class_account/` | `Class.code` / `Class.passwordHash` 迁移（老数据回填 `C00001` 形式）    |
+| `packages/desktop-client/src/renderer/views/LoginView.vue`            | 班级码 + 班级密码登录页（不再展示个人学生账号入口）                     |
+| `packages/web-admin/src/views/ClassesView.vue`（班级账号列与弹窗）    | 管理员设置班级码 / 重置班级密码                                         |
+| `packages/desktop-client/scripts/smoke.mjs`（班级账号准备）           | 冒烟前通过管理端接口准备可用班级凭据，兼容全新安装与升级安装            |
 
 ## 后续可选增强
 

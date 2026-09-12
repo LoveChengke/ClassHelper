@@ -77,7 +77,15 @@ async function toggleComplete(item: HomeworkDto | null): Promise<void> {
         completed: next,
         updatedAt: new Date().toISOString(),
       };
-    ElMessage.success(next ? '已标记为完成' : '已取消完成标记');
+    ElMessage.success(
+      auth.isClassSession
+        ? next
+          ? '已按全班标记为完成'
+          : '已取消全班的完成标记'
+        : next
+          ? '已标记为完成'
+          : '已取消完成标记',
+    );
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '提交失败');
   } finally {
@@ -170,7 +178,15 @@ onUnmounted(() => {
               :loading="submitting"
               @click.stop="toggleComplete(row)"
             >
-              {{ row.completed ? '取消完成' : '标记完成' }}
+              {{
+                row.completed
+                  ? auth.isClassSession
+                    ? '取消全班完成'
+                    : '取消完成'
+                  : auth.isClassSession
+                    ? '全班标记完成'
+                    : '标记完成'
+              }}
             </el-button>
           </template>
         </el-table-column>
@@ -213,7 +229,9 @@ onUnmounted(() => {
             :disabled="appStore.offline"
             @click="toggleComplete(current)"
           >
-            {{ current.completed ? '取消完成标记' : '标记为已完成' }}
+            {{
+              current.completed ? '取消完成标记' : auth.isClassSession ? '全班标记为已完成' : '标记为已完成'
+            }}
           </el-button>
           <span v-if="appStore.offline" class="text-muted" style="margin-left: 10px">离线状态下不可提交</span>
         </div>

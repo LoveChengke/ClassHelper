@@ -1,4 +1,4 @@
-﻿import {
+import {
   SOCKET_EVENTS,
   gradeLevel,
   gradePercent,
@@ -12,6 +12,7 @@ import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { toGradeDto } from '../../lib/mappers.js';
 import { parseOptionalDate } from '../../lib/schemas.js';
+import { resolvePersonalIds } from '../../lib/session.js';
 import { emitToClass, emitToUser } from '../../realtime/bus.js';
 import type { BulkCreateGradeInput, CreateGradeInput, UpdateGradeInput } from './grades.schemas.js';
 
@@ -27,13 +28,20 @@ export interface ListGradeOptions {
   examName?: string;
 }
 
-/** 学生查看自己的成绩 */
+/**
+ * 学生查看成绩。
+ * - 普通学生账号：只看自己的成绩；
+ * - 班级账号（班级设备）：返回**本班全部学生的成绩总览**（个人学生不再是登录主体，
+ *   班级设备上一屏展示全班成绩，便于张贴/核对）。
+ */
 export async function listMyGrades(user: TokenPayload): Promise<GradeDto[]> {
+  const personalIds = await resolvePersonalIds(user);
+
   const grades = await prisma.grade.findMany({
-    where: { userId: user.sub },
+    where: { userId: { in: personalIds } },
     include,
-    orderBy: [{ publishedAt: 'desc' }],
-    take: 300,
+    orderBy: [{ publishedAt: 'desc' }, { examName: 'asc' }],
+    take: 500,
   });
   return grades.map(toGradeDto);
 }

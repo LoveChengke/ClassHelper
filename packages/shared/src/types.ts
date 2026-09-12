@@ -64,9 +64,27 @@ export interface LoginRequest {
   password: string;
 }
 
+/**
+ * 登录会话主体。
+ * - 普通账号（教师/管理员/个人学生）：就是用户本身；
+ * - 班级账号（班级设备）：`classSession = true`，此时 `id` 与 `classId` 都是班级 id，
+ *   `name` 是班级名，个人数据由服务端按"全班"范围读写。
+ */
+export interface SessionUser extends StudentDto {
+  classSession?: boolean;
+  /** 班级账号的班级码（仅班级会话返回） */
+  classCode?: string;
+}
+
 export interface LoginResponse {
   token: string;
-  user: UserDto;
+  user: SessionUser;
+}
+
+/** 班级账号登录（学生端）：班级码 + 班级密码 */
+export interface ClassLoginRequest {
+  code: string;
+  password: string;
 }
 
 /* ------------------------------------------------------------------ 班级 */
@@ -82,6 +100,10 @@ export interface ClassDto {
   courseCount?: number;
   homeworkCount?: number;
   notificationCount?: number;
+  /** 班级码（学生端班级账号登录用）；仅对有管理权限的角色返回 */
+  code?: string;
+  /** 是否已设置班级密码（哈希永不外泄） */
+  hasPassword?: boolean;
 }
 
 export interface ClassTeacherBrief {
@@ -99,11 +121,21 @@ export interface ClassDetailDto extends ClassDto {
 export interface CreateClassRequest {
   name: string;
   grade: string;
+  /** 可选：自定义班级码，留空自动生成 */
+  code?: string;
 }
 
 export interface UpdateClassRequest {
   name?: string;
   grade?: string;
+}
+
+/** 管理员设置/重置班级账号（班级码 + 班级密码） */
+export interface UpdateClassAccountRequest {
+  /** 新的班级码（4~16 位字母数字，留空表示不改） */
+  code?: string;
+  /** 新的班级密码（留空表示不改） */
+  password?: string;
 }
 
 /* ------------------------------------------------------------------ 课程 */

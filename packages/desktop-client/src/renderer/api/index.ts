@@ -17,7 +17,11 @@ import { api } from './http.js';
 
 /** 客户端只需用到学生视角的这批接口（与后端同一套 REST 契约） */
 export const authApi = {
+  /** 个人账号登录（教师/管理员/个人学生；客户端界面已不再展示，保留以兼容旧流程与排障） */
   login: (payload: LoginRequest): Promise<LoginResponse> => api.post(API_PATHS.auth.login, payload),
+  /** 班级账号登录（学生端主入口）：班级码 + 班级密码 */
+  classLogin: (payload: { code: string; password: string }): Promise<LoginResponse> =>
+    api.post('/auth/class-login', payload),
   logout: (): Promise<{ loggedOut: boolean }> => api.post(API_PATHS.auth.logout, {}),
   me: (): Promise<StudentDto> => api.get(API_PATHS.auth.me),
 };

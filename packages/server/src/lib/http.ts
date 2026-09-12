@@ -28,6 +28,8 @@ export type ApiErrorCode =
   | 'IMPORT_FORMAT_INVALID'
   | 'IMPORT_INVALID'
   | 'IMPORT_EMPTY'
+  /** 班级账号：该班级尚未设置班级密码（禁止班级登录，提示管理员设置） */
+  | 'CLASS_PASSWORD_NOT_SET'
   | 'INTERNAL_ERROR';
 
 /** 业务异常：中间件会把它转换成统一错误响应体 */

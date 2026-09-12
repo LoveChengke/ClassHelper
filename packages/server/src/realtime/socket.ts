@@ -52,9 +52,11 @@ export function initRealtime(httpServer: HttpServer): RealtimeServer {
         return;
       }
       const payload = verifyToken(token);
+      // 班级账号（班级设备）：socket.data.user.id 用班级 id，据此加入 user:{classId} 房间，
+      // "叫人"等定向消息因此能直达班级设备（见 calls.service）。
       socket.data.user = {
-        id: payload.sub,
-        username: payload.username,
+        id: payload.classSession ? (payload.classId ?? payload.sub) : payload.sub,
+        username: payload.classSession ? (payload.classCode ?? payload.username) : payload.username,
         name: payload.name,
         role: payload.role,
         classId: payload.classId,

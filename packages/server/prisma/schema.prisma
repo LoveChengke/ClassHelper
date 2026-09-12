@@ -54,6 +54,10 @@ model Class {
   name      String
   grade     String
   teacherId String
+  /// 班级码：学生端「班级账号」登录用（唯一，字母数字，4~16 位，存大写）
+  code      String   @unique
+  /// 班级密码（bcrypt 哈希）；null = 尚未设置，此时禁止班级账号登录
+  passwordHash String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

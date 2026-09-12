@@ -1,4 +1,4 @@
-﻿import { cacheGet, cacheRemove, cacheSet, cacheStats } from './db.js';
+import { cacheGet, cacheRemove, cacheSet, cacheStats } from './db.js';
 import { fetchWithCache } from './index.js';
 
 export interface SmokeCheckResult {
@@ -127,7 +127,10 @@ export async function layoutNavigationSelfTest(): Promise<SmokeCheckResult> {
  * 冒烟自检 4（需后端在线）：真实登录 + 拉取四类数据 + Socket.IO 连接。
  * 覆盖渲染进程里实际使用的 API 封装、JWT 注入、实时通道与缓存写入。
  */
-export async function onlineScenario(): Promise<SmokeCheckResult> {
+export async function onlineScenario(credentials?: {
+  code: string;
+  password: string;
+}): Promise<SmokeCheckResult> {
   const [{ useAuthStore }, { useAppStore }, { useRealtimeStore }, api, cache] = await Promise.all([
     import('../stores/auth.js'),
     import('../stores/app.js'),
@@ -144,8 +147,14 @@ export async function onlineScenario(): Promise<SmokeCheckResult> {
   const detail: string[] = [];
 
   try {
-    await auth.login(serverUrl, 'student01', 'student123');
+    // 学生端已改为「班级账号」登录：凭据由 scripts/smoke.mjs 通过管理端接口准备并传入
+    const code = credentials?.code ?? 'G101';
+    const password = credentials?.password ?? '123456';
+    if (!credentials?.code) detail.push('未收到班级凭据，回退到种子班级码 G101');
+
+    await auth.login(serverUrl, code, password);
     detail.push(`login=${auth.user?.name ?? '-'}`);
+    detail.push(`classSession=${auth.isClassSession}`);
 
     // 进入主布局（后续的侧边栏点击测试依赖布局已挂载）
     const { router } = await import('../router/index.js');

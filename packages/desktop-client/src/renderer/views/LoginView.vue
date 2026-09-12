@@ -14,7 +14,7 @@ const auth = useAuthStore();
 const realtime = useRealtimeStore();
 
 const formRef = ref<FormInstance>();
-const form = reactive({ serverUrl: DEFAULT_SERVER, username: '', password: '' });
+const form = reactive({ serverUrl: DEFAULT_SERVER, code: '', password: '' });
 const testing = ref(false);
 const testResult = ref<'ok' | 'fail' | null>(null);
 
@@ -29,7 +29,7 @@ const rules: FormRules = {
       trigger: 'blur',
     },
   ],
-  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  code: [{ required: true, message: '请输入班级码', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 };
 
@@ -38,7 +38,7 @@ onMounted(async () => {
   if (window.desktop) {
     const config = await window.desktop.getConfig();
     if (config.serverUrl) form.serverUrl = config.serverUrl;
-    if (config.username) form.username = config.username;
+    if (config.username) form.code = config.username;
   }
 });
 
@@ -66,10 +66,10 @@ async function submit(): Promise<void> {
   if (!valid) return;
 
   try {
-    await auth.login(form.serverUrl, form.username.trim(), form.password);
+    await auth.login(form.serverUrl, form.code.trim(), form.password);
     await appStore.init(form.serverUrl);
     if (auth.token) realtime.connect(appStore.serverUrl, auth.token);
-    ElMessage.success(`欢迎回来，${auth.displayName}`);
+    ElMessage.success(`已进入 ${auth.displayName}`);
     await router.replace('/schedule');
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '登录失败');
@@ -92,7 +92,7 @@ async function enterOffline(): Promise<void> {
         <el-icon :size="30" color="#409eff"><School /></el-icon>
         <div>
           <h1 class="login-title">班级小助手</h1>
-          <p class="login-sub">学生客户端 · 登录后实时接收课表、作业、通知与成绩</p>
+          <p class="login-sub">班级客户端 · 以班级账号登录，实时接收课表、作业、通知与成绩</p>
         </div>
       </div>
 
@@ -105,19 +105,24 @@ async function enterOffline(): Promise<void> {
           </el-input>
         </el-form-item>
 
-        <el-form-item label="用户名" prop="username">
-          <el-input v-model="form.username" placeholder="学号 / 用户名" clearable @keyup.enter="submit">
+        <el-form-item label="班级码" prop="code">
+          <el-input
+            v-model="form.code"
+            placeholder="例如 G101（由老师在班级管理中提供）"
+            clearable
+            @keyup.enter="submit"
+          >
             <template #prefix>
-              <el-icon><User /></el-icon>
+              <el-icon><School /></el-icon>
             </template>
           </el-input>
         </el-form-item>
 
-        <el-form-item label="密码" prop="password">
+        <el-form-item label="班级密码" prop="password">
           <el-input
             v-model="form.password"
             type="password"
-            placeholder="密码"
+            placeholder="班级密码"
             show-password
             @keyup.enter="submit"
           >
@@ -156,9 +161,9 @@ async function enterOffline(): Promise<void> {
       </el-button>
 
       <p class="login-tip">
-        演示账号：student01 / student123（高一(1)班）
+        班级码与班级密码由管理员在 Web 管理端「班级管理 → 班级账号」中设置或重置。
         <br />
-        数据来源：教师或管理员在 Web 管理端发布的内容。
+        登录后本机即代表整个班级：作业完成、通知已读都会按全班记录。
       </p>
     </div>
   </div>

@@ -28,6 +28,8 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default('*'),
   BCRYPT_ROUNDS: z.coerce.number().int().min(4).max(15).default(10),
   DEFAULT_STUDENT_PASSWORD: z.string().min(6).default('123456'),
+  /** 新建班级时的默认班级密码（学生端班级账号登录用），管理员可随时重置 */
+  DEFAULT_CLASS_PASSWORD: z.string().min(6).default('123456'),
   TERM_START_DATE: z.string().default(''),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   /** 反向代理层数（nginx / 容器场景一般填 1），用于正确识别客户端 IP 与协议 */
@@ -139,6 +141,8 @@ export const env = {
   bcryptRounds: raw.BCRYPT_ROUNDS,
   /** 新增学生时未指定密码时的初始密码 */
   defaultStudentPassword: raw.DEFAULT_STUDENT_PASSWORD,
+  /** 新建班级时的默认班级密码（班级账号登录） */
+  defaultClassPassword: raw.DEFAULT_CLASS_PASSWORD,
   termStartDate: raw.TERM_START_DATE,
   logLevel: raw.LOG_LEVEL,
   trustProxy: resolveTrustProxy(raw.TRUST_PROXY),
