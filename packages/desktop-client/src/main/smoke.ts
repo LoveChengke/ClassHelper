@@ -977,6 +977,24 @@ async function runIslandChecks(
       await sleep(120);
     }
   };
+  /**
+   * 岛体矩形上的相对点（fx/fy ∈ [0,1]）→ 屏幕坐标。
+   * 主进程的命中兜底轮询读的是屏幕坐标，冒烟里用注入点代替"挪动用户鼠标"。
+   */
+  const islandCardScreenPoint = (fx: number, fy: number): { x: number; y: number } => {
+    const bounds = island.getWindowBounds();
+    const rect = island.getHitRect();
+    if (!rect) {
+      return {
+        x: bounds.x + Math.round(bounds.width / 2),
+        y: bounds.y + Math.round(bounds.height / 2),
+      };
+    }
+    return {
+      x: Math.round(bounds.x + rect.x + rect.width * fx),
+      y: Math.round(bounds.y + rect.y + rect.height * fy),
+    };
+  };
   /** 合成"指针移到卡片上"：命中测试由渲染进程按指针位置决定（真实场景由系统转发 mousemove） */
   const hoverCard = async (): Promise<boolean> =>
     Boolean(
@@ -1015,13 +1033,14 @@ async function runIslandChecks(
     collapseBefore.mode === 'pill' && lingered.mode === 'pill' && lingeredVisible,
     `收起前=${collapseBefore.mode} 超时后=${lingered.mode} 可见=${lingeredVisible}`,
   );
-  // 命中：把窗口显式置为"穿透"（等价于收起瞬间窗口被重置），再做一次状态变化 ——
-  // 主进程会按当前形态重新下发命中，渲染进程也会按缓存指针重算，两者都必须把命中恢复。
+  // 命中兜底：把窗口显式置为"穿透"，再把光标位置注入到胶囊中心 ——
+  // 主进程每 120ms 按光标校正一次命中，必须自己恢复（这正是"点开再收起后点不开"的兜底修复）。
   island.setInteractive(false);
   await sleep(60);
   const forcedThrough = island.getInteractive();
-  island.handleAction({ action: 'collapse' });
-  await sleep(300);
+  const pillPoint = islandCardScreenPoint(0.5, 0.5);
+  island.setHitTestCursor(pillPoint);
+  await sleep(260);
   const interactiveWhilePill = island.getInteractive();
   await islandWindow?.webContents
     .executeJavaScript(
@@ -1039,7 +1058,7 @@ async function runIslandChecks(
       interactiveWhilePill === true &&
       reopened.mode === 'expanded' &&
       reopened.active?.id === 'smoke-collapse-reopen',
-    `置穿透后=${forcedThrough} 状态变化后=${interactiveWhilePill} 点击后 mode=${reopened.mode} ` +
+    `置穿透后=${forcedThrough} 光标在胶囊上时=${interactiveWhilePill} 点击后 mode=${reopened.mode} ` +
       `active=${reopened.active?.id ?? '-'}`,
   );
 
@@ -1049,19 +1068,99 @@ async function runIslandChecks(
   await drainForCollapseCheck();
   await sleep(500);
   const sliverState = island.getState();
-  await hoverCard();
-  await sleep(250);
+  island.setHitTestCursor(islandCardScreenPoint(0.5, 0.5));
+  await sleep(260);
   const sliverInteractive = island.getInteractive();
   const sliverVisible = islandWindow?.isVisible() ?? false;
+  // 光标移开细缝（屏幕左上角）→ 命中必须撤销，避免细缝窗口吞掉桌面点击
+  island.setHitTestCursor({ x: 1, y: 1 });
+  await sleep(260);
+  const sliverInteractiveOutside = island.getInteractive();
   record(
-    '空闲细缝态保持可交互（细缝很窄，指针停在岛上仍能点开）',
-    sliverState.mode === 'hidden' && sliverVisible && sliverInteractive === true,
-    `mode=${sliverState.mode} 可见=${sliverVisible} interactive=${sliverInteractive} ` +
-      `细缝=${sliverForInteractive.width}x${sliverForInteractive.height}`,
+    '空闲细缝态命中跟随光标（细缝上可点、移开即穿透）',
+    sliverState.mode === 'hidden' &&
+      sliverVisible &&
+      sliverInteractive === true &&
+      sliverInteractiveOutside === false,
+    `mode=${sliverState.mode} 可见=${sliverVisible} 光标在细缝上=${sliverInteractive} ` +
+      `光标移开=${sliverInteractiveOutside} 细缝=${sliverForInteractive.width}x${sliverForInteractive.height}`,
   );
+  island.setHitTestCursor(null);
   island.setAppearance({ ...island.getAppearance(), idleSliver: false });
   await drainForCollapseCheck();
   await sleep(300);
+
+  // 4.10) 用户复现路径："点开灵动岛再收起就无法再次打开了"
+  //       之前是一条"展开 → 收起 → 再也点不开"的死路（窗口停在穿透状态）。
+  //       这里用真实 DOM 点击走完 展开 → 收起 → 再次展开，并断言每个形态都有命中框上报。
+  const clickIsland = async (selector = '.island-card'): Promise<boolean> =>
+    Boolean(
+      await islandWindow?.webContents
+        .executeJavaScript(
+          `(() => {
+             const node = document.querySelector(${JSON.stringify(selector)});
+             if (!node) return false;
+             node.click();
+             return true;
+           })()`,
+        )
+        .catch(() => false),
+    );
+  const rectText = (rect: { width: number; height: number } | null): string =>
+    rect ? `${Math.round(rect.width)}x${Math.round(rect.height)}` : '无';
+  await drainForCollapseCheck();
+  await sleep(300);
+  island.pushNotification(makeNotification('smoke-reopen-roundtrip', 'NORMAL', '展开收起再展开'), {
+    inClass: false,
+  });
+  await sleep(500);
+  const clickedFirst = await clickIsland();
+  await sleep(700);
+  const afterFirstOpen = island.getState();
+  const hitRectExpanded = island.getHitRect();
+  const clickedCollapse = await clickIsland('.island-card.expanded .body');
+  await sleep(700);
+  const afterCollapse = island.getState();
+  const hitRectPill = island.getHitRect();
+  const clickedSecond = await clickIsland();
+  await sleep(750);
+  const afterSecondOpen = island.getState();
+  record(
+    '展开 → 收起 → 再次展开（用户复现路径）',
+    clickedFirst &&
+      clickedCollapse &&
+      clickedSecond &&
+      afterFirstOpen.mode === 'expanded' &&
+      afterCollapse.mode === 'pill' &&
+      afterSecondOpen.mode === 'expanded' &&
+      afterSecondOpen.active?.id === 'smoke-reopen-roundtrip' &&
+      hitRectExpanded !== null &&
+      hitRectPill !== null,
+    `${afterFirstOpen.mode}（命中框 ${rectText(hitRectExpanded)}） → ${afterCollapse.mode}` +
+      `（命中框 ${rectText(hitRectPill)}） → ${afterSecondOpen.mode}` +
+      ` active=${afterSecondOpen.active?.id ?? '-'}`,
+  );
+  // 主进程的命中兜底轮询：岛体矩形必须随形态更新（指针交给系统，这里只断言"依据"是对的）
+  await island.handleAction({ action: 'collapse' });
+  await sleep(500);
+  const hitRectCollapsed = island.getHitRect();
+  record(
+    '命中兜底：岛体矩形随形态更新（供主进程按光标校正）',
+    hitRectCollapsed !== null &&
+      Math.abs(hitRectCollapsed.width - ISLAND_SIZES.pill.width) <= 2 &&
+      hitRectExpanded !== null &&
+      hitRectExpanded.width > hitRectCollapsed.width,
+    `展开 ${rectText(hitRectExpanded)} → 收起 ${rectText(hitRectCollapsed)}（期望 ${ISLAND_SIZES.pill.width}）`,
+  );
+  // 彻底隐藏（无细缝）时必须撤销命中框，避免"看不见的窗口吞桌面点击"
+  await drainForCollapseCheck();
+  await sleep(600);
+  const hitRectHidden = island.getHitRect();
+  record(
+    '彻底隐藏时撤销命中框（不吞桌面点击）',
+    island.getState().mode === 'hidden' && hitRectHidden === null,
+    `mode=${island.getState().mode} 命中框=${rectText(hitRectHidden)}`,
+  );
 
   // 5) 截图留档的像素级断言：每张图必须有实际绘制内容、颜色丰富，且宽高比与
   //    状态机配置的窗口尺寸一致（DPI 无关），紧急形态还必须出现红色描边/内部光晕像素。
@@ -1524,6 +1623,9 @@ async function runIslandChecks(
     )
     .catch(() => undefined);
   await sleep(180);
+  // 兜底轮询读的是主进程光标坐标：注入到岛体中心，等价于"指针停在岛内"
+  island.setHitTestCursor(islandCardScreenPoint(0.5, 0.5));
+  await sleep(260);
   const interactiveInside = island.getInteractive();
   await islandWindow?.webContents
     .executeJavaScript(
@@ -1533,8 +1635,11 @@ async function runIslandChecks(
        })()`,
     )
     .catch(() => undefined);
-  await sleep(180);
+  // 光标的权威判定在主进程（兜底轮询）：这里把光标注入到屏幕左上角，等价于"指针离开岛体"
+  island.setHitTestCursor({ x: 1, y: 1 });
+  await sleep(260);
   const interactiveOutside = island.getInteractive();
+  island.setHitTestCursor(null);
   record(
     '岛外鼠标穿透（固定大窗口不吞桌面点击）',
     interactiveInside === true && interactiveOutside === false,

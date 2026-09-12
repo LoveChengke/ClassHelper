@@ -125,6 +125,12 @@ class IslandController {
   private backgroundMaterial: string = 'none';
   /** 当前是否接收鼠标（固定大包围盒窗口默认穿透，由渲染进程按命中动态打开） */
   private interactive = false;
+  /** 渲染进程上报的岛体矩形（窗口内 CSS px）：主进程据此做光标命中兜底轮询 */
+  private hitRect: { x: number; y: number; width: number; height: number } | null = null;
+  /** 光标命中兜底轮询定时器（见 syncHitFromCursor 注释） */
+  private hitTimer: ReturnType<typeof setInterval> | null = null;
+  /** 诊断/冒烟用：覆盖光标位置（屏幕坐标），null 表示使用真实光标 */
+  private cursorOverride: { x: number; y: number } | null = null;
 
   private state: IslandState = {
     mode: 'hidden',
@@ -195,6 +201,8 @@ class IslandController {
     // 默认整块窗口不接收鼠标（避免大面积透明窗口吞掉桌面点击），
     // 只有指针进入"岛"的可见区域时，渲染进程才通过 island:set-interactive 打开命中。
     win.setIgnoreMouseEvents(true, { forward: true });
+    // 光标命中兜底轮询：即使 forward 的 mousemove 丢失，也能按光标位置自行校正命中
+    this.startHitPoll();
     win.on('closed', () => {
       this.win = null;
       this.ready = false;
@@ -473,6 +481,7 @@ class IslandController {
 
   destroy(): void {
     this.clearTimers();
+    this.stopHitPoll();
     this.cancelBoundsAnimation();
     if (this.win && !this.win.isDestroyed()) this.win.destroy();
     this.win = null;
@@ -811,6 +820,11 @@ class IslandController {
    * 鼠标命中开关（照搬 WinIsland 的 `set_cursor_hittest`）：
    * 窗口是固定大包围盒，若不控制命中就会把整片桌面的点击都吃掉。
    * 渲染进程做命中测试（指针是否在"岛"的可见区域/可交互控件内），再回调这里切换。
+   *
+   * 另外主进程还有一路**兜底**：`syncHitFromCursor()` 每 120ms 直接读光标坐标与渲染进程
+   * 上报的岛体矩形比对。原因是 Windows 下 `forward: true` 的 mousemove 转发并不总是可靠，
+   * 一旦"展开 → 收起"后转发丢失，窗口会永远停在穿透状态 —— 用户看到的就是
+   * "点开了再收起，就再也点不开了"。
    */
   setInteractive(interactive: boolean): void {
     if (this.interactive === interactive) return;
@@ -819,6 +833,66 @@ class IslandController {
     // forward: true 让窗口在"忽略鼠标"时仍把 mousemove 转发给渲染进程，
     // 这样渲染进程才能发现指针进入岛体并重新打开命中。
     this.win.setIgnoreMouseEvents(!interactive, { forward: true });
+  }
+
+  /** 渲染进程上报的岛体矩形（窗口内 CSS px，坐标系与窗口 DIP 一致） */
+  setHitRect(rect: { x: number; y: number; width: number; height: number } | null): void {
+    this.hitRect = rect && rect.width > 0 && rect.height > 0 ? { ...rect } : null;
+    // 立即校正一次，避免最长 120ms 的"点了没反应"窗口
+    this.syncHitFromCursor();
+  }
+
+  /** 当前岛体矩形（供冒烟验证） */
+  getHitRect(): { x: number; y: number; width: number; height: number } | null {
+    return this.hitRect ? { ...this.hitRect } : null;
+  }
+
+  /**
+   * 诊断 / 冒烟专用：覆盖"光标位置"（屏幕坐标），让命中兜底轮询按指定坐标校正。
+   *
+   * 真实场景用 `screen.getCursorScreenPoint()`；冒烟里不能去挪用户的物理鼠标，
+   * 因此提供一个显式注入点，把"光标在岛上 / 不在岛上"两种情况都变成可复现的断言。
+   */
+  setHitTestCursor(point: { x: number; y: number } | null): void {
+    this.cursorOverride = point ? { ...point } : null;
+    this.syncHitFromCursor();
+  }
+
+  /** 按光标位置校正命中（不依赖渲染进程是否收到 mousemove） */
+  private syncHitFromCursor(): void {
+    if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) {
+      this.setInteractive(false);
+      return;
+    }
+    const rect = this.hitRect;
+    if (!rect) {
+      this.setInteractive(false);
+      return;
+    }
+    const bounds = this.win.getBounds();
+    const point = this.cursorOverride ?? screen.getCursorScreenPoint();
+    const localX = point.x - bounds.x;
+    const localY = point.y - bounds.y;
+    const margin = 2;
+    const inside =
+      localX >= rect.x - margin &&
+      localX <= rect.x + rect.width + margin &&
+      localY >= rect.y - margin &&
+      localY <= rect.y + rect.height + margin;
+    this.setInteractive(inside);
+  }
+
+  private startHitPoll(): void {
+    if (this.hitTimer) return;
+    this.hitTimer = setInterval(() => this.syncHitFromCursor(), 120);
+    // 定时器不应拖住进程退出
+    this.hitTimer.unref?.();
+  }
+
+  private stopHitPoll(): void {
+    if (!this.hitTimer) return;
+    clearInterval(this.hitTimer);
+    this.hitTimer = null;
   }
 
   /** 当前是否接收鼠标（供冒烟验证） */
@@ -969,6 +1043,14 @@ export function registerIslandIpc(): void {
   ipcMain.on('island:set-interactive', (_event, interactive: boolean) => {
     island.setInteractive(interactive === true);
   });
+
+  // 渲染进程上报岛体矩形 → 主进程按光标位置做命中兜底（不依赖 mousemove 转发）
+  ipcMain.on(
+    'island:set-hit-rect',
+    (_event, rect: { x: number; y: number; width: number; height: number } | null) => {
+      island.setHitRect(rect ?? null);
+    },
+  );
 
   ipcMain.on('island:action', (_event, payload: IslandActionPayload) => {
     if (!payload?.action) return;

@@ -14,6 +14,8 @@ export interface IslandBridge {
   getAppearance(): Promise<IslandAppearance>;
   /** 命中测试结果：指针是否在岛体上（决定窗口是否接收鼠标） */
   setInteractive(interactive: boolean): void;
+  /** 上报岛体矩形（窗口内 CSS px）：主进程据此按光标位置兜底校正命中 */
+  setHitRect(rect: { x: number; y: number; width: number; height: number } | null): void;
 }
 
 const bridge: IslandBridge = {
@@ -30,6 +32,9 @@ const bridge: IslandBridge = {
   getAppearance: () => ipcRenderer.invoke('island:get-appearance'),
   setInteractive: (interactive) => {
     ipcRenderer.send('island:set-interactive', interactive);
+  },
+  setHitRect: (rect) => {
+    ipcRenderer.send('island:set-hit-rect', rect);
   },
 };
 

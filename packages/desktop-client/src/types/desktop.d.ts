@@ -75,6 +75,8 @@ export interface IslandRendererBridge {
   getState(): Promise<IslandState>;
   /** 命中测试结果：指针是否在岛体上（决定固定大窗口是否接收鼠标） */
   setInteractive(interactive: boolean): void;
+  /** 上报岛体矩形（窗口内 CSS px）：主进程据此按光标位置兜底校正命中 */
+  setHitRect(rect: { x: number; y: number; width: number; height: number } | null): void;
 }
 
 declare global {

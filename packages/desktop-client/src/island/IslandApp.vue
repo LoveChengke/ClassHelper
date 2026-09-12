@@ -301,6 +301,19 @@ const islandClass = computed(() => ({
 let lastInteractive: boolean | null = null;
 /** 最近一次已知的指针位置：岛收起/变大后用它重算命中，避免"鼠标没动就点不到" */
 let lastPointer: { x: number; y: number } | null = null;
+/** 最近一次上报给主进程的岛体矩形（去重，避免形变期间刷屏 IPC） */
+let lastHitRectKey: string | null = null;
+
+/** 把岛体矩形上报给主进程：主进程按光标位置兜底校正命中（不依赖 mousemove 转发） */
+function reportHitRect(rect: DOMRect | null): void {
+  const payload = rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null;
+  const key = payload
+    ? `${Math.round(payload.x)},${Math.round(payload.y)},${Math.round(payload.width)},${Math.round(payload.height)}`
+    : 'none';
+  if (key === lastHitRectKey) return;
+  lastHitRectKey = key;
+  bridge?.setHitRect?.(payload);
+}
 
 function updateInteractive(clientX: number, clientY: number): void {
   lastPointer = { x: clientX, y: clientY };
@@ -327,9 +340,14 @@ function updateInteractive(clientX: number, clientY: number): void {
  * 只有在收到 mousemove 时才会打开命中。岛"收起 / 展开 / 换形态"时几何变了，
  * 但指针可能一动没动（没有新的 mousemove）—— 此时窗口会一直保持"穿透"，
  * 表现就是**收起后怎么点都打不开**（用户反馈）。所以每次状态变化都用缓存的指针位置重算一次。
+ *
+ * 另外这里会把当前岛体矩形上报主进程（`setHitRect`）：即使 Windows 下 mousemove 转发丢失，
+ * 主进程也能按光标位置把命中校正回来 —— 这是"点开→收起→再也点不开"的兜底修复。
  */
 function refreshInteractive(): void {
+  const node = document.querySelector('.island-card') as HTMLElement | null;
   const fullyHidden = state.value?.mode === 'hidden' && !appearance.value.idleSliver;
+  reportHitRect(node && !fullyHidden ? node.getBoundingClientRect() : null);
   if (fullyHidden) {
     if (lastInteractive !== false) {
       lastInteractive = false;
