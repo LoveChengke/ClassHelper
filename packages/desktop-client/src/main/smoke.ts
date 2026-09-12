@@ -848,8 +848,15 @@ async function runIslandChecks(
 
   // 4.6) 新作业上岛（kind=homework）：胶囊 + 展开显示作业要求
   //（截止时间功能已下线：这里同时守住"作业卡上不再出现截止时间"）
-  island.handleAction({ action: 'dismiss' });
-  await sleep(400);
+  // 先排空队列：单条消息时胶囊标题应是类型名（"新作业"），多条时才汇总成
+  // 「新消息：叫人/作业/通知（共 N 条）」——两种情况都要确定性覆盖。
+  for (let index = 0; index < 20; index += 1) {
+    const current = island.getState();
+    if (!current.active && current.queued.length === 0) break;
+    island.handleAction({ action: 'dismiss' });
+    await sleep(120);
+  }
+  await sleep(200);
   island.pushNotification(
     {
       ...makeNotification('smoke-homework', 'NORMAL', '第 3 章课后练习'),
@@ -884,6 +891,48 @@ async function runIslandChecks(
     `作业卡文案="${homeworkCardText ?? '-'}"`,
   );
   await captureIsland('island-7-homework', ISLAND_SIZES.expanded);
+
+  // 4.6b) 收起后的胶囊要说明"这批消息里都有什么"：
+  //       单条 → 类型名（上面的"新作业"）；多条 → 「新消息：叫人/作业/通知（共 3 条）」+「点击查看」
+  island.pushNotification(
+    {
+      ...makeNotification('smoke-summary-call', 'NORMAL', '请 王小明 同学找 张老师'),
+      kind: 'call',
+      subtitle: '请尽快前往，收到后点「收到」',
+    },
+    { inClass: false },
+  );
+  await sleep(400);
+  island.pushNotification(makeNotification('smoke-summary-notice', 'NORMAL', '类型汇总校验'), {
+    inClass: false,
+  });
+  await sleep(600);
+  const summaryDom = await islandWindow?.webContents.executeJavaScript(
+    `(() => {
+       const card = document.querySelector('.island-card.pill');
+       return {
+         title: card?.querySelector('.pill-title')?.textContent?.trim() ?? '',
+         sub: card?.querySelector('.pill-sub')?.textContent?.trim() ?? '',
+         types: Array.from(card?.querySelectorAll('.pill-type') ?? []).map((node) => node.textContent.trim()),
+       };
+     })()`,
+  );
+  const summaryState = island.getState();
+  record(
+    '收起胶囊显示通知类型汇总（新消息：叫人/作业/通知（共 N 条））',
+    (summaryDom?.title ?? '').includes('新消息：') &&
+      (summaryDom?.title ?? '').includes('叫人') &&
+      (summaryDom?.title ?? '').includes('作业') &&
+      (summaryDom?.title ?? '').includes('通知') &&
+      (summaryDom?.title ?? '').includes('共 3 条') &&
+      (summaryDom?.sub ?? '').includes('点击查看') &&
+      (summaryDom?.types ?? []).length === 3 &&
+      summaryState.mode === 'pill',
+    `标题="${summaryDom?.title ?? '-'}" 副标题="${summaryDom?.sub ?? '-'}" ` +
+      `类型标签=[${(summaryDom?.types ?? []).join(',')}] mode=${summaryState.mode}`,
+  );
+  island.handleAction({ action: 'dismiss' });
+  await sleep(300);
 
   // 4.7) "紧急叫人"：URGENT + kind=call → 上课时段也立即展开
   island.handleAction({ action: 'dismiss' });
@@ -928,8 +977,38 @@ async function runIslandChecks(
   );
   await captureIsland('island-8-call', ISLAND_CALL_SIZE);
 
-  // 4.8) "普通叫人"：kind=call 但 priority=HIGH（服务端 urgent 缺省）→ 不打断课堂，
-  //      只进队列；与"紧急叫人"合并前的旧行为相反，这里守住回归。
+  // 4.7b) 紧急叫人"收起 → 再次点开"（用户复现路径：点击缩回后也无法点开）
+  await islandWindow?.webContents
+    .executeJavaScript(
+      `(() => {
+         document.querySelector('.island-card')?.click();
+         return true;
+       })()`,
+    )
+    .catch(() => undefined);
+  await sleep(600);
+  const urgentCallCollapsed = island.getState();
+  await islandWindow?.webContents
+    .executeJavaScript(
+      `(() => {
+         document.querySelector('.island-card')?.click();
+         return true;
+       })()`,
+    )
+    .catch(() => undefined);
+  await sleep(700);
+  const urgentCallReopened = island.getState();
+  record(
+    '紧急叫人收起后可再次点开（用户复现路径）',
+    urgentCallCollapsed.mode === 'pill' &&
+      urgentCallReopened.mode === 'expanded' &&
+      urgentCallReopened.active?.id === 'smoke-call',
+    `收起后=${urgentCallCollapsed.mode} 再次点开=${urgentCallReopened.mode} ` +
+      `active=${urgentCallReopened.active?.id ?? '-'}`,
+  );
+
+  // 4.8) "普通叫人"：kind=call 但 priority=HIGH（服务端 urgent 缺省）→ **不自动展开**（不打断课堂），
+  //      但上课时段仍以胶囊保持可见，并且必须能点开（用户反馈："非紧急叫人无法点开灵动岛"）。
   island.handleAction({ action: 'dismiss' });
   await sleep(300);
   island.pushNotification(
@@ -942,15 +1021,41 @@ async function runIslandChecks(
   );
   await sleep(500);
   const normalCallState = island.getState();
+  const normalCallVisible = islandWindow?.isVisible() ?? false;
   record(
-    '普通叫人只进队列（上课时段不打断、下课再弹）',
-    normalCallState.mode === 'hidden' &&
-      normalCallState.active?.id !== 'smoke-call-normal' &&
-      normalCallState.queued.some((item) => item.id === 'smoke-call-normal'),
-    `mode=${normalCallState.mode} active=${normalCallState.active?.id ?? '-'} ` +
-      `queued=[${normalCallState.queued.map((item) => item.id).join(',')}]`,
+    '普通叫人上课时段只显示胶囊（不自动展开、不打断课堂）',
+    normalCallState.mode === 'pill' &&
+      normalCallState.active?.id === 'smoke-call-normal' &&
+      normalCallState.reason === 'call' &&
+      normalCallVisible,
+    `mode=${normalCallState.mode} reason=${normalCallState.reason} 可见=${normalCallVisible} ` +
+      `active=${normalCallState.active?.id ?? '-'}`,
   );
-  // 下课：队列中的普通叫人自动弹出（与普通通知同一路径）
+  // 上课时段点开普通叫人：必须能展开（这正是用户复现的那条路径）
+  await islandWindow?.webContents
+    .executeJavaScript(
+      `(() => {
+         document.querySelector('.island-card')?.click();
+         return true;
+       })()`,
+    )
+    .catch(() => undefined);
+  await sleep(700);
+  const normalCallOpened = island.getState();
+  record(
+    '普通叫人上课时段可以点开（用户复现路径）',
+    normalCallOpened.mode === 'expanded' && normalCallOpened.active?.id === 'smoke-call-normal',
+    `点击后 mode=${normalCallOpened.mode} active=${normalCallOpened.active?.id ?? '-'}`,
+  );
+  // 再收起 → 仍是胶囊（保持可见、可再次点开），下课后自动展开
+  await island.handleAction({ action: 'collapse' });
+  await sleep(500);
+  const normalCallCollapsed = island.getState();
+  record(
+    '普通叫人收起后仍保留胶囊（可再次点开）',
+    normalCallCollapsed.mode === 'pill' && normalCallCollapsed.active?.id === 'smoke-call-normal',
+    `mode=${normalCallCollapsed.mode} active=${normalCallCollapsed.active?.id ?? '-'}`,
+  );
   island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1 });
   await sleep(600);
   const afterClassCall = island.getState();
@@ -1162,6 +1267,46 @@ async function runIslandChecks(
     `mode=${island.getState().mode} 命中框=${rectText(hitRectHidden)}`,
   );
 
+  // 4.11) 设置页"预览效果"（用户反馈：预览无法正常展开示例岛）
+  //       预览必须直接展开、失焦不收起（用户调滑块时主窗口一直是焦点），并在到点后自行消失。
+  await drainForCollapseCheck();
+  await sleep(300);
+  island.pushNotification(
+    {
+      ...makeNotification('appearance-test-smoke', 'NORMAL', '灵动岛外观预览'),
+      content: '拖动滑块即可实时预览。',
+      teacherName: '本地预览',
+    },
+    { inClass: false, preview: true },
+  );
+  await sleep(700);
+  const previewState = island.getState();
+  const previewVisible = islandWindow?.isVisible() ?? false;
+  const previewGeometry = await readIslandGeometry();
+  // 失焦（等价于用户回到设置页拖滑块）不应把示例岛收起来
+  islandWindow?.emit('blur');
+  await sleep(700);
+  const previewAfterBlur = island.getState();
+  record(
+    '设置页预览：示例岛直接展开且失焦不收起',
+    previewState.mode === 'expanded' &&
+      previewState.active?.id === 'appearance-test-smoke' &&
+      previewVisible &&
+      (previewGeometry?.island.width ?? 0) > ISLAND_SIZES.pill.width &&
+      previewAfterBlur.mode === 'expanded',
+    `预览态=${previewState.mode} 可见=${previewVisible} 岛宽=${previewGeometry?.island.width?.toFixed(0) ?? '-'}` +
+      ` 失焦后=${previewAfterBlur.mode}`,
+  );
+  // 预览通知不该被"常驻胶囊"逻辑留下：点"知道了"后必须彻底消失
+  island.handleAction({ action: 'dismiss' });
+  await sleep(600);
+  const previewDismissed = island.getState();
+  record(
+    '设置页预览：关掉后不残留（不会变成常驻胶囊）',
+    previewDismissed.mode === 'hidden' && previewDismissed.active === null,
+    `mode=${previewDismissed.mode} active=${previewDismissed.active?.id ?? '-'}`,
+  );
+
   // 5) 截图留档的像素级断言：每张图必须有实际绘制内容、颜色丰富，且宽高比与
   //    状态机配置的窗口尺寸一致（DPI 无关），紧急形态还必须出现红色描边/内部光晕像素。
   const shotDetails = islandShots.map((shot) => {
@@ -1294,6 +1439,14 @@ async function runIslandChecks(
   //    - 卡片布局尺寸用 offsetWidth/offsetTop（不含 CSS transform），只允许在"详情/胶囊"两种固定值间切换
   island.setAppearance(appearanceBefore);
   await sleep(300);
+  // 前面几节的收尾可能已经清空队列：这里保证有"正在展示的通知"，否则 expand 无可展开，
+  // 采样只会拿到隐藏态的空数据（这条断言就失去意义）。
+  if (!island.getState().active) {
+    island.pushNotification(makeNotification('smoke-jitter', 'NORMAL', '开合抖动校验'), {
+      inClass: false,
+    });
+    await sleep(500);
+  }
   island.handleAction({ action: 'expand' });
   await sleep(700);
   const jitterSamples: { win: number; cardWidth: number; cardTop: number }[] = [];
@@ -1606,6 +1759,8 @@ async function runIslandChecks(
   });
   await waitForIslandDom('.island-card.pill .pill-title');
   await sleep(200);
+  // 命中兜底轮询读的是"岛体矩形"：等它上报后再注入光标（渲染进程上报有限流）
+  for (let index = 0; index < 20 && !island.getHitRect(); index += 1) await sleep(80);
   await islandWindow?.webContents
     .executeJavaScript(
       `(() => {

@@ -160,7 +160,7 @@ async function resetIslandAppearance(): Promise<void> {
   await saveIslandAppearance();
 }
 
-/** 本地推一条测试通知，立刻确认外观效果 */
+/** 本地推一条测试通知，立刻确认外观效果（预览模式：直接展开、失焦不收起、30 秒后自动消失） */
 function testIsland(): void {
   window.desktop?.islandPush?.({
     notification: {
@@ -172,7 +172,7 @@ function testIsland(): void {
       courseName: null,
       teacherName: '本地预览',
     },
-    context: { inClass: false, currentPeriodEnd: null },
+    context: { inClass: false, currentPeriodEnd: null, preview: true },
   });
 }
 

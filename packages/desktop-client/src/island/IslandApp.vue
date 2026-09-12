@@ -58,6 +58,43 @@ const pillTitle = computed(() => {
   return isUrgent.value ? '紧急通知' : '新消息';
 });
 
+/**
+ * 未处理消息的**类型汇总**（当前展示的 + 队列里的）：
+ * 用户要求收起后的胶囊直接说明这批消息里都有什么，例如
+ * 「新消息：叫人/作业/通知（共 3 条）」+「点击查看」。
+ */
+const TYPE_LABELS: Record<IslandNotificationKind, string> = {
+  call: '叫人',
+  homework: '作业',
+  notification: '通知',
+};
+/** 汇总展示顺序：叫人 > 作业 > 通知（与用户示例一致） */
+const TYPE_ORDER: IslandNotificationKind[] = ['call', 'homework', 'notification'];
+
+const pendingNotifications = computed<IslandNotification[]>(() => {
+  const list: IslandNotification[] = [];
+  if (state.value.active) list.push(state.value.active);
+  for (const item of state.value.queued) {
+    if (!list.some((existing) => existing.id === item.id)) list.push(item);
+  }
+  return list;
+});
+
+/** 这批未处理消息覆盖了哪些类型（按"叫人/作业/通知"顺序） */
+const pendingTypes = computed<string[]>(() => {
+  const kinds = new Set(pendingNotifications.value.map((item) => item.kind ?? 'notification'));
+  return TYPE_ORDER.filter((item) => kinds.has(item)).map((item) => TYPE_LABELS[item]);
+});
+
+const pendingCount = computed(() => pendingNotifications.value.length);
+
+/** 多条消息时把类型摊开：`新消息：叫人/作业/通知（共 3 条）` */
+const pillSummaryTitle = computed(() => {
+  if (pendingCount.value <= 1) return pillTitle.value;
+  const types = pendingTypes.value.join('/');
+  return types ? `新消息：${types}（共 ${pendingCount.value} 条）` : `新消息（共 ${pendingCount.value} 条）`;
+});
+
 /** 展开态徽标：叫人 / 新作业 / 优先级文案 */
 const badgeText = computed(() => {
   if (isCall.value) return '叫人';
@@ -301,8 +338,11 @@ const islandClass = computed(() => ({
 let lastInteractive: boolean | null = null;
 /** 最近一次已知的指针位置：岛收起/变大后用它重算命中，避免"鼠标没动就点不到" */
 let lastPointer: { x: number; y: number } | null = null;
-/** 最近一次上报给主进程的岛体矩形（去重，避免形变期间刷屏 IPC） */
+/** 最近一次上报给主进程的岛体矩形（去重 + 限流，避免形变期间刷屏 IPC 拖慢渲染） */
 let lastHitRectKey: string | null = null;
+let lastHitRectAt = 0;
+const HIT_RECT_MIN_INTERVAL_MS = 100;
+let hitRectTrailingTimer: number | null = null;
 
 /** 把岛体矩形上报给主进程：主进程按光标位置兜底校正命中（不依赖 mousemove 转发） */
 function reportHitRect(rect: DOMRect | null): void {
@@ -312,7 +352,30 @@ function reportHitRect(rect: DOMRect | null): void {
     : 'none';
   if (key === lastHitRectKey) return;
   lastHitRectKey = key;
-  bridge?.setHitRect?.(payload);
+  const now = performance.now();
+  const elapsed = now - lastHitRectAt;
+  if (elapsed >= HIT_RECT_MIN_INTERVAL_MS) {
+    lastHitRectAt = now;
+    bridge?.setHitRect?.(payload);
+    return;
+  }
+  // 限流：形变过程中每帧都发会挤占主进程（实测拖慢到采样都变少），
+  // 这里保证"最后一次形状"一定会送达（尾随发送）。
+  if (hitRectTrailingTimer !== null) window.clearTimeout(hitRectTrailingTimer);
+  hitRectTrailingTimer = window.setTimeout(() => {
+    hitRectTrailingTimer = null;
+    lastHitRectAt = performance.now();
+    const node = document.querySelector('.island-card') as HTMLElement | null;
+    const fullyHidden = state.value?.mode === 'hidden' && !appearance.value.idleSliver;
+    const latest = node && !fullyHidden ? node.getBoundingClientRect() : null;
+    const latestPayload = latest
+      ? { x: latest.left, y: latest.top, width: latest.width, height: latest.height }
+      : null;
+    lastHitRectKey = latestPayload
+      ? `${Math.round(latestPayload.x)},${Math.round(latestPayload.y)},${Math.round(latestPayload.width)},${Math.round(latestPayload.height)}`
+      : 'none';
+    bridge?.setHitRect?.(latestPayload);
+  }, HIT_RECT_MIN_INTERVAL_MS);
 }
 
 function updateInteractive(clientX: number, clientY: number): void {
@@ -449,11 +512,15 @@ onMounted(async () => {
             </svg>
           </span>
           <span class="pill-text">
-            <span class="pill-title">
-              {{ pillTitle }}
-              <template v-if="queueCount > 0">· 共 {{ queueCount + 1 }} 条</template>
+            <span class="pill-title">{{ pillSummaryTitle }}</span>
+            <span class="pill-sub">
+              <template v-if="pendingCount > 1">点击查看</template>
+              <template v-else>{{ notification?.teacherName || '老师' }} · 点击查看</template>
             </span>
-            <span class="pill-sub">{{ notification?.teacherName || '老师' }} · 点击查看</span>
+          </span>
+          <!-- 多类型时把类型也做成小圆点，收起状态一眼看出有什么 -->
+          <span v-if="pendingCount > 1 && pendingTypes.length > 1" class="pill-types" aria-hidden="true">
+            <span v-for="item in pendingTypes" :key="item" class="pill-type">{{ item }}</span>
           </span>
           <span class="pill-chevron" aria-hidden="true">
             <svg viewBox="0 0 24 24">
@@ -751,6 +818,25 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 多条消息时把类型做成胶囊小标签（叫人/作业/通知），收起状态也能一眼看出内容构成 */
+.pill-types {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--island-font, 13px) * 0.2);
+  flex: 0 0 auto;
+  padding-right: calc(var(--island-font, 13px) * 0.2);
+}
+
+.pill-type {
+  font-size: calc(var(--island-font, 13px) * 0.6);
+  line-height: 1.4;
+  padding: 0 calc(var(--island-font, 13px) * 0.36);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--wn-text-2);
+  white-space: nowrap;
 }
 
 .pill-chevron {

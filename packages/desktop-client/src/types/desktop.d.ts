@@ -33,6 +33,8 @@ export interface IslandPushContext {
   /** 当前这节课的结束时间（HH:mm） */
   currentPeriodEnd?: string | null;
   week?: number;
+  /** 设置页"预览效果"：直接展开示例岛、失焦不收起、30 秒后自行消失 */
+  preview?: boolean;
 }
 
 export interface IslandClassStatePayload {
