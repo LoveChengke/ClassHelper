@@ -12,6 +12,11 @@ const currentDir = __dirname;
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const isSmokeTest = process.env.ELECTRON_SMOKE_TEST === '1';
 
+// 自动化验证使用独立的 userData：否则用户正在运行的客户端会占着单实例锁，
+// 冒烟进程会"静默退出（退出码 0、无输出）"，看起来像构建坏了。
+const smokeProfile = process.env.ELECTRON_SMOKE_PROFILE;
+if (smokeProfile) app.setPath('userData', smokeProfile);
+
 let mainWindow: BrowserWindow | null = null;
 
 function createWindow(): BrowserWindow {

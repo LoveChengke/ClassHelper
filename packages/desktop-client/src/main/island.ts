@@ -246,6 +246,8 @@ class IslandController {
   handleAction(payload: IslandActionPayload): void {
     switch (payload.action) {
       case 'expand':
+        // 上课时段一律不显示灵动岛（只有紧急通知能自动展开）
+        if (this.state.inClass) break;
         if (this.state.active) {
           this.setState({ mode: 'expanded' });
           this.scheduleCollapse(
@@ -253,16 +255,19 @@ class IslandController {
           );
         }
         break;
-      case 'collapse': {
-        const next = this.state.queued[this.state.queued.length - 1];
-        if (next) {
+      case 'collapse':
+        // 点击卡片空白处 / 右上角收起按钮：回缩到灵动岛（胶囊），不直接消失
+        if (this.state.inClass) {
+          this.hideImmediately();
+          break;
+        }
+        if (this.state.active) {
           this.setState({ mode: 'pill', reason: this.state.reason });
           this.scheduleCollapse(TIMEOUTS.pill);
         } else {
           this.hide();
         }
         break;
-      }
       case 'dismiss':
         this.dismissActive();
         break;
@@ -288,6 +293,23 @@ class IslandController {
     if (!this.win || this.win.isDestroyed()) return;
     this.fadeOut();
     this.setState({ mode: 'hidden', reason: null }, { skipWindow: true });
+  }
+
+  /**
+   * 立刻隐藏（不做淡出）：
+   * 上课时间段必须"完全不显示灵动岛"，任何残留的淡出都会被投影/屏幕录制看到。
+   */
+  hideImmediately(): void {
+    this.clearTimers();
+    this.fadeToken += 1;
+    const changed = this.state.mode !== 'hidden' || this.state.reason !== null;
+    if (changed) {
+      this.state = { ...this.state, mode: 'hidden', reason: null, updatedAt: Date.now() };
+      this.emit();
+    }
+    if (!this.win || this.win.isDestroyed()) return;
+    if (this.win.isVisible()) this.win.hide();
+    this.win.setOpacity(1);
   }
 
   destroy(): void {
@@ -397,6 +419,13 @@ class IslandController {
   private syncWindow(): void {
     if (!this.win || this.win.isDestroyed()) return;
 
+    // 上课时间段：一律不显示灵动岛（只有"正在展示的紧急通知"允许出现在屏幕上）
+    const urgentShowing = this.state.mode === 'expanded' && this.state.active?.priority === 'URGENT';
+    if (this.state.inClass && !urgentShowing) {
+      this.hideImmediately();
+      return;
+    }
+
     if (this.state.mode === 'hidden') {
       this.fadeOut();
       return;
@@ -410,13 +439,30 @@ class IslandController {
         : SIZES.pill;
 
     if (!this.win.isVisible()) {
+      const pillBounds = this.computeBounds(SIZES.pill);
+      // 普通通知：直接出现在屏幕上，不做"上岛"入场动画
+      if (size === SIZES.pill) {
+        this.cancelFade();
+        this.win.setOpacity(1);
+        this.win.setBounds(pillBounds);
+        this.win.showInactive();
+        return;
+      }
+      // 展开 / 紧急：一定从胶囊尺寸开始缓动，保证"展开动画"看得见
+      this.cancelFade();
       this.win.setOpacity(0);
+      this.win.setBounds(pillBounds);
       this.win.showInactive();
-      this.animateBounds(size);
+      this.animateBounds(size, { spring: true });
       this.fadeIn();
       return;
     }
-    this.animateBounds(size);
+    this.animateBounds(size, { spring: size !== SIZES.pill });
+  }
+
+  /** 作废进行中的淡入淡出动画 */
+  private cancelFade(): void {
+    this.fadeToken += 1;
   }
 
   private fadeIn(): void {
@@ -450,32 +496,44 @@ class IslandController {
     step();
   }
 
-  /** 尺寸/位置缓动：Windows 下没有原生窗口动画，这里按帧插值实现"形变"效果 */
-  private animateBounds(size: { width: number; height: number }): void {
+  /**
+   * 尺寸/位置缓动：Windows 下没有原生窗口动画，这里按帧插值实现"形变"效果。
+   * `spring` 使用回弹缓动（轻微过冲后回落），用于"展开成卡片"的弹簧手感。
+   */
+  private animateBounds(size: { width: number; height: number }, options: { spring?: boolean } = {}): void {
     if (!this.win || this.win.isDestroyed()) return;
     const from = this.win.getBounds();
     const to = this.computeBounds(size);
     if (from.width === to.width && from.height === to.height && from.x === to.x && from.y === to.y) return;
 
     const token = ++this.boundsToken;
-    const duration = 260;
+    const spring = options.spring === true;
+    const duration = spring ? 340 : 260;
     const startedAt = Date.now();
 
     const step = (): void => {
       if (!this.win || this.win.isDestroyed() || token !== this.boundsToken) return;
       const progress = Math.min(1, (Date.now() - startedAt) / duration);
-      const eased = 1 - Math.pow(1 - progress, 3); // easeOutCubic
+      const eased = spring ? easeOutBack(progress) : 1 - Math.pow(1 - progress, 3); // easeOutCubic
       const bounds = {
         x: Math.round(from.x + (to.x - from.x) * eased),
         y: Math.round(from.y + (to.y - from.y) * eased),
-        width: Math.round(from.width + (to.width - from.width) * eased),
-        height: Math.round(from.height + (to.height - from.height) * eased),
+        width: Math.max(1, Math.round(from.width + (to.width - from.width) * eased)),
+        height: Math.max(1, Math.round(from.height + (to.height - from.height) * eased)),
       };
       this.win.setBounds(bounds);
       if (progress < 1) setTimeout(step, 12);
     };
     step();
   }
+}
+
+/** 回弹缓动（easeOutBack）：进度超过 1 形成轻微过冲，营造弹簧感 */
+function easeOutBack(progress: number): number {
+  const c1 = 1.15;
+  const c3 = c1 + 1;
+  const p = progress - 1;
+  return 1 + c3 * p * p * p + c1 * p * p;
 }
 
 export const island = new IslandController();

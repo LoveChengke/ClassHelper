@@ -40,12 +40,31 @@ const subtitle = computed(() => {
 /** 下课补发时提示"其实上课期间就到了" */
 const showAfterClassHint = computed(() => state.value.reason === 'after-class' && !state.value.inClass);
 
+/**
+ * 入场动画：
+ * - 胶囊（普通通知）：**没有入场动画**，直接出现在屏幕上
+ * - 展开 / 紧急：弹簧缩放入场，配合窗口尺寸缓动形成"展开"效果
+ */
+const transitionName = computed(() => (mode.value === 'pill' ? 'island-instant' : 'island-pop'));
+const transitionDuration = computed(() => ({
+  enter: mode.value === 'pill' ? 0 : 260,
+  leave: 140,
+}));
+
 function expand(): void {
   bridge?.sendAction('expand');
 }
 
 function collapse(): void {
   bridge?.sendAction('collapse');
+}
+
+/** 点击卡片空白处（非按钮、非选中文字）→ 回缩为灵动岛胶囊 */
+function onCardClick(event: MouseEvent): void {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('button')) return;
+  if (window.getSelection()?.toString()) return;
+  collapse();
 }
 
 function dismiss(): void {
@@ -70,8 +89,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="island-root">
-    <Transition name="island-pop" :duration="{ enter: 240, leave: 150 }">
+  <div class="island-root" @click.self="collapse">
+    <Transition :name="transitionName" :duration="transitionDuration">
       <!-- 胶囊态：收到通知后先变成"新消息" -->
       <button
         v-if="mode === 'pill' && notification"
@@ -111,12 +130,13 @@ onMounted(async () => {
         </span>
       </button>
 
-      <!-- 展开态：显示通知详情 -->
+      <!-- 展开态：显示通知详情（点击空白处回缩为胶囊） -->
       <section
         v-else-if="mode === 'expanded' && notification"
         key="expanded"
         class="island-card expanded"
         :class="{ urgent: isUrgent }"
+        @click="onCardClick"
       >
         <span v-if="isUrgent" class="glow" aria-hidden="true"></span>
         <header class="head">
@@ -194,7 +214,10 @@ body,
   box-sizing: border-box;
 }
 
-/* 三态卡片绝对定位，使交叉淡入淡出（并行 Transition）不会互相挤压 */
+/* 三态卡片绝对定位，使交叉淡入淡出（并行 Transition）不会互相挤压。
+   注意：窗口只比卡片大 2~4px，任何向外的 box-shadow/光晕都会被窗口边界裁切，
+   在屏幕上表现为"卡片周围一圈奇怪的光晕/硬边"。因此这里**只用 inset 阴影**，
+   所有装饰效果都画在卡片内部。 */
 .island-card {
   position: absolute;
   top: 2px;
@@ -209,28 +232,24 @@ body,
     radial-gradient(120% 140% at 50% -20%, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0) 55%),
     linear-gradient(180deg, #23242a 0%, #0c0d10 100%);
   box-shadow:
-    0 12px 28px rgba(0, 0, 0, 0.45),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35);
   transition:
     border-color 0.28s ease,
-    box-shadow 0.28s ease,
     background 0.28s ease;
 }
 
-/* 紧急通知：红色描边 + 独立光晕层呼吸
-   注意：无限动画必须放在内部 .glow 上，否则会让 Vue <Transition> 的
-   transitionend/animationend 判定失效，导致DOM 卡在离场状态。 */
+/* 紧急通知：红色描边 + 内部光晕呼吸（不外扩，避免窗口边界裁切出光晕硬边） */
 .island-card.urgent {
-  border-color: rgba(255, 92, 92, 0.55);
+  border-color: rgba(255, 92, 92, 0.6);
   box-shadow:
-    0 12px 30px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 92, 92, 0.25),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35);
 }
 
 .glow {
   position: absolute;
-  inset: -1px;
+  inset: 0;
   border-radius: inherit;
   pointer-events: none;
   animation: urgent-breath 2.2s ease-in-out infinite;
@@ -240,13 +259,13 @@ body,
   0%,
   100% {
     box-shadow:
-      0 0 0 1px rgba(255, 92, 92, 0.22),
-      0 0 18px rgba(255, 72, 72, 0.28);
+      inset 0 0 14px rgba(255, 72, 72, 0.22),
+      inset 0 0 0 1px rgba(255, 92, 92, 0.3);
   }
   50% {
     box-shadow:
-      0 0 0 1px rgba(255, 92, 92, 0.38),
-      0 0 34px rgba(255, 72, 72, 0.5);
+      inset 0 0 26px rgba(255, 72, 72, 0.45),
+      inset 0 0 0 1px rgba(255, 92, 92, 0.55);
   }
 }
 
@@ -576,25 +595,44 @@ body,
 
 /* ---------------------------------------------------------------- 形变动画 */
 
+/* 胶囊态：没有入场动画，直接出现 */
+.island-instant-enter-active {
+  transition: none;
+}
+
+.island-instant-enter-from {
+  opacity: 1;
+  transform: none;
+}
+
+.island-instant-leave-active {
+  transition: opacity 0.12s ease;
+}
+
+.island-instant-leave-to {
+  opacity: 0;
+}
+
+/* 展开态：弹簧缩放入场（配合窗口尺寸缓动） */
 .island-pop-enter-active {
   transition:
-    opacity 0.22s ease,
+    opacity 0.2s ease,
     transform 0.34s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .island-pop-leave-active {
   transition:
-    opacity 0.16s ease,
+    opacity 0.14s ease,
     transform 0.2s ease;
 }
 
 .island-pop-enter-from {
   opacity: 0;
-  transform: scale(0.86) translateY(-8px);
+  transform: scale(0.88) translateY(-6px);
 }
 
 .island-pop-leave-to {
   opacity: 0;
-  transform: scale(0.9);
+  transform: scale(0.92);
 }
 </style>

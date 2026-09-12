@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveElectronEnv, resolveElectronExecutable } from '../../../scripts/lib/electron-env.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = path.resolve(root, '..', '..');
 const electronPath = resolveElectronExecutable(path.join(root, 'node_modules', 'electron'));
 const required = [path.join(root, 'dist/main/index.js'), path.join(root, 'dist/renderer/index.html')];
 const missing = required.filter((file) => !fs.existsSync(file));
@@ -24,6 +25,11 @@ if (missing.length > 0) {
 }
 
 console.log('[smoke] 启动 Electron 冒烟验证...\n');
+
+// 独立的 userData：避免与用户正在运行的客户端抢单实例锁（否则新进程会静默退出）
+const profileDir = path.join(repoRoot, '.cache', 'desktop-smoke-profile');
+fs.rmSync(profileDir, { recursive: true, force: true });
+console.log(`[smoke] 独立配置目录：${profileDir}`);
 
 // 未显式指定时自动探测后端：可达则启用联网集成 + 侧边栏点击测试
 let online = process.env.ELECTRON_SMOKE_ONLINE;
@@ -48,7 +54,11 @@ if (online === undefined) {
 const child = spawn(electronPath, ['.'], {
   cwd: root,
   stdio: 'inherit',
-  env: resolveElectronEnv({ ELECTRON_SMOKE_TEST: '1', ELECTRON_SMOKE_ONLINE: online }),
+  env: resolveElectronEnv({
+    ELECTRON_SMOKE_TEST: '1',
+    ELECTRON_SMOKE_ONLINE: online,
+    ELECTRON_SMOKE_PROFILE: profileDir,
+  }),
 });
 
 child.on('exit', (code) => {

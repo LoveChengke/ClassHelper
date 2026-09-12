@@ -29,8 +29,10 @@ interface IslandShotStats {
   opaque: number;
   transparent: number;
   uniqueColors: number;
-  /** 偏红像素数（紧急形态的红色光晕/角标） */
+  /** 偏红像素数（紧急形态的红色描边/角标/内部光晕） */
   reddish: number;
+  /** 图像最外圈（2px）的偏红像素数：必须为 0，用于守住"卡片外不允许有光晕外溢" */
+  edgeReddish: number;
   filePath: string;
 }
 
@@ -42,12 +44,15 @@ function analyzeBitmap(image: NativeImage): {
   transparent: number;
   uniqueColors: number;
   reddish: number;
+  edgeReddish: number;
 } {
   const bitmap = image.toBitmap();
+  const { width, height } = image.getSize();
   const total = Math.floor(bitmap.length / 4);
   let opaque = 0;
   let transparent = 0;
   let reddish = 0;
+  let edgeReddish = 0;
   const colors = new Set<number>();
 
   for (let index = 0; index < total; index += 1) {
@@ -63,11 +68,18 @@ function analyzeBitmap(image: NativeImage): {
     }
     opaque += 1;
     if (colors.size < 4096) colors.add((red << 16) | (green << 8) | blue);
-    // 红色占优：紧急态的光晕、角标、深色卡片上的暖色高光
-    if (red > 110 && red > green + 40 && red > blue + 40) reddish += 1;
+
+    // 红色占优：紧急态的描边、角标、内部光晕
+    if (red > 110 && red > green + 40 && red > blue + 40) {
+      reddish += 1;
+      // 最外圈 2px 是窗口留白（卡片之外），不允许出现红色外溢光晕
+      const x = index % width;
+      const y = Math.floor(index / width);
+      if (x < 2 || y < 2 || x >= width - 2 || y >= height - 2) edgeReddish += 1;
+    }
   }
 
-  return { opaque, transparent, uniqueColors: colors.size, reddish };
+  return { opaque, transparent, uniqueColors: colors.size, reddish, edgeReddish };
 }
 
 /** 灵动岛状态截图留档 + 像素统计（便于人工复核外观与自动化断言） */
@@ -104,7 +116,7 @@ async function captureIsland(
     islandShots.push(stats);
     console.log(
       `[SMOKE] 灵动岛截图：${filePath}（${stats.width}x${stats.height} 不透明=${stats.opaque} ` +
-        `颜色=${stats.uniqueColors} 偏红=${stats.reddish}）`,
+        `颜色=${stats.uniqueColors} 偏红=${stats.reddish} 外圈偏红=${stats.edgeReddish}）`,
     );
     return stats;
   } catch (error) {
@@ -153,10 +165,12 @@ function makeNotification(
 
 /**
  * 灵动岛行为验证（对应产品需求）：
- * 1. 上课时间段收到普通通知 → 自动隐藏并暂存
+ * 1. 上课时间段收到普通通知 → 不显示灵动岛（窗口真正隐藏）并暂存
  * 2. 下课后 → 自动在桌面中上方弹出详情
- * 3. 上课时间段收到紧急通知 → 立即展开显示详情（无需点击）
- * 4. 非上课时段收到普通通知 → 变成"新消息"胶囊，点击后展开
+ * 3. 上课时间段收到紧急通知 → 立即展开显示详情（无需点击），且带展开动画
+ * 4. 非上课时段收到普通通知 → 直接显示"新消息"胶囊（无入场动画），点击后展开
+ * 5. 点击卡片空白处 / 右上角收起按钮 → 回缩为胶囊
+ * 6. 上课时间段内点击胶囊不会展开（上课不显示灵动岛）
  */
 async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promise<void> {
   record('灵动岛窗口已创建（置顶/透明/不占任务栏）', island.isReady(), `ready=${island.isReady()}`);
@@ -164,19 +178,30 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
 
   const islandWindow = island.getWindow();
 
-  // 1) 上课期间：普通通知必须保持隐藏并进入队列
+  // 1) 上课期间：普通通知必须完全不显示（窗口隐藏）并进入队列
   island.setClassState({ inClass: true, currentPeriodEnd: '08:45', week: 1 });
   island.pushNotification(makeNotification('smoke-normal-in-class', 'NORMAL', '上课期间的普通通知'), {
     inClass: true,
   });
   await sleep(500);
   const hiddenState = island.getState();
+  const hiddenVisible = islandWindow?.isVisible() ?? true;
   record(
-    '上课期间普通通知自动隐藏（暂存待下课弹出）',
-    hiddenState.mode === 'hidden' && hiddenState.queued.length === 1,
-    `mode=${hiddenState.mode} queued=${hiddenState.queued.length}`,
+    '上课期间普通通知自动隐藏（窗口隐藏 + 暂存待下课弹出）',
+    hiddenState.mode === 'hidden' && hiddenState.queued.length === 1 && hiddenVisible === false,
+    `mode=${hiddenState.mode} queued=${hiddenState.queued.length} visible=${hiddenVisible}`,
   );
   console.log(`[SMOKE] 隐藏态 DOM：${await dumpIslandDom('hidden')}`);
+
+  // 1.1) 上课期间请求展开也不应显示（上课不显示灵动岛）
+  island.handleAction({ action: 'expand' });
+  await sleep(400);
+  const expandBlocked = island.getState().mode === 'hidden' && !(islandWindow?.isVisible() ?? true);
+  record(
+    '上课期间点击不会展开灵动岛（严格不显示）',
+    expandBlocked,
+    `mode=${island.getState().mode} visible=${islandWindow?.isVisible() ?? true}`,
+  );
 
   // 2) 下课：自动弹出暂存通知的详情
   island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1 });
@@ -189,13 +214,19 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
   );
   await captureIsland('island-2-after-class', ISLAND_SIZES.expanded);
 
-  // 3) 上课期间紧急通知：立即展开，无需点击
+  // 3) 上课期间紧急通知：立即展开，无需点击；并采样窗口尺寸证明有"展开动画"
   island.setClassState({ inClass: true, currentPeriodEnd: '08:45', week: 1 });
   await sleep(300);
+  const sampledWidths: number[] = [];
+  const sampler = setInterval(() => {
+    const bounds = islandWindow?.getBounds();
+    if (bounds) sampledWidths.push(bounds.width);
+  }, 16);
   island.pushNotification(makeNotification('smoke-urgent-in-class', 'URGENT', '上课期间的紧急通知'), {
     inClass: true,
   });
   await sleep(900);
+  clearInterval(sampler);
   const urgentState = island.getState();
   record(
     '上课期间紧急通知立即展开显示详情（无需点击）',
@@ -204,17 +235,49 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
       urgentState.reason === 'urgent',
     `mode=${urgentState.mode} active=${urgentState.active?.id ?? '-'} reason=${urgentState.reason ?? '-'}`,
   );
+
+  const urgentBounds = islandWindow?.getBounds();
+  const rampWidths = [
+    ...new Set(sampledWidths.filter((width) => width > 0 && width < ISLAND_URGENT_SIZE.width)),
+  ];
+  record(
+    '紧急通知带展开动画（窗口从胶囊尺寸缓动到紧急尺寸）',
+    rampWidths.length >= 3 && urgentBounds?.width === ISLAND_URGENT_SIZE.width,
+    `采样=${sampledWidths.length} 中间尺寸=${rampWidths.length} 最终=${urgentBounds?.width ?? '-'}x${urgentBounds?.height ?? '-'}`,
+  );
   await captureIsland('island-3-urgent', ISLAND_URGENT_SIZE);
 
-  // 4) 非上课时段普通通知 → 胶囊态；点击后展开
-  island.handleAction({ action: 'dismiss' });
+  // 3.1) 上课期间请求"收起"也不应显示胶囊（上课严格不显示灵动岛）
+  island.handleAction({ action: 'collapse' });
+  await sleep(400);
+  record(
+    '上课期间收起不会回缩成胶囊（严格不显示）',
+    island.getState().mode === 'hidden' && !(islandWindow?.isVisible() ?? true),
+    `mode=${island.getState().mode} visible=${islandWindow?.isVisible() ?? true}`,
+  );
+
+  // 4) 非上课时段普通通知 → 直接显示胶囊（无入场动画）；点击后展开
   island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1 });
-  await sleep(300);
+  await sleep(800);
+  island.hide();
+  await sleep(400);
+  const hiddenBeforePush = !(islandWindow?.isVisible() ?? true);
   island.pushNotification(makeNotification('smoke-normal-free', 'NORMAL', '课间收到的普通通知'), {
     inClass: false,
   });
-  await sleep(700);
+  await sleep(60);
+  const immediateBounds = islandWindow?.getBounds();
+  await sleep(640);
   const pillState = island.getState();
+  record(
+    '普通通知直接显示胶囊（无"上岛"入场动画）',
+    hiddenBeforePush &&
+      pillState.mode === 'pill' &&
+      immediateBounds?.width === ISLAND_SIZES.pill.width &&
+      immediateBounds?.height === ISLAND_SIZES.pill.height,
+    `推送前隐藏=${hiddenBeforePush} 60ms 内窗口=${immediateBounds?.width ?? '-'}x${immediateBounds?.height ?? '-'}` +
+      `（期望 ${ISLAND_SIZES.pill.width}x${ISLAND_SIZES.pill.height}）mode=${pillState.mode}`,
+  );
   await captureIsland('island-4-pill', ISLAND_SIZES.pill);
   console.log(`[SMOKE] 胶囊态 DOM：${await dumpIslandDom('pill')}`);
 
@@ -235,7 +298,7 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
   );
   await captureIsland('island-5-clicked', ISLAND_SIZES.expanded);
 
-  // 5) 灵动岛 DOM 结构自检（确保渲染进程真的画出卡片而不是空白窗口）
+  // 4.1) 展开态的 DOM 结构自检（卡片/标题/操作按钮都要真的渲染出来）
   const domInfo = await islandWindow?.webContents.executeJavaScript(
     `(() => ({
        hasCard: Boolean(document.querySelector('.island-card')),
@@ -249,8 +312,44 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
     `title=${domInfo?.title ?? '-'} actions=${domInfo?.hasActions ?? false}`,
   );
 
-  // 6) 截图留档的像素级断言：每张图必须有实际绘制内容、颜色丰富，且宽高比与
-  //    状态机配置的窗口尺寸一致（DPI 无关），紧急形态还必须出现红色光晕像素。
+  // 4.2) 点击卡片空白处 → 回缩为胶囊
+  const blankClicked = await islandWindow?.webContents.executeJavaScript(
+    `(() => {
+       const blank = document.querySelector('.island-card.expanded .body');
+       if (!blank) return false;
+       blank.click();
+       return true;
+     })()`,
+  );
+  await sleep(600);
+  const afterBlank = island.getState();
+  record(
+    '点击卡片空白处回缩为胶囊',
+    blankClicked === true && afterBlank.mode === 'pill',
+    `blankClicked=${blankClicked} mode=${afterBlank.mode}`,
+  );
+
+  // 4.3) 点击右上角收起按钮 → 回缩为胶囊
+  island.handleAction({ action: 'expand' });
+  await sleep(600);
+  const chevronClicked = await islandWindow?.webContents.executeJavaScript(
+    `(() => {
+       const button = document.querySelector('.island-card.expanded .icon-btn');
+       if (!button) return false;
+       button.click();
+       return true;
+     })()`,
+  );
+  await sleep(600);
+  const afterChevron = island.getState();
+  record(
+    '点击右上角收起按钮回缩为胶囊',
+    chevronClicked === true && afterChevron.mode === 'pill',
+    `chevronClicked=${chevronClicked} mode=${afterChevron.mode}`,
+  );
+
+  // 5) 截图留档的像素级断言：每张图必须有实际绘制内容、颜色丰富，且宽高比与
+  //    状态机配置的窗口尺寸一致（DPI 无关），紧急形态还必须出现红色描边/内部光晕像素。
   const shotDetails = islandShots.map((shot) => {
     const expectedRatio = shot.expected.width / shot.expected.height;
     const actualRatio = shot.width / shot.height;
@@ -260,7 +359,8 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
       ratioDelta,
       text:
         `${shot.name} ${shot.width}x${shot.height}(期望 ${shot.expected.width}x${shot.expected.height}, ` +
-        `比例偏差 ${ratioDelta.toFixed(3)}) 不透明=${shot.opaque} 颜色=${shot.uniqueColors} 偏红=${shot.reddish}`,
+        `比例偏差 ${ratioDelta.toFixed(3)}) 不透明=${shot.opaque} 颜色=${shot.uniqueColors} ` +
+        `偏红=${shot.reddish} 外圈偏红=${shot.edgeReddish}`,
     };
   });
 
@@ -268,6 +368,7 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
   const wrongRatio = shotDetails.filter((shot) => shot.ratioDelta > 0.05);
   const urgentShot = shotDetails.find((shot) => shot.name.includes('urgent'));
   const urgentReddish = urgentShot?.reddish ?? 0;
+  const edgeReddish = urgentShot?.edgeReddish ?? 0;
   const pillShot = shotDetails.find((shot) => shot.name.includes('pill'));
   const sizesOrdered = Boolean(
     pillShot &&
@@ -287,6 +388,13 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
       `${blank.length > 0 ? ` 空白图=${blank.map((shot) => shot.name).join(',')}` : ''}` +
       `${wrongRatio.length > 0 ? ` 比例异常=${wrongRatio.map((shot) => shot.name).join(',')}` : ''}` +
       ` 形态尺寸递增=${sizesOrdered}`,
+  );
+
+  // 7) 光晕只在卡片内部：截图最外圈（窗口留白）不允许出现红色外溢像素
+  record(
+    '紧急红晕不外溢（窗口边缘无红色光晕像素）',
+    urgentShot !== undefined && edgeReddish === 0 && urgentReddish > 200,
+    `紧急态偏红=${urgentReddish} 最外圈偏红=${edgeReddish}（要求 0）`,
   );
 
   // 收尾：隐藏灵动岛，避免影响后续用例
