@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
-import type { BrowserWindow } from 'electron';
+import type { BrowserWindow, NativeImage } from 'electron';
 import type { IslandNotification } from '@classhelper/shared';
 import { getDiagnostics } from './ipc.js';
-import { island } from './island.js';
+import { island, ISLAND_SIZES, ISLAND_URGENT_SIZE } from './island.js';
 
 interface SmokeResult {
   name: string;
@@ -18,11 +18,66 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** 灵动岛状态截图留档（便于人工复核外观与动画） */
-async function captureIsland(name: string): Promise<void> {
+/** 灵动岛每种形态的截图像素统计（用于"截图像素级留档"断言） */
+interface IslandShotStats {
+  name: string;
+  /** 期望的窗口逻辑尺寸（CSS 像素） */
+  expected: { width: number; height: number };
+  /** 实际截图像素尺寸（受 DPI 缩放影响，通常是逻辑尺寸的整数倍） */
+  width: number;
+  height: number;
+  opaque: number;
+  transparent: number;
+  uniqueColors: number;
+  /** 偏红像素数（紧急形态的红色光晕/角标） */
+  reddish: number;
+  filePath: string;
+}
+
+const islandShots: IslandShotStats[] = [];
+
+/** 统计截图位图：不透明像素、颜色种类、偏红像素（Electron 位图格式为 BGRA） */
+function analyzeBitmap(image: NativeImage): {
+  opaque: number;
+  transparent: number;
+  uniqueColors: number;
+  reddish: number;
+} {
+  const bitmap = image.toBitmap();
+  const total = Math.floor(bitmap.length / 4);
+  let opaque = 0;
+  let transparent = 0;
+  let reddish = 0;
+  const colors = new Set<number>();
+
+  for (let index = 0; index < total; index += 1) {
+    const offset = index * 4;
+    const blue = bitmap[offset] ?? 0;
+    const green = bitmap[offset + 1] ?? 0;
+    const red = bitmap[offset + 2] ?? 0;
+    const alpha = bitmap[offset + 3] ?? 0;
+
+    if (alpha === 0) {
+      transparent += 1;
+      continue;
+    }
+    opaque += 1;
+    if (colors.size < 4096) colors.add((red << 16) | (green << 8) | blue);
+    // 红色占优：紧急态的光晕、角标、深色卡片上的暖色高光
+    if (red > 110 && red > green + 40 && red > blue + 40) reddish += 1;
+  }
+
+  return { opaque, transparent, uniqueColors: colors.size, reddish };
+}
+
+/** 灵动岛状态截图留档 + 像素统计（便于人工复核外观与自动化断言） */
+async function captureIsland(
+  name: string,
+  expected: { width: number; height: number },
+): Promise<IslandShotStats | null> {
   const dir = process.env.ISLAND_SHOTS_DIR;
   const win = island.getWindow();
-  if (!dir || !win || win.isDestroyed() || !win.isVisible()) return;
+  if (!dir || !win || win.isDestroyed() || !win.isVisible()) return null;
   try {
     // 透明窗口直接 capturePage 会得到空白图：把它临时放到不透明背景上再截图
     await win.webContents.executeJavaScript(
@@ -34,10 +89,27 @@ async function captureIsland(name: string): Promise<void> {
       `document.documentElement.style.background = 'transparent'; document.body.style.background = 'transparent'; true`,
     );
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, `${name}.png`), image.toPNG());
-    console.log(`[SMOKE] 灵动岛截图：${path.join(dir, `${name}.png`)}`);
+    const filePath = path.join(dir, `${name}.png`);
+    fs.writeFileSync(filePath, image.toPNG());
+
+    const size = image.getSize();
+    const stats: IslandShotStats = {
+      name,
+      expected,
+      width: size.width,
+      height: size.height,
+      filePath,
+      ...analyzeBitmap(image),
+    };
+    islandShots.push(stats);
+    console.log(
+      `[SMOKE] 灵动岛截图：${filePath}（${stats.width}x${stats.height} 不透明=${stats.opaque} ` +
+        `颜色=${stats.uniqueColors} 偏红=${stats.reddish}）`,
+    );
+    return stats;
   } catch (error) {
     console.warn('[SMOKE] 灵动岛截图失败', error);
+    return null;
   }
 }
 
@@ -115,7 +187,7 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
     afterClassState.mode === 'expanded' && afterClassState.active?.id === 'smoke-normal-in-class',
     `mode=${afterClassState.mode} active=${afterClassState.active?.id ?? '-'} reason=${afterClassState.reason ?? '-'}`,
   );
-  await captureIsland('island-2-after-class');
+  await captureIsland('island-2-after-class', ISLAND_SIZES.expanded);
 
   // 3) 上课期间紧急通知：立即展开，无需点击
   island.setClassState({ inClass: true, currentPeriodEnd: '08:45', week: 1 });
@@ -132,7 +204,7 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
       urgentState.reason === 'urgent',
     `mode=${urgentState.mode} active=${urgentState.active?.id ?? '-'} reason=${urgentState.reason ?? '-'}`,
   );
-  await captureIsland('island-3-urgent');
+  await captureIsland('island-3-urgent', ISLAND_URGENT_SIZE);
 
   // 4) 非上课时段普通通知 → 胶囊态；点击后展开
   island.handleAction({ action: 'dismiss' });
@@ -143,7 +215,7 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
   });
   await sleep(700);
   const pillState = island.getState();
-  await captureIsland('island-4-pill');
+  await captureIsland('island-4-pill', ISLAND_SIZES.pill);
   console.log(`[SMOKE] 胶囊态 DOM：${await dumpIslandDom('pill')}`);
 
   const clicked = await islandWindow?.webContents.executeJavaScript(
@@ -161,7 +233,7 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
     pillState.mode === 'pill' && clicked === true && expandedState.mode === 'expanded',
     `pillMode=${pillState.mode} clicked=${clicked} expandedMode=${expandedState.mode}`,
   );
-  await captureIsland('island-5-clicked');
+  await captureIsland('island-5-clicked', ISLAND_SIZES.expanded);
 
   // 5) 灵动岛 DOM 结构自检（确保渲染进程真的画出卡片而不是空白窗口）
   const domInfo = await islandWindow?.webContents.executeJavaScript(
@@ -175,6 +247,46 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
     '灵动岛渲染进程正常绘制（卡片/标题/操作按钮）',
     Boolean(domInfo?.hasCard && domInfo?.title && domInfo?.hasActions),
     `title=${domInfo?.title ?? '-'} actions=${domInfo?.hasActions ?? false}`,
+  );
+
+  // 6) 截图留档的像素级断言：每张图必须有实际绘制内容、颜色丰富，且宽高比与
+  //    状态机配置的窗口尺寸一致（DPI 无关），紧急形态还必须出现红色光晕像素。
+  const shotDetails = islandShots.map((shot) => {
+    const expectedRatio = shot.expected.width / shot.expected.height;
+    const actualRatio = shot.width / shot.height;
+    const ratioDelta = Math.abs(actualRatio - expectedRatio);
+    return {
+      ...shot,
+      ratioDelta,
+      text:
+        `${shot.name} ${shot.width}x${shot.height}(期望 ${shot.expected.width}x${shot.expected.height}, ` +
+        `比例偏差 ${ratioDelta.toFixed(3)}) 不透明=${shot.opaque} 颜色=${shot.uniqueColors} 偏红=${shot.reddish}`,
+    };
+  });
+
+  const blank = shotDetails.filter((shot) => shot.opaque < 500 || shot.uniqueColors < 3);
+  const wrongRatio = shotDetails.filter((shot) => shot.ratioDelta > 0.05);
+  const urgentShot = shotDetails.find((shot) => shot.name.includes('urgent'));
+  const urgentReddish = urgentShot?.reddish ?? 0;
+  const pillShot = shotDetails.find((shot) => shot.name.includes('pill'));
+  const sizesOrdered = Boolean(
+    pillShot &&
+    urgentShot &&
+    pillShot.height < (shotDetails.find((shot) => shot.name.includes('after-class'))?.height ?? 0) &&
+    (shotDetails.find((shot) => shot.name.includes('after-class'))?.height ?? 0) < urgentShot.height,
+  );
+
+  record(
+    '灵动岛各状态截图像素级留档（尺寸/宽高比/绘制内容/紧急红光）',
+    shotDetails.length >= 4 &&
+      blank.length === 0 &&
+      wrongRatio.length === 0 &&
+      urgentReddish > 200 &&
+      sizesOrdered,
+    `${shotDetails.length} 张：${shotDetails.map((shot) => shot.text).join(' | ')}` +
+      `${blank.length > 0 ? ` 空白图=${blank.map((shot) => shot.name).join(',')}` : ''}` +
+      `${wrongRatio.length > 0 ? ` 比例异常=${wrongRatio.map((shot) => shot.name).join(',')}` : ''}` +
+      ` 形态尺寸递增=${sizesOrdered}`,
   );
 
   // 收尾：隐藏灵动岛，避免影响后续用例
