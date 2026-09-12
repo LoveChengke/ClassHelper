@@ -2,7 +2,15 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { formatDate } from '@classhelper/shared';
+import {
+  DEFAULT_ISLAND_APPEARANCE,
+  ISLAND_APPEARANCE_RANGES as RANGES,
+  ISLAND_POSITION_LABELS,
+  ISLAND_POSITIONS,
+  formatDate,
+  type IslandAppearance,
+  type IslandPosition,
+} from '@classhelper/shared';
 import type { DesktopAppInfo } from '../../types/desktop.js';
 import { pingHealth, setApiBaseUrl } from '../api/http.js';
 import { normalizeServerUrl } from '../config.js';
@@ -102,9 +110,68 @@ async function logout(): Promise<void> {
   await router.replace('/login');
 }
 
+/* ------------------------------------------------------------ 灵动岛个性化 */
+
+const island = ref<IslandAppearance>({ ...DEFAULT_ISLAND_APPEARANCE });
+const savingIsland = ref(false);
+
+const positionOptions = ISLAND_POSITIONS.map((value) => ({
+  value,
+  label: ISLAND_POSITION_LABELS[value],
+}));
+
+/** 读取当前生效的外观（主进程为单一事实来源） */
+async function loadIslandAppearance(): Promise<void> {
+  if (!window.desktop?.islandGetAppearance) return;
+  island.value = await window.desktop.islandGetAppearance();
+}
+
+/**
+ * 改动即生效：属性变化时先应用（实时预览），点"保存"再落盘。
+ * 高度/宽度只影响窗口与卡片尺寸变量，内容用 flex + 溢出滚动承载，不会溢出或错乱。
+ */
+function applyIslandAppearance(patch: Partial<IslandAppearance> = {}): void {
+  island.value = { ...island.value, ...patch };
+  window.desktop?.islandSetAppearance(island.value);
+}
+
+async function saveIslandAppearance(): Promise<void> {
+  if (!window.desktop?.saveConfig) return;
+  savingIsland.value = true;
+  try {
+    await window.desktop.saveConfig({ island: island.value });
+    ElMessage.success('个性化设置已保存');
+  } finally {
+    savingIsland.value = false;
+  }
+}
+
+async function resetIslandAppearance(): Promise<void> {
+  await ElMessageBox.confirm('恢复灵动岛的默认外观？', '恢复默认', { type: 'warning' });
+  applyIslandAppearance({ ...DEFAULT_ISLAND_APPEARANCE });
+  await saveIslandAppearance();
+}
+
+/** 本地推一条测试通知，立刻确认外观效果 */
+function testIsland(): void {
+  window.desktop?.islandPush?.({
+    notification: {
+      id: `appearance-test-${Date.now()}`,
+      title: '灵动岛外观预览',
+      content: '拖动滑块即可实时预览：高度、宽度、圆角、透明度、字号、主题色、位置与动画。',
+      priority: 'NORMAL',
+      createdAt: new Date().toISOString(),
+      courseName: null,
+      teacherName: '本地预览',
+    },
+    context: { inClass: false, currentPeriodEnd: null },
+  });
+}
+
 onMounted(async () => {
   await loadAppInfo();
   await appStore.refreshCacheStats();
+  await loadIslandAppearance();
 });
 </script>
 
@@ -150,6 +217,118 @@ onMounted(async () => {
           </el-descriptions>
         </el-card>
 
+        <el-card shadow="never" class="mt-12">
+          <template #header>
+            <span>灵动岛 · 个性化</span>
+          </template>
+          <el-form label-width="96px" label-position="left">
+            <el-form-item :label="`高度 ${island.height}px`">
+              <el-slider
+                :model-value="island.height"
+                :min="RANGES.height.min"
+                :max="RANGES.height.max"
+                :step="1"
+                @input="(value: number) => applyIslandAppearance({ height: value })"
+              />
+            </el-form-item>
+            <el-form-item :label="`宽度 ${island.width}px`">
+              <el-slider
+                :model-value="island.width"
+                :min="RANGES.width.min"
+                :max="RANGES.width.max"
+                :step="2"
+                @input="(value: number) => applyIslandAppearance({ width: value })"
+              />
+            </el-form-item>
+            <el-form-item :label="`圆角 ${island.radius}px`">
+              <el-slider
+                :model-value="island.radius"
+                :min="RANGES.radius.min"
+                :max="RANGES.radius.max"
+                :step="1"
+                @input="(value: number) => applyIslandAppearance({ radius: value })"
+              />
+            </el-form-item>
+            <el-form-item :label="`不透明度 ${Math.round(island.opacity * 100)}%`">
+              <el-slider
+                :model-value="island.opacity"
+                :min="RANGES.opacity.min"
+                :max="RANGES.opacity.max"
+                :step="0.05"
+                @input="(value: number) => applyIslandAppearance({ opacity: value })"
+              />
+            </el-form-item>
+            <el-form-item :label="`字号 ${island.fontSize}px`">
+              <el-slider
+                :model-value="island.fontSize"
+                :min="RANGES.fontSize.min"
+                :max="RANGES.fontSize.max"
+                :step="1"
+                @input="(value: number) => applyIslandAppearance({ fontSize: value })"
+              />
+            </el-form-item>
+            <el-form-item :label="`动画速度 ${island.speed.toFixed(1)}x`">
+              <el-slider
+                :model-value="island.speed"
+                :min="RANGES.speed.min"
+                :max="RANGES.speed.max"
+                :step="0.1"
+                @input="(value: number) => applyIslandAppearance({ speed: value })"
+              />
+            </el-form-item>
+            <el-form-item label="主题色">
+              <el-color-picker
+                :model-value="island.accent"
+                @change="(value: string | null) => applyIslandAppearance({ accent: value ?? '#6cc4ff' })"
+              />
+              <span class="text-muted ml-8">用于高亮、按钮与进度条</span>
+            </el-form-item>
+            <el-form-item label="显示位置">
+              <el-select
+                :model-value="island.position"
+                style="width: 180px"
+                @change="(value: IslandPosition) => applyIslandAppearance({ position: value })"
+              >
+                <el-option
+                  v-for="item in positionOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="动画">
+              <el-switch
+                :model-value="island.animations"
+                @change="
+                  (value: boolean | string | number) => applyIslandAppearance({ animations: Boolean(value) })
+                "
+              />
+              <span class="text-muted ml-8">关闭后展开/收起为瞬时生效</span>
+            </el-form-item>
+            <el-form-item label="始终置顶">
+              <el-switch
+                :model-value="island.alwaysOnTop"
+                @change="
+                  (value: boolean | string | number) => applyIslandAppearance({ alwaysOnTop: Boolean(value) })
+                "
+              />
+            </el-form-item>
+          </el-form>
+          <div class="toolbar">
+            <el-button type="primary" :loading="savingIsland" @click="saveIslandAppearance">
+              保存设置
+            </el-button>
+            <el-button @click="testIsland">预览效果</el-button>
+            <el-button @click="resetIslandAppearance">恢复默认</el-button>
+          </div>
+          <el-alert
+            class="mt-12"
+            type="info"
+            :closable="false"
+            title="拖动滑块即为实时预览；保存后写入本地配置，重启客户端仍然生效"
+          />
+        </el-card>
         <el-card shadow="never" class="mt-12">
           <template #header><span>账号信息</span></template>
           <el-descriptions :column="1" border size="small">

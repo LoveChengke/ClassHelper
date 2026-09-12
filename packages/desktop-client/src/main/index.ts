@@ -4,6 +4,7 @@ import { registerIpcHandlers } from './ipc.js';
 import { island, registerIslandIpc } from './island.js';
 import { logger } from './logger.js';
 import { runSmokeTest } from './smoke.js';
+import { createTray, destroyTray, isTrayReady } from './tray.js';
 
 // 主进程由 esbuild 打包为 CommonJS，因此这里可以直接使用 __dirname
 // （dist/main/index.js -> dist/preload/index.js 与 dist/renderer/index.html）
@@ -18,6 +19,9 @@ const smokeProfile = process.env.ELECTRON_SMOKE_PROFILE;
 if (smokeProfile) app.setPath('userData', smokeProfile);
 
 let mainWindow: BrowserWindow | null = null;
+
+/** 是否正在退出：用于区分「关闭窗口 = 隐藏到托盘」与「真正退出」 */
+let isQuitting = false;
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -106,6 +110,25 @@ if (!gotLock) {
       logger.error('灵动岛初始化失败（不影响主功能）', error);
     }
 
+    // 关闭主窗口 → 隐藏到系统托盘（需求 5），只有托盘"退出"才真正结束进程
+    // 注意：必须在冒烟验证之前挂载，否则 close() 会真的销毁窗口
+    mainWindow?.on('close', (event) => {
+      if (isQuitting) return;
+      event.preventDefault();
+      mainWindow?.hide();
+      logger.info('主窗口已隐藏到系统托盘（后台继续运行，左键托盘图标可恢复）');
+    });
+
+    try {
+      createTray({
+        onShow: () => showMainWindow(),
+        onHide: () => mainWindow?.hide(),
+        onQuit: () => quitApp(),
+      });
+    } catch (error) {
+      logger.warn(`系统托盘初始化失败（不影响主功能）：${error instanceof Error ? error.message : error}`);
+    }
+
     if (isSmokeTest) {
       try {
         await runSmokeTest(mainWindow);
@@ -116,13 +139,63 @@ if (!gotLock) {
     }
   });
 
+  /** 显示主窗口（托盘左键 / 托盘菜单 / 二次启动） */
+  function showMainWindow(): void {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      mainWindow = createWindow();
+      void loadRenderer(mainWindow);
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+
+  /**
+   * 退出前的统一资源清理（需求 5：托盘 / 定时器 / 网络连接 / 窗口都不留残留）。
+   * 幂等：托盘退出、before-quit、will-quit 都可能触发。
+   */
+  function shutdownResources(): string {
+    const done: string[] = [];
+    if (isTrayReady()) {
+      destroyTray();
+      done.push('托盘已销毁');
+    }
+    if (island.isReady()) {
+      island.destroy();
+      done.push('灵动岛已销毁');
+    }
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        // 渲染进程随之结束：其中的 Socket.IO 连接、定时器、IndexedDB 句柄一并释放
+        win.destroy();
+        done.push('窗口已销毁');
+      }
+    }
+    return done.length > 0 ? done.join('、') : '无需要清理的资源';
+  }
+
+  /** 真正退出：先清理资源，再 app.quit，并用 app.exit 兜底（确保不留进程） */
+  function quitApp(): void {
+    if (isQuitting) return;
+    isQuitting = true;
+    logger.info(`正在退出：${shutdownResources()}`);
+    app.quit();
+    setTimeout(() => app.exit(0), 1500);
+  }
+
   app.on('window-all-closed', () => {
-    island.destroy();
-    if (process.platform !== 'darwin') app.quit();
+    // 有托盘常驻：窗口全关也不退出，继续后台接收通知
+    logger.info('所有窗口已关闭，程序继续在系统托盘后台运行');
   });
 
   app.on('before-quit', () => {
-    island.destroy();
+    isQuitting = true;
+    shutdownResources();
+  });
+
+  app.on('will-quit', () => {
+    const summary = shutdownResources();
+    logger.info(`应用退出清理：${summary}`);
   });
 
   app.on('activate', async () => {

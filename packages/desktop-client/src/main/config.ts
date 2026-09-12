@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, safeStorage } from 'electron';
-import { DEFAULT_SERVER_URL } from '@classhelper/shared';
+import { DEFAULT_ISLAND_APPEARANCE, DEFAULT_SERVER_URL, type IslandAppearance } from '@classhelper/shared';
 import type { DesktopStoredConfig } from '../types/desktop.js';
 
 interface PersistedConfig {
@@ -10,6 +10,8 @@ interface PersistedConfig {
   /** 加密后的 token（base64）或明文（当系统不支持加密时） */
   token: string | null;
   tokenEncrypted: boolean;
+  /** 个性化设置：灵动岛外观（向后兼容：旧配置文件没有该字段时用默认值补齐） */
+  island?: Partial<IslandAppearance>;
 }
 
 const DEFAULT_CONFIG: PersistedConfig = {
@@ -17,7 +19,34 @@ const DEFAULT_CONFIG: PersistedConfig = {
   username: '',
   token: null,
   tokenEncrypted: false,
+  island: { ...DEFAULT_ISLAND_APPEARANCE },
 };
+
+/** 外观字段的合法区间校验（越界值直接夹紧，避免用户配置破坏灵动岛布局） */
+function normalizeIslandAppearance(input?: Partial<IslandAppearance>): IslandAppearance {
+  const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
+    const numeric = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+    return Math.min(max, Math.max(min, Math.round(numeric * 100) / 100));
+  };
+  const positions: IslandAppearance['position'][] = ['top-center', 'top-left', 'top-right', 'bottom-center'];
+  return {
+    height: clamp(input?.height, 36, 72, DEFAULT_ISLAND_APPEARANCE.height),
+    width: clamp(input?.width, 220, 420, DEFAULT_ISLAND_APPEARANCE.width),
+    radius: clamp(input?.radius, 8, 32, DEFAULT_ISLAND_APPEARANCE.radius),
+    opacity: clamp(input?.opacity, 0.4, 1, DEFAULT_ISLAND_APPEARANCE.opacity),
+    accent:
+      typeof input?.accent === 'string' && /^#[0-9a-fA-F]{6}$/.test(input.accent)
+        ? input.accent
+        : DEFAULT_ISLAND_APPEARANCE.accent,
+    fontSize: clamp(input?.fontSize, 11, 18, DEFAULT_ISLAND_APPEARANCE.fontSize),
+    animations: input?.animations !== false,
+    speed: clamp(input?.speed, 0.5, 2, DEFAULT_ISLAND_APPEARANCE.speed),
+    position: positions.includes(input?.position as IslandAppearance['position'])
+      ? (input?.position as IslandAppearance['position'])
+      : DEFAULT_ISLAND_APPEARANCE.position,
+    alwaysOnTop: input?.alwaysOnTop !== false,
+  };
+}
 
 function configFilePath(): string {
   return path.join(app.getPath('userData'), 'config.json');
@@ -57,6 +86,7 @@ function readPersisted(): PersistedConfig {
       username: typeof parsed.username === 'string' ? parsed.username : '',
       token: typeof parsed.token === 'string' ? parsed.token : null,
       tokenEncrypted: parsed.tokenEncrypted === true,
+      island: normalizeIslandAppearance(parsed.island),
     };
   } catch {
     return { ...DEFAULT_CONFIG };
@@ -76,6 +106,7 @@ export function getConfig(): DesktopStoredConfig {
     serverUrl: persisted.serverUrl,
     username: persisted.username,
     token: decryptToken(persisted),
+    island: normalizeIslandAppearance(persisted.island),
   };
 }
 
@@ -88,6 +119,9 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
   }
   if (typeof patch.username === 'string') {
     persisted.username = patch.username;
+  }
+  if (patch.island !== undefined) {
+    persisted.island = normalizeIslandAppearance({ ...persisted.island, ...patch.island });
   }
   if (patch.token !== undefined) {
     const encrypted = encryptToken(patch.token);

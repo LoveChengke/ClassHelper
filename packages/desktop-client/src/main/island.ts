@@ -1,7 +1,14 @@
 import path from 'node:path';
 import { BrowserWindow, ipcMain, screen } from 'electron';
-import type { IslandMode, IslandNotification, IslandState } from '@classhelper/shared';
+import {
+  DEFAULT_ISLAND_APPEARANCE,
+  type IslandAppearance,
+  type IslandMode,
+  type IslandNotification,
+  type IslandState,
+} from '@classhelper/shared';
 import { logger } from './logger.js';
+import { getConfig } from './config.js';
 
 /**
  * 灵动岛（Dynamic Island）主进程控制器。
@@ -14,18 +21,52 @@ import { logger } from './logger.js';
  * - 上课时间段：非紧急通知不弹出（自动隐藏），进入待发队列
  * - 下课后：自动在桌面中上方弹出队列中的通知详情
  * - 紧急通知：无论是否在上课，立刻展开显示详情，无需点击
+ *
+ * 动画实现要点（需求 4：展开/收起不能抖动）：
+ * - 窗口尺寸用**单一 requestAnimationFrame 循环**插值，不再用 setTimeout 链（避免掉帧与回跳）
+ * - 锚点固定：横向按停靠位置计算、纵向固定，形变过程中卡片上边缘不动
+ * - 卡片本身是固定尺寸（渲染进程），只让窗口露出/裁切，内容不参与布局重排
+ * - 展开完成之后才取焦点（避免取焦瞬间抢走动画帧）
+ * - 关闭动画时直接落到目标尺寸
  */
 
-const SIZES: Record<IslandMode, { width: number; height: number }> = {
-  hidden: { width: 268, height: 44 },
+/** 基础尺寸：真实尺寸 = 外观设置联动计算（见 sizes()） */
+const BASE = {
   pill: { width: 268, height: 44 },
   expanded: { width: 404, height: 316 },
+  urgent: { width: 424, height: 344 },
+  /** "叫人"消息卡片（比普通详情略大，突出"请 XXX 同学找 XXX 老师"） */
+  call: { width: 440, height: 360 },
 };
 
-const URGENT_SIZE = { width: 424, height: 344 };
+/**
+ * 帧调度：优先 requestAnimationFrame（有则最平滑），主进程没有该全局时退化为 ~60fps 定时器。
+ * 关键点不是用哪个 API，而是**始终只有一条动画循环**：每次新动画都会取消上一条并作废令牌，
+ * 结束时再对齐一次最终尺寸，避免累积误差导致边缘"抖一下"。
+ */
+type FrameHandle = number;
+declare const requestAnimationFrame: ((callback: (time: number) => void) => number) | undefined;
+declare const cancelAnimationFrame: ((handle: number) => void) | undefined;
 
-/** "叫人"消息卡片（比普通详情略大，突出"请 XXX 同学找 XXX 老师"） */
-const CALL_SIZE = { width: 440, height: 360 };
+function scheduleFrame(callback: () => void): FrameHandle {
+  if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(() => callback());
+  return setTimeout(callback, 16) as unknown as FrameHandle;
+}
+
+function cancelFrame(handle: FrameHandle): void {
+  if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(handle);
+  else clearTimeout(handle as unknown as ReturnType<typeof setTimeout>);
+}
+
+const DEFAULT_SIZES: Record<IslandMode, { width: number; height: number }> = {
+  hidden: BASE.pill,
+  pill: BASE.pill,
+  expanded: BASE.expanded,
+};
+
+let SIZES: Record<IslandMode, { width: number; height: number }> = { ...DEFAULT_SIZES };
+let URGENT_SIZE = { ...BASE.urgent };
+let CALL_SIZE = { ...BASE.call };
 
 /** 各状态的自动收起/隐藏时长（毫秒），0 表示不自动收起 */
 const TIMEOUTS = {
@@ -67,6 +108,10 @@ class IslandController {
   private boundsToken = 0;
   /** 透明度（淡入淡出）动画令牌，与尺寸动画分开，否则淡入会立刻取消形变 */
   private fadeToken = 0;
+  /** 尺寸动画的 requestAnimationFrame 句柄（需求 4：单循环，避免抖动） */
+  private boundsFrame: number | null = null;
+  /** 外观设置（设置页可调，主进程持久化） */
+  private appearance: IslandAppearance = { ...DEFAULT_ISLAND_APPEARANCE };
 
   private state: IslandState = {
     mode: 'hidden',
@@ -94,6 +139,13 @@ class IslandController {
 
   async init(rendererUrl: string | null): Promise<void> {
     this.rendererUrl = rendererUrl;
+    // 恢复用户保存的个性化外观（尺寸/位置/透明度/动画…），失败则用默认值
+    try {
+      this.appearance = normalizeAppearance({ ...DEFAULT_ISLAND_APPEARANCE, ...getConfig().island });
+    } catch {
+      this.appearance = { ...DEFAULT_ISLAND_APPEARANCE };
+    }
+    recomputeSizes(this.appearance);
     if (this.win && !this.win.isDestroyed()) return;
 
     const win = new BrowserWindow({
@@ -121,7 +173,7 @@ class IslandController {
       },
     });
 
-    win.setAlwaysOnTop(true, 'screen-saver');
+    win.setAlwaysOnTop(this.appearance.alwaysOnTop, 'screen-saver');
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     win.setIgnoreMouseEvents(false);
     win.on('closed', () => {
@@ -164,7 +216,8 @@ class IslandController {
       this.emit(this.pendingState);
       this.pendingState = null;
     }
-    // 首次进入时同步一次当前状态，保证渲染进程不会停在初始默认值
+    // 首次进入时同步一次外观与状态，保证渲染进程不会停在初始默认值
+    this.emitAppearance();
     this.emit();
     logger.info('灵动岛已就绪（置顶透明窗口，顶部居中）');
   }
@@ -349,6 +402,7 @@ class IslandController {
    */
   hideImmediately(): void {
     this.clearTimers();
+    this.cancelBoundsAnimation();
     this.fadeToken += 1;
     const changed = this.state.mode !== 'hidden' || this.state.reason !== null;
     if (changed) {
@@ -363,6 +417,7 @@ class IslandController {
 
   destroy(): void {
     this.clearTimers();
+    this.cancelBoundsAnimation();
     if (this.win && !this.win.isDestroyed()) this.win.destroy();
     this.win = null;
   }
@@ -437,12 +492,25 @@ class IslandController {
     height: number;
   } {
     const area = screen.getPrimaryDisplay().workArea;
-    return {
-      x: Math.round(area.x + (area.width - size.width) / 2),
-      y: area.y + 8,
-      width: size.width,
-      height: size.height,
-    };
+    const margin = 8;
+    let x = Math.round(area.x + (area.width - size.width) / 2);
+    let y = area.y + margin;
+
+    switch (this.appearance.position) {
+      case 'top-left':
+        x = area.x + margin;
+        break;
+      case 'top-right':
+        x = area.x + area.width - size.width - margin;
+        break;
+      case 'bottom-center':
+        y = area.y + area.height - size.height - margin;
+        break;
+      default:
+        break;
+    }
+
+    return { x, y, width: size.width, height: size.height };
   }
 
   /** 状态变更：先通知渲染进程，再驱动窗口尺寸/透明度动画 */
@@ -532,19 +600,31 @@ class IslandController {
 
   private fadeIn(): void {
     if (!this.win || this.win.isDestroyed()) return;
+    const target = this.appearance.opacity;
+    if (!this.appearance.animations) {
+      this.fadeToken += 1;
+      this.win.setOpacity(target);
+      return;
+    }
     const token = ++this.fadeToken;
     let opacity = this.win.getOpacity();
     const step = (): void => {
       if (!this.win || this.win.isDestroyed() || token !== this.fadeToken) return;
-      opacity = Math.min(1, opacity + 0.16);
+      opacity = Math.min(target, opacity + 0.16);
       this.win.setOpacity(opacity);
-      if (opacity < 1) setTimeout(step, 16);
+      if (opacity < target) setTimeout(step, 16);
     };
     step();
   }
 
   private fadeOut(): void {
     if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) return;
+    if (!this.appearance.animations) {
+      this.fadeToken += 1;
+      this.win.hide();
+      this.win.setOpacity(1);
+      return;
+    }
     const token = ++this.fadeToken;
     let opacity = this.win.getOpacity();
     const step = (): void => {
@@ -563,7 +643,12 @@ class IslandController {
 
   /**
    * 尺寸/位置缓动：Windows 下没有原生窗口动画，这里按帧插值实现"形变"效果。
-   * `spring` 使用回弹缓动（轻微过冲后回落），用于"展开成卡片"的弹簧手感。
+   *
+   * 用**单一 requestAnimationFrame 循环**驱动（需求 4）：
+   * - 不再使用 setTimeout 链：避免掉帧、避免"每帧重新排定时器"带来的节奏抖动
+   * - 锚点固定：横向/纵向都由 computeBounds 决定，形变过程中卡片上边缘（或下边缘）不动
+   * - 关闭动画（appearance.animations = false）时直接落到目标尺寸
+   * - `spring` 使用回弹缓动（轻微过冲后回落），用于"展开成卡片"的弹簧手感
    */
   private animateBounds(size: { width: number; height: number }, options: { spring?: boolean } = {}): void {
     if (!this.win || this.win.isDestroyed()) return;
@@ -571,12 +656,19 @@ class IslandController {
     const to = this.computeBounds(size);
     if (from.width === to.width && from.height === to.height && from.x === to.x && from.y === to.y) return;
 
+    this.cancelBoundsAnimation();
     const token = ++this.boundsToken;
+
+    if (!this.appearance.animations) {
+      this.win.setBounds(to);
+      return;
+    }
+
     const spring = options.spring === true;
-    const duration = spring ? 340 : 260;
+    const duration = (spring ? 340 : 260) / Math.max(0.25, this.appearance.speed);
     const startedAt = Date.now();
 
-    const step = (): void => {
+    const frame = (): void => {
       if (!this.win || this.win.isDestroyed() || token !== this.boundsToken) return;
       const progress = Math.min(1, (Date.now() - startedAt) / duration);
       const eased = spring ? easeOutBack(progress) : 1 - Math.pow(1 - progress, 3); // easeOutCubic
@@ -587,10 +679,98 @@ class IslandController {
         height: Math.max(1, Math.round(from.height + (to.height - from.height) * eased)),
       };
       this.win.setBounds(bounds);
-      if (progress < 1) setTimeout(step, 12);
+      if (progress < 1) {
+        this.boundsFrame = scheduleFrame(frame);
+        return;
+      }
+      // 收尾对齐到最终尺寸，避免四舍五入留下 1px 误差（会让卡片边缘"抖一下"）
+      this.win.setBounds(to);
+      this.boundsFrame = null;
+      this.applyFocusable();
     };
-    step();
+    this.boundsFrame = scheduleFrame(frame);
   }
+
+  /** 取消进行中的尺寸动画（帧循环） */
+  private cancelBoundsAnimation(): void {
+    if (this.boundsFrame !== null) {
+      cancelFrame(this.boundsFrame);
+      this.boundsFrame = null;
+    }
+    this.boundsToken += 1;
+  }
+
+  /**
+   * 应用外观设置（设置页实时生效）：尺寸联动、透明度、置顶、动画开关与位置。
+   * 尺寸只改窗口与卡片变量，渲染进程用 CSS 变量适配，不会引发布局错乱。
+   */
+  setAppearance(patch: Partial<IslandAppearance>): void {
+    this.appearance = normalizeAppearance({ ...this.appearance, ...patch });
+    recomputeSizes(this.appearance);
+
+    if (this.win && !this.win.isDestroyed()) {
+      this.win.setAlwaysOnTop(this.appearance.alwaysOnTop, 'screen-saver');
+      if (this.win.isVisible()) {
+        // 显示中：立即应用透明度（隐藏时由 fadeIn 负责）
+        this.win.setOpacity(this.appearance.opacity);
+      }
+    }
+    this.emitAppearance();
+    // 外观变化后按新尺寸重新同步（隐藏态不显示，不做额外动作）
+    if (this.state.mode !== 'hidden') this.syncWindow();
+    logger.info(
+      `灵动岛外观已更新：${this.appearance.width}x${this.appearance.height} 圆角=${this.appearance.radius} ` +
+        `透明度=${this.appearance.opacity} 位置=${this.appearance.position} 动画=${this.appearance.animations} ` +
+        `速度=${this.appearance.speed}`,
+    );
+  }
+
+  getAppearance(): IslandAppearance {
+    return { ...this.appearance };
+  }
+
+  /** 把外观同步给灵动岛渲染进程（CSS 变量） */
+  private emitAppearance(): void {
+    if (!this.win || this.win.isDestroyed() || !this.ready) return;
+    this.win.webContents.send('island:appearance', this.getAppearance());
+  }
+}
+
+/** 按外观设置换算各形态尺寸（胶囊尺寸可调，展开卡按比例联动，保证内容不溢出） */
+export function recomputeSizes(appearance: IslandAppearance): void {
+  const widthDelta = appearance.width - BASE.pill.width;
+  const heightDelta = appearance.height - BASE.pill.height;
+  const grow = (size: { width: number; height: number }): { width: number; height: number } => ({
+    width: Math.max(appearance.width, size.width + widthDelta),
+    height: Math.max(appearance.height, size.height + heightDelta),
+  });
+  SIZES = {
+    hidden: { width: appearance.width, height: appearance.height },
+    pill: { width: appearance.width, height: appearance.height },
+    expanded: grow(BASE.expanded),
+  };
+  URGENT_SIZE = grow(BASE.urgent);
+  CALL_SIZE = grow(BASE.call);
+}
+
+/** 夹紧外观取值（越界值直接收敛，避免用户配置破坏布局） */
+export function normalizeAppearance(input: IslandAppearance): IslandAppearance {
+  const clamp = (value: number, min: number, max: number): number =>
+    Math.min(max, Math.max(min, Math.round(value * 100) / 100));
+  return {
+    height: clamp(input.height, 36, 72),
+    width: clamp(input.width, 220, 420),
+    radius: clamp(input.radius, 8, 32),
+    opacity: clamp(input.opacity, 0.4, 1),
+    accent: /^#[0-9a-fA-F]{6}$/.test(input.accent) ? input.accent : DEFAULT_ISLAND_APPEARANCE.accent,
+    fontSize: clamp(input.fontSize, 11, 18),
+    animations: input.animations !== false,
+    speed: clamp(input.speed, 0.5, 2),
+    position: ['top-center', 'top-left', 'top-right', 'bottom-center'].includes(input.position)
+      ? input.position
+      : 'top-center',
+    alwaysOnTop: input.alwaysOnTop !== false,
+  };
 }
 
 /** 回弹缓动（easeOutBack）：进度超过 1 形成轻微过冲，营造弹簧感 */
@@ -619,6 +799,12 @@ export function registerIslandIpc(): void {
   });
 
   ipcMain.handle('island:get-state', () => island.getState());
+
+  ipcMain.on('island:set-appearance', (_event, patch: Partial<IslandAppearance>) => {
+    if (patch) island.setAppearance(patch);
+  });
+
+  ipcMain.handle('island:get-appearance', () => island.getAppearance());
 
   ipcMain.on('island:action', (_event, payload: IslandActionPayload) => {
     if (!payload?.action) return;

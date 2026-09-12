@@ -24,4 +24,18 @@ const child = spawn(executable, [path.join(root, 'scripts', 'icons', 'render.cjs
   env: resolveElectronEnv(),
 });
 
-child.on('exit', (code) => process.exit(code ?? 1));
+child.on('exit', (code) => {
+  if (code === 0) {
+    // 托盘图标需要一张 PNG 随 renderer 一起打包（Vite 会把 public/ 复制到 dist/renderer）
+    try {
+      const source = path.join(root, 'packages', 'desktop-client', 'build', 'icon.png');
+      const targetDir = path.join(root, 'packages', 'desktop-client', 'public');
+      fs.mkdirSync(targetDir, { recursive: true });
+      fs.copyFileSync(source, path.join(targetDir, 'tray.png'));
+      console.log('[icons] 托盘图标已同步：packages/desktop-client/public/tray.png');
+    } catch (error) {
+      console.warn('[icons] 同步托盘图标失败（不影响构建）', error);
+    }
+  }
+  process.exit(code ?? 1);
+});

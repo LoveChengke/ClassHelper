@@ -2,7 +2,7 @@
  * 主进程与渲染进程之间的桥接契约（preload 通过 contextBridge 暴露）。
  * 渲染进程只依赖这些最小 API，不接触 Node.js。
  */
-import type { IslandNotification, IslandState } from '@classhelper/shared';
+import type { IslandAppearance, IslandNotification, IslandState } from '@classhelper/shared';
 
 export interface DesktopStoredConfig {
   /** 后端服务地址，例如 http://127.0.0.1:4000 */
@@ -11,6 +11,8 @@ export interface DesktopStoredConfig {
   username: string;
   /** 登录令牌（主进程用 safeStorage 加密后落盘，读回时自动解密） */
   token: string | null;
+  /** 个性化设置：灵动岛外观（高度/宽度/圆角/透明度/主题色/字号/动画/位置/置顶） */
+  island: IslandAppearance;
 }
 
 export interface DesktopAppInfo {
@@ -55,6 +57,10 @@ export interface DesktopBridge {
   islandSetClassState(payload: IslandClassStatePayload): void;
   /** 读取灵动岛当前状态（设置页/冒烟验证用） */
   islandGetState(): Promise<IslandState>;
+  /** 应用灵动岛外观设置（实时生效） */
+  islandSetAppearance(appearance: Partial<IslandAppearance>): void;
+  /** 读取当前生效的外观设置 */
+  islandGetAppearance(): Promise<IslandAppearance>;
   /** 订阅"灵动岛点了标为已读"事件，用于同步通知中心 */
   onIslandMarkRead(handler: (id: string) => void): void;
 }
@@ -62,6 +68,9 @@ export interface DesktopBridge {
 /** 灵动岛窗口自身的桥接（只暴露订阅状态与发送操作） */
 export interface IslandRendererBridge {
   onState(handler: (state: IslandState) => void): void;
+  /** 订阅外观设置（CSS 变量实时生效） */
+  onAppearance(handler: (appearance: IslandAppearance) => void): void;
+  getAppearance(): Promise<IslandAppearance>;
   sendAction(action: 'expand' | 'collapse' | 'dismiss' | 'mark-read' | 'open-app', id?: string): void;
   getState(): Promise<IslandState>;
 }

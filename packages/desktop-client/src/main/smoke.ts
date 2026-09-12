@@ -5,6 +5,7 @@ import type { BrowserWindow, NativeImage } from 'electron';
 import type { IslandNotification } from '@classhelper/shared';
 import { getDiagnostics } from './ipc.js';
 import { island, ISLAND_CALL_SIZE, ISLAND_SIZES, ISLAND_URGENT_SIZE } from './island.js';
+import { destroyTray, getTrayState, isTrayReady } from './tray.js';
 
 interface SmokeResult {
   name: string;
@@ -175,7 +176,11 @@ function makeNotification(
  * 5. 点击卡片空白处 / 右上角收起按钮 → 回缩为胶囊
  * 6. 上课时间段内点击胶囊不会展开（上课不显示灵动岛）
  */
-async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promise<void> {
+async function runIslandChecks(
+  mainWin: BrowserWindow,
+  record: Recorder,
+  results: SmokeResult[],
+): Promise<void> {
   record('灵动岛窗口已创建（置顶/透明/不占任务栏）', island.isReady(), `ready=${island.isReady()}`);
   if (!island.isReady()) return;
 
@@ -449,7 +454,13 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
     },
     { inClass: true },
   );
-  await sleep(900);
+  // 采样状态轨迹，便于定位"出现了又被隐藏"这类时序问题
+  const callTrace: string[] = [];
+  for (let index = 0; index < 9; index += 1) {
+    await sleep(100);
+    const snapshot = island.getState();
+    callTrace.push(`${snapshot.mode}/${snapshot.reason ?? '-'}`);
+  }
   const callState = island.getState();
   const callDom = await islandWindow?.webContents.executeJavaScript(
     `(() => ({
@@ -524,6 +535,126 @@ async function runIslandChecks(record: Recorder, results: SmokeResult[]): Promis
     urgentShot !== undefined && edgeReddish === 0 && urgentReddish > 200,
     `紧急态偏红=${urgentReddish} 最外圈偏红=${edgeReddish}（要求 0）`,
   );
+
+  // 8) 个性化外观：高度/宽度/圆角/字号/透明度/动画速度实时生效，且不破坏布局
+  const appearanceBefore = island.getAppearance();
+  island.setAppearance({ height: 56, width: 300, radius: 26, fontSize: 14, opacity: 0.92, speed: 1.5 });
+  island.handleAction({ action: 'dismiss' });
+  await sleep(300);
+  island.pushNotification(makeNotification('smoke-appearance', 'NORMAL', '外观设置校验'), {
+    inClass: false,
+  });
+  await sleep(600);
+  const pillBounds = islandWindow?.getBounds();
+  const cssVars = await islandWindow?.webContents.executeJavaScript(
+    `(() => {
+       const style = getComputedStyle(document.documentElement);
+       const card = document.querySelector('.island-card');
+       return {
+         h: style.getPropertyValue('--island-h').trim(),
+         w: style.getPropertyValue('--island-w').trim(),
+         radius: style.getPropertyValue('--island-radius').trim(),
+         font: style.getPropertyValue('--island-font').trim(),
+         accent: style.getPropertyValue('--island-accent').trim(),
+         cardHeight: card ? Math.round(card.getBoundingClientRect().height) : 0,
+       };
+     })()`,
+  );
+  record(
+    '个性化外观生效（高度/宽度/圆角/字号 → 窗口与卡片同步）',
+    pillBounds?.width === 300 &&
+      pillBounds?.height === 56 &&
+      cssVars?.h === '56px' &&
+      cssVars?.w === '300px' &&
+      cssVars?.radius === '26px' &&
+      cssVars?.font === '14px',
+    `窗口=${pillBounds?.width ?? '-'}x${pillBounds?.height ?? '-'} CSS变量 h=${cssVars?.h} w=${cssVars?.w} ` +
+      `圆角=${cssVars?.radius} 字号=${cssVars?.font} 卡片高=${cssVars?.cardHeight}`,
+  );
+
+  // 展开后内容不溢出（高度调大也不能出现内容超出卡片）
+  island.handleAction({ action: 'expand' });
+  await sleep(700);
+  const overflowCheck = await islandWindow?.webContents.executeJavaScript(
+    `(() => {
+       const card = document.querySelector('.island-card.expanded');
+       if (!card) return null;
+       return {
+         overflow: card.scrollHeight - card.clientHeight,
+         width: Math.round(card.getBoundingClientRect().width),
+         height: Math.round(card.getBoundingClientRect().height),
+       };
+     })()`,
+  );
+  record(
+    '调整尺寸后内容不溢出',
+    Boolean(overflowCheck) && overflowCheck.overflow <= 1,
+    `卡片=${overflowCheck?.width ?? '-'}x${overflowCheck?.height ?? '-'} 溢出=${overflowCheck?.overflow ?? '-'}px`,
+  );
+
+  // 9) 抖动修复（需求 4）：只量"收回"过程
+  //    - 窗口宽度必须单调收缩（由主进程 rAF 循环驱动，不回跳）
+  //    - 卡片布局尺寸用 offsetWidth/offsetTop（不含 CSS transform），只允许在"详情/胶囊"两种固定值间切换
+  island.setAppearance(appearanceBefore);
+  await sleep(300);
+  island.handleAction({ action: 'expand' });
+  await sleep(700);
+  const jitterSamples: { win: number; cardWidth: number; cardTop: number }[] = [];
+  const jitterSampler = setInterval(() => {
+    const winWidth = islandWindow?.getBounds().width ?? 0;
+    void islandWindow?.webContents
+      .executeJavaScript(
+        `(() => {
+           const card = document.querySelector('.island-card');
+           return card ? { width: card.offsetWidth, top: card.offsetTop } : null;
+         })()`,
+      )
+      .then((value: { width: number; top: number } | null) => {
+        if (value) jitterSamples.push({ win: winWidth, cardWidth: value.width, cardTop: value.top });
+      })
+      .catch(() => undefined);
+  }, 30);
+  island.handleAction({ action: 'collapse' });
+  await sleep(800);
+  clearInterval(jitterSampler);
+
+  const winSequence = jitterSamples.map((item) => item.win);
+  const monotonicShrink = winSequence.every(
+    (width, index) => index === 0 || width <= (winSequence[index - 1] ?? width) + 1,
+  );
+  const cardTops = jitterSamples.map((item) => item.cardTop);
+  const topSpread = cardTops.length > 0 ? Math.max(...cardTops) - Math.min(...cardTops) : 99;
+  const cardWidths = [...new Set(jitterSamples.map((item) => item.cardWidth))];
+  const expectedWidths = [ISLAND_SIZES.expanded.width - 8, ISLAND_SIZES.pill.width - 8];
+  const widthOk = cardWidths.every((width) => expectedWidths.includes(width));
+  record(
+    '收回过程不抖动（窗口宽度单调收缩 + 卡片布局尺寸不拉伸）',
+    jitterSamples.length >= 4 && monotonicShrink && topSpread <= 1 && widthOk && cardWidths.length <= 2,
+    `采样=${jitterSamples.length} 窗口序列=[${winSequence.join(',')}] 单调收缩=${monotonicShrink} ` +
+      `卡片上边缘波动=${topSpread}px 卡片宽度集合=[${cardWidths.join(',')}]（期望 ${expectedWidths.join('/')}）`,
+  );
+  // 10) 连续快速开合：最终状态与尺寸必须稳定
+  for (let index = 0; index < 5; index += 1) {
+    island.handleAction({ action: 'expand' });
+    await sleep(45);
+    island.handleAction({ action: 'collapse' });
+    await sleep(45);
+  }
+  await sleep(600);
+  const rapidState = island.getState();
+  const rapidBounds = islandWindow?.getBounds();
+  const currentAppearance = island.getAppearance();
+  record(
+    '连续快速展开/收起后状态与尺寸稳定',
+    rapidState.mode === 'pill' &&
+      rapidBounds?.width === currentAppearance.width &&
+      rapidBounds?.height === currentAppearance.height,
+    `mode=${rapidState.mode} 窗口=${rapidBounds?.width ?? '-'}x${rapidBounds?.height ?? '-'}` +
+      `（期望 ${currentAppearance.width}x${currentAppearance.height}）`,
+  );
+
+  island.setAppearance(appearanceBefore);
+  await sleep(300);
 
   // 收尾：隐藏灵动岛，避免影响后续用例
   island.handleAction({ action: 'dismiss' });
@@ -626,6 +757,35 @@ async function runIslandRealtimeCheck(
  * 结果同时输出到 stdout，并在设置 ELECTRON_SMOKE_RESULT 时写入 JSON 文件 ——
  * 打包后的 Windows GUI 进程没有 stdout，用结果文件才能在 CI/脚本里验证安装包。
  */
+
+/**
+ * 托盘与退出清理校验（需求 5）。
+ * 这两个用例会隐藏主窗口并销毁托盘/灵动岛，因此必须放在所有依赖它们的用例之后。
+ */
+async function runTrayAndShutdownChecks(mainWin: BrowserWindow, record: Recorder): Promise<void> {
+  // 11) 关闭到托盘：窗口关闭后进程存活、托盘仍在；清理后资源归零
+  const trayBefore = getTrayState();
+  mainWin.close();
+  await sleep(500);
+  const afterClose = { visible: mainWin.isVisible(), destroyed: mainWin.isDestroyed(), alive: app.isReady() };
+  record(
+    '关闭窗口隐藏到托盘（进程继续后台运行）',
+    trayBefore.ready === true &&
+      afterClose.visible === false &&
+      afterClose.destroyed === false &&
+      afterClose.alive === true,
+    `托盘就绪=${trayBefore.ready} 有图标=${trayBefore.hasIcon} 关闭后 visible=${afterClose.visible} destroyed=${afterClose.destroyed} 进程存活=${afterClose.alive}`,
+  );
+
+  destroyTray();
+  island.destroy();
+  await sleep(200);
+  record(
+    '退出前资源清理（托盘/灵动岛已释放）',
+    isTrayReady() === false && island.isReady() === false,
+    `托盘=${isTrayReady()} 灵动岛=${island.isReady()}`,
+  );
+}
 export async function runSmokeTest(win: BrowserWindow): Promise<void> {
   const results: SmokeResult[] = [];
   const record = (name: string, ok: boolean, detail = ''): void => {
@@ -744,7 +904,7 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
   record('断网时回退到本地缓存', Boolean(offline?.ok), String(offline?.detail ?? ''));
 
   // ---------------------------------------------------------------- 灵动岛
-  await runIslandChecks(record, results);
+  await runIslandChecks(win, record, results);
 
   // 可选：对真实后端做联网集成自检（ELECTRON_SMOKE_ONLINE=1 时启用）
   if (process.env.ELECTRON_SMOKE_ONLINE === '1') {
@@ -796,6 +956,9 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     );
     record('冒烟收尾：清理登录态', Boolean(cleanup?.ok), String(cleanup?.detail ?? ''));
   }
+
+  // 托盘与退出清理放在最后：会隐藏主窗口并销毁托盘/灵动岛
+  await runTrayAndShutdownChecks(win, record);
 
   const failed = results.filter((item) => !item.ok);
   const passed = results.length - failed.length;

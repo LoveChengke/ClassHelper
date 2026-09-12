@@ -1,6 +1,8 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import {
+  DEFAULT_ISLAND_APPEARANCE,
+  type IslandAppearance,
   PRIORITY_LABELS,
   formatDate,
   type IslandNotification,
@@ -111,12 +113,31 @@ function openApp(): void {
   bridge?.sendAction('open-app');
 }
 
+/** 个性化外观：主进程下发后写入 CSS 变量，卡片尺寸/圆角/字号/主题色随之实时变化 */
+const appearance = ref<IslandAppearance>({ ...DEFAULT_ISLAND_APPEARANCE });
+
+function applyAppearance(next: IslandAppearance | null | undefined): void {
+  if (!next) return;
+  appearance.value = next;
+  const style = document.documentElement.style;
+  style.setProperty('--island-accent', next.accent);
+  style.setProperty('--island-radius', `${next.radius}px`);
+  style.setProperty('--island-font', `${next.fontSize}px`);
+  style.setProperty('--island-w', `${next.width}px`);
+  style.setProperty('--island-h', `${next.height}px`);
+  style.setProperty('--island-anim', next.animations ? '1' : '0');
+}
+
 onMounted(async () => {
   bridge?.onState((next) => {
     state.value = next;
   });
   const initial = await bridge?.getState();
   if (initial) state.value = initial;
+  // 外观：先同步一次，再订阅后续改动
+  bridge?.onAppearance((next) => applyAppearance(next));
+  const initialAppearance = await bridge?.getAppearance?.();
+  applyAppearance(initialAppearance);
 });
 </script>
 
@@ -260,6 +281,13 @@ body,
   background: transparent;
   overflow: hidden;
   font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  /* 个性化外观默认值（主进程会通过 island:appearance 覆盖这些变量） */
+  --island-accent: #6cc4ff;
+  --island-radius: 20px;
+  --island-font: 13px;
+  --island-w: 268px;
+  --island-h: 44px;
+  font-size: var(--island-font);
   -webkit-user-select: none;
   user-select: none;
 }
@@ -298,30 +326,30 @@ body,
 
 /* 各形态固定尺寸（与主进程 ISLAND_SIZES 对齐：卡片刻意比窗口小 4~8px，四周留 2~4px 透明边） */
 .island-card.pill {
-  left: calc(50% - 130px);
-  width: 260px;
-  height: 38px;
-  border-radius: 20px;
+  left: calc(50% - var(--island-w) / 2 + 4px);
+  width: calc(var(--island-w) - 8px);
+  height: calc(var(--island-h) - 6px);
+  border-radius: var(--island-radius);
 }
 
 .island-card.expanded {
-  left: calc(50% - 198px);
-  width: 396px;
-  height: 308px;
-  border-radius: 24px;
+  left: calc(50% - (var(--island-w) + 136px) / 2 + 4px);
+  width: calc(var(--island-w) + 128px);
+  height: calc(var(--island-h) + 264px);
+  border-radius: var(--island-radius);
 }
 
 .island-card.expanded.urgent {
-  left: calc(50% - 208px);
-  width: 416px;
-  height: 336px;
+  left: calc(50% - (var(--island-w) + 156px) / 2 + 4px);
+  width: calc(var(--island-w) + 148px);
+  height: calc(var(--island-h) + 292px);
 }
 
 /* 叫人：卡片略大（对应主进程 CALL_SIZE 440x360） */
 .island-card.expanded.call {
-  left: calc(50% - 216px);
-  width: 432px;
-  height: 352px;
+  left: calc(50% - (var(--island-w) + 172px) / 2 + 4px);
+  width: calc(var(--island-w) + 164px);
+  height: calc(var(--island-h) + 308px);
 }
 
 /* 隐藏态占位：只保留结构，不占视觉空间 */
@@ -457,8 +485,8 @@ body,
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  color: #9fd0ff;
-  background: rgba(79, 172, 254, 0.14);
+  color: var(--island-accent);
+  background: color-mix(in srgb, var(--island-accent) 16%, transparent);
   flex: 0 0 auto;
 }
 
@@ -664,7 +692,7 @@ body,
 
 .more {
   font-size: 11px;
-  color: #9fd0ff;
+  color: var(--island-accent);
 }
 
 .more.muted {
@@ -702,7 +730,7 @@ body,
 
 .solid-btn {
   color: #06263f;
-  background: #6cc4ff;
+  background: var(--island-accent);
   font-weight: 650;
 }
 

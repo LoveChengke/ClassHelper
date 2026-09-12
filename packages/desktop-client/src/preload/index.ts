@@ -29,6 +29,10 @@ const bridge: DesktopBridge = {
     ipcRenderer.send('island:class-state', payload);
   },
   islandGetState: () => ipcRenderer.invoke('island:get-state'),
+  islandSetAppearance: (appearance): void => {
+    ipcRenderer.send('island:set-appearance', appearance);
+  },
+  islandGetAppearance: () => ipcRenderer.invoke('island:get-appearance'),
   /** 灵动岛点了"标为已读"：主进程转交渲染进程同步通知中心 */
   onIslandMarkRead: (handler: (id: string) => void): void => {
     ipcRenderer.on('island:mark-read', (_event, id: string) => handler(id));

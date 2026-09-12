@@ -377,6 +377,33 @@ export interface IslandNotification {
   subtitle?: string | null;
 }
 
+/** 灵动岛外观设置（设置页可调，主进程持久化并按此驱动窗口与渲染进程） */
+export interface IslandAppearance {
+  /** 胶囊高度（px，36~72）：展开卡高度按比例联动，保证布局不错乱 */
+  height: number;
+  /** 胶囊宽度（px，220~420） */
+  width: number;
+  /** 卡片圆角（px，8~32） */
+  radius: number;
+  /** 整体不透明度（0.4~1） */
+  opacity: number;
+  /** 主题色（强调色，用于高亮与按钮） */
+  accent: string;
+  /** 基础字号（px，11~18） */
+  fontSize: number;
+  /** 是否启用动画（关闭后展开/收起为瞬时） */
+  animations: boolean;
+  /** 动画速度倍率（0.5 慢 ~ 2 快） */
+  speed: number;
+  /** 显示位置 */
+  position: IslandPosition;
+  /** 是否始终置顶 */
+  alwaysOnTop: boolean;
+}
+
+/** 灵动岛停靠位置 */
+export type IslandPosition = 'top-center' | 'top-left' | 'top-right' | 'bottom-center';
+
 /** 灵动岛当前状态（主进程持有，渲染进程与冒烟测试读取） */
 export interface IslandState {
   mode: IslandMode;

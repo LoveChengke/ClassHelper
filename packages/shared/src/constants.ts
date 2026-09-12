@@ -1,4 +1,4 @@
-﻿import type { NotificationPriority, UserRole } from './types.js';
+import type { NotificationPriority, UserRole } from './types.js';
 
 /** API 前缀 */
 export const API_PREFIX = '/api';
@@ -64,6 +64,39 @@ export const WEEKDAY_LABELS: Record<number, string> = {
 
 export const WEEKDAYS: readonly number[] = [1, 2, 3, 4, 5, 6, 7];
 
+/** 灵动岛默认外观（设置页个性化项的初始值，也是区间校验的单一来源） */
+export const DEFAULT_ISLAND_APPEARANCE = {
+  height: 44,
+  width: 268,
+  radius: 20,
+  opacity: 1,
+  accent: '#6cc4ff',
+  fontSize: 13,
+  animations: true,
+  speed: 1,
+  position: 'top-center',
+  alwaysOnTop: true,
+} as const;
+
+/** 个性化设置项的合法区间（前端滑块与后端校验共用，避免越界导致布局错乱） */
+export const ISLAND_APPEARANCE_RANGES = {
+  height: { min: 36, max: 72 },
+  width: { min: 220, max: 420 },
+  radius: { min: 8, max: 32 },
+  opacity: { min: 0.4, max: 1 },
+  fontSize: { min: 11, max: 18 },
+  speed: { min: 0.5, max: 2 },
+} as const;
+
+/** 停靠位置可选值 */
+export const ISLAND_POSITIONS = ['top-center', 'top-left', 'top-right', 'bottom-center'] as const;
+
+export const ISLAND_POSITION_LABELS: Record<(typeof ISLAND_POSITIONS)[number], string> = {
+  'top-center': '顶部居中',
+  'top-left': '左上角',
+  'top-right': '右上角',
+  'bottom-center': '底部居中',
+};
 /** 默认学期周次上限 */
 export const DEFAULT_WEEK_COUNT = 20;
 
