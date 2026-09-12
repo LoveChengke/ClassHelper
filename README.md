@@ -75,7 +75,7 @@ class-helper/
     │   ├── prisma/migrations/           # 迁移历史（已生成并应用）
     │   ├── prisma/seed.ts               # 种子数据
     │   ├── prisma.config.ts             # Prisma 7 配置（迁移/种子/连接串）
-    │   ├── scripts/verify-e2e.mjs       # 后端端到端验收脚本（62 项）
+    │   ├── scripts/verify-e2e.mjs       # 后端端到端验收脚本（107 项）
     │   └── src/
     │       ├── app.ts                   # Express 装配（静态托管 + 探针 + 限流 + 模块挂载）
     │       ├── index.ts                 # 启动入口（自检/初始化 + HTTP + Socket.IO + 优雅退出）
@@ -171,12 +171,12 @@ pnpm verify:desktop
 
 ```bash
 # 另开一个终端先启动后端：pnpm dev:server
-pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC + 上课时段拦截 + 叫人：82 项
-pnpm verify:web          # Web 管理端真实点击（含权限入口隐藏、手机适配、叫人入口、紧急通知）：17 项
+pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC + 上课时段拦截 + 叫人 + 导入：107 项
+pnpm verify:web          # Web 管理端真实点击（含权限入口隐藏、手机适配、叫人入口、紧急通知 + 导入弹窗）：18 项
 pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读/作业/叫人、真实链路、课表时间轴、个性化与托盘）：40 项
 ```
 
-后端脚本验证**实时推送时延、作业完成、成绩下发、权限隔离、上课时段紧急通知拦截**等 62 项，
+后端脚本验证**实时推送时延、作业完成、成绩下发、权限隔离、上课时段紧急通知拦截、导入与失败回滚**等 107 项，
 实测通知 37ms、作业 26ms、成绩 25ms 到达（要求 < 5 秒），紧急通知 409 拦截与二次确认后发布均通过；
 客户端脚本验证 preload 桥接、渲染进程、IndexedDB 读写、断网回退、**灵动岛四种状态切换**与联网集成
 （登录 + 四类数据 + Socket.IO），实测 26/26 通过。
@@ -202,30 +202,30 @@ pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读
 
 ## 常用命令
 
-| 命令                                        | 说明                                                                      |
-| ------------------------------------------- | ------------------------------------------------------------------------- |
-| `pnpm dev`                                  | 并行启动 shared(tsc watch) + 后端 + Web 端                                |
-| `pnpm dev:server` / `pnpm dev:web`          | 只启动后端 / 只启动 Web 端                                                |
-| `pnpm dev:desktop`                          | 启动 EXE 客户端开发模式（Vite 5174 + Electron，热更新）                   |
-| `pnpm build`                                | 构建 shared + 后端 + Web 端 + EXE 客户端                                  |
-| `pnpm build:desktop`                        | 仅构建 EXE 客户端（esbuild 主进程/preload + Vite 渲染进程）               |
-| `pnpm icons`                                | 生成应用图标（PNG/ICO，用 Electron 渲染 SVG）                             |
-| **`pnpm dist:server`**                      | **打包服务端 + Web 管理端**（免安装目录 + NSIS 安装程序，内置 Node）      |
-| `pnpm dist:dir`                             | 打包客户端免安装目录 `release/win-unpacked`（含可执行文件，最快）         |
-| `pnpm dist:win`                             | 打包客户端 nsis 安装包 + portable 单文件 EXE                              |
-| `pnpm dist:all`                             | 服务端安装程序 + 客户端安装程序一起打                                     |
-| `pnpm verify:e2e`                           | 后端端到端验收（82 项，含角色权限矩阵，需服务端已启动）                   |
-| `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，17 项，含权限入口隐藏）        |
-| `pnpm verify:desktop`                       | EXE 客户端冒烟验证（34 项，含灵动岛动画/收回/已读/作业/叫人、课表时间轴） |
-| `pnpm typecheck`                            | 全仓库类型检查（含 `vue-tsc`）                                            |
-| `pnpm lint` / `pnpm lint:fix`               | ESLint 检查 / 自动修复                                                    |
-| `pnpm format` / `pnpm format:check`         | Prettier 格式化 / 检查                                                    |
-| `pnpm db:generate`                          | 生成 Prisma Client（输出到 `packages/server/src/generated/prisma`）       |
-| `pnpm db:migrate`                           | 创建并应用迁移                                                            |
-| `pnpm db:seed`                              | 写入种子数据                                                              |
-| `pnpm db:reset`                             | 重置数据库并重新执行 seed                                                 |
-| `pnpm db:studio`                            | 打开 Prisma Studio                                                        |
-| `pnpm db:switch:mysql` / `db:switch:sqlite` | 切换数据库 provider                                                       |
+| 命令                                        | 说明                                                                         |
+| ------------------------------------------- | ---------------------------------------------------------------------------- |
+| `pnpm dev`                                  | 并行启动 shared(tsc watch) + 后端 + Web 端                                   |
+| `pnpm dev:server` / `pnpm dev:web`          | 只启动后端 / 只启动 Web 端                                                   |
+| `pnpm dev:desktop`                          | 启动 EXE 客户端开发模式（Vite 5174 + Electron，热更新）                      |
+| `pnpm build`                                | 构建 shared + 后端 + Web 端 + EXE 客户端                                     |
+| `pnpm build:desktop`                        | 仅构建 EXE 客户端（esbuild 主进程/preload + Vite 渲染进程）                  |
+| `pnpm icons`                                | 生成应用图标（PNG/ICO，用 Electron 渲染 SVG）                                |
+| **`pnpm dist:server`**                      | **打包服务端 + Web 管理端**（免安装目录 + NSIS 安装程序，内置 Node）         |
+| `pnpm dist:dir`                             | 打包客户端免安装目录 `release/win-unpacked`（含可执行文件，最快）            |
+| `pnpm dist:win`                             | 打包客户端 nsis 安装包 + portable 单文件 EXE                                 |
+| `pnpm dist:all`                             | 服务端安装程序 + 客户端安装程序一起打                                        |
+| `pnpm verify:e2e`                           | 后端端到端验收（107 项，含角色权限矩阵与导入，需服务端已启动）               |
+| `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，18 项，含权限入口隐藏与导入弹窗） |
+| `pnpm verify:desktop`                       | EXE 客户端冒烟验证（40 项，含灵动岛动画/收回/已读/作业/叫人、课表时间轴）    |
+| `pnpm typecheck`                            | 全仓库类型检查（含 `vue-tsc`）                                               |
+| `pnpm lint` / `pnpm lint:fix`               | ESLint 检查 / 自动修复                                                       |
+| `pnpm format` / `pnpm format:check`         | Prettier 格式化 / 检查                                                       |
+| `pnpm db:generate`                          | 生成 Prisma Client（输出到 `packages/server/src/generated/prisma`）          |
+| `pnpm db:migrate`                           | 创建并应用迁移                                                               |
+| `pnpm db:seed`                              | 写入种子数据                                                                 |
+| `pnpm db:reset`                             | 重置数据库并重新执行 seed                                                    |
+| `pnpm db:studio`                            | 打开 Prisma Studio                                                           |
+| `pnpm db:switch:mysql` / `db:switch:sqlite` | 切换数据库 provider                                                          |
 
 ## Web 管理端（含手机小屏适配）
 
@@ -261,7 +261,7 @@ pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读
 实现位置：`src/composables/useResponsive.ts`（断点 + resize 监听）、`src/layouts/AdminLayout.vue`（抽屉/顶栏）、
 `src/styles/index.css`（全局响应式规则）、各视图表格卡片加 `.table-card`。
 
-`pnpm verify:web` 的 17 项里，最后 9 项专门验证权限入口隐藏、手机端与叫人入口（Electron 真实点击）：
+`pnpm verify:web` 的 18 项里，最后 10 项专门验证权限入口隐藏、手机端、叫人入口与 ClassIsland 时间配置导入弹窗（Electron 真实点击）：
 
 | 校验项                                 | 实测结果                                                             |
 | -------------------------------------- | -------------------------------------------------------------------- |
@@ -531,49 +531,102 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 回归测试：`verify:e2e` 覆盖 409 拦截 / 二次确认后 201 / 普通通知不受限（用 `at` 固定时刻，结果可复现）；
 `verify:web` 用真实点击构造"正在上课"场景并断言全屏警告文案、按钮禁用与倒计时时长（实测 ~2.96s）。
 
+## 导入（成绩 / 名单表格 + ClassIsland 时间配置）
+
+三条导入链路都在服务端完成解析、校验与去重，前端只负责收集文件与展示结果，
+因此 Web 端、客户端与后续接口调用者拿到的是**同一套规则与同一份结果统计**。
+
+### 1. 成绩表格导入（管理员）
+
+界面：Web 管理端 →「成绩录入」→「导入表格」（组件 `packages/web-admin/src/components/TableImportDialog.vue`）。
+
+1. **下载模板**：`GET /imports/template?kind=grades&format=xlsx|csv`
+   模板列：`学生用户名 / 学生姓名 / 考试名称 / 分数 / 总分 / 课程`（CSV 带 BOM，Excel 直接双击不乱码）。
+2. **上传预览**：`POST /imports/table/preview` → 列名、前 20 行、`totalRows`、**建议字段映射**与校验问题。
+   - 支持 `.xlsx / .xls / .csv / .tsv`（SheetJS，自动识别分隔符），上限 8MB；
+   - 列名按同义词自动映射（如「学号→学生用户名」「得分→分数」「满分→总分」），也可手动改；
+   - 缺必填列（考试名称、分数）不会静默通过，直接给出"缺少必填列「…」"提示。
+3. **确认导入**：`POST /imports/table/commit`，参数 `mapping`（规范字段 → 列名）+ `mode`：
+   - `upsert`（默认）已存在则更新；`append` 已存在则跳过；
+   - 成绩重复判定：**同班级 + 同学生 + 同考试 + 同课程**；学生按「用户名」优先、「姓名」兜底匹配；
+   - 返回 `{ total, inserted, updated, skipped, failed, errors[], warnings[] }`，
+     `errors[].row` 是 **Excel 视角的行号**（含表头），便于老师改完再导。
+
+### 2. 学生名单导入（管理员）
+
+界面：Web 管理端 →「学生管理」→「导入名单」（复用同一组件，`kind=students`）。
+
+- 模板列：`用户名 / 姓名 / 初始密码`；用户名必须匹配 `^[A-Za-z0-9_.-]{3,32}$`；
+- 重复判定：同一用户名（`append` 跳过 / `upsert` 更新姓名与班级）；
+- 密码留空使用 `DEFAULT_STUDENT_PASSWORD`，服务端 bcrypt 加密后入库；
+- 用户名被教师/管理员账号占用时该行进错误行，不会覆盖他人账号。
+
+### 3. ClassIsland 课表时间配置导入（管理员 / 本班班主任）
+
+界面：Web 管理端 →「课表管理」→「导入时间配置」
+（组件 `packages/web-admin/src/components/TimeLayoutImportDialog.vue`）。
+
+- **输入**：粘贴 JSON 文本或选择 ClassIsland 导出的 `.json` 文件；
+- **容错解析**（`packages/server/src/modules/imports/time-layout.service.ts`）：
+  顶层数组、`{ TimeLayouts: [...] }`、`{ TimeLayoutItems | Items | items | Layouts | TimeLayout: [...] }` 都能识别；
+  时间支持 `"8:0:0"` / `"08:00"` / ISO 字符串 / `StartSecond: 28800` 秒数；字段名兼容
+  `StartTime|startTime|start`、`EndTime|end`、`Name|Title|Subject`、`TimeType|Type`、`IsSkipped|skip`；
+- **校验**：时间无法解析、结束不晚于开始、空配置都会给出**逐条原因**（含条序号与名称）；
+  时间重叠、分割线无时间、原配置标记跳过等只作为 `warnings`；
+- **写入模式**：
+  - `replace`：整体替换该班同名（缺省「默认时间表」）配置；
+  - `merge`：以**开始时间**为槽位标识合并——同槽位被导入项覆盖，其它旧节次全部保留（不静默丢数据）；
+- **失败回滚**：解析存在 `errors` 时返回 400 `IMPORT_INVALID` / `IMPORT_EMPTY`，
+  **数据库完全不写入**，界面会提示"原有配置不会被修改"，不会出现导入到一半的脏状态。
+
 ## REST API 一览
 
 统一响应体：`{ "success": true, "data": {}, "message": "" }`（错误为 `success:false` + `code`）。
 所有接口前缀 `/api`，除登录外均需 `Authorization: Bearer <token>`。
 
-| 方法                        | 路径                                                     | 权限            | 说明                                                                             |
-| --------------------------- | -------------------------------------------------------- | --------------- | -------------------------------------------------------------------------------- |
-| POST                        | `/auth/login`                                            | 公开            | 登录，返回 token + 用户信息                                                      |
-| GET                         | `/auth/me`                                               | 登录            | 当前用户（学生附带班级/年级）                                                    |
-| PATCH                       | `/auth/password`                                         | 登录            | 修改自己的密码                                                                   |
-| POST                        | `/auth/logout`                                           | 登录            | 退出（无状态，客户端丢弃 token）                                                 |
-| GET                         | `/classes`                                               | 登录            | 班级列表（按权限收敛）                                                           |
-| GET                         | `/classes/:id`                                           | 班级可见        | 班级详情（学生/课程/协作教师）                                                   |
-| POST / PATCH / DELETE       | `/classes` `/classes/:id`                                | 教师/管理员     | 班级增删改                                                                       |
-| GET / POST                  | `/classes/:id/students`                                  | 班级可见 / 可写 | 学生名单 / 添加学生（已存在账号直接转入）                                        |
-| DELETE                      | `/classes/:id/students/:userId`                          | 教师/管理员     | 移出学生                                                                         |
-| POST / DELETE               | `/classes/:id/teachers[/:teacherId]`                     | 教师/管理员     | 分配 / 取消协作教师                                                              |
-| GET / POST / PATCH / DELETE | `/courses`                                               | 登录 / 教师     | 课程管理                                                                         |
-| GET                         | `/schedules?classId=&week=&dayOfWeek=`                   | 登录            | 课表列表（week 过滤周次范围）                                                    |
-| GET                         | `/schedules/grid?classId=&week=`                         | 登录            | 周视图（7 列结构，供客户端直接渲染）                                             |
-| GET                         | `/schedules/current?classId=&at=`                        | 登录            | 当前上课状态（`inClass` / `current` / `next`；`at` 为诊断用时间覆盖）            |
-| POST / PATCH / DELETE       | `/schedules`                                             | 教师/管理员     | 课表增删改（广播 `schedule:updated`）                                            |
-| GET                         | `/homeworks?classId=&courseId=&pendingOnly=&keyword=`    | 登录            | 作业列表（学生带完成状态，教师带完成人数）                                       |
-| GET                         | `/homeworks/:id`                                         | 班级可见        | 作业详情                                                                         |
-| POST / PATCH / DELETE       | `/homeworks`                                             | 教师/管理员     | 发布/修改/删除（广播 `homework:new` / `homework:updated`）                       |
-| PATCH                       | `/homeworks/:id/status`                                  | 登录            | 标记完成/取消（广播 `homework:status`）                                          |
-| GET                         | `/notifications?classId=&priority=&unreadOnly=&keyword=` | 登录            | 通知列表（带已读状态）                                                           |
-| GET                         | `/notifications/unread-count`                            | 登录            | 未读数（红点）                                                                   |
-| POST                        | `/notifications`                                         | 教师/管理员     | 发布通知（广播 `notification:new`）；上课时段发布紧急通知需 `confirmDuringClass` |
-| POST                        | `/notifications/:id/read`、`/notifications/read-all`     | 登录            | 标记已读                                                                         |
-| DELETE                      | `/notifications/:id`                                     | 教师/管理员     | 删除通知                                                                         |
-| GET                         | `/grades/my`                                             | 登录            | 个人成绩                                                                         |
-| GET                         | `/grades?classId=&courseId=&userId=&examName=`           | 教师/管理员     | 班级成绩                                                                         |
-| GET                         | `/grades/stats?classId=&courseId=&examName=`             | 教师/管理员     | 等级分布 + 各课程平均得分率                                                      |
-| POST                        | `/grades`、`/grades/bulk`                                | 教师/管理员     | 单条 / 批量录入（广播 `grade:updated`）                                          |
-| PATCH / DELETE              | `/grades/:id`                                            | 教师/管理员     | 修改 / 删除成绩                                                                  |
-| GET                         | `/students?classId=&keyword=`                            | 教师/管理员     | 学生名单                                                                         |
-| POST / PATCH / DELETE       | `/students`                                              | 教师/管理员     | 学生账号增删改                                                                   |
-| POST                        | `/students/:id/reset-password`                           | 教师/管理员     | 重置密码                                                                         |
-| GET                         | `/teachers?keyword=`                                     | 教师/管理员     | 教师列表（分配协作教师用）                                                       |
-| POST                        | `/teachers`                                              | 管理员          | 新建教师账号                                                                     |
-| GET                         | `/dashboard/summary` / `/dashboard/term`                 | 登录            | 仪表盘汇总 / 学期周次                                                            |
-| GET                         | `/health`                                                | 公开            | 健康检查（含已挂载模块列表）                                                     |
+| 方法                        | 路径                                                     | 权限              | 说明                                                                             |
+| --------------------------- | -------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------- |
+| POST                        | `/auth/login`                                            | 公开              | 登录，返回 token + 用户信息                                                      |
+| GET                         | `/auth/me`                                               | 登录              | 当前用户（学生附带班级/年级）                                                    |
+| PATCH                       | `/auth/password`                                         | 登录              | 修改自己的密码                                                                   |
+| POST                        | `/auth/logout`                                           | 登录              | 退出（无状态，客户端丢弃 token）                                                 |
+| GET                         | `/classes`                                               | 登录              | 班级列表（按权限收敛）                                                           |
+| GET                         | `/classes/:id`                                           | 班级可见          | 班级详情（学生/课程/协作教师）                                                   |
+| POST / PATCH / DELETE       | `/classes` `/classes/:id`                                | 教师/管理员       | 班级增删改                                                                       |
+| GET / POST                  | `/classes/:id/students`                                  | 班级可见 / 可写   | 学生名单 / 添加学生（已存在账号直接转入）                                        |
+| DELETE                      | `/classes/:id/students/:userId`                          | 教师/管理员       | 移出学生                                                                         |
+| POST / DELETE               | `/classes/:id/teachers[/:teacherId]`                     | 教师/管理员       | 分配 / 取消协作教师                                                              |
+| GET / POST / PATCH / DELETE | `/courses`                                               | 登录 / 教师       | 课程管理                                                                         |
+| GET                         | `/schedules?classId=&week=&dayOfWeek=`                   | 登录              | 课表列表（week 过滤周次范围）                                                    |
+| GET                         | `/schedules/grid?classId=&week=`                         | 登录              | 周视图（7 列结构，供客户端直接渲染）                                             |
+| GET                         | `/schedules/current?classId=&at=`                        | 登录              | 当前上课状态（`inClass` / `current` / `next`；`at` 为诊断用时间覆盖）            |
+| POST / PATCH / DELETE       | `/schedules`                                             | 教师/管理员       | 课表增删改（广播 `schedule:updated`）                                            |
+| GET                         | `/homeworks?classId=&courseId=&pendingOnly=&keyword=`    | 登录              | 作业列表（学生带完成状态，教师带完成人数）                                       |
+| GET                         | `/homeworks/:id`                                         | 班级可见          | 作业详情                                                                         |
+| POST / PATCH / DELETE       | `/homeworks`                                             | 教师/管理员       | 发布/修改/删除（广播 `homework:new` / `homework:updated`）                       |
+| PATCH                       | `/homeworks/:id/status`                                  | 登录              | 标记完成/取消（广播 `homework:status`）                                          |
+| GET                         | `/notifications?classId=&priority=&unreadOnly=&keyword=` | 登录              | 通知列表（带已读状态）                                                           |
+| GET                         | `/notifications/unread-count`                            | 登录              | 未读数（红点）                                                                   |
+| POST                        | `/notifications`                                         | 教师/管理员       | 发布通知（广播 `notification:new`）；上课时段发布紧急通知需 `confirmDuringClass` |
+| POST                        | `/notifications/:id/read`、`/notifications/read-all`     | 登录              | 标记已读                                                                         |
+| DELETE                      | `/notifications/:id`                                     | 教师/管理员       | 删除通知                                                                         |
+| GET                         | `/grades/my`                                             | 登录              | 个人成绩                                                                         |
+| GET                         | `/grades?classId=&courseId=&userId=&examName=`           | 教师/管理员       | 班级成绩                                                                         |
+| GET                         | `/grades/stats?classId=&courseId=&examName=`             | 教师/管理员       | 等级分布 + 各课程平均得分率                                                      |
+| POST                        | `/grades`、`/grades/bulk`                                | 教师/管理员       | 单条 / 批量录入（广播 `grade:updated`）                                          |
+| PATCH / DELETE              | `/grades/:id`                                            | 教师/管理员       | 修改 / 删除成绩                                                                  |
+| GET                         | `/students?classId=&keyword=`                            | 教师/管理员       | 学生名单                                                                         |
+| POST / PATCH / DELETE       | `/students`                                              | 教师/管理员       | 学生账号增删改                                                                   |
+| POST                        | `/students/:id/reset-password`                           | 教师/管理员       | 重置密码                                                                         |
+| GET                         | `/teachers?keyword=`                                     | 教师/管理员       | 教师列表（分配协作教师用）                                                       |
+| POST                        | `/teachers`                                              | 管理员            | 新建教师账号                                                                     |
+| GET                         | `/dashboard/summary` / `/dashboard/term`                 | 登录              | 仪表盘汇总 / 学期周次                                                            |
+| GET                         | `/imports/template?kind=&format=`                        | 管理员            | 导入模板下载（`csv` 走 JSON，`xlsx` 走二进制）                                   |
+| POST                        | `/imports/table/preview`                                 | 管理员            | 上传表格（base64）解析预览：列名 + 前 20 行 + 校验问题 + 建议映射                |
+| POST                        | `/imports/table/commit`                                  | 管理员            | 按字段映射与写入模式导入（成绩 / 学生名单），返回新增/更新/跳过/失败与错误行号   |
+| POST                        | `/imports/time-layout/preview`                           | 管理员/本班班主任 | 解析 ClassIsland 时间配置 JSON（只解析不落库）                                   |
+| GET / POST / DELETE         | `/imports/time-layout`                                   | 管理员/本班班主任 | 时间配置列表 / 导入（`replace` 覆盖、`merge` 合并）/ 删除                        |
+| GET                         | `/health`                                                | 公开              | 健康检查（含已挂载模块列表）                                                     |
 
 ## WebSocket 事件
 
@@ -678,26 +731,41 @@ pnpm db:migrate && pnpm db:seed
 ```
 
 数据库表：`User` / `Class` / `ClassTeacher` / `Enrollment` / `Course` / `Schedule` /
-`Homework` / `HomeworkStatus` / `Notification` / `NotificationRead` / `Grade`（共 11 张）。
+`Homework` / `HomeworkStatus` / `Notification` / `NotificationRead` / `Grade` /
+`TimeLayout`（共 12 张）。
+
+### 启动时迁移（安装版自动升级）
+
+`packages/server/src/lib/db-bootstrap.ts` 用一张账本表 `_ch_migrations` 记录已执行的迁移目录名：
+
+- **全新安装**：库中无业务表 → 依次执行 `prisma/migrations/` 下全部迁移，并创建初始管理员；
+- **覆盖安装升级**：只补跑账本里没有记录的迁移（已存在的表/索引自动跳过），
+  因此新增表（如 `TimeLayout`）无需用户手动执行 `prisma migrate deploy`；
+- **已是最新**：直接跳过，不做任何写操作。
+
+日志会明确写出 `全新安装` / `升级安装`、应用了几个迁移、跳过了几个已存在对象，便于排障。
 
 ## 验收标准对照
 
-| 验收项                                           | 结果 | 证据                                                                                         |
-| ------------------------------------------------ | ---- | -------------------------------------------------------------------------------------------- |
-| 教师 Web 端发布通知，学生端 5 秒内收到           | ✅   | `verify:e2e`：`notification:new` **37–44ms**                                                 |
-| 教师发布作业，学生能查看并标记完成               | ✅   | `homework:new` **26–40ms**，`PATCH /homeworks/:id/status` 200 且列表回显 `completed=true`    |
-| 教师录入成绩，学生能查看个人成绩                 | ✅   | `grade:updated` **21–25ms**，`/grades/my` 返回记录；批量录入与统计接口通过                   |
-| 学生能查看课表，支持按周切换                     | ✅   | `/schedules/grid?week=1` 返回 30 节，`week` 过滤 `weekStart ≤ week ≤ weekEnd`                |
-| 断网后客户端可查看缓存数据                       | ✅   | 客户端冒烟：`断网时回退到本地缓存 → fromCache=true items=1`；离线横幅 + 缓存统计页可用       |
-| 权限隔离：学生不能访问其他班级数据               | ✅   | 10 项越权断言全部 403/401（学生跨班/跨班作业/跨班课表、教师跨班发布、未登录访问…）           |
-| 上课时段发布紧急通知必须二次确认                 | ✅   | 服务端 409 `URGENT_DURING_CLASS`（`confirmDuringClass` 后 201）；Web 端全屏警告 + 3 秒倒计时 |
-| 客户端灵动岛：上课隐藏 / 下课弹出 / 紧急立即展开 | ✅   | `verify:desktop` 状态断言 + 像素级截图（`docs/screenshots/island/`）                         |
-| 灵动岛：收回无"方框"闪烁 / 点击屏幕任意处收回    | ✅   | 采样卡片尺寸恒为固定值（396×308、260×38）+ 失焦自动收回                                      |
-| 灵动岛"标为已读"同步通知中心                     | ✅   | 真实链路：点击后 `read=false → true`、未读数 `1 → 0`                                         |
-| 作业发布也上岛（"新作业"胶囊 + 截止时间）        | ✅   | `kind=homework` + 展开显示"截止时间：…"                                                      |
-| 叫人（老师点名 → 学生灵动岛立即跳出）            | ✅   | `verify:e2e` 6 项 + `verify:desktop` 上课中也立即展开（徽标"叫人"、按钮"收到"）              |
-| 能成功打包 Windows EXE                           | ✅   | `班级小助手-0.1.0-x64-setup.exe` / `-portable.exe` / `win-unpacked/*.exe`（见下表）          |
-| 提供完整 README（启动、构建、打包、默认账号）    | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、MySQL 切换、打包与常见问题           |
+| 验收项                                           | 结果 | 证据                                                                                           |
+| ------------------------------------------------ | ---- | ---------------------------------------------------------------------------------------------- |
+| 教师 Web 端发布通知，学生端 5 秒内收到           | ✅   | `verify:e2e`：`notification:new` **37–44ms**                                                   |
+| 教师发布作业，学生能查看并标记完成               | ✅   | `homework:new` **26–40ms**，`PATCH /homeworks/:id/status` 200 且列表回显 `completed=true`      |
+| 教师录入成绩，学生能查看个人成绩                 | ✅   | `grade:updated` **21–25ms**，`/grades/my` 返回记录；批量录入与统计接口通过                     |
+| 学生能查看课表，支持按周切换                     | ✅   | `/schedules/grid?week=1` 返回 30 节，`week` 过滤 `weekStart ≤ week ≤ weekEnd`                  |
+| 断网后客户端可查看缓存数据                       | ✅   | 客户端冒烟：`断网时回退到本地缓存 → fromCache=true items=1`；离线横幅 + 缓存统计页可用         |
+| 权限隔离：学生不能访问其他班级数据               | ✅   | 10 项越权断言全部 403/401（学生跨班/跨班作业/跨班课表、教师跨班发布、未登录访问…）             |
+| 上课时段发布紧急通知必须二次确认                 | ✅   | 服务端 409 `URGENT_DURING_CLASS`（`confirmDuringClass` 后 201）；Web 端全屏警告 + 3 秒倒计时   |
+| 客户端灵动岛：上课隐藏 / 下课弹出 / 紧急立即展开 | ✅   | `verify:desktop` 状态断言 + 像素级截图（`docs/screenshots/island/`）                           |
+| 灵动岛：收回无"方框"闪烁 / 点击屏幕任意处收回    | ✅   | 采样卡片尺寸恒为固定值（396×308、260×38）+ 失焦自动收回                                        |
+| 灵动岛"标为已读"同步通知中心                     | ✅   | 真实链路：点击后 `read=false → true`、未读数 `1 → 0`                                           |
+| 作业发布也上岛（"新作业"胶囊 + 截止时间）        | ✅   | `kind=homework` + 展开显示"截止时间：…"                                                        |
+| 叫人（老师点名 → 学生灵动岛立即跳出）            | ✅   | `verify:e2e` 6 项 + `verify:desktop` 上课中也立即展开（徽标"叫人"、按钮"收到"）                |
+| 成绩 / 名单表格导入（xlsx·xls·csv）              | ✅   | 模板下载 + 预览映射 + 重复处理 + 行号级错误：`verify:e2e` 导入 22 项、`verify:web` 弹窗实测    |
+| ClassIsland 时间配置导入（覆盖 / 合并 / 回滚）   | ✅   | 合法 200、非法 400 `IMPORT_INVALID` 且原配置仍为 3 节、merge 覆盖 1 新增 1 共 4 节             |
+| 安装版覆盖升级自动补迁移                         | ✅   | 真实旧库升级日志：`升级安装：已应用 2 个迁移文件，跳过 34 个已存在对象`，`TimeLayout` 自动建表 |
+| 能成功打包 Windows EXE                           | ✅   | `班级小助手-0.1.0-x64-setup.exe` / `-portable.exe` / `win-unpacked/*.exe`（见下表）            |
+| 提供完整 README（启动、构建、打包、默认账号）    | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、MySQL 切换、打包与常见问题             |
 
 打包产物验证（对最终 EXE 实测，非仅开发产物）：
 
@@ -710,14 +778,14 @@ pnpm db:migrate && pnpm db:seed
 
 当前实测：
 
-| 验证                                                                              | 结果                                |
-| --------------------------------------------------------------------------------- | ----------------------------------- |
-| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                       | **82/82** ✅                        |
-| `pnpm verify:web`（Web 管理端真实点击 + 权限入口隐藏 + 手机适配 + 叫人 + PWA）    | **17/17** ✅                        |
-| `pnpm verify:desktop`（客户端冒烟 + 灵动岛动画/收回/已读/作业/叫人 + 课表时间轴） | **40/40** ✅                        |
-| `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                              | 全部通过 ✅                         |
-| 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）                                | 通过 ✅                             |
-| Docker / Nginx 部署样例                                                           | 文件已提供，本机无 Docker 未实测 ⚠️ |
+| 验证                                                                                      | 结果                                |
+| ----------------------------------------------------------------------------------------- | ----------------------------------- |
+| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                               | **107/107** ✅                      |
+| `pnpm verify:web`（Web 管理端真实点击 + 权限入口隐藏 + 手机适配 + 叫人 + 导入弹窗 + PWA） | **18/18** ✅                        |
+| `pnpm verify:desktop`（客户端冒烟 + 灵动岛动画/收回/已读/作业/叫人 + 课表时间轴）         | **40/40** ✅                        |
+| `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                                      | 全部通过 ✅                         |
+| 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）                                        | 通过 ✅                             |
+| Docker / Nginx 部署样例                                                                   | 文件已提供，本机无 Docker 未实测 ⚠️ |
 
 ## 常见问题（本机环境已知坑）
 
@@ -815,6 +883,19 @@ pnpm db:migrate && pnpm db:seed
 | `scripts/ui-smoke/live-probe.mjs`                            | UI 回归测试的"真实上课时段"探针（自建课表 + 用后清理）               |
 | `scripts/lib/{electron-env,node-runtime}.mjs`                | Electron/Node 运行时定位与宿主环境兼容处理                           |
 | `docs/screenshots/island/*.png`                              | 灵动岛四种形态的自动化留档截图（由冒烟验证生成，含像素级断言）       |
+
+阶段 9（导入能力：成绩 / 名单表格 + ClassIsland 时间配置）新增文件：
+
+| 路径                                                                | 说明                                                                       |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `packages/server/src/modules/imports/imports.module.ts`             | 导入路由（模板下载 / 表格预览与提交 / 时间配置预览·导入·列表·删除）        |
+| `packages/server/src/modules/imports/imports.schemas.ts`            | Zod 校验（base64 文件、字段映射、写入模式、时间配置 payload）              |
+| `packages/server/src/modules/imports/table-import.service.ts`       | SheetJS 解析 + 模板生成 + 同义词映射 + 成绩/名单写入与结果统计             |
+| `packages/server/src/modules/imports/time-layout.service.ts`        | ClassIsland 时间配置容错解析（多形态/多字段名/秒与 HH:mm）+ 覆盖/合并      |
+| `packages/server/prisma/migrations/20260912120000_add_time_layout/` | `TimeLayout` 表迁移                                                        |
+| `packages/web-admin/src/components/TableImportDialog.vue`           | 成绩 / 名单导入弹窗（模板、预览、字段映射、模式、结果与错误行）            |
+| `packages/web-admin/src/components/TimeLayoutImportDialog.vue`      | ClassIsland 时间配置导入弹窗（粘贴/选文件、解析预览、覆盖/合并、已存列表） |
+| `packages/shared/src/types.ts` 的导入 DTO                           | `TableImportPreview` / `TableImportResult` / `TimeLayoutDto` 等前后端共用  |
 
 ## 后续可选增强
 

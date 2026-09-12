@@ -14,6 +14,7 @@ import {
   type ScheduleWeekView,
 } from '@classhelper/shared';
 import { classApi, courseApi, dashboardApi, scheduleApi } from '@/api';
+import TimeLayoutImportDialog from '@/components/TimeLayoutImportDialog.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 
@@ -194,6 +195,18 @@ function onScheduleEvent(): void {
   void loadSchedules();
 }
 
+/* ------------------------------------------------------------ ClassIsland 时间配置导入 */
+
+const timeLayoutVisible = ref(false);
+
+function openTimeLayoutImport(): void {
+  if (!query.classId) {
+    ElMessage.warning('请先选择班级');
+    return;
+  }
+  timeLayoutVisible.value = true;
+}
+
 onMounted(async () => {
   await loadBase();
   await loadSchedules();
@@ -227,6 +240,9 @@ onUnmounted(() => {
         <el-button :icon="'Refresh'" @click="loadSchedules">刷新</el-button>
         <el-button v-if="canManageSchedule" type="primary" :icon="'Plus'" @click="openCreate">
           新增课表
+        </el-button>
+        <el-button v-if="canManageSchedule" type="warning" :icon="'Upload'" @click="openTimeLayoutImport">
+          导入时间配置
         </el-button>
       </div>
     </div>
@@ -313,5 +329,12 @@ onUnmounted(() => {
         <el-button type="primary" @click="submitForm">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- ClassIsland 时间配置导入（覆盖 / 合并，失败不改动原配置） -->
+    <TimeLayoutImportDialog
+      v-model="timeLayoutVisible"
+      :class-id="query.classId"
+      :class-name="classes.find((item) => item.id === query.classId)?.name"
+    />
   </div>
 </template>

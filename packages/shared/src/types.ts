@@ -458,6 +458,77 @@ export interface ServerToClientEvents {
   connected: (payload: { userId: string; role: UserRole; rooms: string[] }) => void;
 }
 
+/* ------------------------------------------------------------------ 导入（模板 / 表格 / 课表时间配置） */
+
+/** 表格导入预览：列名、前若干行、建议字段映射与校验问题 */
+export interface TableImportPreview {
+  kind: 'grades' | 'students';
+  columns: string[];
+  rows: string[][];
+  totalRows: number;
+  suggestedMapping: Record<string, string>;
+  errors: string[];
+  warnings: string[];
+  templateCsv: string;
+}
+
+/** 导入时某一行的具体错误（row 为 Excel 视角的行号，含表头） */
+export interface TableImportRowError {
+  row: number;
+  message: string;
+}
+
+/** 导入结果统计 */
+export interface TableImportResult {
+  kind: 'grades' | 'students';
+  total: number;
+  inserted: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  errors: TableImportRowError[];
+  warnings: string[];
+}
+
+/** ClassIsland 时间配置条目 */
+export interface TimeLayoutEntry {
+  index: number;
+  name: string;
+  startTime: string;
+  endTime: string;
+  type: 'class' | 'break' | 'divider';
+  skipped: boolean;
+}
+
+export interface TimeLayoutDto {
+  id: string;
+  classId: string;
+  name: string;
+  source: string;
+  items: TimeLayoutEntry[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** ClassIsland JSON 解析结果（预览用：只解析不落库） */
+export interface TimeLayoutParsePreview {
+  items: TimeLayoutEntry[];
+  errors: string[];
+  warnings: string[];
+  shape: string;
+}
+
+/** 课表时间配置导入结果 */
+export interface TimeLayoutImportResult {
+  layout: TimeLayoutDto;
+  mode: 'replace' | 'merge';
+  warnings: string[];
+  /** merge 时：被此次导入覆盖的旧节次数 */
+  merged: number;
+  /** merge 时：新增节次数；replace 时为总节次数 */
+  replaced: number;
+}
+
 /** 客户端 -> 服务端事件名 */
 export interface ClientToServerEvents {
   'class:join': (classId: string, ack?: (result: { ok: boolean; message?: string }) => void) => void;

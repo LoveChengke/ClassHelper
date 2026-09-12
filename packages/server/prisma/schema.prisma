@@ -66,6 +66,7 @@ model Class {
   notifications Notification[]
   grades        Grade[]
   enrollments   Enrollment[]
+  timeLayouts   TimeLayout[]
 
   @@index([teacherId])
 }
@@ -210,6 +211,24 @@ model NotificationRead {
 
   @@unique([notificationId, userId])
   @@index([userId])
+}
+
+
+/// 课表时间配置（ClassIsland 同款 JSON 导入后的节次时间表）
+model TimeLayout {
+  id        String   @id @default(cuid())
+  classId   String
+  name      String
+  /// 来源：classisland | manual
+  source    String   @default("classisland")
+  /// 节次数组（JSON 字符串）：[{ index, name, startTime, endTime, type, skipped }]
+  items     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  class Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@index([classId])
 }
 
 /// 成绩

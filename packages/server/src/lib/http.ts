@@ -22,6 +22,12 @@ export type ApiErrorCode =
   | 'TOO_MANY_REQUESTS'
   /** 上课时间段发布紧急通知需要二次确认（前端据此弹出全屏警告 + 3 秒倒计时） */
   | 'URGENT_DURING_CLASS'
+  /** 导入：空文件 / 文件过大 / 格式错误 / 内容不合法 / 没有有效数据 */
+  | 'IMPORT_EMPTY_FILE'
+  | 'IMPORT_TOO_LARGE'
+  | 'IMPORT_FORMAT_INVALID'
+  | 'IMPORT_INVALID'
+  | 'IMPORT_EMPTY'
   | 'INTERNAL_ERROR';
 
 /** 业务异常：中间件会把它转换成统一错误响应体 */

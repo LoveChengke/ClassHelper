@@ -28,6 +28,12 @@ export function validate<B = unknown, Q = unknown, P = unknown>(
 }
 
 /** 读取已校验的 query（类型由调用方用 zod schema 保证） */
+/** 取出校验后的请求体（与 validatedQuery/validatedParams 同一套约定） */
+export function validatedBody<T>(req: Request): T {
+  // validate() 会把解析结果写回 req.body
+  return req.body as T;
+}
+
 export function validatedQuery<T>(req: Request): T {
   return (req.validatedQuery ?? {}) as T;
 }

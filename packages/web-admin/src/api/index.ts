@@ -21,6 +21,11 @@ import {
   type ScheduleDto,
   type ScheduleWeekView,
   type StudentDto,
+  type TableImportPreview,
+  type TableImportResult,
+  type TimeLayoutDto,
+  type TimeLayoutImportResult,
+  type TimeLayoutParsePreview,
   type UpdateClassRequest,
   type UserDto,
 } from '@classhelper/shared';
@@ -191,4 +196,55 @@ export const teacherApi = {
   }): Promise<UserDto> => api.post(API_PATHS.teachers, payload),
   /** 班级详情中的 teachers 字段即为已分配的协作教师 */
   fromClass: (classId: string): Promise<ClassDetailDto> => classApi.detail(classId),
+};
+
+/* ------------------------------------------------------------------ 导入（模板 / 表格 / 课表时间配置） */
+
+export const importApi = {
+  /** 模板下载地址（CSV 走 JSON，XLSX 走二进制） */
+  template: (
+    kind: 'grades' | 'students',
+    format: 'csv' | 'xlsx' = 'csv',
+  ): Promise<{ kind: string; format: string; fileName: string; content: string }> =>
+    api.get(`${API_PATHS.imports}/template`, { kind, format }),
+
+  /** 上传表格并预览（解析 + 必填列校验 + 建议映射，不写库） */
+  previewTable: (payload: {
+    kind: 'grades' | 'students';
+    fileName: string;
+    contentBase64: string;
+  }): Promise<TableImportPreview> => api.post(`${API_PATHS.imports}/table/preview`, payload),
+
+  /** 确认字段映射与写入模式后执行导入 */
+  commitTable: (payload: {
+    kind: 'grades' | 'students';
+    classId: string;
+    fileName: string;
+    contentBase64: string;
+    mapping: Record<string, string>;
+    mode: 'append' | 'upsert';
+  }): Promise<TableImportResult> => api.post(`${API_PATHS.imports}/table/commit`, payload),
+
+  /** ClassIsland 时间配置解析预览（不写库） */
+  previewTimeLayout: (payload: {
+    classId: string;
+    name?: string;
+    mode?: 'replace' | 'merge';
+    payload: unknown;
+  }): Promise<TimeLayoutParsePreview> => api.post(`${API_PATHS.imports}/time-layout/preview`, payload),
+
+  /** 某班已导入的时间配置 */
+  listTimeLayouts: (classId: string): Promise<TimeLayoutDto[]> =>
+    api.get(`${API_PATHS.imports}/time-layout`, { classId }),
+
+  /** 导入（覆盖或合并；解析失败返回 400 且不改动原配置） */
+  importTimeLayout: (payload: {
+    classId: string;
+    name?: string;
+    mode: 'replace' | 'merge';
+    payload: unknown;
+  }): Promise<TimeLayoutImportResult> => api.post(`${API_PATHS.imports}/time-layout`, payload),
+
+  removeTimeLayout: (id: string): Promise<{ id: string }> =>
+    api.delete(`${API_PATHS.imports}/time-layout/${id}`),
 };

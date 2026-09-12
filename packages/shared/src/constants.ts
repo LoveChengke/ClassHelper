@@ -21,6 +21,8 @@ export const API_PATHS = {
   grades: '/grades',
   students: '/students',
   teachers: '/teachers',
+  /** 导入：模板下载 / 表格导入 / ClassIsland 课表时间配置 */
+  imports: '/imports',
   dashboard: '/dashboard/summary',
 } as const;
 

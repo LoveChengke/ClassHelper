@@ -14,6 +14,7 @@ import {
   type StudentDto,
 } from '@classhelper/shared';
 import { classApi, courseApi, gradeApi } from '@/api';
+import TableImportDialog from '@/components/TableImportDialog.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 
@@ -214,6 +215,22 @@ async function submitBulk(): Promise<void> {
   await loadGrades();
 }
 
+/* ------------------------------------------------------------ 表格导入 */
+
+const importVisible = ref(false);
+
+function openImport(): void {
+  if (!filter.classId) {
+    ElMessage.warning('请先选择班级');
+    return;
+  }
+  importVisible.value = true;
+}
+
+async function onImported(): Promise<void> {
+  await loadGrades();
+}
+
 async function removeGrade(row: GradeDto): Promise<void> {
   await ElMessageBox.confirm(`删除 ${row.student?.name ?? ''} 的「${row.examName}」成绩？`, '确认', {
     type: 'warning',
@@ -280,6 +297,7 @@ onUnmounted(() => {
         </el-select>
         <el-button v-if="isAdmin" type="primary" :icon="'Plus'" @click="openSingle">单条录入</el-button>
         <el-button v-if="isAdmin" type="success" :icon="'Upload'" @click="openBulk">批量录入</el-button>
+        <el-button v-if="isAdmin" type="warning" :icon="'Document'" @click="openImport">导入表格</el-button>
       </div>
     </div>
 
@@ -415,6 +433,14 @@ onUnmounted(() => {
         <el-button type="primary" @click="submitBulk">提交并广播</el-button>
       </template>
     </el-dialog>
+
+    <!-- 表格导入（xlsx/xls/csv：模板下载 + 预览 + 字段映射 + 结果统计） -->
+    <TableImportDialog
+      v-model="importVisible"
+      kind="grades"
+      :class-id="filter.classId"
+      @imported="onImported"
+    />
   </div>
 </template>
 

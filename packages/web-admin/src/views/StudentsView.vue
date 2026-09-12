@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
@@ -9,6 +9,7 @@ import {
   type StudentDto,
 } from '@classhelper/shared';
 import { callApi, classApi, studentApi } from '@/api';
+import TableImportDialog from '@/components/TableImportDialog.vue';
 
 const loading = ref(false);
 const students = ref<StudentDto[]>([]);
@@ -32,6 +33,16 @@ async function loadStudents(): Promise<void> {
 }
 
 /* ------------------------------------------------------------ 新建 / 编辑 */
+
+/** 名单导入（表格）：需要先选定班级，避免导入到错误的班级 */
+const importVisible = ref(false);
+function openImport(): void {
+  if (!filter.classId) {
+    ElMessage.warning('请先选择要导入的班级');
+    return;
+  }
+  importVisible.value = true;
+}
 
 const formVisible = ref(false);
 const formRef = ref<FormInstance>();
@@ -180,6 +191,7 @@ async function submitCall(): Promise<void> {
         />
         <el-button :icon="'Search'" @click="loadStudents">查询</el-button>
         <el-button type="primary" :icon="'Plus'" @click="openCreate">新建学生</el-button>
+        <el-button type="warning" :icon="'Document'" @click="openImport">导入名单</el-button>
       </div>
     </div>
 
@@ -284,6 +296,14 @@ async function submitCall(): Promise<void> {
         <el-button type="primary" @click="submitForm">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 学生名单导入（xlsx/xls/csv，仅管理员可见；后端同样强校验权限） -->
+    <TableImportDialog
+      v-model="importVisible"
+      kind="students"
+      :class-id="filter.classId"
+      @imported="loadStudents"
+    />
   </div>
 </template>
 

@@ -412,6 +412,77 @@ async function main() {
     return true;
   })()`);
   await sleep(300);
+
+  // 7.7 ClassIsland 时间配置导入弹窗（班主任可见：粘贴 JSON → 解析预览 → 确认导入）
+  const layoutDialog = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
+      (node.textContent ?? '').trim().startsWith('课表管理'),
+    );
+    if (!menu) return { ok: false, reason: '未找到课表管理菜单' };
+    menu.click();
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline && location.pathname !== '/schedules') await sleep(80);
+    await sleep(600);
+
+    const openButton = Array.from(document.querySelectorAll('button')).find((node) =>
+      (node.textContent ?? '').trim() === '导入时间配置',
+    );
+    if (!openButton) return { ok: false, reason: '课表页没有"导入时间配置"按钮（班主任权限未生效？）' };
+    openButton.click();
+    await sleep(700);
+
+    const dialog = Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
+      (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('ClassIsland'),
+    );
+    if (!dialog) return { ok: false, reason: '时间配置导入弹窗未打开' };
+
+    const sampleButton = Array.from(dialog.querySelectorAll('button')).find((node) =>
+      (node.textContent ?? '').trim() === '填入示例',
+    );
+    if (!sampleButton) return { ok: false, reason: '缺少"填入示例"按钮' };
+    sampleButton.click();
+    await sleep(200);
+
+    const previewButton = Array.from(dialog.querySelectorAll('button')).find((node) =>
+      (node.textContent ?? '').trim() === '解析预览',
+    );
+    if (!previewButton) return { ok: false, reason: '缺少"解析预览"按钮' };
+    previewButton.click();
+
+    const previewDeadline = Date.now() + 8000;
+    let rows = 0;
+    let importEnabled = false;
+    let errors = 0;
+    while (Date.now() < previewDeadline) {
+      rows = dialog.querySelectorAll('.el-table__body tbody tr').length;
+      errors = dialog.querySelectorAll('.el-alert--error').length;
+      const confirm = Array.from(dialog.querySelectorAll('.el-dialog__footer button')).find((node) =>
+        (node.textContent ?? '').trim() === '确认导入',
+      );
+      importEnabled = Boolean(confirm) && !confirm.disabled;
+      if (rows >= 2) break;
+      await sleep(150);
+    }
+    return { ok: true, rows, importEnabled, errors, hasFileInput: Boolean(dialog.querySelector('input[type=file]')) };
+  })()`);
+  record(
+    'ClassIsland 时间配置导入弹窗（示例 → 解析预览 → 可导入）',
+    Boolean(layoutDialog?.ok) &&
+      (layoutDialog?.rows ?? 0) >= 2 &&
+      layoutDialog?.importEnabled === true &&
+      layoutDialog?.errors === 0,
+    `节次行=${layoutDialog?.rows ?? 0} 可导入=${layoutDialog?.importEnabled} 校验错误=${layoutDialog?.errors ?? '-'} 文件选择=${layoutDialog?.hasFileInput}` +
+      `${layoutDialog?.reason ? ` 原因=${layoutDialog.reason}` : ''}`,
+  );
+  await win.webContents.executeJavaScript(`(() => {
+    const buttons = Array.from(document.querySelectorAll('.el-dialog__footer button'));
+    const close = buttons.find((node) => (node.textContent ?? '').trim() === '关闭');
+    if (close) close.click();
+    return true;
+  })()`);
+  await sleep(300);
+
   // 8. 手机小屏适配（390×844，1Panel 风格：侧边栏收进抽屉 + 卡片内横向滚动）
   await runMobileChecks(win);
 

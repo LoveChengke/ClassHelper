@@ -847,6 +847,393 @@ async function main() {
     `涉及 ${homeworkClassIds.size} 个班级`,
   );
 
+  // ---------------------------------------------------------------- 8. 导入能力（课表时间配置 + 表格导入）
+  const NL = String.fromCharCode(10);
+
+  // 8.1 导入模板下载
+  const templateCsv = await api('/imports/template?kind=grades&format=csv', { token: adminToken });
+  const templateCsvText = templateCsv.payload?.data?.content ?? '';
+  record(
+    '成绩导入模板（CSV）可下载且含必填列',
+    templateCsv.status === 200 &&
+      templateCsvText.includes('考试名称') &&
+      templateCsvText.includes('分数') &&
+      templateCsvText.charCodeAt(0) === 0xfeff,
+    `status=${templateCsv.status} len=${templateCsvText.length}`,
+  );
+
+  const templateXlsxResponse = await fetch(`${BASE_URL}/api/imports/template?kind=students&format=xlsx`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  const templateXlsxBuffer = Buffer.from(await templateXlsxResponse.arrayBuffer());
+  record(
+    '名单导入模板（XLSX）可下载',
+    templateXlsxResponse.status === 200 &&
+      templateXlsxBuffer.length > 500 &&
+      templateXlsxBuffer.subarray(0, 2).toString() === 'PK',
+    `status=${templateXlsxResponse.status} bytes=${templateXlsxBuffer.length}`,
+  );
+
+  const templateDenied = await api('/imports/template?kind=grades&format=csv', { token: teacherToken });
+  record('教师下载成绩模板被拒绝（403）', templateDenied.status === 403, `status=${templateDenied.status}`);
+
+  // 8.2 ClassIsland 课表时间配置：预览 -> 导入 -> 失败回滚 -> 合并 -> 越权 -> 清理
+  const sampleLayout = {
+    TimeLayouts: [
+      { Name: '第 1 节', StartTime: '8:0:0', EndTime: '8:45:0', TimeType: 0 },
+      { Name: '课间休息', StartTime: '8:45:0', EndTime: '8:55:0', TimeType: 1 },
+      { Name: '第 2 节', StartSecond: 31500, EndSecond: 34200, TimeType: 0 },
+    ],
+  };
+
+  const layoutPreview = await api('/imports/time-layout/preview', {
+    method: 'POST',
+    token: teacherToken,
+    body: { classId, payload: sampleLayout },
+  });
+  const previewItems = layoutPreview.payload?.data?.items ?? [];
+  record(
+    'ClassIsland 时间配置预览（时分与秒两种写法）',
+    layoutPreview.status === 200 && previewItems.length === 3 && previewItems[0]?.startTime === '08:00',
+    `status=${layoutPreview.status} 节数=${previewItems.length} shape=${layoutPreview.payload?.data?.shape}`,
+  );
+
+  const brokenPreview = await api('/imports/time-layout/preview', {
+    method: 'POST',
+    token: teacherToken,
+    body: { classId, payload: '[{"StartTime":"8:0:0","EndTime":"7:0:0"}]' },
+  });
+  record(
+    '时间配置校验可定位错误（预览返回 errors）',
+    brokenPreview.status === 200 && (brokenPreview.payload?.data?.errors ?? []).length > 0,
+    `errors=${(brokenPreview.payload?.data?.errors ?? []).length}`,
+  );
+
+  const layoutImport = await api('/imports/time-layout', {
+    method: 'POST',
+    token: teacherToken,
+    body: { classId, name: '默认时间表', mode: 'replace', payload: sampleLayout },
+  });
+  const layoutId = layoutImport.payload?.data?.layout?.id ?? null;
+  record(
+    '班主任导入本班时间配置（replace）',
+    layoutImport.status === 200 && layoutImport.payload?.data?.layout?.items?.length === 3,
+    `status=${layoutImport.status} 节数=${layoutImport.payload?.data?.layout?.items?.length}`,
+  );
+
+  const layoutList = await api(`/imports/time-layout?classId=${classId}`, { token: teacherToken });
+  record(
+    '时间配置已持久化可查询',
+    (layoutList.payload?.data ?? []).some((item) => item.id === layoutId),
+    `共 ${(layoutList.payload?.data ?? []).length} 份`,
+  );
+
+  const badImport = await api('/imports/time-layout', {
+    method: 'POST',
+    token: teacherToken,
+    body: {
+      classId,
+      name: '默认时间表',
+      mode: 'replace',
+      payload: '[{"StartTime":"9:0:0","EndTime":"8:0:0"}]',
+    },
+  });
+  const afterBadList = await api(`/imports/time-layout?classId=${classId}`, { token: teacherToken });
+  const afterBadItems = (afterBadList.payload?.data ?? []).find((item) => item.id === layoutId)?.items ?? [];
+  record(
+    '非法时间配置导入失败且原配置不变（失败回滚）',
+    badImport.status === 400 && badImport.payload?.code === 'IMPORT_INVALID' && afterBadItems.length === 3,
+    `status=${badImport.status} code=${badImport.payload?.code} 原配置=${afterBadItems.length} 节`,
+  );
+
+  const mergeImport = await api('/imports/time-layout', {
+    method: 'POST',
+    token: teacherToken,
+    body: {
+      classId,
+      name: '默认时间表',
+      mode: 'merge',
+      payload: [
+        { StartTime: '8:0:0', EndTime: '8:50:0', Name: '第 1 节（调整）' },
+        { StartTime: '10:0:0', EndTime: '10:45:0', Name: '第 3 节' },
+      ],
+    },
+  });
+  const mergeData = mergeImport.payload?.data;
+  record(
+    '合并导入按开始时间去重（合并 1 节 / 新增 1 节）',
+    mergeImport.status === 200 &&
+      mergeData?.merged === 1 &&
+      mergeData?.replaced === 1 &&
+      mergeData?.layout?.items?.length === 4,
+    `合并=${mergeData?.merged} 新增=${mergeData?.replaced} 共=${mergeData?.layout?.items?.length}`,
+  );
+
+  if (foreignClass) {
+    const crossImport = await api('/imports/time-layout', {
+      method: 'POST',
+      token: teacherToken,
+      body: { classId: foreignClass.id, mode: 'replace', payload: sampleLayout },
+    });
+    record('向他人班级导入时间配置被拒绝（403）', crossImport.status === 403, `status=${crossImport.status}`);
+  }
+
+  const studentLayoutList = await api(`/imports/time-layout?classId=${classId}`, { token: studentToken });
+  record(
+    '学生访问时间配置管理接口被拒绝（403）',
+    studentLayoutList.status === 403,
+    `status=${studentLayoutList.status}`,
+  );
+
+  // 8.3 成绩表格导入（CSV 校验 + XLSX 新增/重复/更新 + 错误行提示）
+  const gradesCsv = [
+    '用户名,姓名,考试名称,分数,总分,课程',
+    'student01,,期中导入考试,92,100,',
+    `,${targetStudent?.name ?? '张同学'},期中导入考试,不是数字,100,`,
+    'unknown-user,,期中导入考试,88,100,',
+  ].join(NL);
+  const gradesCsvBase64 = Buffer.from(`\ufeff${gradesCsv}${NL}`, 'utf8').toString('base64');
+
+  const gradesPreview = await api('/imports/table/preview', {
+    method: 'POST',
+    token: adminToken,
+    body: { kind: 'grades', fileName: 'grades.csv', contentBase64: gradesCsvBase64 },
+  });
+  const previewData = gradesPreview.payload?.data;
+  record(
+    'CSV 成绩表预览（列名 + 行数 + 建议映射）',
+    gradesPreview.status === 200 &&
+      previewData?.columns?.length === 6 &&
+      previewData?.totalRows === 3 &&
+      previewData?.suggestedMapping?.score === '分数',
+    `status=${gradesPreview.status} 行数=${previewData?.totalRows} 映射=${JSON.stringify(previewData?.suggestedMapping ?? {})}`,
+  );
+
+  const missingColumn = await api('/imports/table/preview', {
+    method: 'POST',
+    token: adminToken,
+    body: {
+      kind: 'grades',
+      fileName: 'missing.csv',
+      contentBase64: Buffer.from(`\ufeff姓名${NL}王小明${NL}`, 'utf8').toString('base64'),
+    },
+  });
+  record(
+    '缺少必填列的表格给出明确提示',
+    missingColumn.status === 200 && (missingColumn.payload?.data?.errors ?? []).length >= 2,
+    `errors=${(missingColumn.payload?.data?.errors ?? []).length}`,
+  );
+
+  const emptyFile = await api('/imports/table/preview', {
+    method: 'POST',
+    token: adminToken,
+    body: { kind: 'grades', fileName: 'empty.csv', contentBase64: '' },
+  });
+  record(
+    '空文件被明确拒绝（IMPORT_EMPTY_FILE）',
+    emptyFile.status === 400 && emptyFile.payload?.code === 'IMPORT_EMPTY_FILE',
+    `status=${emptyFile.status} code=${emptyFile.payload?.code}`,
+  );
+
+  const xlsxNamespace = await import('xlsx');
+  const XLSX = xlsxNamespace.default ?? xlsxNamespace;
+  const xlsxSheet = XLSX.utils.aoa_to_sheet([
+    ['学号', '姓名', '考试', '得分', '满分', '科目'],
+    ['student02', '', '期中导入考试', 85, 100, ''],
+    ['student01', '', '期中导入考试', 78, 100, ''],
+  ]);
+  const xlsxBook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(xlsxBook, xlsxSheet, '成绩');
+  const xlsxBase64 = XLSX.write(xlsxBook, { type: 'base64', bookType: 'xlsx' });
+
+  const xlsxPreview = await api('/imports/table/preview', {
+    method: 'POST',
+    token: adminToken,
+    body: { kind: 'grades', fileName: 'grades.xlsx', contentBase64: xlsxBase64 },
+  });
+  record(
+    'XLSX 成绩表预览（同义词自动映射 学号/得分）',
+    xlsxPreview.status === 200 &&
+      xlsxPreview.payload?.data?.totalRows === 2 &&
+      xlsxPreview.payload?.data?.suggestedMapping?.username === '学号' &&
+      xlsxPreview.payload?.data?.suggestedMapping?.score === '得分',
+    `status=${xlsxPreview.status} 映射=${JSON.stringify(xlsxPreview.payload?.data?.suggestedMapping ?? {})}`,
+  );
+
+  const commitMapping = {
+    username: '学号',
+    name: '姓名',
+    examName: '考试',
+    score: '得分',
+    totalScore: '满分',
+    courseName: '科目',
+  };
+  const gradesCommitBody = {
+    kind: 'grades',
+    classId,
+    fileName: 'grades.xlsx',
+    contentBase64: xlsxBase64,
+    mapping: commitMapping,
+  };
+
+  const gradesCommit = await api('/imports/table/commit', {
+    method: 'POST',
+    token: adminToken,
+    body: { ...gradesCommitBody, mode: 'append' },
+  });
+  record(
+    '成绩导入新增成功且返回结果统计',
+    gradesCommit.status === 200 &&
+      gradesCommit.payload?.data?.inserted === 2 &&
+      gradesCommit.payload?.data?.failed === 0,
+    `新增=${gradesCommit.payload?.data?.inserted} 失败=${gradesCommit.payload?.data?.failed}`,
+  );
+
+  const gradesAgain = await api('/imports/table/commit', {
+    method: 'POST',
+    token: adminToken,
+    body: { ...gradesCommitBody, mode: 'append' },
+  });
+  record(
+    '重复成绩按 append 跳过（不重复写入）',
+    gradesAgain.status === 200 &&
+      gradesAgain.payload?.data?.skipped === 2 &&
+      gradesAgain.payload?.data?.inserted === 0,
+    `跳过=${gradesAgain.payload?.data?.skipped} 新增=${gradesAgain.payload?.data?.inserted}`,
+  );
+
+  const gradesUpsert = await api('/imports/table/commit', {
+    method: 'POST',
+    token: adminToken,
+    body: { ...gradesCommitBody, mode: 'upsert' },
+  });
+  record(
+    '重复成绩按 upsert 更新',
+    gradesUpsert.status === 200 && gradesUpsert.payload?.data?.updated === 2,
+    `更新=${gradesUpsert.payload?.data?.updated}`,
+  );
+
+  const gradesBroken = await api('/imports/table/commit', {
+    method: 'POST',
+    token: adminToken,
+    body: {
+      kind: 'grades',
+      classId,
+      fileName: 'grades.csv',
+      contentBase64: gradesCsvBase64,
+      mapping: {
+        username: '用户名',
+        name: '姓名',
+        examName: '考试名称',
+        score: '分数',
+        totalScore: '总分',
+        courseName: '课程',
+      },
+      mode: 'append',
+    },
+  });
+  const brokenErrors = gradesBroken.payload?.data?.errors ?? [];
+  record(
+    '非法数据行给出具体行号与原因',
+    gradesBroken.status === 200 &&
+      gradesBroken.payload?.data?.failed === 2 &&
+      brokenErrors.length === 2 &&
+      brokenErrors.every((item) => item.row >= 2 && item.message.length > 0),
+    `失败=${gradesBroken.payload?.data?.failed} 首条=第 ${brokenErrors[0]?.row} 行：${brokenErrors[0]?.message ?? ''}`,
+  );
+
+  const gradesByTeacher = await api('/imports/table/commit', {
+    method: 'POST',
+    token: teacherToken,
+    body: { ...gradesCommitBody, mode: 'append' },
+  });
+  record(
+    '教师（非管理员）导入成绩被拒绝（403）',
+    gradesByTeacher.status === 403,
+    `status=${gradesByTeacher.status}`,
+  );
+
+  // 8.4 学生名单导入（仅管理员）+ 数据清理
+  const importedUsername = `imp${Date.now().toString(36).slice(-6)}`;
+  const studentsCsv = [
+    '用户名,姓名,初始密码',
+    `${importedUsername},导入测试生,imp123456`,
+    'bad user,非法用户名,imp123456',
+  ].join(NL);
+  const studentsCommit = await api('/imports/table/commit', {
+    method: 'POST',
+    token: adminToken,
+    body: {
+      kind: 'students',
+      classId,
+      fileName: 'students.csv',
+      contentBase64: Buffer.from(`\ufeff${studentsCsv}${NL}`, 'utf8').toString('base64'),
+      mapping: { username: '用户名', name: '姓名', password: '初始密码' },
+      mode: 'append',
+    },
+  });
+  record(
+    '学生名单导入（新增 1 / 非法用户名进错误行 1）',
+    studentsCommit.status === 200 &&
+      studentsCommit.payload?.data?.inserted === 1 &&
+      studentsCommit.payload?.data?.failed === 1,
+    `新增=${studentsCommit.payload?.data?.inserted} 失败=${studentsCommit.payload?.data?.failed}`,
+  );
+
+  const studentsByTeacher = await api('/imports/table/commit', {
+    method: 'POST',
+    token: teacherToken,
+    body: {
+      kind: 'students',
+      classId,
+      fileName: 'students.csv',
+      contentBase64: Buffer.from(`\ufeff${studentsCsv}${NL}`, 'utf8').toString('base64'),
+      mapping: { username: '用户名', name: '姓名', password: '初始密码' },
+      mode: 'append',
+    },
+  });
+  record(
+    '教师导入学生名单被拒绝（403）',
+    studentsByTeacher.status === 403,
+    `status=${studentsByTeacher.status}`,
+  );
+
+  // 清理：删除导入产生的成绩、时间配置与学生，保持环境可重复验证
+  const importedGrades = await api(
+    `/grades?classId=${classId}&examName=${encodeURIComponent('期中导入考试')}`,
+    {
+      token: adminToken,
+    },
+  );
+  let gradesCleaned = 0;
+  for (const grade of importedGrades.payload?.data ?? []) {
+    const removed = await api(`/grades/${grade.id}`, { method: 'DELETE', token: adminToken });
+    if (removed.status === 200) gradesCleaned += 1;
+  }
+  record('导入的成绩可正常删除（清理验证数据）', gradesCleaned >= 2, `已删除 ${gradesCleaned} 条`);
+
+  const roster = await api(`/students?classId=${classId}`, { token: adminToken });
+  const importedStudent = (roster.payload?.data ?? []).find((item) => item.username === importedUsername);
+  if (importedStudent) {
+    const removedStudent = await api(`/students/${importedStudent.id}`, {
+      method: 'DELETE',
+      token: adminToken,
+    });
+    record(
+      '导入的学生可正常删除（清理验证数据）',
+      removedStudent.status === 200,
+      `status=${removedStudent.status}`,
+    );
+  }
+
+  if (layoutId) {
+    const layoutDeleted = await api(`/imports/time-layout/${layoutId}`, {
+      method: 'DELETE',
+      token: teacherToken,
+    });
+    record('时间配置可删除（清理验证数据）', layoutDeleted.status === 200, `status=${layoutDeleted.status}`);
+  }
+
   socket.close();
 
   // ---------------------------------------------------------------- 汇总
