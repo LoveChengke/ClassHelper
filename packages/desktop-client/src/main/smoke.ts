@@ -654,6 +654,123 @@ async function runIslandChecks(
       `（期望 ${currentAppearance.width}x${currentAppearance.height}）`,
   );
 
+  // 10.5) 「开合不震动」实测：把窗口矩形与卡片的**真实屏幕矩形**逐帧采样，
+  //       断言 ①卡片的水平中心与上边缘绝对不动（锚点稳定，不左右/上下跳动）
+  //            ②卡片与窗口的尺寸单调变化且**从不过冲**（不再有"弹一下"的回弹）
+  const motionSamples: {
+    winW: number;
+    winH: number;
+    cardCx: number;
+    cardTop: number;
+    cardW: number;
+    cardH: number;
+  }[] = [];
+
+  const sampleCardRect = async (): Promise<void> => {
+    const bounds = islandWindow?.getBounds();
+    const rect = await islandWindow?.webContents
+      .executeJavaScript(
+        `(() => {
+           const card = document.querySelector('.island-card');
+           if (!card) return null;
+           const r = card.getBoundingClientRect();
+           return { left: r.left, top: r.top, width: r.width, height: r.height };
+         })()`,
+      )
+      .catch(() => null);
+    if (!bounds || !rect) return;
+    motionSamples.push({
+      winW: bounds.width,
+      winH: bounds.height,
+      cardCx: bounds.x + rect.left + rect.width / 2,
+      cardTop: bounds.y + rect.top,
+      cardW: rect.width,
+      cardH: rect.height,
+    });
+  };
+
+  const runMotionProbe = async (action: 'expand' | 'collapse'): Promise<void> => {
+    motionSamples.length = 0;
+    island.handleAction({ action });
+    const deadline = Date.now() + 900;
+    while (Date.now() < deadline) {
+      await sampleCardRect();
+      await sleep(12);
+    }
+  };
+
+  island.handleAction({ action: 'dismiss' });
+  await sleep(250);
+  island.pushNotification(makeNotification('smoke-motion', 'NORMAL', '开合不震动校验'), { inClass: false });
+  await sleep(350);
+
+  const expandedCard = { width: ISLAND_SIZES.expanded.width - 8, height: ISLAND_SIZES.expanded.height - 6 };
+  const pillCard = { width: ISLAND_SIZES.pill.width - 8, height: ISLAND_SIZES.pill.height - 6 };
+
+  await runMotionProbe('expand');
+  const expandSamples = [...motionSamples];
+  const cxSpread = expandSamples.length
+    ? Math.max(...expandSamples.map((item) => item.cardCx)) -
+      Math.min(...expandSamples.map((item) => item.cardCx))
+    : 99;
+  const topSpreadExpand = expandSamples.length
+    ? Math.max(...expandSamples.map((item) => item.cardTop)) -
+      Math.min(...expandSamples.map((item) => item.cardTop))
+    : 99;
+  const maxCardW = expandSamples.length ? Math.max(...expandSamples.map((item) => item.cardW)) : 0;
+  const maxCardH = expandSamples.length ? Math.max(...expandSamples.map((item) => item.cardH)) : 0;
+  const maxWinW = expandSamples.length ? Math.max(...expandSamples.map((item) => item.winW)) : 0;
+  const maxWinH = expandSamples.length ? Math.max(...expandSamples.map((item) => item.winH)) : 0;
+  const expandMonotonic = expandSamples.every(
+    (item, index) => index === 0 || item.winW >= (expandSamples[index - 1]?.winW ?? 0) - 1,
+  );
+  const expandNoOvershoot =
+    maxCardW <= expandedCard.width + 0.5 &&
+    maxCardH <= expandedCard.height + 0.5 &&
+    maxWinW <= ISLAND_SIZES.expanded.width + 1 &&
+    maxWinH <= ISLAND_SIZES.expanded.height + 1;
+  record(
+    '展开过程不震动（锚点不动 + 尺寸不过冲）',
+    expandSamples.length >= 5 &&
+      cxSpread <= 0.5 &&
+      topSpreadExpand <= 0.5 &&
+      expandMonotonic &&
+      expandNoOvershoot,
+    `采样=${expandSamples.length} 卡片中心波动=${cxSpread.toFixed(2)}px 上边缘波动=${topSpreadExpand.toFixed(2)}px ` +
+      `最大卡片=${maxCardW.toFixed(1)}x${maxCardH.toFixed(1)}（目标 ${expandedCard.width}x${expandedCard.height}）` +
+      ` 最大窗口=${maxWinW}x${maxWinH}（目标 ${ISLAND_SIZES.expanded.width}x${ISLAND_SIZES.expanded.height}） 单调=${expandMonotonic}`,
+  );
+
+  await runMotionProbe('collapse');
+  const collapseSamples = [...motionSamples];
+  const cxSpreadCollapse = collapseSamples.length
+    ? Math.max(...collapseSamples.map((item) => item.cardCx)) -
+      Math.min(...collapseSamples.map((item) => item.cardCx))
+    : 99;
+  const topSpreadCollapse = collapseSamples.length
+    ? Math.max(...collapseSamples.map((item) => item.cardTop)) -
+      Math.min(...collapseSamples.map((item) => item.cardTop))
+    : 99;
+  const minWinW = collapseSamples.length ? Math.min(...collapseSamples.map((item) => item.winW)) : 0;
+  const minCardW = collapseSamples.length ? Math.min(...collapseSamples.map((item) => item.cardW)) : 0;
+  const collapseMonotonic = collapseSamples.every(
+    (item, index) =>
+      index === 0 || item.winW <= (collapseSamples[index - 1]?.winW ?? Number.MAX_SAFE_INTEGER) + 1,
+  );
+  const collapseNoOvershoot = minCardW >= pillCard.width - 0.5 && minWinW >= ISLAND_SIZES.pill.width - 1;
+  record(
+    '收回过程不震动（锚点不动 + 尺寸不过冲）',
+    collapseSamples.length >= 5 &&
+      cxSpreadCollapse <= 0.5 &&
+      topSpreadCollapse <= 0.5 &&
+      collapseMonotonic &&
+      collapseNoOvershoot,
+    `采样=${collapseSamples.length} 卡片中心波动=${cxSpreadCollapse.toFixed(2)}px 上边缘波动=${topSpreadCollapse.toFixed(2)}px ` +
+      `最小卡片宽=${minCardW.toFixed(1)}（目标 ${pillCard.width}） 最小窗口宽=${minWinW}（目标 ${ISLAND_SIZES.pill.width}） 单调=${collapseMonotonic}`,
+  );
+
+  // 收尾：保持"胶囊可见"状态——后续个性化用例（透明度 / 位置）需要窗口可见才会立即生效
+  await sleep(250);
   // 11) 个性化设置的其余参数：透明度 / 主题色 / 动画开关 / 速度 / 位置 / 置顶 / 持久化
   //     （需求 2 的完整清单，逐项断言真实窗口属性，而不是只看设置页显示）
   const workArea = screen.getPrimaryDisplay().workArea;

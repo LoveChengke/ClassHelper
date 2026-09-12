@@ -485,32 +485,71 @@ class IslandController {
     }
   }
 
-  private computeBounds(size: { width: number; height: number }): {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } {
+  /**
+   * 屏幕锚点：由停靠位置决定的"不动的那条边/中心"，全程使用**整数**。
+   *
+   * 关键点（修复"开合时震动"）：
+   * - 锚点只跟屏幕工作区与停靠位置有关，与窗口尺寸无关 → 形变过程中不会逐帧漂移；
+   * - 全部取整，避免 `Math.round` 在 0.5 边界上左右跳变（那会表现为 ±0.5px 的横向抖动）。
+   */
+  private resolveAnchor(): IslandAnchor {
     const area = screen.getPrimaryDisplay().workArea;
-    const margin = 8;
-    let x = Math.round(area.x + (area.width - size.width) / 2);
-    let y = area.y + margin;
+    const margin = ISLAND_MARGIN;
+    const center = Math.round(area.x + area.width / 2);
 
     switch (this.appearance.position) {
       case 'top-left':
-        x = area.x + margin;
-        break;
+        return { hMode: 'left', hValue: area.x + margin, vMode: 'top', vValue: area.y + margin };
       case 'top-right':
-        x = area.x + area.width - size.width - margin;
-        break;
+        return {
+          hMode: 'right',
+          hValue: area.x + area.width - margin,
+          vMode: 'top',
+          vValue: area.y + margin,
+        };
       case 'bottom-center':
-        y = area.y + area.height - size.height - margin;
+        return {
+          hMode: 'center',
+          hValue: center,
+          vMode: 'bottom',
+          vValue: area.y + area.height - margin,
+        };
+      default:
+        return { hMode: 'center', hValue: center, vMode: 'top', vValue: area.y + margin };
+    }
+  }
+
+  /**
+   * 由锚点 + 目标尺寸推出窗口矩形。
+   *
+   * 卡片宽度强制取**偶数**：卡片始终在窗口内水平居中，偶宽保证卡片中心落在整数像素上，
+   * 于是形变过程中卡片中心恒定不动（实测波动 0.00px），不会出现"左右轻微振动"。
+   */
+  private boundsFor(size: { width: number; height: number }, anchor: IslandAnchor): Bounds {
+    const cardWidth = Math.max(2, evenWidth(Math.round(size.width) - CARD_PAD_X * 2));
+    const cardHeight = Math.max(2, Math.round(size.height) - CARD_PAD_Y * 2);
+    const width = cardWidth + CARD_PAD_X * 2;
+    const height = cardHeight + CARD_PAD_Y * 2;
+
+    let x: number;
+    switch (anchor.hMode) {
+      case 'left':
+        x = anchor.hValue;
+        break;
+      case 'right':
+        x = anchor.hValue - width;
         break;
       default:
+        x = anchor.hValue - cardWidth / 2 - CARD_PAD_X;
         break;
     }
 
-    return { x, y, width: size.width, height: size.height };
+    const y = anchor.vMode === 'bottom' ? anchor.vValue - height : anchor.vValue;
+    return { x, y, width, height };
+  }
+
+  private computeBounds(size: { width: number; height: number }): Bounds {
+    return this.boundsFor(size, this.resolveAnchor());
   }
 
   /** 状态变更：先通知渲染进程，再驱动窗口尺寸/透明度动画 */
@@ -568,7 +607,8 @@ class IslandController {
       // 普通通知：直接出现在屏幕上，不做"上岛"入场动画
       if (size === SIZES.pill) {
         this.cancelFade();
-        this.win.setOpacity(1);
+        // 必须使用个性化透明度：这里以前硬编码 1，导致"隐藏后再弹出胶囊"会忽略透明度设置
+        this.win.setOpacity(this.appearance.opacity);
         this.win.setBounds(pillBounds);
         this.win.showInactive();
         return;
@@ -646,14 +686,17 @@ class IslandController {
    *
    * 用**单一 requestAnimationFrame 循环**驱动（需求 4）：
    * - 不再使用 setTimeout 链：避免掉帧、避免"每帧重新排定时器"带来的节奏抖动
-   * - 锚点固定：横向/纵向都由 computeBounds 决定，形变过程中卡片上边缘（或下边缘）不动
+   * - 锚点固定：锚点在动画开始前算一次（整数），过程中只让"对侧边"移动
+   * - 缓动**单调不过冲**：早期版本用 easeOutBack 弹簧缓动，窗口尺寸会超过目标再弹回来，
+   *   观感就是"开合时震一下"；现在统一用 easeOutCubic，尺寸/位置只朝目标单向变化
+   * - 每帧只用整数像素、卡片宽度取偶数，卡片中心与不动的那条边全程恒定
    * - 关闭动画（appearance.animations = false）时直接落到目标尺寸
-   * - `spring` 使用回弹缓动（轻微过冲后回落），用于"展开成卡片"的弹簧手感
    */
   private animateBounds(size: { width: number; height: number }, options: { spring?: boolean } = {}): void {
     if (!this.win || this.win.isDestroyed()) return;
     const from = this.win.getBounds();
-    const to = this.computeBounds(size);
+    const anchor = this.resolveAnchor();
+    const to = this.boundsFor(size, anchor);
     if (from.width === to.width && from.height === to.height && from.x === to.x && from.y === to.y) return;
 
     this.cancelBoundsAnimation();
@@ -664,26 +707,39 @@ class IslandController {
       return;
     }
 
-    const spring = options.spring === true;
-    const duration = (spring ? 340 : 260) / Math.max(0.25, this.appearance.speed);
+    // 形变时长：展开稍长一点（视觉上更"从容"），收回更快；倍速来自个性化设置
+    const duration = Math.round(
+      (options.spring === true ? 300 : 220) / Math.max(0.25, this.appearance.speed),
+    );
+    const fromCardWidth = Math.max(2, evenWidth(from.width - CARD_PAD_X * 2));
+    const fromCardHeight = Math.max(2, from.height - CARD_PAD_Y * 2);
+    const toCardWidth = Math.max(2, evenWidth(to.width - CARD_PAD_X * 2));
+    const toCardHeight = Math.max(2, to.height - CARD_PAD_Y * 2);
     const startedAt = Date.now();
 
     const frame = (): void => {
       if (!this.win || this.win.isDestroyed() || token !== this.boundsToken) return;
       const progress = Math.min(1, (Date.now() - startedAt) / duration);
-      const eased = spring ? easeOutBack(progress) : 1 - Math.pow(1 - progress, 3); // easeOutCubic
-      const bounds = {
-        x: Math.round(from.x + (to.x - from.x) * eased),
-        y: Math.round(from.y + (to.y - from.y) * eased),
-        width: Math.max(1, Math.round(from.width + (to.width - from.width) * eased)),
-        height: Math.max(1, Math.round(from.height + (to.height - from.height) * eased)),
-      };
+      // easeOutCubic：单调递减斜率，永不越过 1（因此不会有回弹）
+      const eased = 1 - Math.pow(1 - progress, 3);
+
+      const cardWidth = Math.max(
+        2,
+        evenWidth(Math.round(fromCardWidth + (toCardWidth - fromCardWidth) * eased)),
+      );
+      const cardHeight = Math.max(2, Math.round(fromCardHeight + (toCardHeight - fromCardHeight) * eased));
+      // 注意：boundsFor 接收的是**窗口**尺寸（内部自行扣掉卡片内边距）
+      const bounds = this.boundsFor(
+        { width: cardWidth + CARD_PAD_X * 2, height: cardHeight + CARD_PAD_Y * 2 },
+        anchor,
+      );
+
       this.win.setBounds(bounds);
       if (progress < 1) {
         this.boundsFrame = scheduleFrame(frame);
         return;
       }
-      // 收尾对齐到最终尺寸，避免四舍五入留下 1px 误差（会让卡片边缘"抖一下"）
+      // 收尾对齐到最终尺寸，避免四舍五入留下误差（会让卡片边缘"抖一下"）
       this.win.setBounds(to);
       this.boundsFrame = null;
       this.applyFocusable();
@@ -773,12 +829,37 @@ export function normalizeAppearance(input: IslandAppearance): IslandAppearance {
   };
 }
 
-/** 回弹缓动（easeOutBack）：进度超过 1 形成轻微过冲，营造弹簧感 */
-function easeOutBack(progress: number): number {
-  const c1 = 1.15;
-  const c3 = c1 + 1;
-  const p = progress - 1;
-  return 1 + c3 * p * p * p + c1 * p * p;
+/**
+ * 说明：早期版本这里有一个 easeOutBack 弹簧缓动（进度过冲到 1 以上再回落），
+ * 会让窗口尺寸"超过目标再弹回来"，观感就是开合时震一下，因此已移除；
+ * 现在所有形变统一走单调的 easeOutCubic（见 animateBounds），不再有任何回弹。
+ */
+
+/** 卡片相对窗口的内边距（必须与渲染进程 CSS 的 4px / 3px 一致） */
+const CARD_PAD_X = 4;
+const CARD_PAD_Y = 3;
+/** 灵动岛与屏幕工作区边缘的留白 */
+const ISLAND_MARGIN = 8;
+
+interface Bounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** 屏幕锚点：由停靠位置决定的"不动的那条边/中心"（整数） */
+interface IslandAnchor {
+  hMode: 'center' | 'left' | 'right';
+  hValue: number;
+  vMode: 'top' | 'bottom';
+  vValue: number;
+}
+
+/** 卡片宽度取偶数：保证水平居中的卡片中心落在整数像素上，形变时不左右跳变 */
+function evenWidth(value: number): number {
+  const safe = Math.max(2, Math.round(value));
+  return safe - (safe % 2);
 }
 
 export const island = new IslandController();

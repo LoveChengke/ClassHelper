@@ -832,26 +832,27 @@ body,
   opacity: 0;
 }
 
-/* 展开态：弹簧缩放入场（配合窗口尺寸缓动） */
+/*
+ * 展开 / 收回：只做轻微淡入淡出，**不做缩放与位移**。
+ *
+ * 之前用 `cubic-bezier(0.34, 1.56, 0.64, 1)` + `scale(0.88) translateY(-6px)` 做弹簧入场，
+ * 缩放会先超过 1 再回落（实测卡片被放大到 400.6px 再回到 396px），观感就是"开合时震一下"。
+ * 现在形变完全交给主进程的窗口尺寸缓动（单调 easeOutCubic），卡片保持固定尺寸与固定锚点，
+ * 由窗口"揭开"卡片，全程无色块回弹、无位移抖动。
+ */
 .island-pop-enter-active {
-  transition:
-    opacity 0.2s ease,
-    transform 0.34s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: opacity 0.18s ease-out;
 }
 
 .island-pop-leave-active {
-  transition:
-    opacity 0.14s ease,
-    transform 0.2s ease;
+  transition: opacity 0.12s ease-out;
 }
 
 .island-pop-enter-from {
   opacity: 0;
-  transform: scale(0.88) translateY(-6px);
 }
 
 .island-pop-leave-to {
   opacity: 0;
-  transform: scale(0.92);
 }
 </style>
