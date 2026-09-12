@@ -1,4 +1,4 @@
-﻿# 班级小助手（Class Helper）
+# 班级小助手（Class Helper）
 
 班级信息管理系统，采用 pnpm monorepo，包含**后端服务**、**Web 管理端**（教师/管理员）与
 **桌面客户端**（学生）三端。核心链路：
@@ -20,7 +20,7 @@
 | 1    | pnpm monorepo 脚手架、TypeScript / ESLint / Prettier / 环境变量                                            | ✅ 已完成                                                  |
 | 2    | 后端：Prisma schema + 迁移 + 种子数据 + JWT 认证 + RBAC + 模块化 REST API + Socket.IO                      | ✅ 已完成                                                  |
 | 3    | Web 管理端：登录、主布局、仪表盘、班级/学生/课表/作业/通知/成绩页面、Axios 封装、实时提示                  | ✅ 已完成                                                  |
-| 4    | EXE 客户端：Electron 主进程/preload/渲染进程、登录、课表/作业/通知/成绩/设置、实时推送、IndexedDB 离线缓存 | ✅ 已完成（冒烟验证 26/26）                                |
+| 4    | EXE 客户端：Electron 主进程/preload/渲染进程、登录、课表/作业/通知/成绩/设置、实时推送、IndexedDB 离线缓存 | ✅ 已完成（冒烟验证 27/27）                                |
 | 5    | 三端联调脚本、打包命令、完整 README                                                                        | ✅ 已完成（三套安装包 + 两套 UI 回归测试）                 |
 | 6    | 测试账号与种子数据说明                                                                                     | ✅ 已完成（见下文）                                        |
 | 7    | 生产化：服务端安装程序（内置 Node）、Web 端 PWA 可安装、Docker + Nginx 部署、生产加固与运维文档            | ✅ 已完成（见 [`docs/production.md`](docs/production.md)） |
@@ -173,13 +173,13 @@ pnpm verify:desktop
 # 另开一个终端先启动后端：pnpm dev:server
 pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC + 上课时段拦截：62 项
 pnpm verify:web          # Web 管理端真实点击（含手机小屏适配、上课时段紧急通知全屏警告）：15 项
-pnpm verify:desktop      # Electron 客户端（含灵动岛与联网集成）：26 项
+pnpm verify:desktop      # Electron 客户端（含灵动岛、真实通知链路与联网集成）：27 项
 ```
 
 后端脚本验证**实时推送时延、作业完成、成绩下发、权限隔离、上课时段紧急通知拦截**等 62 项，
 实测通知 37ms、作业 26ms、成绩 25ms 到达（要求 < 5 秒），紧急通知 409 拦截与二次确认后发布均通过；
 客户端脚本验证 preload 桥接、渲染进程、IndexedDB 读写、断网回退、**灵动岛四种状态切换**与联网集成
-（登录 + 四类数据 + Socket.IO），实测 26/26 通过。
+（登录 + 四类数据 + Socket.IO），实测 27/27 通过。
 
 ## 默认账号与种子数据
 
@@ -202,30 +202,30 @@ pnpm verify:desktop      # Electron 客户端（含灵动岛与联网集成）�
 
 ## 常用命令
 
-| 命令                                        | 说明                                                                           |
-| ------------------------------------------- | ------------------------------------------------------------------------------ |
-| `pnpm dev`                                  | 并行启动 shared(tsc watch) + 后端 + Web 端                                     |
-| `pnpm dev:server` / `pnpm dev:web`          | 只启动后端 / 只启动 Web 端                                                     |
-| `pnpm dev:desktop`                          | 启动 EXE 客户端开发模式（Vite 5174 + Electron，热更新）                        |
-| `pnpm build`                                | 构建 shared + 后端 + Web 端 + EXE 客户端                                       |
-| `pnpm build:desktop`                        | 仅构建 EXE 客户端（esbuild 主进程/preload + Vite 渲染进程）                    |
-| `pnpm icons`                                | 生成应用图标（PNG/ICO，用 Electron 渲染 SVG）                                  |
-| **`pnpm dist:server`**                      | **打包服务端 + Web 管理端**（免安装目录 + NSIS 安装程序，内置 Node）           |
-| `pnpm dist:dir`                             | 打包客户端免安装目录 `release/win-unpacked`（含可执行文件，最快）              |
-| `pnpm dist:win`                             | 打包客户端 nsis 安装包 + portable 单文件 EXE                                   |
-| `pnpm dist:all`                             | 服务端安装程序 + 客户端安装程序一起打                                          |
-| `pnpm verify:e2e`                           | 后端端到端验收（62 项，需服务端已启动）                                        |
-| `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，15 项，含手机小屏适配）             |
-| `pnpm verify:desktop`                       | EXE 客户端冒烟验证（26 项，含灵动岛行为/像素级截图校验、侧边栏点击与离线回退） |
-| `pnpm typecheck`                            | 全仓库类型检查（含 `vue-tsc`）                                                 |
-| `pnpm lint` / `pnpm lint:fix`               | ESLint 检查 / 自动修复                                                         |
-| `pnpm format` / `pnpm format:check`         | Prettier 格式化 / 检查                                                         |
-| `pnpm db:generate`                          | 生成 Prisma Client（输出到 `packages/server/src/generated/prisma`）            |
-| `pnpm db:migrate`                           | 创建并应用迁移                                                                 |
-| `pnpm db:seed`                              | 写入种子数据                                                                   |
-| `pnpm db:reset`                             | 重置数据库并重新执行 seed                                                      |
-| `pnpm db:studio`                            | 打开 Prisma Studio                                                             |
-| `pnpm db:switch:mysql` / `db:switch:sqlite` | 切换数据库 provider                                                            |
+| 命令                                        | 说明                                                                                    |
+| ------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `pnpm dev`                                  | 并行启动 shared(tsc watch) + 后端 + Web 端                                              |
+| `pnpm dev:server` / `pnpm dev:web`          | 只启动后端 / 只启动 Web 端                                                              |
+| `pnpm dev:desktop`                          | 启动 EXE 客户端开发模式（Vite 5174 + Electron，热更新）                                 |
+| `pnpm build`                                | 构建 shared + 后端 + Web 端 + EXE 客户端                                                |
+| `pnpm build:desktop`                        | 仅构建 EXE 客户端（esbuild 主进程/preload + Vite 渲染进程）                             |
+| `pnpm icons`                                | 生成应用图标（PNG/ICO，用 Electron 渲染 SVG）                                           |
+| **`pnpm dist:server`**                      | **打包服务端 + Web 管理端**（免安装目录 + NSIS 安装程序，内置 Node）                    |
+| `pnpm dist:dir`                             | 打包客户端免安装目录 `release/win-unpacked`（含可执行文件，最快）                       |
+| `pnpm dist:win`                             | 打包客户端 nsis 安装包 + portable 单文件 EXE                                            |
+| `pnpm dist:all`                             | 服务端安装程序 + 客户端安装程序一起打                                                   |
+| `pnpm verify:e2e`                           | 后端端到端验收（62 项，需服务端已启动）                                                 |
+| `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，15 项，含手机小屏适配）                      |
+| `pnpm verify:desktop`                       | EXE 客户端冒烟验证（27 项，含灵动岛行为/像素级截图/真实通知链路、侧边栏点击与离线回退） |
+| `pnpm typecheck`                            | 全仓库类型检查（含 `vue-tsc`）                                                          |
+| `pnpm lint` / `pnpm lint:fix`               | ESLint 检查 / 自动修复                                                                  |
+| `pnpm format` / `pnpm format:check`         | Prettier 格式化 / 检查                                                                  |
+| `pnpm db:generate`                          | 生成 Prisma Client（输出到 `packages/server/src/generated/prisma`）                     |
+| `pnpm db:migrate`                           | 创建并应用迁移                                                                          |
+| `pnpm db:seed`                              | 写入种子数据                                                                            |
+| `pnpm db:reset`                             | 重置数据库并重新执行 seed                                                               |
+| `pnpm db:studio`                            | 打开 Prisma Studio                                                                      |
+| `pnpm db:switch:mysql` / `db:switch:sqlite` | 切换数据库 provider                                                                     |
 
 ## Web 管理端（含手机小屏适配）
 
@@ -347,6 +347,27 @@ pnpm verify:desktop      # Electron 客户端（含灵动岛与联网集成）�
 
 > 截图路径可用 `ISLAND_SHOTS_DIR` 覆盖（默认 `.cache/island-shots/`）；
 > 归档目录里的图就是打包后 EXE 跑自动化验证时产出的同一份文件。
+> 不设置该变量时只做像素统计与断言、不落盘，验证同样通过。
+
+**灵动岛不出现时怎么排查**（客户端是 GUI，看不到控制台，因此提供两条自查通道）：
+
+1. 客户端 → **设置 → 灵动岛（桌面通知浮窗）**：实时显示当前形态（隐藏 / 新消息胶囊 / 展开详情）、
+   是否处于上课时段、待查看条数与原因说明，并提供「测试灵动岛」按钮——
+   点击后本地推一条自检通知；能看到胶囊就说明灵动岛本身正常，问题在"没有通知到达"或"上课时段自动隐藏"。
+2. 客户端日志：`%APPDATA%\@classhelper\desktop-client\logs\client.log`（超过 1MB 轮转为 `client.log.1`），
+   按时间记录灵动岛的每次状态流转，例如 `灵动岛：进入上课时间段，自动隐藏`、
+   `灵动岛暂存通知（上课中，下课后弹出）`、`灵动岛：下课，弹出上课期间暂存的通知`。
+
+常见原因（按出现频率）：
+
+| 现象                      | 原因与处理                                                                                                                                               |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 一整天都不出现            | 客户端判定为"上课中"（课表覆盖当前时刻）→ 普通通知按设计暂存，紧急通知才立刻展开；下课后自动弹出                                                         |
+| 登录页时就期待出现        | 未登录不启动灵动岛桥接（`auth.token` 为空），登录后才有                                                                                                  |
+| 点过「知道了」后消失      | 正常行为：该条已看过，队列为空时整体隐藏，下一条通知会再出现                                                                                             |
+| 换显示器 / 分辨率后看不到 | 已修复：显示器参数变化会自动重新定位到主屏顶部居中（此前会停留在旧坐标，可能跑到屏幕外）                                                                 |
+| 偶发"再也不出现"          | 已修复：Windows 上 `hide()`/`show()` 异步生效，原先用 `isVisible()` 判断存在竞态（刚 hide 完仍报 true）→ 只做动画不再 show；现改为控制器自己维护显示标记 |
+| 客户端在跑但服务端离线    | 实时通道断开时收不到新通知；恢复连接自动重连，历史未读仍可在"通知"页查看                                                                                 |
 
 ### 离线缓存与自动同步
 
@@ -403,6 +424,7 @@ pnpm dist:win     # nsis 安装包 + portable 单文件（需联网下载 NSIS �
 | 上课期间紧急通知立即展开（无需点击）   | ✅ `mode=expanded reason=urgent`                                                                                                                                  |
 | **紧急通知带展开动画**                 | ✅ 16ms 采样 34 帧，出现 7 个中间尺寸，最终 `424x344`（窗口从胶囊尺寸弹簧展开）                                                                                   |
 | 上课期间收起不回缩成胶囊               | ✅ `mode=hidden visible=false`                                                                                                                                    |
+| **真实通知链路（Socket.IO → 灵动岛）** | ✅ 教师真实发布通知 → 客户端实时通道 → `mode=pill 可见=true 文案="新消息 张老师 · 点击查看"`（用后删除测试通知）                                                  |
 | **普通通知直接显示胶囊（无入场动画）** | ✅ 推送前已隐藏，60ms 内窗口即为 `268x44`、`mode=pill`（无"上岛"动画）                                                                                            |
 | 胶囊 → 点击 → 展开详情                 | ✅ `新消息 · 共 2 条` → `expanded`（含真实 DOM 断言与截图）                                                                                                       |
 | **点击卡片空白处回缩为胶囊**           | ✅ 真实点击 `.body` 空白区域 → `mode=pill`                                                                                                                        |
@@ -594,14 +616,14 @@ pnpm db:migrate && pnpm db:seed
 
 当前实测：
 
-| 验证                                                                            | 结果                                |
-| ------------------------------------------------------------------------------- | ----------------------------------- |
-| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                     | **62/62** ✅                        |
-| `pnpm verify:web`（Web 管理端真实点击 + 手机小屏适配 + 上课时段紧急通知 + PWA） | **15/15** ✅                        |
-| `pnpm verify:desktop`（客户端冒烟 + 灵动岛行为 + 像素级截图校验 + 离线回退）    | **26/26** ✅                        |
-| `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                            | 全部通过 ✅                         |
-| 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）                              | 通过 ✅                             |
-| Docker / Nginx 部署样例                                                         | 文件已提供，本机无 Docker 未实测 ⚠️ |
+| 验证                                                                                    | 结果                                |
+| --------------------------------------------------------------------------------------- | ----------------------------------- |
+| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                             | **62/62** ✅                        |
+| `pnpm verify:web`（Web 管理端真实点击 + 手机小屏适配 + 上课时段紧急通知 + PWA）         | **15/15** ✅                        |
+| `pnpm verify:desktop`（客户端冒烟 + 灵动岛行为 + 真实通知链路 + 像素级校验 + 离线回退） | **27/27** ✅                        |
+| `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                                    | 全部通过 ✅                         |
+| 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）                                      | 通过 ✅                             |
+| Docker / Nginx 部署样例                                                                 | 文件已提供，本机无 Docker 未实测 ⚠️ |
 
 ## 常见问题（本机环境已知坑）
 
