@@ -1,5 +1,5 @@
-import { SOCKET_EVENTS, buildCallTitle, type NotificationDto } from '@classhelper/shared';
-import { assertClassWritable } from '../../lib/access.js';
+﻿import { SOCKET_EVENTS, buildCallTitle, type NotificationDto } from '@classhelper/shared';
+import { assertCanPublishContent } from '../../lib/access.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -18,7 +18,7 @@ const creatorSelect = { select: { id: true, name: true, username: true } } as co
  * "叫人"类型，无论是否在上课都立即展开显示。
  */
 export async function createCall(user: TokenPayload, input: CreateCallInput): Promise<NotificationDto> {
-  await assertClassWritable(user, input.classId);
+  await assertCanPublishContent(user, input.classId);
 
   const student = await prisma.user.findUnique({
     where: { id: input.studentId },

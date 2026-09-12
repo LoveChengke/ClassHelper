@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
@@ -14,9 +14,22 @@ import {
   type ScheduleWeekView,
 } from '@classhelper/shared';
 import { classApi, courseApi, dashboardApi, scheduleApi } from '@/api';
+import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 
+const auth = useAuthStore();
 const realtime = useRealtimeStore();
+
+/**
+ * 课表管理权限：管理员，或"所选班级的班主任"（Class.teacherId === 当前用户）。
+ * 与后端 assertCanManageSchedule 使用同一权限矩阵；科任老师不显示写入口。
+ */
+const canManageSchedule = computed(() => {
+  if (auth.role === 'ADMIN') return true;
+  if (auth.role !== 'TEACHER') return false;
+  const current = classes.value.find((item) => item.id === query.classId);
+  return Boolean(current && current.teacherId === auth.user?.id);
+});
 
 const loading = ref(false);
 const classes = ref<ClassDto[]>([]);
@@ -212,7 +225,9 @@ onUnmounted(() => {
           <el-option v-for="week in weekOptions" :key="week" :label="`第 ${week} 周`" :value="week" />
         </el-select>
         <el-button :icon="'Refresh'" @click="loadSchedules">刷新</el-button>
-        <el-button type="primary" :icon="'Plus'" @click="openCreate">新增课表</el-button>
+        <el-button v-if="canManageSchedule" type="primary" :icon="'Plus'" @click="openCreate">
+          新增课表
+        </el-button>
       </div>
     </div>
 
@@ -241,8 +256,18 @@ onUnmounted(() => {
               <div class="timetable-meta">{{ item.location ?? '未填地点' }}</div>
               <div class="timetable-meta">{{ formatWeekRange(item.weekStart, item.weekEnd) }}</div>
               <div>
-                <el-button link type="primary" size="small" @click="openEdit(item)">编辑</el-button>
-                <el-button link type="danger" size="small" @click="removeSchedule(item)">删除</el-button>
+                <el-button v-if="canManageSchedule" link type="primary" size="small" @click="openEdit(item)">
+                  编辑
+                </el-button>
+                <el-button
+                  v-if="canManageSchedule"
+                  link
+                  type="danger"
+                  size="small"
+                  @click="removeSchedule(item)"
+                >
+                  删除
+                </el-button>
               </div>
             </div>
           </template>

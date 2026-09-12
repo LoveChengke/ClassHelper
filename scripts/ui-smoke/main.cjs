@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Web 管理端 UI 冒烟测试（Electron 驱动真实浏览器内核）。
  *
  * 覆盖：
@@ -29,16 +29,20 @@ const USERNAME = process.env.UI_SMOKE_USER ?? 'teacher1';
 const PASSWORD = process.env.UI_SMOKE_PASS ?? 'teacher123';
 const RESULT_FILE = process.env.UI_SMOKE_RESULT ?? '';
 
-/** 侧边栏菜单：显示文案 -> 期望路由 */
+/**
+ * 侧边栏菜单（教师账号 teacher1 可见的部分）。
+ * 按新的角色权限模型：班级管理 / 学生管理 / 成绩录入 仅管理员可见，
+ * 教师端不应出现这些入口（后端同时强校验），因此期望值只有 4 项。
+ */
 const MENU_ITEMS = [
   { label: '仪表盘', path: '/dashboard' },
-  { label: '班级管理', path: '/classes' },
-  { label: '学生管理', path: '/students' },
   { label: '课表管理', path: '/schedules' },
   { label: '作业发布', path: '/homeworks' },
   { label: '通知发布', path: '/notifications' },
-  { label: '成绩录入', path: '/grades' },
 ];
+
+/** 教师端必须隐藏的入口（前端隐藏 + 后端 403，双重保障） */
+const HIDDEN_MENU_LABELS = ['班级管理', '学生管理', '成绩录入'];
 
 const results = [];
 function record(name, ok, detail = '') {
@@ -218,8 +222,15 @@ async function main() {
       if (!openButton) return { ok: false, detail: '未找到"发布通知"按钮' };
       openButton.click();
 
-      const dialog = await waitFor(() => document.querySelector('.el-dialog'));
+      // 页面里同时存在「发布通知」与「叫人」两个弹窗，按标题精确定位
+      const dialog = await waitFor(() =>
+        Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
+          (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('发布通知'),
+        ),
+      );
       if (!dialog) return { ok: false, detail: '发布通知弹窗未打开' };
+      // 等目标班级下拉选好值（班级列表是异步加载的，避免空值导致校验失败）
+      await waitFor(() => (dialog.querySelector('.el-select__selected-item')?.textContent ?? '').trim().length > 0, 5000);
 
       const titleItem = formItem(dialog, '标题');
       const contentItem = formItem(dialog, '内容');
@@ -240,8 +251,12 @@ async function main() {
       if (!publish) return { ok: false, detail: '未找到"立即发布"按钮' };
       publish.click();
 
-      const mask = await waitFor(() => document.querySelector('.urgent-mask'), 10000);
-      if (!mask) return { ok: false, detail: '上课时段发布紧急通知未弹出全屏警告' };
+      const mask = await waitFor(() => document.querySelector('.urgent-mask'), 15000);
+      if (!mask) {
+        const errors = Array.from(dialog.querySelectorAll('.el-form-item__error')).map((n) => n.textContent.trim()).join('|');
+        const tips = Array.from(document.querySelectorAll('.el-message')).map((n) => n.textContent.trim()).join('|');
+        return { ok: false, detail: '未弹出全屏警告｜表单错误=' + (errors || '无') + '｜页面提示=' + (tips || '无') + '｜班级=' + ((dialog.querySelector('.el-select__selected-item')?.textContent ?? '').trim()) };
+      }
 
       const maskText = (mask.textContent ?? '').replace(/\\s+/g, ' ').trim();
       const periodText = (mask.querySelector('.urgent-period .period-value')?.textContent ?? '').trim();
@@ -331,25 +346,41 @@ async function main() {
   })()`);
   record('Service Worker 已注册（浏览器可安装为应用）', Boolean(swInfo?.ok), String(swInfo?.detail ?? ''));
 
-  // 7.5 "叫人"入口（学生管理 → 叫人 → 快捷短语/自定义消息）
+  // 7.5 权限入口隐藏（教师端不应出现班级/学生/成绩录入入口）
+  const hiddenCheck = await win.webContents.executeJavaScript(`(() => {
+    const labels = Array.from(document.querySelectorAll('.el-menu-item')).map((node) =>
+      (node.textContent ?? '').trim(),
+    );
+    const leaked = ${JSON.stringify(HIDDEN_MENU_LABELS)}.filter((item) => labels.some((label) => label.startsWith(item)));
+    return { labels, leaked };
+  })()`);
+  record(
+    '教师端隐藏无权入口（班级管理/学生管理/成绩录入）',
+    (hiddenCheck?.leaked ?? ['?']).length === 0,
+    `可见菜单=[${(hiddenCheck?.labels ?? []).join(',')}] 越权入口=[${(hiddenCheck?.leaked ?? []).join(',')}]`,
+  );
+
+  // 7.6 "叫人"入口（通知发布 → 叫人 → 快捷短语/自定义消息）
   const callDialog = await win.webContents.executeJavaScript(`(async () => {
     const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
-      (node.textContent ?? '').trim().startsWith('学生管理'),
+      (node.textContent ?? '').trim().startsWith('通知发布'),
     );
-    if (!menu) return { ok: false, reason: '未找到学生管理菜单' };
+    if (!menu) return { ok: false, reason: '未找到通知发布菜单' };
     menu.click();
     const deadline = Date.now() + 6000;
-    while (Date.now() < deadline && location.pathname !== '/students') {
+    while (Date.now() < deadline && location.pathname !== '/notifications') {
       await new Promise((resolve) => setTimeout(resolve, 80));
     }
     await new Promise((resolve) => setTimeout(resolve, 600));
     const callButton = Array.from(document.querySelectorAll('button')).find((node) =>
       (node.textContent ?? '').trim() === '叫人',
     );
-    if (!callButton) return { ok: false, reason: '学生列表里没有"叫人"按钮' };
+    if (!callButton) return { ok: false, reason: '通知页没有"叫人"按钮' };
     callButton.click();
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const dialog = document.querySelector('.el-dialog');
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const dialog = Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
+      (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('叫人'),
+    );
     if (!dialog) return { ok: false, reason: '叫人弹窗未打开' };
     const phrases = Array.from(dialog.querySelectorAll('.call-phrase')).map((node) => node.textContent.trim());
     const hasTextarea = Boolean(dialog.querySelector('textarea'));
@@ -474,7 +505,7 @@ async function runMobileChecks(win) {
   await captureMobileShot(win, 'mobile-1-drawer');
   record(
     '手机端抽屉菜单（点汉堡滑出，菜单项完整）',
-    drawerInfo?.open === true && drawerInfo?.items >= 7 && !/enter-from/.test(drawerInfo?.overlayClass ?? ''),
+    drawerInfo?.open === true && drawerInfo?.items >= 4 && !/enter-from/.test(drawerInfo?.overlayClass ?? ''),
     `菜单项=${drawerInfo?.items} left=${drawerInfo?.left} aria-expanded=${drawerInfo?.expandAttr} ` +
       `transform=${drawerInfo?.transform} 遮罩类=${drawerInfo?.overlayClass}`,
   );

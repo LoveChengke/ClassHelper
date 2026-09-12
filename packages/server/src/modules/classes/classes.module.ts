@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
 import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
@@ -38,7 +38,7 @@ router.get('/:id', validate({ params: idParamSchema }), async (req, res) => {
 });
 
 /** POST /api/classes - 创建班级 */
-router.post('/', requireRole('ADMIN', 'TEACHER'), validate({ body: createClassSchema }), async (req, res) => {
+router.post('/', requireRole('ADMIN'), validate({ body: createClassSchema }), async (req, res) => {
   const user = getAuthUser(req);
   sendCreated(res, await classService.createClass(user, req.body as CreateClassInput), '班级创建成功');
 });

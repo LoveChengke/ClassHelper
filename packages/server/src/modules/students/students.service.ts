@@ -1,6 +1,6 @@
-import type { StudentDto } from '@classhelper/shared';
+﻿import type { StudentDto } from '@classhelper/shared';
 import { env } from '../../config/env.js';
-import { assertClassWritable, classScopeWhere, isAdmin, resolveClassScope } from '../../lib/access.js';
+import { assertCanManageRoster, classScopeWhere, isAdmin, resolveClassScope } from '../../lib/access.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -37,7 +37,7 @@ export async function listStudents(user: TokenPayload, options: ListStudentOptio
 
 /** 新建学生账号（可选直接分班） */
 export async function createStudent(user: TokenPayload, input: CreateStudentInput): Promise<StudentDto> {
-  if (input.classId) await assertClassWritable(user, input.classId);
+  if (input.classId) assertCanManageRoster(user);
 
   const passwordHash = await hashPassword(input.password ?? env.defaultStudentPassword);
   const created = await prisma.user.create({
@@ -75,14 +75,14 @@ export async function updateStudent(
   if (!student || student.role !== 'STUDENT') throw ApiError.notFound('学生不存在');
 
   if (student.classId) {
-    await assertClassWritable(user, student.classId);
+    assertCanManageRoster(user);
   } else if (!isAdmin(user)) {
     throw ApiError.forbidden('该学生尚未分班，仅管理员可以直接修改');
   }
 
   const nextClassId = input.classId === undefined ? student.classId : (input.classId ?? null);
   if (nextClassId && nextClassId !== student.classId) {
-    await assertClassWritable(user, nextClassId);
+    assertCanManageRoster(user);
   }
 
   const updated = await prisma.user.update({
@@ -119,7 +119,7 @@ export async function deleteStudent(user: TokenPayload, studentId: string): Prom
   if (!student || student.role !== 'STUDENT') throw ApiError.notFound('学生不存在');
 
   if (student.classId) {
-    await assertClassWritable(user, student.classId);
+    assertCanManageRoster(user);
   } else if (!isAdmin(user)) {
     throw ApiError.forbidden('该学生尚未分班，仅管理员可以删除');
   }
@@ -137,7 +137,7 @@ export async function resetPassword(
   if (!student || student.role !== 'STUDENT') throw ApiError.notFound('学生不存在');
 
   if (student.classId) {
-    await assertClassWritable(user, student.classId);
+    assertCanManageRoster(user);
   } else if (!isAdmin(user)) {
     throw ApiError.forbidden('该学生尚未分班，仅管理员可以重置密码');
   }

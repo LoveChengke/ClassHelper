@@ -1,4 +1,4 @@
-import {
+﻿import {
   SOCKET_EVENTS,
   buildScheduleWeekView,
   resolveClassStatus,
@@ -9,7 +9,7 @@ import {
 } from '@classhelper/shared';
 import {
   assertClassAccess,
-  assertClassWritable,
+  assertCanManageSchedule,
   classScopeWhere,
   isStudent,
   requireStudentClassId,
@@ -102,7 +102,7 @@ export async function getClassStatus(
 }
 
 export async function createSchedule(user: TokenPayload, input: CreateScheduleInput): Promise<ScheduleDto> {
-  await assertClassWritable(user, input.classId);
+  await assertCanManageSchedule(user, input.classId);
   await assertCourseInClass(input.courseId, input.classId);
 
   const created = await prisma.schedule.create({
@@ -135,7 +135,7 @@ export async function updateSchedule(
 ): Promise<ScheduleDto> {
   const current = await prisma.schedule.findUnique({ where: { id: scheduleId } });
   if (!current) throw ApiError.notFound('课表记录不存在');
-  await assertClassWritable(user, current.classId);
+  await assertCanManageSchedule(user, current.classId);
 
   if (input.courseId) await assertCourseInClass(input.courseId, current.classId);
 
@@ -173,7 +173,7 @@ export async function updateSchedule(
 export async function deleteSchedule(user: TokenPayload, scheduleId: string): Promise<void> {
   const current = await prisma.schedule.findUnique({ where: { id: scheduleId } });
   if (!current) throw ApiError.notFound('课表记录不存在');
-  await assertClassWritable(user, current.classId);
+  await assertCanManageSchedule(user, current.classId);
 
   await prisma.schedule.delete({ where: { id: scheduleId } });
   emitToClass(current.classId, SOCKET_EVENTS.scheduleUpdated, {

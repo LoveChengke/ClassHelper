@@ -1,12 +1,25 @@
+import {
+  canManageGrades,
+  canManageSchedule,
+  canPublishContent,
+  canManageClasses,
+  canAssignTeachers,
+  canManageRoster,
+  resolveClassRole,
+  type ClassRole,
+} from '@classhelper/shared';
 import { prisma } from './db.js';
 import { ApiError } from './http.js';
 import type { TokenPayload } from './jwt.js';
 
 /**
  * 权限（RBAC）规则：
- * - ADMIN   ：可访问全部班级
- * - TEACHER ：仅可访问自己创建（teacherId）或被分配（ClassTeacher）的班级
- * - STUDENT ：仅可查看自己所在班级的数据，且无任何写权限
+ * - ADMIN   ：全部班级；班级增删改、人员分配、成绩、课表
+ * - HEAD    ：班主任（Class.teacherId）—— 本班课表 + 作业/通知/叫人
+ * - SUBJECT ：科任老师（ClassTeacher）—— 仅作业/通知/叫人
+ * - STUDENT ：只读；班级账号（classSession）以班级为单位读写自己的数据
+ *
+ * 判定逻辑与前端共用 `@classhelper/shared/permissions`，避免前后端口径漂移。
  */
 
 export function isAdmin(user: TokenPayload): boolean {
@@ -80,6 +93,75 @@ export async function assertClassAccess(user: TokenPayload, classId: string): Pr
 export async function assertClassWritable(user: TokenPayload, classId: string): Promise<void> {
   if (!isStaff(user)) throw ApiError.forbidden('学生账号没有管理权限');
   await assertClassAccess(user, classId);
+}
+
+/* ---------------------------------------------------------------- 班级内角色 */
+
+/** 解析当前用户在某班级里的角色（ADMIN / HEAD / SUBJECT / STUDENT / NONE） */
+export async function resolveUserClassRole(user: TokenPayload, classId: string): Promise<ClassRole> {
+  if (user.role === 'ADMIN') return 'ADMIN';
+  if (user.role === 'STUDENT') return canAccessClass(user, classId).then((ok) => (ok ? 'STUDENT' : 'NONE'));
+
+  const record = await prisma.class.findUnique({
+    where: { id: classId },
+    select: {
+      teacherId: true,
+      teachers: { where: { teacherId: user.sub }, select: { id: true } },
+    },
+  });
+  if (!record) return 'NONE';
+  return resolveClassRole({
+    role: user.role,
+    isHeadTeacher: record.teacherId === user.sub,
+    isSubjectTeacher: record.teachers.length > 0,
+  });
+}
+
+/** 班级本身（增删改）与人员分配：仅管理员 */
+export function assertCanManageClasses(user: TokenPayload): void {
+  if (!canManageClasses(user.role)) {
+    throw ApiError.forbidden('只有管理员可以创建、修改或删除班级');
+  }
+}
+
+/** 班主任 / 科任老师分配：仅管理员 */
+export function assertCanAssignTeachers(user: TokenPayload): void {
+  if (!canAssignTeachers(user.role)) {
+    throw ApiError.forbidden('只有管理员可以分配班主任与科任老师');
+  }
+}
+
+/** 学生名单管理：仅管理员 */
+export function assertCanManageRoster(user: TokenPayload): void {
+  if (!canManageRoster(user.role)) {
+    throw ApiError.forbidden('只有管理员可以管理学生名单与账号');
+  }
+}
+
+/** 课表管理（含时间配置导入）：管理员或本班班主任 */
+export async function assertCanManageSchedule(user: TokenPayload, classId: string): Promise<void> {
+  const classRole = await resolveUserClassRole(user, classId);
+  if (!canManageSchedule(classRole)) {
+    throw ApiError.forbidden(
+      classRole === 'SUBJECT' ? '科任老师不能管理课表，请联系班主任或管理员' : '无权管理该班级的课表',
+    );
+  }
+}
+
+/** 作业 / 通知 / 叫人：管理员、班主任、科任老师 */
+export async function assertCanPublishContent(user: TokenPayload, classId: string): Promise<void> {
+  await assertClassAccess(user, classId);
+  const classRole = await resolveUserClassRole(user, classId);
+  if (!canPublishContent(classRole)) {
+    throw ApiError.forbidden('当前账号没有发布作业/通知或叫人的权限');
+  }
+}
+
+/** 成绩录入 / 修改 / 导入：仅管理员 */
+export function assertCanManageGrades(user: TokenPayload): void {
+  if (!canManageGrades(user.role)) {
+    throw ApiError.forbidden('只有管理员可以录入、修改或导入成绩');
+  }
 }
 
 /** 学生的主班级，未分配班级时抛 403 */

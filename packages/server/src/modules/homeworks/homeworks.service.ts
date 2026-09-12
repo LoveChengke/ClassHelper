@@ -1,7 +1,7 @@
-import { SOCKET_EVENTS, type HomeworkDto, type HomeworkStatusDto } from '@classhelper/shared';
+﻿import { SOCKET_EVENTS, type HomeworkDto, type HomeworkStatusDto } from '@classhelper/shared';
 import {
+  assertCanPublishContent,
   assertClassAccess,
-  assertClassWritable,
   classScopeWhere,
   isStudent,
   resolveClassScope,
@@ -82,7 +82,7 @@ export async function getHomework(user: TokenPayload, homeworkId: string): Promi
 
 /** 发布作业并实时推送到班级房间 */
 export async function createHomework(user: TokenPayload, input: CreateHomeworkInput): Promise<HomeworkDto> {
-  await assertClassWritable(user, input.classId);
+  await assertCanPublishContent(user, input.classId);
   if (input.courseId) await assertCourseInClass(input.courseId, input.classId);
 
   const created = await prisma.homework.create({
@@ -110,7 +110,7 @@ export async function updateHomework(
 ): Promise<HomeworkDto> {
   const current = await prisma.homework.findUnique({ where: { id: homeworkId } });
   if (!current) throw ApiError.notFound('作业不存在');
-  await assertClassWritable(user, current.classId);
+  await assertCanPublishContent(user, current.classId);
 
   if (input.courseId) await assertCourseInClass(input.courseId, current.classId);
 
@@ -137,7 +137,7 @@ export async function deleteHomework(user: TokenPayload, homeworkId: string): Pr
     include: { course: courseSelect, creator: creatorSelect },
   });
   if (!current) throw ApiError.notFound('作业不存在');
-  await assertClassWritable(user, current.classId);
+  await assertCanPublishContent(user, current.classId);
 
   await prisma.homework.delete({ where: { id: homeworkId } });
   emitToClass(current.classId, SOCKET_EVENTS.homeworkUpdated, {

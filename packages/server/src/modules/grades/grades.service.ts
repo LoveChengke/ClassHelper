@@ -1,4 +1,4 @@
-import {
+﻿import {
   SOCKET_EVENTS,
   gradeLevel,
   gradePercent,
@@ -6,7 +6,7 @@ import {
   type GradeLevel,
   type GradeStats,
 } from '@classhelper/shared';
-import { assertClassWritable, classScopeWhere, resolveClassScope } from '../../lib/access.js';
+import { assertCanManageGrades, classScopeWhere, resolveClassScope } from '../../lib/access.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -98,7 +98,7 @@ export async function getGradeStats(user: TokenPayload, options: ListGradeOption
 }
 
 export async function createGrade(user: TokenPayload, input: CreateGradeInput): Promise<GradeDto> {
-  await assertClassWritable(user, input.classId);
+  assertCanManageGrades(user);
   await assertStudentInClass(input.userId, input.classId);
   if (input.courseId) await assertCourseInClass(input.courseId, input.classId);
 
@@ -119,7 +119,7 @@ export async function createGrade(user: TokenPayload, input: CreateGradeInput): 
 
 /** 批量录入：同一个考试一次提交整班成绩 */
 export async function bulkCreateGrades(user: TokenPayload, input: BulkCreateGradeInput): Promise<GradeDto[]> {
-  await assertClassWritable(user, input.classId);
+  assertCanManageGrades(user);
   if (input.courseId) await assertCourseInClass(input.courseId, input.classId);
 
   const publishedAt = parseOptionalDate(input.publishedAt) ?? new Date();
@@ -155,7 +155,7 @@ export async function updateGrade(
 ): Promise<GradeDto> {
   const current = await prisma.grade.findUnique({ where: { id: gradeId } });
   if (!current) throw ApiError.notFound('成绩记录不存在');
-  await assertClassWritable(user, current.classId);
+  assertCanManageGrades(user);
   if (input.courseId) await assertCourseInClass(input.courseId, current.classId);
 
   const updated = await prisma.grade.update({
@@ -181,7 +181,7 @@ export async function updateGrade(
 export async function deleteGrade(user: TokenPayload, gradeId: string): Promise<void> {
   const current = await prisma.grade.findUnique({ where: { id: gradeId } });
   if (!current) throw ApiError.notFound('成绩记录不存在');
-  await assertClassWritable(user, current.classId);
+  assertCanManageGrades(user);
   await prisma.grade.delete({ where: { id: gradeId } });
   emitToClass(current.classId, SOCKET_EVENTS.gradeUpdated, {
     ...toGradeDto({ ...current, course: null, student: null, class: null }),

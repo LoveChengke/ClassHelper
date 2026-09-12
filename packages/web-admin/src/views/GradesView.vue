@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import * as echarts from 'echarts';
@@ -14,8 +14,13 @@ import {
   type StudentDto,
 } from '@classhelper/shared';
 import { classApi, courseApi, gradeApi } from '@/api';
+import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 
+const auth = useAuthStore();
+
+/** 成绩写入仅管理员（教师仍可查看列表与统计，符合需求 7 的权限清单） */
+const isAdmin = computed(() => auth.role === 'ADMIN');
 const realtime = useRealtimeStore();
 
 const loading = ref(false);
@@ -273,8 +278,8 @@ onUnmounted(() => {
         <el-select v-model="filter.examName" placeholder="全部考试" clearable style="width: 160px">
           <el-option v-for="item in examOptions" :key="item" :label="item" :value="item" />
         </el-select>
-        <el-button type="primary" :icon="'Plus'" @click="openSingle">单条录入</el-button>
-        <el-button type="success" :icon="'Upload'" @click="openBulk">批量录入</el-button>
+        <el-button v-if="isAdmin" type="primary" :icon="'Plus'" @click="openSingle">单条录入</el-button>
+        <el-button v-if="isAdmin" type="success" :icon="'Upload'" @click="openBulk">批量录入</el-button>
       </div>
     </div>
 
@@ -335,7 +340,7 @@ onUnmounted(() => {
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
-            <el-button link type="danger" @click="removeGrade(row)">删除</el-button>
+            <el-button v-if="isAdmin" link type="danger" @click="removeGrade(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

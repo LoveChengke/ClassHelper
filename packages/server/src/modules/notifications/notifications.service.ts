@@ -1,7 +1,7 @@
-import { SOCKET_EVENTS, type NotificationDto } from '@classhelper/shared';
+﻿import { SOCKET_EVENTS, type NotificationDto } from '@classhelper/shared';
 import {
   assertClassAccess,
-  assertClassWritable,
+  assertCanPublishContent,
   classScopeWhere,
   resolveClassScope,
 } from '../../lib/access.js';
@@ -61,7 +61,7 @@ export async function createNotification(
   user: TokenPayload,
   input: CreateNotificationInput,
 ): Promise<NotificationDto> {
-  await assertClassWritable(user, input.classId);
+  await assertCanPublishContent(user, input.classId);
 
   const priority = input.priority ?? 'NORMAL';
   if (priority === 'URGENT' && input.confirmDuringClass !== true) {
@@ -99,7 +99,7 @@ export async function createNotification(
 export async function deleteNotification(user: TokenPayload, notificationId: string): Promise<void> {
   const current = await prisma.notification.findUnique({ where: { id: notificationId } });
   if (!current) throw ApiError.notFound('通知不存在');
-  await assertClassWritable(user, current.classId);
+  await assertCanPublishContent(user, current.classId);
   await prisma.notification.delete({ where: { id: notificationId } });
 }
 

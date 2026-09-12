@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
@@ -11,11 +11,16 @@ import {
   type UserDto,
 } from '@classhelper/shared';
 import { classApi, courseApi, teacherApi } from '@/api';
+import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useResponsive } from '@/composables/useResponsive';
 
+const auth = useAuthStore();
 const realtime = useRealtimeStore();
 const { isMobile } = useResponsive();
+
+/** 仅管理员可管理班级（增删改）与人员分配 —— 与后端权限矩阵一致 */
+const isAdmin = computed(() => auth.role === 'ADMIN');
 
 /** 小屏下详情描述改为单列，避免文字被压成竖排 */
 const detailColumns = computed(() => (isMobile.value ? 1 : 3));
@@ -239,7 +244,7 @@ onUnmounted(() => {
           @clear="loadClasses"
         />
         <el-button :icon="'Search'" @click="loadClasses">查询</el-button>
-        <el-button type="primary" :icon="'Plus'" @click="openCreate">新建班级</el-button>
+        <el-button v-if="isAdmin" type="primary" :icon="'Plus'" @click="openCreate">新建班级</el-button>
       </div>
     </div>
 
@@ -268,8 +273,8 @@ onUnmounted(() => {
         <el-table-column label="操作" width="230" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="removeClass(row)">删除</el-button>
+            <el-button v-if="isAdmin" link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="isAdmin" link type="danger" @click="removeClass(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

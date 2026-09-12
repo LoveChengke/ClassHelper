@@ -1,4 +1,4 @@
-﻿# 班级小助手（Class Helper）
+# 班级小助手（Class Helper）
 
 班级信息管理系统，采用 pnpm monorepo，包含**后端服务**、**Web 管理端**（教师/管理员）与
 **桌面客户端**（学生）三端。核心链路：
@@ -171,8 +171,8 @@ pnpm verify:desktop
 
 ```bash
 # 另开一个终端先启动后端：pnpm dev:server
-pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC + 上课时段拦截 + 叫人：68 项
-pnpm verify:web          # Web 管理端真实点击（含手机小屏适配、叫人入口、紧急通知全屏警告）：16 项
+pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC + 上课时段拦截 + 叫人：82 项
+pnpm verify:web          # Web 管理端真实点击（含权限入口隐藏、手机适配、叫人入口、紧急通知）：17 项
 pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读/作业/叫人、真实链路、课表时间轴）：34 项
 ```
 
@@ -202,30 +202,30 @@ pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读
 
 ## 常用命令
 
-| 命令                                        | 说明                                                                         |
-| ------------------------------------------- | ---------------------------------------------------------------------------- |
-| `pnpm dev`                                  | 并行启动 shared(tsc watch) + 后端 + Web 端                                   |
-| `pnpm dev:server` / `pnpm dev:web`          | 只启动后端 / 只启动 Web 端                                                   |
-| `pnpm dev:desktop`                          | 启动 EXE 客户端开发模式（Vite 5174 + Electron，热更新）                      |
-| `pnpm build`                                | 构建 shared + 后端 + Web 端 + EXE 客户端                                     |
-| `pnpm build:desktop`                        | 仅构建 EXE 客户端（esbuild 主进程/preload + Vite 渲染进程）                  |
-| `pnpm icons`                                | 生成应用图标（PNG/ICO，用 Electron 渲染 SVG）                                |
-| **`pnpm dist:server`**                      | **打包服务端 + Web 管理端**（免安装目录 + NSIS 安装程序，内置 Node）         |
-| `pnpm dist:dir`                             | 打包客户端免安装目录 `release/win-unpacked`（含可执行文件，最快）            |
-| `pnpm dist:win`                             | 打包客户端 nsis 安装包 + portable 单文件 EXE                                 |
-| `pnpm dist:all`                             | 服务端安装程序 + 客户端安装程序一起打                                        |
-| `pnpm verify:e2e`                           | 后端端到端验收（68 项，需服务端已启动）                                      |
-| `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，16 项，含手机小屏适配与叫人入口） |
-| `pnpm verify:desktop`                       | EXE 客户端冒烟验证（34 项，含灵动岛动画/收回/已读/作业/叫人、课表时间轴）    |
-| `pnpm typecheck`                            | 全仓库类型检查（含 `vue-tsc`）                                               |
-| `pnpm lint` / `pnpm lint:fix`               | ESLint 检查 / 自动修复                                                       |
-| `pnpm format` / `pnpm format:check`         | Prettier 格式化 / 检查                                                       |
-| `pnpm db:generate`                          | 生成 Prisma Client（输出到 `packages/server/src/generated/prisma`）          |
-| `pnpm db:migrate`                           | 创建并应用迁移                                                               |
-| `pnpm db:seed`                              | 写入种子数据                                                                 |
-| `pnpm db:reset`                             | 重置数据库并重新执行 seed                                                    |
-| `pnpm db:studio`                            | 打开 Prisma Studio                                                           |
-| `pnpm db:switch:mysql` / `db:switch:sqlite` | 切换数据库 provider                                                          |
+| 命令                                        | 说明                                                                      |
+| ------------------------------------------- | ------------------------------------------------------------------------- |
+| `pnpm dev`                                  | 并行启动 shared(tsc watch) + 后端 + Web 端                                |
+| `pnpm dev:server` / `pnpm dev:web`          | 只启动后端 / 只启动 Web 端                                                |
+| `pnpm dev:desktop`                          | 启动 EXE 客户端开发模式（Vite 5174 + Electron，热更新）                   |
+| `pnpm build`                                | 构建 shared + 后端 + Web 端 + EXE 客户端                                  |
+| `pnpm build:desktop`                        | 仅构建 EXE 客户端（esbuild 主进程/preload + Vite 渲染进程）               |
+| `pnpm icons`                                | 生成应用图标（PNG/ICO，用 Electron 渲染 SVG）                             |
+| **`pnpm dist:server`**                      | **打包服务端 + Web 管理端**（免安装目录 + NSIS 安装程序，内置 Node）      |
+| `pnpm dist:dir`                             | 打包客户端免安装目录 `release/win-unpacked`（含可执行文件，最快）         |
+| `pnpm dist:win`                             | 打包客户端 nsis 安装包 + portable 单文件 EXE                              |
+| `pnpm dist:all`                             | 服务端安装程序 + 客户端安装程序一起打                                     |
+| `pnpm verify:e2e`                           | 后端端到端验收（82 项，含角色权限矩阵，需服务端已启动）                   |
+| `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，17 项，含权限入口隐藏）        |
+| `pnpm verify:desktop`                       | EXE 客户端冒烟验证（34 项，含灵动岛动画/收回/已读/作业/叫人、课表时间轴） |
+| `pnpm typecheck`                            | 全仓库类型检查（含 `vue-tsc`）                                            |
+| `pnpm lint` / `pnpm lint:fix`               | ESLint 检查 / 自动修复                                                    |
+| `pnpm format` / `pnpm format:check`         | Prettier 格式化 / 检查                                                    |
+| `pnpm db:generate`                          | 生成 Prisma Client（输出到 `packages/server/src/generated/prisma`）       |
+| `pnpm db:migrate`                           | 创建并应用迁移                                                            |
+| `pnpm db:seed`                              | 写入种子数据                                                              |
+| `pnpm db:reset`                             | 重置数据库并重新执行 seed                                                 |
+| `pnpm db:studio`                            | 打开 Prisma Studio                                                        |
+| `pnpm db:switch:mysql` / `db:switch:sqlite` | 切换数据库 provider                                                       |
 
 ## Web 管理端（含手机小屏适配）
 
@@ -261,7 +261,7 @@ pnpm verify:desktop      # Electron 客户端（含灵动岛动画/收回/已读
 实现位置：`src/composables/useResponsive.ts`（断点 + resize 监听）、`src/layouts/AdminLayout.vue`（抽屉/顶栏）、
 `src/styles/index.css`（全局响应式规则）、各视图表格卡片加 `.table-card`。
 
-`pnpm verify:web` 的 16 项里，最后 8 项专门验证手机端与叫人入口（Electron 真实点击 + 真实尺寸窗口）：
+`pnpm verify:web` 的 17 项里，最后 9 项专门验证权限入口隐藏、手机端与叫人入口（Electron 真实点击）：
 
 | 校验项                                 | 实测结果                                                             |
 | -------------------------------------- | -------------------------------------------------------------------- |
@@ -561,20 +561,47 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 `class:{classId}`、`user:{userId}`、`role:{role}`、`students`、`teachers`。
 客户端断线由 Socket.IO 自动重连（Web 端 store 与后续 EXE 端共用同一套事件名）。
 
-## 权限模型（RBAC）
+## 角色与权限模型（RBAC）
 
-| 角色      | 可见范围                                                      | 写权限                                  |
-| --------- | ------------------------------------------------------------- | --------------------------------------- |
-| `ADMIN`   | 全部班级                                                      | 全部                                    |
-| `TEACHER` | 自己创建（`Class.teacherId`）或被分配（`ClassTeacher`）的班级 | 仅上述班级                              |
-| `STUDENT` | 仅自己所在班级（`User.classId` + `Enrollment`）               | 无（仅能标记自己的作业状态 / 已读通知） |
+班级内的角色由"账号角色 + 与该班级的关系"共同决定，前后端共用同一份矩阵
+（`packages/shared/src/permissions.ts`，后端 `lib/access.ts` 复用，前端用它隐藏入口）：
+
+| 角色               | 判定方式                       | 可见范围                   |
+| ------------------ | ------------------------------ | -------------------------- |
+| `ADMIN` 管理员     | `User.role = ADMIN`            | 全部班级                   |
+| 班主任 `HEAD`      | `Class.teacherId === 当前用户` | 本班                       |
+| 科任老师 `SUBJECT` | `ClassTeacher` 中存在当前用户  | 被分配的班级               |
+| 学生 `STUDENT`     | `User.classId` / 班级账号      | 自己的班级（只读业务数据） |
+
+**权限矩阵**（`PERMISSION_MATRIX`，验收脚本按此逐条断言）：
+
+| 操作                                   | 管理员 |    班主任    | 科任老师 |
+| -------------------------------------- | :----: | :----------: | :------: |
+| 班级创建 / 修改 / 删除                 |   ✅   |      ❌      |    ❌    |
+| 分配班主任与科任老师                   |   ✅   |      ❌      |    ❌    |
+| 学生名单管理（增删 / 重置密码 / 导入） |   ✅   |      ❌      |    ❌    |
+| 课表管理（增删改 / 时间配置导入）      |   ✅   | ✅（仅本班） |    ❌    |
+| 布置作业                               |   ✅   |      ✅      |    ✅    |
+| 叫人                                   |   ✅   |      ✅      |    ✅    |
+| 发布通知                               |   ✅   |      ✅      |    ✅    |
+| 成绩录入 / 修改 / 导入                 |   ✅   |      ❌      |    ❌    |
 
 实现要点：
 
-- `src/middleware/auth.ts`：JWT 校验后会**回查数据库**，班级/角色变更立即生效。
-- `src/lib/access.ts`：集中实现 `assertClassAccess` / `assertClassWritable` / `resolveClassScope`，
-  列表接口通过 scope 收敛数据（`classId in [...]`），单条接口直接断言。
-- 越权请求统一返回 `403`，未登录返回 `401`（验收脚本已覆盖 10 项越权场景）。
+- `src/middleware/auth.ts`：JWT 校验后**回查数据库**，班级/角色变更立即生效。
+- `src/lib/access.ts`：`resolveUserClassRole()` 解析班级内角色，`assertCanManageClasses` /
+  `assertCanAssignTeachers` / `assertCanManageRoster` / `assertCanManageSchedule` /
+  `assertCanPublishContent` / `assertCanManageGrades` 在**服务层**断言（路由只做角色过滤）。
+- `resolveClassScope()` 收敛列表数据（`classId in [...]`），单条接口直接断言；越权一律 `403`。
+- 前端按同一矩阵隐藏入口：教师端侧边栏不再显示「班级管理 / 学生管理 / 成绩录入」，
+  课表页的增删改按钮仅对"管理员或本班班主任"显示，成绩页的录入/删除按钮仅对管理员显示。
+- **`叫人`入口位置调整**：班主任与科任老师都需要叫人，而「学生管理」页是管理员专属，
+  因此教师的叫人入口放在「通知发布 → 叫人」（选班级 → 选学生 → 快捷短语/自定义消息），
+  管理员在学生管理里仍保留逐行「叫人」。
+
+> 行为变更提示：按需求"科任老师只有布置作业、叫人、通知权限""班主任另有本班课表管理权限"，
+> 成绩录入与班级/名单管理已收紧为管理员专属；如需把成绩下放给班主任或科任老师，
+> 只需调整 `packages/shared/src/permissions.ts` 里的 `canManageGrades()` 并同步断言。
 
 ## 模块化设计（可随时增删模块）
 
@@ -649,14 +676,14 @@ pnpm db:migrate && pnpm db:seed
 
 当前实测：
 
-| 验证                                                                               | 结果                                |
-| ---------------------------------------------------------------------------------- | ----------------------------------- |
-| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                        | **68/68** ✅                        |
-| `pnpm verify:web`（Web 管理端真实点击 + 手机小屏适配 + 叫人入口 + 紧急通知 + PWA） | **16/16** ✅                        |
-| `pnpm verify:desktop`（客户端冒烟 + 灵动岛动画/收回/已读/作业/叫人 + 课表时间轴）  | **34/34** ✅                        |
-| `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                               | 全部通过 ✅                         |
-| 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）                                 | 通过 ✅                             |
-| Docker / Nginx 部署样例                                                            | 文件已提供，本机无 Docker 未实测 ⚠️ |
+| 验证                                                                              | 结果                                |
+| --------------------------------------------------------------------------------- | ----------------------------------- |
+| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                       | **82/82** ✅                        |
+| `pnpm verify:web`（Web 管理端真实点击 + 权限入口隐藏 + 手机适配 + 叫人 + PWA）    | **17/17** ✅                        |
+| `pnpm verify:desktop`（客户端冒烟 + 灵动岛动画/收回/已读/作业/叫人 + 课表时间轴） | **34/34** ✅                        |
+| `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                              | 全部通过 ✅                         |
+| 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）                                | 通过 ✅                             |
+| Docker / Nginx 部署样例                                                           | 文件已提供，本机无 Docker 未实测 ⚠️ |
 
 ## 常见问题（本机环境已知坑）
 

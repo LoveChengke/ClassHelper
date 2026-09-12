@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 /**
  * 端到端联调验证（对应验收标准）：
  *   1. 教师发布通知 -> 学生端 Socket.IO 5 秒内收到
@@ -76,6 +76,15 @@ async function main() {
   record('教师登录 teacher1', Boolean(teacherToken), `status=${teacherLogin.status}`);
   if (!teacherToken) process.exit(1);
 
+  // 管理员令牌：按新的角色权限模型，班级增删改/人员分配/学生名单/成绩均仅管理员可执行
+  const adminLogin = await api('/auth/login', {
+    method: 'POST',
+    body: { username: 'admin', password: 'admin123' },
+  });
+  const adminToken = adminLogin.payload?.data?.token;
+  record('管理员登录 admin', Boolean(adminToken), `status=${adminLogin.status}`);
+  if (!adminToken) process.exit(1);
+
   const studentLogin = await api('/auth/login', {
     method: 'POST',
     body: { username: 'student01', password: 'student123' },
@@ -117,7 +126,7 @@ async function main() {
     foreignClass ? `外部班级：${foreignClass.name}` : '未找到其它教师的班级',
   );
 
-  const studentList = await api(`/students?classId=${classId}`, { token: teacherToken });
+  const studentList = await api(`/students?classId=${classId}`, { token: adminToken });
   const classmates = studentList.payload?.data ?? [];
   const targetStudent = classmates.find((item) => item.id === studentUser?.id) ?? classmates[0];
   record('教师获取学生名单', classmates.length > 0, `共 ${classmates.length} 人`);
@@ -225,7 +234,7 @@ async function main() {
   const gradeWait = waitForEvent(socket, 'grade:updated');
   const createdGrade = await api('/grades', {
     method: 'POST',
-    token: teacherToken,
+    token: adminToken,
     body: {
       classId,
       courseId,
@@ -270,7 +279,7 @@ async function main() {
     `学生 ${classDetail.payload?.data?.students?.length ?? 0} 人 · 课程 ${classDetail.payload?.data?.courses?.length ?? 0} 门`,
   );
 
-  const teacherList = await api('/teachers', { token: teacherToken });
+  const teacherList = await api('/teachers', { token: adminToken });
   record(
     '教师列表 /teachers',
     (teacherList.payload?.data ?? []).length >= 2,
@@ -305,20 +314,20 @@ async function main() {
 
   const assigned = await api(`/classes/${classId}/teachers`, {
     method: 'POST',
-    token: teacherToken,
+    token: adminToken,
     body: { teacherId: teacher2Login.payload?.data?.user?.id },
   });
   record('分配协作教师', assigned.status === 201, `status=${assigned.status}`);
   const unassigned = await api(`/classes/${classId}/teachers/${teacher2Login.payload?.data?.user?.id}`, {
     method: 'DELETE',
-    token: teacherToken,
+    token: adminToken,
   });
   record('取消协作教师', unassigned.status === 200, `status=${unassigned.status}`);
 
   const tempUsername = `e2e_student_${Date.now()}`;
   const addedStudent = await api(`/classes/${classId}/students`, {
     method: 'POST',
-    token: teacherToken,
+    token: adminToken,
     body: { username: tempUsername, name: '联调学生' },
   });
   const addedStudentId = addedStudent.payload?.data?.id;
@@ -334,14 +343,14 @@ async function main() {
 
     const resetResult = await api(`/students/${addedStudentId}/reset-password`, {
       method: 'POST',
-      token: teacherToken,
+      token: adminToken,
       body: {},
     });
     record('重置学生密码', resetResult.status === 200, `status=${resetResult.status}`);
 
     const renamed = await api(`/students/${addedStudentId}`, {
       method: 'PATCH',
-      token: teacherToken,
+      token: adminToken,
       body: { name: '联调学生（已改名）' },
     });
     record(
@@ -352,7 +361,7 @@ async function main() {
 
     const removedStudent = await api(`/classes/${classId}/students/${addedStudentId}`, {
       method: 'DELETE',
-      token: teacherToken,
+      token: adminToken,
     });
     record('班级移出学生', removedStudent.status === 200, `status=${removedStudent.status}`);
 
@@ -360,20 +369,13 @@ async function main() {
     const teacherDelete = await api(`/students/${addedStudentId}`, { method: 'DELETE', token: teacherToken });
     record('教师删除未分班学生被拒绝（403）', teacherDelete.status === 403, `status=${teacherDelete.status}`);
 
-    const adminLogin = await api('/auth/login', {
-      method: 'POST',
-      body: { username: 'admin', password: 'admin123' },
-    });
-    const adminToken = adminLogin.payload?.data?.token;
-    record('管理员登录 admin', Boolean(adminToken), `status=${adminLogin.status}`);
-
     const adminDelete = await api(`/students/${addedStudentId}`, { method: 'DELETE', token: adminToken });
     record('管理员删除学生账号', adminDelete.status === 200, `status=${adminDelete.status}`);
   }
 
   const bulkResult = await api('/grades/bulk', {
     method: 'POST',
-    token: teacherToken,
+    token: adminToken,
     body: {
       classId,
       courseId,
@@ -424,7 +426,7 @@ async function main() {
 
   const updatedGrade = await api(`/grades/${createdGrade.payload?.data?.id}`, {
     method: 'PATCH',
-    token: teacherToken,
+    token: adminToken,
     body: { score: 95 },
   });
   record(
@@ -617,6 +619,156 @@ async function main() {
       if (id) await api(`/notifications/${id}`, { method: 'DELETE', token: teacherToken });
     }
     record('清理叫人测试数据', true, '已删除 3 条叫人通知');
+  }
+
+  // ---------------------------------------------------------------- 6.4 班级角色权限矩阵
+  // 依据需求：班主任/科任老师不能增删改班级；仅管理员可分配人员；
+  // 科任老师仅作业/叫人/通知；班主任另可管理本班课表；成绩录入仅管理员。
+  {
+    record('管理员登录（用于权限矩阵校验）', Boolean(adminToken), '已在上文登录');
+
+    // 科任老师：teacher2 在高二(3)班是协作（科任）老师
+    const subjectClass = teacher2Classes.find(
+      (item) => item.teacherId !== teacher2Login.payload?.data?.user?.id,
+    );
+    const subjectClassId = subjectClass?.id;
+    record(
+      '存在"科任老师"场景的班级',
+      Boolean(subjectClassId) && subjectClassId !== foreignClass?.id,
+      `classId=${subjectClassId ?? '-'} name=${subjectClass?.name ?? '-'}`,
+    );
+
+    if (adminToken) {
+      const headCreate = await api('/classes', {
+        method: 'POST',
+        token: teacherToken,
+        body: { name: '班主任越权班', grade: '高一' },
+      });
+      record('班主任创建班级被拒绝（403）', headCreate.status === 403, `status=${headCreate.status}`);
+
+      const subjectCreate = await api('/classes', {
+        method: 'POST',
+        token: teacher2Token,
+        body: { name: '科任越权班', grade: '高一' },
+      });
+      record('科任老师创建班级被拒绝（403）', subjectCreate.status === 403, `status=${subjectCreate.status}`);
+
+      const headDelete = await api(`/classes/${classId}`, { method: 'DELETE', token: teacherToken });
+      record('班主任删除班级被拒绝（403）', headDelete.status === 403, `status=${headDelete.status}`);
+
+      const headAssign = await api(`/classes/${classId}/teachers`, {
+        method: 'POST',
+        token: teacherToken,
+        body: { teacherId: teacher2Login.payload?.data?.user?.id },
+      });
+      record('班主任分配科任老师被拒绝（403）', headAssign.status === 403, `status=${headAssign.status}`);
+
+      const subjectAssign = await api(`/classes/${classId}/teachers`, {
+        method: 'POST',
+        token: teacher2Token,
+        body: { teacherId: teacher2Login.payload?.data?.user?.id },
+      });
+      record('科任老师分配人员被拒绝（403）', subjectAssign.status === 403, `status=${subjectAssign.status}`);
+
+      // 管理员可以分配（用"先加后删"验证）
+      const adminAssign = await api(`/classes/${classId}/teachers`, {
+        method: 'POST',
+        token: adminToken,
+        body: { teacherId: teacher2Login.payload?.data?.user?.id },
+      });
+      record(
+        '管理员分配科任老师成功（201/200）',
+        [200, 201].includes(adminAssign.status),
+        `status=${adminAssign.status}`,
+      );
+      const adminUnassign = await api(
+        `/classes/${classId}/teachers/${teacher2Login.payload?.data?.user?.id}`,
+        {
+          method: 'DELETE',
+          token: adminToken,
+        },
+      );
+      record('管理员取消科任老师成功（200）', adminUnassign.status === 200, `status=${adminUnassign.status}`);
+
+      // 课表：班主任可管理本班，科任老师不可
+      if (subjectClassId) {
+        const subjectSchedule = await api('/schedules', {
+          method: 'POST',
+          token: teacher2Token,
+          body: {
+            classId: subjectClassId,
+            courseId: courses.payload?.data?.[0]?.id,
+            dayOfWeek: 3,
+            startTime: '13:00',
+            endTime: '13:45',
+            weekStart: 1,
+            weekEnd: 20,
+          },
+        });
+        record(
+          '科任老师管理课表被拒绝（403）',
+          subjectSchedule.status === 403 || subjectSchedule.status === 400,
+          `status=${subjectSchedule.status}`,
+        );
+      }
+
+      const subjectHomework = await api('/homeworks', {
+        method: 'POST',
+        token: subjectClassId ? teacher2Token : teacherToken,
+        body: {
+          classId: subjectClassId,
+          title: '科任老师布置的作业',
+          content: '权限矩阵校验用',
+        },
+      });
+      record('科任老师可布置作业（201）', subjectHomework.status === 201, `status=${subjectHomework.status}`);
+      if (subjectHomework.payload?.data?.id) {
+        await api(`/homeworks/${subjectHomework.payload.data.id}`, {
+          method: 'DELETE',
+          token: teacher2Token,
+        });
+      }
+
+      const subjectGrades = await api('/grades', {
+        method: 'POST',
+        token: teacher2Token,
+        body: { classId: classId, userId: studentUser?.id, examName: '越权成绩', score: 90, totalScore: 100 },
+      });
+      record('科任老师录入成绩被拒绝（403）', subjectGrades.status === 403, `status=${subjectGrades.status}`);
+
+      const headGrades = await api('/grades', {
+        method: 'POST',
+        token: teacherToken,
+        body: {
+          classId: classId,
+          userId: studentUser?.id,
+          examName: '班主任越权成绩',
+          score: 90,
+          totalScore: 100,
+        },
+      });
+      record(
+        '班主任录入成绩被拒绝（403，成绩仅管理员）',
+        headGrades.status === 403,
+        `status=${headGrades.status}`,
+      );
+
+      const adminGrades = await api('/grades', {
+        method: 'POST',
+        token: adminToken,
+        body: {
+          classId: classId,
+          userId: studentUser?.id,
+          examName: '管理员录入成绩',
+          score: 88,
+          totalScore: 100,
+        },
+      });
+      record('管理员录入成绩成功（201）', adminGrades.status === 201, `status=${adminGrades.status}`);
+      if (adminGrades.payload?.data?.id) {
+        await api(`/grades/${adminGrades.payload.data.id}`, { method: 'DELETE', token: adminToken });
+      }
+    }
   }
 
   // ---------------------------------------------------------------- 7. 权限隔离

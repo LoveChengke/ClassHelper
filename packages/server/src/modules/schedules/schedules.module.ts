@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { resolveCurrentWeek } from '@classhelper/shared';
 import { env } from '../../config/env.js';
 import { sendCreated, sendOk } from '../../lib/http.js';

@@ -1,8 +1,10 @@
-import type { ClassDetailDto, ClassDto, StudentDto } from '@classhelper/shared';
+﻿import type { ClassDetailDto, ClassDto, StudentDto } from '@classhelper/shared';
 import { env } from '../../config/env.js';
 import {
   assertClassAccess,
-  assertClassWritable,
+  assertCanAssignTeachers,
+  assertCanManageClasses,
+  assertCanManageRoster,
   classScopeIdFilter,
   resolveClassScope,
 } from '../../lib/access.js';
@@ -75,6 +77,7 @@ export async function getClassDetail(user: TokenPayload, classId: string): Promi
 
 /** 创建班级 */
 export async function createClass(user: TokenPayload, input: CreateClassInput): Promise<ClassDto> {
+  assertCanManageClasses(user);
   let teacherId = user.sub;
   if (input.teacherId && user.role === 'ADMIN') {
     const teacher = await prisma.user.findUnique({ where: { id: input.teacherId } });
@@ -101,7 +104,7 @@ export async function updateClass(
   classId: string,
   input: UpdateClassInput,
 ): Promise<ClassDto> {
-  await assertClassWritable(user, classId);
+  assertCanManageClasses(user);
 
   const updated = await prisma.class.update({
     where: { id: classId },
@@ -118,7 +121,7 @@ export async function updateClass(
 
 /** 删除班级（级联删除课表/作业/通知/成绩） */
 export async function deleteClass(user: TokenPayload, classId: string): Promise<void> {
-  await assertClassWritable(user, classId);
+  assertCanManageClasses(user);
   emitToClass(classId, SOCKET_EVENTS.classUpdated, { classId, action: 'deleted' });
   await prisma.class.delete({ where: { id: classId } });
 }
@@ -144,7 +147,7 @@ export async function addStudent(
   classId: string,
   input: AddStudentInput,
 ): Promise<StudentDto> {
-  await assertClassWritable(user, classId);
+  assertCanManageRoster(user);
 
   const existing = await prisma.user.findUnique({ where: { username: input.username } });
   let studentId: string;
@@ -190,7 +193,7 @@ export async function addStudent(
 
 /** 将学生移出班级（保留账号） */
 export async function removeStudent(user: TokenPayload, classId: string, studentId: string): Promise<void> {
-  await assertClassWritable(user, classId);
+  assertCanManageRoster(user);
 
   const student = await prisma.user.findUnique({ where: { id: studentId } });
   if (!student || student.role !== 'STUDENT') throw ApiError.notFound('学生不存在');
@@ -206,7 +209,7 @@ export async function removeStudent(user: TokenPayload, classId: string, student
 
 /** 分配协作教师 */
 export async function assignTeacher(user: TokenPayload, classId: string, teacherId: string): Promise<void> {
-  await assertClassWritable(user, classId);
+  assertCanAssignTeachers(user);
 
   const teacher = await prisma.user.findUnique({ where: { id: teacherId } });
   if (!teacher || (teacher.role !== 'TEACHER' && teacher.role !== 'ADMIN')) {
@@ -222,7 +225,7 @@ export async function assignTeacher(user: TokenPayload, classId: string, teacher
 
 /** 取消协作教师（班主任不可被移除） */
 export async function removeTeacher(user: TokenPayload, classId: string, teacherId: string): Promise<void> {
-  await assertClassWritable(user, classId);
+  assertCanAssignTeachers(user);
 
   const target = await prisma.class.findUnique({ where: { id: classId }, select: { teacherId: true } });
   if (target?.teacherId === teacherId) throw ApiError.badRequest('班主任不能被移除，请先转移班级');

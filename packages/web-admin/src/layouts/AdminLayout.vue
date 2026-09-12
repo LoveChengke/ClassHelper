@@ -14,15 +14,27 @@ const auth = useAuthStore();
 const realtime = useRealtimeStore();
 const { isMobile } = useResponsive();
 
+/**
+ * 菜单项与可见角色（与后端 `@classhelper/shared/permissions` 矩阵保持一致）：
+ * - 班级管理 / 学生管理：仅管理员（班主任与科任老师都没有班级增删改与人员分配权限）
+ * - 课表管理：管理员 + 班主任（页面内再按"是否本班班主任"控制增删改按钮）
+ * - 作业 / 通知：所有教师
+ * - 成绩录入：仅管理员（成绩写入仅管理员；教师仍可在仪表盘查看汇总）
+ */
 const menuItems = [
-  { path: '/dashboard', title: '仪表盘', icon: 'Odometer' },
-  { path: '/classes', title: '班级管理', icon: 'School' },
-  { path: '/students', title: '学生管理', icon: 'User' },
-  { path: '/schedules', title: '课表管理', icon: 'Calendar' },
-  { path: '/homeworks', title: '作业发布', icon: 'Notebook' },
-  { path: '/notifications', title: '通知发布', icon: 'Bell' },
-  { path: '/grades', title: '成绩录入', icon: 'Trophy' },
+  { path: '/dashboard', title: '仪表盘', icon: 'Odometer', roles: ['ADMIN', 'TEACHER'] },
+  { path: '/classes', title: '班级管理', icon: 'School', roles: ['ADMIN'] },
+  { path: '/students', title: '学生管理', icon: 'User', roles: ['ADMIN'] },
+  { path: '/schedules', title: '课表管理', icon: 'Calendar', roles: ['ADMIN', 'TEACHER'] },
+  { path: '/homeworks', title: '作业发布', icon: 'Notebook', roles: ['ADMIN', 'TEACHER'] },
+  { path: '/notifications', title: '通知发布', icon: 'Bell', roles: ['ADMIN', 'TEACHER'] },
+  { path: '/grades', title: '成绩录入', icon: 'Trophy', roles: ['ADMIN'] },
 ];
+
+/** 当前账号可见的菜单（教师看不到班级/学生/成绩录入等无权入口） */
+const visibleMenuItems = computed(() =>
+  menuItems.filter((item) => (auth.role ? item.roles.includes(auth.role) : false)),
+);
 
 /** 高亮当前菜单：直接比较路由路径，避免依赖路由名 */
 const activeMenu = computed(() => route.path);
@@ -129,7 +141,7 @@ async function submitPassword(): Promise<void> {
         <span class="brand-text">班级小助手</span>
       </div>
       <el-menu :default-active="activeMenu" class="layout-menu" @select="handleMenuSelect">
-        <el-menu-item v-for="item in menuItems" :key="item.path" :index="item.path">
+        <el-menu-item v-for="item in visibleMenuItems" :key="item.path" :index="item.path">
           <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.title }}</span>
         </el-menu-item>
@@ -217,7 +229,7 @@ async function submitPassword(): Promise<void> {
           <span class="brand-text">班级小助手</span>
         </div>
         <el-menu :default-active="activeMenu" class="layout-menu" @select="handleMenuSelect">
-          <el-menu-item v-for="item in menuItems" :key="item.path" :index="item.path">
+          <el-menu-item v-for="item in visibleMenuItems" :key="item.path" :index="item.path">
             <el-icon><component :is="item.icon" /></el-icon>
             <span>{{ item.title }}</span>
           </el-menu-item>

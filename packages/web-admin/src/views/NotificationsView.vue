@@ -1,7 +1,8 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
+  CALL_QUICK_PHRASES,
   NOTIFICATION_PRIORITIES,
   PRIORITY_LABELS,
   PRIORITY_TAG_TYPES,
@@ -13,8 +14,9 @@ import {
   type ClassPeriod,
   type NotificationDto,
   type NotificationPriority,
+  type StudentDto,
 } from '@classhelper/shared';
-import { classApi, notificationApi, scheduleApi } from '@/api';
+import { callApi, classApi, notificationApi, scheduleApi } from '@/api';
 import { useRealtimeStore } from '@/stores/realtime';
 import UrgentClassWarning from '@/components/UrgentClassWarning.vue';
 
@@ -49,6 +51,68 @@ async function loadNotifications(): Promise<void> {
   }
 }
 
+/* ------------------------------------------------------------ 叫人（教师可用） */
+
+/**
+ * 叫人入口放在通知页：班主任与科任老师都能用（学生管理页是管理员专属）。
+ * 学生名单走 `/classes/:id/students`（班级详情接口，教师有权访问），
+ * 不使用管理员专属的 `/students`。
+ */
+const callVisible = ref(false);
+const callSending = ref(false);
+const callClassId = ref('');
+const callStudentId = ref('');
+const callStudents = ref<StudentDto[]>([]);
+const callQuickPhrase = ref<string>(CALL_QUICK_PHRASES[0] ?? '');
+const callMessage = ref('');
+
+async function openCall(): Promise<void> {
+  callClassId.value = filter.classId || classes.value[0]?.id || '';
+  callStudentId.value = '';
+  callMessage.value = '';
+  callQuickPhrase.value = CALL_QUICK_PHRASES[0] ?? '';
+  callStudents.value = [];
+  callVisible.value = true;
+  if (callClassId.value) await loadCallStudents();
+}
+
+async function loadCallStudents(): Promise<void> {
+  callStudentId.value = '';
+  callStudents.value = callClassId.value ? await classApi.students(callClassId.value) : [];
+}
+
+function pickCallPhrase(phrase: string): void {
+  callQuickPhrase.value = callQuickPhrase.value === phrase ? '' : phrase;
+}
+
+async function submitCall(): Promise<void> {
+  if (!callClassId.value) {
+    ElMessage.warning('请选择班级');
+    return;
+  }
+  if (!callStudentId.value) {
+    ElMessage.warning('请选择学生');
+    return;
+  }
+  if (!callMessage.value.trim() && !callQuickPhrase.value.trim()) {
+    ElMessage.warning('请选择快捷短语或填写自定义消息');
+    return;
+  }
+  callSending.value = true;
+  try {
+    const created = await callApi.create({
+      classId: callClassId.value,
+      studentId: callStudentId.value,
+      ...(callMessage.value.trim() ? { message: callMessage.value.trim() } : {}),
+      ...(callQuickPhrase.value.trim() ? { quickPhrase: callQuickPhrase.value.trim() } : {}),
+    });
+    ElMessage.success(`已通知：${created.title}`);
+    callVisible.value = false;
+  } finally {
+    callSending.value = false;
+  }
+}
+
 /* ------------------------------------------------------------ 发布 */
 
 const formVisible = ref(false);
@@ -73,7 +137,9 @@ const urgentWarning = reactive({
   title: '',
 });
 
-function openCreate(): void {
+async function openCreate(): Promise<void> {
+  // 班级列表可能还没加载完（进入页面后立刻点按钮）：先补一次，避免「目标班级」为空导致校验失败
+  if (classes.value.length === 0) await loadClasses().catch(() => undefined);
   form.classId = filter.classId || classes.value[0]?.id || '';
   form.title = '';
   form.content = '';
@@ -202,6 +268,7 @@ onUnmounted(() => {
           @keyup.enter="loadNotifications"
           @clear="loadNotifications"
         />
+        <el-button type="warning" :icon="'Bell'" @click="openCall">叫人</el-button>
         <el-button type="primary" :icon="'Plus'" @click="openCreate">发布通知</el-button>
       </div>
     </div>
@@ -273,6 +340,59 @@ onUnmounted(() => {
       </template>
     </el-dialog>
 
+    <!-- 叫人：选班级 → 选学生 → 快捷短语 / 自定义消息 → 学生端灵动岛立即弹出 -->
+    <el-dialog v-model="callVisible" title="叫人" width="520px">
+      <el-form label-width="76px">
+        <el-form-item label="班级">
+          <el-select v-model="callClassId" style="width: 100%" @change="loadCallStudents">
+            <el-option v-for="item in classes" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="学生">
+          <el-select v-model="callStudentId" filterable placeholder="选择学生" style="width: 100%">
+            <el-option
+              v-for="item in callStudents"
+              :key="item.id"
+              :label="`${item.name}（${item.username}）`"
+              :value="item.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="快捷短语">
+          <div class="call-phrases">
+            <el-tag
+              v-for="phrase in CALL_QUICK_PHRASES"
+              :key="phrase"
+              class="call-phrase"
+              :effect="callQuickPhrase === phrase ? 'dark' : 'plain'"
+              :type="callQuickPhrase === phrase ? 'warning' : 'info'"
+              @click="pickCallPhrase(phrase)"
+            >
+              {{ phrase }}
+            </el-tag>
+          </div>
+        </el-form-item>
+        <el-form-item label="自定义">
+          <el-input
+            v-model="callMessage"
+            type="textarea"
+            :rows="2"
+            maxlength="200"
+            show-word-limit
+            placeholder="可选；填写后优先于快捷短语"
+          />
+        </el-form-item>
+      </el-form>
+      <el-alert
+        type="warning"
+        :closable="false"
+        title="学生端桌面会立即浮出「请 XXX 同学找 XXX 老师」，上课时段也照常弹出"
+      />
+      <template #footer>
+        <el-button @click="callVisible = false">取消</el-button>
+        <el-button type="warning" :loading="callSending" @click="submitCall">发送叫人</el-button>
+      </template>
+    </el-dialog>
     <!-- 上课时段发布紧急通知的全屏二次确认（3 秒倒计时） -->
     <UrgentClassWarning
       :visible="urgentWarning.visible"

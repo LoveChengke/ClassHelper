@@ -26,9 +26,15 @@ if (missing.length > 0) {
 
 console.log('[smoke] 启动 Electron 冒烟验证...\n');
 
-// 独立的 userData：避免与用户正在运行的客户端抢单实例锁（否则新进程会静默退出）
-const profileDir = path.join(repoRoot, '.cache', 'desktop-smoke-profile');
-fs.rmSync(profileDir, { recursive: true, force: true });
+// 独立的 userData：避免与用户正在运行的客户端抢单实例锁（否则新进程会静默退出）。
+// 目录按进程号区分：上一次冒烟若被强杀，目录可能仍被句柄占用（rmSync 会 ENOTEMPTY），
+// 用独立目录可以彻底避免互相干扰。
+const profileDir = path.join(repoRoot, '.cache', `desktop-smoke-profile-${process.pid}`);
+try {
+  fs.rmSync(profileDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+} catch (error) {
+  console.warn(`[smoke] 复用/清理配置目录失败（忽略）：${error?.message ?? error}`);
+}
 console.log(`[smoke] 独立配置目录：${profileDir}`);
 
 // 未显式指定时自动探测后端：可达则启用联网集成 + 侧边栏点击测试

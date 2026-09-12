@@ -1,5 +1,5 @@
-import type { CourseDto } from '@classhelper/shared';
-import { assertClassWritable, classScopeWhere, resolveClassScope } from '../../lib/access.js';
+﻿import type { CourseDto } from '@classhelper/shared';
+import { assertCanManageSchedule, classScopeWhere, resolveClassScope } from '../../lib/access.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -19,7 +19,7 @@ export async function listCourses(user: TokenPayload, classId?: string): Promise
 }
 
 export async function createCourse(user: TokenPayload, input: CreateCourseInput): Promise<CourseDto> {
-  await assertClassWritable(user, input.classId);
+  await assertCanManageSchedule(user, input.classId);
 
   const created = await prisma.course.create({
     data: { name: input.name, classId: input.classId, teacherId: user.sub },
@@ -35,7 +35,7 @@ export async function updateCourse(
 ): Promise<CourseDto> {
   const course = await prisma.course.findUnique({ where: { id: courseId } });
   if (!course) throw ApiError.notFound('课程不存在');
-  await assertClassWritable(user, course.classId);
+  await assertCanManageSchedule(user, course.classId);
 
   const updated = await prisma.course.update({
     where: { id: courseId },
@@ -48,6 +48,6 @@ export async function updateCourse(
 export async function deleteCourse(user: TokenPayload, courseId: string): Promise<void> {
   const course = await prisma.course.findUnique({ where: { id: courseId } });
   if (!course) throw ApiError.notFound('课程不存在');
-  await assertClassWritable(user, course.classId);
+  await assertCanManageSchedule(user, course.classId);
   await prisma.course.delete({ where: { id: courseId } });
 }
