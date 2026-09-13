@@ -67,6 +67,29 @@ export const WEEKDAY_LABELS: Record<number, string> = {
 export const WEEKDAYS: readonly number[] = [1, 2, 3, 4, 5, 6, 7];
 
 /**
+ * 常用科目目录：作业/课表里"新建课程"时可直接选（也用于种子数据与导入时的科目建议）。
+ * 顺序按中学常见排课习惯，前 9 个是文化课，后面是技术与体艺类。
+ */
+export const SUBJECT_CATALOG: readonly string[] = [
+  '语文',
+  '数学',
+  '英语',
+  '物理',
+  '化学',
+  '生物',
+  '政治',
+  '历史',
+  '地理',
+  '信息技术',
+  '通用技术',
+  '体育',
+  '音乐',
+  '美术',
+  '心理健康',
+  '劳动',
+] as const;
+
+/**
  * 单双周标签与取值（课表用）。
  * 语义与 ClassIsland 课表一致：WeekCountDivTotal=1 → 每周；=2 时 WeekCountDiv=1 → 单周、=2 → 双周。
  */

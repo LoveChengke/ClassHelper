@@ -58,6 +58,8 @@ model Class {
   code      String   @unique
   /// 班级密码（bcrypt 哈希）；null = 尚未设置，此时禁止班级账号登录
   passwordHash String?
+  /// 本学期教学周数（班主任可调，默认 20）：课表周次选择与 weekEnd 默认值都用它
+  termWeeks    Int      @default(20)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

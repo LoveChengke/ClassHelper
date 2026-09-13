@@ -126,6 +126,8 @@ class IslandController {
   /** 当前生效的窗口背景材质（'acrylic' | 'none'），用于避免重复设置与冒烟断言 */
   private backgroundMaterial: string = 'none';
   /** 当前是否接收鼠标（固定大包围盒窗口默认穿透，由渲染进程按命中动态打开） */
+  /** 是否允许"失焦自动收起"（冒烟可临时关闭，避免焦点抖动干扰断言） */
+  private blurCollapseEnabled = true;
   private interactive = false;
   /** 渲染进程上报的岛体矩形（窗口内 CSS px）：主进程据此做光标命中兜底轮询 */
   private hitRect: { x: number; y: number; width: number; height: number } | null = null;
@@ -137,6 +139,8 @@ class IslandController {
   private lastHitSyncAt = 0;
   /** 设置页"预览效果"的示例通知 id（预览期间失焦不收起） */
   private previewId: string | null = null;
+  /** 上课时段里"用户主动点开"的通知 id（syncWindow 的上课守卫对它放行） */
+  private explicitShowId: string | null = null;
   /** 预览示例岛的自动收尾定时器 */
   private previewTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -225,6 +229,8 @@ class IslandController {
      * 只在激活满 500ms 后才把 blur 当作"用户点击了别处"。
      */
     win.on('blur', () => {
+      // 冒烟里可以临时关掉"失焦收起"，避免测试过程被无关的焦点变化打断（默认开启）
+      if (!this.blurCollapseEnabled) return;
       if (this.state.mode !== 'expanded' || this.state.inClass) return;
       // 设置页预览：示例岛要继续留在屏幕上（用户在调滑块时主窗口一直是焦点）
       if (this.previewId && this.state.active?.id === this.previewId) return;
@@ -388,6 +394,7 @@ class IslandController {
 
     if (payload.inClass) {
       if (!wasInClass) logger.info('灵动岛：进入上课时间段，自动隐藏');
+      this.explicitShowId = null;
       if (this.state.mode !== 'hidden') {
         // 上课期间自动隐藏（紧急通知也遵循，避免持续遮挡课堂投影）
         this.setState({ mode: 'hidden', reason: null });
@@ -434,21 +441,38 @@ class IslandController {
         // 上课时段：普通通知（含普通叫人）一律不显示；但紧急通知 / 紧急叫人本来就是必须
         // 立刻看到的，收起（回缩为胶囊）之后必须能再次点开——否则学生会误以为消息消失了。
         const showing = this.state.active;
-        if (this.state.inClass && !this.isOpenable(showing)) {
+        // 岛当前可见（胶囊态）时，用户是"对着屏幕上这条岛"点的：
+        // 只要队列里有更**新**的消息（例如紧急通知之后又来了作业），就应当打开新那条，
+        // 而不是反复打开上一条 —— 否则表现为"点不开新作业"（用户反馈的联合通知场景）。
+        // 岛完全隐藏时仍严格遵循上课不打扰。
+        const islandVisible = this.state.mode !== 'hidden';
+        if (this.state.inClass && !this.isOpenable(showing) && !islandVisible) {
           logger.info(
             `灵动岛：上课时段忽略展开（priority=${showing?.priority ?? '-'} kind=${showing?.kind ?? '-'} id=${showing?.id ?? '-'}）`,
           );
           break;
         }
-        // 收起态（胶囊 / 空闲细缝）再次点击必须能打开：
-        // active 为空但队列里还有未看通知时，先把它取出来当"当前通知"再展开，
-        // 否则会出现"岛明明在屏幕上，点了没反应"（部分情况下的收起态无法再次打开）。
-        if (!this.state.active) {
-          const pending = this.state.queued[this.state.queued.length - 1];
+        const newestQueued = this.state.queued[this.state.queued.length - 1];
+        const shouldOpenNewest = Boolean(
+          newestQueued &&
+          (!showing || String(newestQueued.createdAt ?? '') > String(showing.createdAt ?? '')),
+        );
+        if (!this.state.active || shouldOpenNewest) {
+          const pending = newestQueued;
           if (pending) {
-            this.state.queued = this.state.queued.filter((item) => item.id !== pending.id);
+            // 当前展示的那条回队列，换成最新的一条
+            if (this.state.active && this.state.active.id !== pending.id) {
+              this.state.queued = this.state.queued.filter(
+                (item) => item.id !== pending.id && item.id !== this.state.active?.id,
+              );
+              this.state.queued.push(this.state.active);
+            } else {
+              this.state.queued = this.state.queued.filter((item) => item.id !== pending.id);
+            }
             this.state.active = pending;
-            logger.info(`灵动岛：收起态点击，重新打开队列中的通知 ${pending.id}`);
+            logger.info(
+              `灵动岛：收起态点击，打开最新通知 ${pending.id}（队列 ${this.state.queued.length} 条）`,
+            );
           }
         }
         const active = this.state.active;
@@ -458,6 +482,10 @@ class IslandController {
               `灵动岛：展开通知 ${active.id}（priority=${active.priority} kind=${active.kind ?? '-'}）`,
             );
           }
+          // 上课时段里"用户主动点开"的消息要能真的留在屏幕上：
+          // 记下这条 id，syncWindow 的上课守卫对它是放行的（否则展开后会被立刻隐藏，
+          // 表现为"点不开新作业"——用户反馈的联合通知场景）。
+          this.explicitShowId = this.state.inClass ? active.id : null;
           this.setState({ mode: 'expanded' });
           this.scheduleCollapse(
             this.isImmediate(active)
@@ -511,6 +539,7 @@ class IslandController {
 
   hide(): void {
     this.clearTimers();
+    this.explicitShowId = null;
     if (!this.win || this.win.isDestroyed()) return;
     // 开启"空闲细缝"时不能走 fadeOut + skipWindow：那样会完全隐藏，
     // 必须让 syncWindow() 把窗口收成一条细缝（上课时段仍由 syncWindow 兜底为立即隐藏）。
@@ -529,6 +558,7 @@ class IslandController {
   hideImmediately(): void {
     this.clearTimers();
     this.cancelBoundsAnimation();
+    this.explicitShowId = null;
     this.fadeToken += 1;
     const changed = this.state.mode !== 'hidden' || this.state.reason !== null;
     if (changed) {
@@ -699,7 +729,10 @@ class IslandController {
     // 上课时段：只有"紧急通知 / 叫人"允许出现在屏幕上——展开态与胶囊态都算
     // （胶囊态也允许，学生收起后还能再点开；普通通知则一律隐藏）
     const openableShowing = this.state.active !== null && this.isOpenable(this.state.active);
-    if (this.state.inClass && !openableShowing) {
+    // 用户在课中主动点开的那条同样允许显示（否则"点开了又被立刻隐藏"）
+    const explicitShowing =
+      this.state.active !== null && this.state.active.id === this.explicitShowId && !this.previewId;
+    if (this.state.inClass && !openableShowing && !explicitShowing) {
       this.hideImmediately();
       return;
     }
@@ -978,6 +1011,11 @@ class IslandController {
   }
 
   /** 当前是否接收鼠标（供冒烟验证） */
+  /** 诊断/冒烟用：开关"失焦自动收起" */
+  setBlurCollapseEnabled(enabled: boolean): void {
+    this.blurCollapseEnabled = enabled;
+  }
+
   getInteractive(): boolean {
     return this.interactive;
   }

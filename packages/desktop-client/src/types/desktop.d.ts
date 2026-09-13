@@ -8,10 +8,12 @@ import type { IslandAppearance, IslandNotification, IslandState } from '@classhe
 export interface HomeworkBoardSettings {
   /** 展示模式：board = 按科目卡片看板，list = 默认表格 */
   mode: 'board' | 'list';
-  /** 看板条目是否显示时间 */
+  /** 看板条目是否显示时间（同时也控制"今日作业看板"标题栏中间的当天时间） */
   showTime: boolean;
   /** 看板字号（px） */
   fontSize: number;
+  /** 只看"今天布置"的作业（默认 true，避免昨天的过期作业混进来） */
+  todayOnly: boolean;
 }
 
 export interface DesktopStoredConfig {

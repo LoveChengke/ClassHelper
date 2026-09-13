@@ -67,5 +67,6 @@ export const gradeApi = {
 
 export const dashboardApi = {
   summary: (): Promise<DashboardSummary> => api.get(API_PATHS.dashboard),
-  term: (): Promise<{ currentWeek: number; maxWeek: number }> => api.get('/dashboard/term'),
+  term: (classId?: string): Promise<{ currentWeek: number; maxWeek: number }> =>
+    api.get('/dashboard/term', classId ? { classId } : undefined),
 };

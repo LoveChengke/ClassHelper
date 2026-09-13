@@ -174,7 +174,12 @@ export async function updateClass(
 
   const updated = await prisma.class.update({
     where: { id: classId },
-    data: { ...(input.name ? { name: input.name } : {}), ...(input.grade ? { grade: input.grade } : {}) },
+    data: {
+      ...(input.name ? { name: input.name } : {}),
+      ...(input.grade ? { grade: input.grade } : {}),
+      // 教学周数（班主任可调）：课表周次选择与默认 weekEnd 都用它
+      ...(input.termWeeks !== undefined ? { termWeeks: input.termWeeks } : {}),
+    },
     include: {
       teacher: { select: { id: true, name: true, username: true } },
       _count: { select: countSelect },

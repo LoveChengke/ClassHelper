@@ -87,6 +87,13 @@ const connectionType = computed(() =>
   realtime.connected ? 'success' : realtime.connecting ? 'warning' : 'danger',
 );
 
+/**
+ * 小屏顶栏的实时通道提示：
+ * 连接正常时 **什么都不显示**（旧版只显示一个绿色圆点，看起来像坏掉的元素）；
+ * 只有"连接中 / 已断开"这种异常态才显示带文字的紧凑标签。
+ */
+const mobileConnectionText = computed(() => (realtime.connecting ? '重连中…' : '已断开'));
+
 async function handleLogout(): Promise<void> {
   await ElMessageBox.confirm('确认退出当前账号？', '退出登录', { type: 'warning' });
   await auth.logout();
@@ -167,15 +174,15 @@ async function submitPassword(): Promise<void> {
           <el-tag v-if="!isMobile" :type="connectionType" size="small" effect="light">
             <span class="header-conn">{{ connectionText }}</span>
           </el-tag>
+          <!-- 小屏：连接正常时不显示任何圆点/标签，只在异常态显示带文字的紧凑标签 -->
           <el-tag
-            v-else
+            v-else-if="!realtime.connected"
             :type="connectionType"
             size="small"
             effect="light"
-            class="header-conn-dot"
-            :title="connectionText"
+            class="header-conn-mobile"
           >
-            <span class="conn-dot" :class="`conn-${connectionType}`"></span>
+            {{ mobileConnectionText }}
           </el-tag>
           <el-tag v-if="realtime.eventCount > 0 && !isMobile" size="small" type="info" effect="plain">
             已接收 {{ realtime.eventCount }} 条实时事件
@@ -388,6 +395,12 @@ async function submitPassword(): Promise<void> {
 
   .header-title {
     font-size: 15px;
+  }
+
+  /* 异常态才出现的实时通道标签：紧凑、不挤占标题 */
+  .header-conn-mobile {
+    flex: 0 0 auto;
+    font-size: 11px;
   }
 }
 </style>

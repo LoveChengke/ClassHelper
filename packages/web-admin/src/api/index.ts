@@ -192,7 +192,12 @@ export const studentApi = {
 
 export const dashboardApi = {
   summary: (): Promise<DashboardSummary> => api.get(API_PATHS.dashboard),
-  term: (): Promise<{ currentWeek: number; maxWeek: number }> => api.get('/dashboard/term'),
+  /**
+   * 学期信息：`maxWeek` 是该班的教学周数（`Class.termWeeks`，班主任可调，默认 20），
+   * 不带 classId 时后端回退全局默认值。
+   */
+  term: (classId?: string): Promise<{ currentWeek: number; maxWeek: number }> =>
+    api.get('/dashboard/term', classId ? { classId } : undefined),
 };
 
 /* ------------------------------------------------------------------ 协作教师 */

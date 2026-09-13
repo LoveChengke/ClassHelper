@@ -105,6 +105,12 @@ export async function getClassStatus(
 }
 
 export async function createSchedule(user: TokenPayload, input: CreateScheduleInput): Promise<ScheduleDto> {
+  // 教学周数由班级设置决定（班主任可调，默认 20 周）
+  const classRecord = await prisma.class.findUnique({
+    where: { id: input.classId },
+    select: { termWeeks: true },
+  });
+  const termWeeks = classRecord?.termWeeks ?? 20;
   await assertCanManageSchedule(user, input.classId);
   await assertCourseInClass(input.courseId, input.classId);
 
@@ -117,7 +123,7 @@ export async function createSchedule(user: TokenPayload, input: CreateScheduleIn
       endTime: input.endTime,
       location: input.location ?? null,
       weekStart: input.weekStart ?? 1,
-      weekEnd: input.weekEnd ?? 20,
+      weekEnd: input.weekEnd ?? termWeeks,
       // 单双周：默认 ALL（每周），与旧数据行为一致
       weekParity: input.weekParity ?? 'ALL',
     },

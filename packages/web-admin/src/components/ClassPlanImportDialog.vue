@@ -281,8 +281,13 @@ function parityLabel(item: ClassPlanEntryDto): string {
           <template #default="{ row }">{{ row.startTime }}-{{ row.endTime }}</template>
         </el-table-column>
         <el-table-column prop="subject" label="科目" min-width="110" />
-        <el-table-column label="单双周" width="90">
-          <template #default="{ row }">{{ parityLabel(row) }}</template>
+        <el-table-column label="单双周" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="row.weekParity !== 'ALL'" size="small" effect="plain">
+              {{ parityLabel(row) }}
+            </el-tag>
+            <span v-else class="text-muted">{{ parityLabel(row) }}</span>
+          </template>
         </el-table-column>
         <el-table-column prop="planName" label="来源" min-width="120" />
       </el-table>

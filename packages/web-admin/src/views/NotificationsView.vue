@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
   CALL_QUICK_PHRASES,
@@ -25,12 +25,39 @@ const realtime = useRealtimeStore();
 const loading = ref(false);
 const classes = ref<ClassDto[]>([]);
 const notifications = ref<NotificationDto[]>([]);
-const studentCount = ref(0);
 const filter = reactive({ classId: '', priority: '', keyword: '' });
+
+/**
+ * 是否"单班视图"：选中了具体班级时列表只服务一个班。
+ * 单班视图只展示"已读情况"（已读 N 人 / 未读），跨班视图才展示已读率百分比。
+ */
+const isSingleClass = computed(() => Boolean(filter.classId));
+
+/**
+ * 各班学生数（classId → 人数）。
+ * NotificationDto 只有 readCount（已读人数），没有 unreadCount / reads，
+ * 已读率的分母只能自己算，所以进入页面时按班级各取一次学生名单长度。
+ */
+const classStudentCounts = ref<Record<string, number>>({});
+
+function classSizeOf(classId: string): number {
+  return classStudentCounts.value[classId] ?? 0;
+}
 
 async function loadClasses(): Promise<void> {
   classes.value = await classApi.list();
   if (!filter.classId && classes.value.length > 0) filter.classId = classes.value[0]?.id ?? '';
+  await loadClassStudentCounts();
+}
+
+async function loadClassStudentCounts(): Promise<void> {
+  const entries = await Promise.all(
+    classes.value.map(async (item) => {
+      const students = await classApi.students(item.id).catch(() => []);
+      return [item.id, students.length] as const;
+    }),
+  );
+  classStudentCounts.value = Object.fromEntries(entries);
 }
 
 async function loadNotifications(): Promise<void> {
@@ -41,11 +68,6 @@ async function loadNotifications(): Promise<void> {
     if (filter.priority) params.priority = filter.priority;
     if (filter.keyword.trim()) params.keyword = filter.keyword.trim();
     notifications.value = await notificationApi.list(params);
-
-    if (filter.classId) {
-      const students = await classApi.students(filter.classId);
-      studentCount.value = students.length;
-    }
   } finally {
     loading.value = false;
   }
@@ -121,89 +143,185 @@ async function submitCall(): Promise<void> {
 
 const formVisible = ref(false);
 const formRef = ref<FormInstance>();
-const form = reactive<{ classId: string; title: string; content: string; priority: NotificationPriority }>({
-  classId: '',
+const form = reactive<{
+  classIds: string[];
+  title: string;
+  content: string;
+  priority: NotificationPriority;
+}>({
+  classIds: [],
   title: '',
   content: '',
   priority: 'NORMAL',
 });
 
 const rules: FormRules = {
-  classId: [{ required: true, message: '请选择目标班级', trigger: 'change' }],
+  classIds: [{ required: true, type: 'array', min: 1, message: '请选择目标班级', trigger: 'change' }],
   title: [{ required: true, message: '请输入通知标题', trigger: 'blur' }],
   content: [{ required: true, message: '请输入通知内容', trigger: 'blur' }],
 };
 
-/** 上课时段发布紧急通知的全屏二次确认状态 */
+/** 上课时段发布紧急通知的全屏二次确认状态（classIds = 本次要发布的班级） */
 const urgentWarning = reactive({
   visible: false,
   period: null as ClassPeriod | null,
   title: '',
+  classIds: [] as string[],
 });
+
+function classNameOf(classId: string): string {
+  return classes.value.find((item) => item.id === classId)?.name ?? classId;
+}
 
 async function openCreate(): Promise<void> {
   // 班级列表可能还没加载完（进入页面后立刻点按钮）：先补一次，避免「目标班级」为空导致校验失败
   if (classes.value.length === 0) await loadClasses().catch(() => undefined);
-  form.classId = filter.classId || classes.value[0]?.id || '';
+  form.classIds = filter.classId ? [filter.classId] : classes.value[0] ? [classes.value[0].id] : [];
   form.title = '';
   form.content = '';
   form.priority = 'NORMAL';
   formVisible.value = true;
 }
 
+/**
+ * 上课时段检查：多班发布时逐班查询（GET /api/schedules/current?classId=...），
+ * 任一班级正在上课就需要二次确认；返回命中的班级与时段。
+ */
+async function findClassInSession(
+  classIds: string[],
+): Promise<{ classId: string; period: ClassPeriod | null } | null> {
+  const results = await Promise.all(
+    classIds.map(async (classId) => {
+      const status = await scheduleApi.classStatus(classId).catch(() => null);
+      return status?.inClass ? { classId, period: status.current } : null;
+    }),
+  );
+  return results.find((item) => item !== null) ?? null;
+}
+
 async function submitForm(): Promise<void> {
   const valid = await formRef.value?.validate().catch(() => false);
   if (!valid) return;
 
-  // 上课时段发布紧急通知：先查询班级上课状态，命中则弹全屏二次确认（3 秒倒计时）
+  const classIds = [...form.classIds];
+  if (classIds.length === 0) {
+    ElMessage.warning('请至少选择一个目标班级');
+    return;
+  }
+
+  // 上课时段发布紧急通知：先查询所有目标班级的上课状态，任一命中则弹全屏二次确认（3 秒倒计时）
   if (form.priority === 'URGENT') {
-    const status = await scheduleApi.classStatus(form.classId).catch(() => null);
-    if (status?.inClass) {
-      urgentWarning.period = status.current;
+    const hit = await findClassInSession(classIds);
+    if (hit) {
+      urgentWarning.period = hit.period;
       urgentWarning.title = form.title.trim();
+      urgentWarning.classIds = classIds;
       urgentWarning.visible = true;
       return;
     }
   }
 
-  await doPublish(false);
+  await doPublish(classIds, false);
 }
 
-/** 真正提交；confirmDuringClass 为 true 表示教师已在上课警告中确认 */
-async function doPublish(confirmDuringClass: boolean): Promise<void> {
-  try {
-    const created = await notificationApi.create({
-      classId: form.classId,
-      title: form.title.trim(),
-      content: form.content,
-      priority: form.priority,
-      ...(confirmDuringClass ? { confirmDuringClass: true } : {}),
-    });
-    ElMessage.success(`通知已发布（${created.title}），已推送给学生客户端`);
-    formVisible.value = false;
-    await loadNotifications();
-  } catch (error) {
-    // 兜底：并发场景下服务端仍可能拦截（例如刚好上课铃响），此时同样弹出警告
+/** 单个班级的发布失败信息（用于汇总提示） */
+interface PublishFailure {
+  classId: string;
+  reason: string;
+  /** 服务端因"上课时段紧急通知"拦截（409 URGENT_DURING_CLASS） */
+  urgentConflict: boolean;
+  period: ClassPeriod | null;
+}
+
+/**
+ * 真正提交：对每个班级各调一次 `POST /api/notifications`（Promise.allSettled），
+ * confirmDuringClass 为 true 表示教师已在上课警告中确认。
+ */
+async function doPublish(classIds: string[], confirmDuringClass: boolean): Promise<void> {
+  if (classIds.length === 0) return;
+
+  const payload = {
+    title: form.title.trim(),
+    content: form.content,
+    priority: form.priority,
+    ...(confirmDuringClass ? { confirmDuringClass: true } : {}),
+  };
+
+  const settled = await Promise.allSettled(
+    classIds.map((classId) => notificationApi.create({ ...payload, classId })),
+  );
+
+  let successCount = 0;
+  const failures: PublishFailure[] = [];
+
+  settled.forEach((result, index) => {
+    if (result.status === 'fulfilled') {
+      successCount += 1;
+      return;
+    }
     const response = (
-      error as {
-        response?: { status?: number; data?: { code?: string; details?: { current?: ClassPeriod | null } } };
+      result.reason as {
+        response?: {
+          status?: number;
+          data?: { code?: string; message?: string; details?: { current?: ClassPeriod | null } };
+        };
       }
     ).response;
-    if (response?.status === 409 && response.data?.code === 'URGENT_DURING_CLASS') {
-      urgentWarning.period = response.data.details?.current ?? null;
-      urgentWarning.title = form.title.trim();
-      urgentWarning.visible = true;
-    }
+    failures.push({
+      classId: classIds[index] ?? '',
+      reason:
+        response?.data?.message ?? (result.reason instanceof Error ? result.reason.message : '发布失败'),
+      urgentConflict: response?.status === 409 && response?.data?.code === 'URGENT_DURING_CLASS',
+      period: response?.data?.details?.current ?? null,
+    });
+  });
+
+  // 兜底：并发场景下服务端仍可能拦截（例如刚好上课铃响），对这批班级重新走一次二次确认
+  const conflicted = failures.filter((item) => item.urgentConflict);
+  const pendingConfirm = !confirmDuringClass && conflicted.length > 0;
+  if (pendingConfirm) {
+    urgentWarning.period = conflicted[0]?.period ?? null;
+    urgentWarning.title = form.title.trim();
+    urgentWarning.classIds = conflicted.map((item) => item.classId);
+    urgentWarning.visible = true;
+  }
+
+  const reported = confirmDuringClass ? failures : failures.filter((item) => !item.urgentConflict);
+  reportPublishResult(successCount, reported);
+
+  if (successCount > 0) {
+    // 有班级发布成功：关掉弹窗并刷新列表（仍需二次确认时保留弹窗内的数据）
+    formVisible.value = !pendingConfirm;
+    await loadNotifications();
   }
 }
 
+/** 多班发布结果汇总：成功 N 个班、失败 M 个班（失败列出班级名 + 原因） */
+function reportPublishResult(successCount: number, failures: PublishFailure[]): void {
+  if (successCount === 0 && failures.length === 0) return;
+  if (failures.length === 0) {
+    ElMessage.success(`通知已发布到 ${successCount} 个班级，已推送给学生客户端`);
+    return;
+  }
+  const detail = failures.map((item) => `${classNameOf(item.classId)}（${item.reason}）`).join('；');
+  ElMessage({
+    type: successCount > 0 ? 'warning' : 'error',
+    message: `成功 ${successCount} 个班，失败 ${failures.length} 个班｜${detail}`,
+    duration: 6000,
+    showClose: true,
+  });
+}
+
 function onUrgentConfirmed(): void {
+  const classIds = [...urgentWarning.classIds];
   urgentWarning.visible = false;
-  void doPublish(true);
+  urgentWarning.classIds = [];
+  void doPublish(classIds, true);
 }
 
 function onUrgentCancelled(): void {
   urgentWarning.visible = false;
+  urgentWarning.classIds = [];
   ElMessage.info('已取消发布，紧急通知未发出');
 }
 
@@ -214,9 +332,11 @@ async function removeNotification(row: NotificationDto): Promise<void> {
   await loadNotifications();
 }
 
+/** 已读率（跨班视图使用）：分母按该通知所属班级的学生数算 */
 function readRate(row: NotificationDto): number {
-  if (!studentCount.value) return 0;
-  return Math.round(((row.readCount ?? 0) / studentCount.value) * 100);
+  const total = classSizeOf(row.classId);
+  if (!total) return 0;
+  return Math.round(((row.readCount ?? 0) / total) * 100);
 }
 
 function onNotificationEvent(): void {
@@ -245,6 +365,7 @@ onUnmounted(() => {
         <el-select
           v-model="filter.classId"
           placeholder="选择班级"
+          clearable
           style="width: 170px"
           @change="loadNotifications"
         >
@@ -303,10 +424,24 @@ onUnmounted(() => {
             <div class="text-muted">{{ relativeTime(row.createdAt) }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="已读率" width="150">
+        <el-table-column :label="isSingleClass ? '已读情况' : '已读率'" width="150">
           <template #default="{ row }">
-            <el-progress :percentage="readRate(row)" :stroke-width="10" />
-            <span class="text-muted">{{ row.readCount ?? 0 }}/{{ studentCount }} 人</span>
+            <!--
+              单班视图：只显示该通知的已读情况（不显示百分比）。
+              NotificationDto 只有 readCount（已读人数），没有 unreadCount / reads 明细，
+              所以这里用「已读 N 人 / 未读」标签 + 班级总人数表达已读情况。
+            -->
+            <template v-if="isSingleClass">
+              <el-tag :type="(row.readCount ?? 0) > 0 ? 'success' : 'info'" size="small" effect="light">
+                {{ (row.readCount ?? 0) > 0 ? `已读 ${row.readCount} 人` : '未读' }}
+              </el-tag>
+              <div class="text-muted">共 {{ classSizeOf(row.classId) }} 人</div>
+            </template>
+            <!-- 跨班视图（未选具体班级）：显示已读率百分比，分母按该通知所属班级算 -->
+            <template v-else>
+              <el-progress :percentage="readRate(row)" :stroke-width="10" />
+              <span class="text-muted">{{ row.readCount ?? 0 }}/{{ classSizeOf(row.classId) }} 人</span>
+            </template>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
@@ -319,8 +454,16 @@ onUnmounted(() => {
 
     <el-dialog v-model="formVisible" title="发布通知" width="560px">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
-        <el-form-item label="目标班级" prop="classId">
-          <el-select v-model="form.classId" style="width: 100%">
+        <el-form-item label="目标班级" prop="classIds">
+          <el-select
+            v-model="form.classIds"
+            multiple
+            filterable
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="可多选；发布时逐班提交"
+            style="width: 100%"
+          >
             <el-option v-for="item in classes" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>

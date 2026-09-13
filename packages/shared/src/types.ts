@@ -104,6 +104,8 @@ export interface ClassDto {
   code?: string;
   /** 是否已设置班级密码（哈希永不外泄） */
   hasPassword?: boolean;
+  /** 本学期教学周数（班主任可调，默认 20）：课表周次选择与默认 weekEnd 都用它 */
+  termWeeks: number;
 }
 
 export interface ClassTeacherBrief {
@@ -128,6 +130,8 @@ export interface CreateClassRequest {
 export interface UpdateClassRequest {
   name?: string;
   grade?: string;
+  /** 本学期教学周数（1~40，班主任可调） */
+  termWeeks?: number;
 }
 
 /** 管理员设置/重置班级账号（班级码 + 班级密码） */

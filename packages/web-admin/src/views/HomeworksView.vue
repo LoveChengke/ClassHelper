@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
   SOCKET_EVENTS,
+  SUBJECT_CATALOG,
   formatDate,
   truncate,
   type ClassDto,
@@ -136,6 +137,38 @@ const form = reactive({
   attachmentUrl: '',
 });
 
+/**
+ * 发布弹窗里的「其他科目（新建）」选项前缀。
+ * 下拉只有课程 id 一个 v-model，新建科目用 `subject:语文` 这种带前缀的伪值表达，
+ * 提交时再解析成「复用同名课程 / 新建课程」。
+ */
+const NEW_SUBJECT_PREFIX = 'subject:';
+/** 弹窗里所选班级的课程（与页面筛选用的 courses 分开，避免互相污染） */
+const formCourses = ref<CourseDto[]>([]);
+/** 课程列表加载中：加载完成前不展示「其他科目（新建）」，避免把该班已有科目误当成新科目 */
+const formCoursesLoading = ref(false);
+
+/** 该班还没有的科目（来自 shared 的 SUBJECT_CATALOG） */
+const newSubjectOptions = computed(() => {
+  const existing = new Set(formCourses.value.map((item) => item.name));
+  return SUBJECT_CATALOG.filter((name) => !existing.has(name));
+});
+
+async function loadFormCourses(): Promise<void> {
+  if (!form.classId) {
+    formCourses.value = [];
+    return;
+  }
+  formCoursesLoading.value = true;
+  try {
+    formCourses.value = await courseApi.list(form.classId);
+  } catch {
+    formCourses.value = [];
+  } finally {
+    formCoursesLoading.value = false;
+  }
+}
+
 const rules: FormRules = {
   classId: [{ required: true, message: '请选择目标班级', trigger: 'change' }],
   title: [{ required: true, message: '请输入作业标题', trigger: 'blur' }],
@@ -150,6 +183,7 @@ function openCreate(): void {
   form.content = '';
   form.attachmentUrl = '';
   formVisible.value = true;
+  void loadFormCourses();
 }
 
 function openEdit(row: HomeworkDto): void {
@@ -160,15 +194,62 @@ function openEdit(row: HomeworkDto): void {
   form.content = row.content;
   form.attachmentUrl = row.attachmentUrl ?? '';
   formVisible.value = true;
+  void loadFormCourses();
+}
+
+/** 弹窗里改班级：课程下拉要跟着换成该班的课程 */
+async function onFormClassChange(): Promise<void> {
+  form.courseId = '';
+  await loadFormCourses();
+}
+
+/**
+ * 解析课程下拉的取值：
+ * - 已有课程 id → 直接用；
+ * - `subject:语文`（其他科目新建）→ 该班已有同名课程则复用，否则先 `courseApi.create` 建课再返回新 id；
+ * - 空 → 不关联课程。
+ */
+async function resolveCourseId(): Promise<string | null> {
+  const value = form.courseId;
+  if (!value) return null;
+  if (!value.startsWith(NEW_SUBJECT_PREFIX)) return value;
+
+  const name = value.slice(NEW_SUBJECT_PREFIX.length);
+  const reuse =
+    formCourses.value.find((item) => item.name === name) ??
+    (await courseApi.list(form.classId).catch(() => [])).find((item) => item.name === name);
+  if (reuse) return reuse.id;
+
+  try {
+    const created = await courseApi.create({ classId: form.classId, name });
+    formCourses.value = [...formCourses.value, created];
+    return created.id;
+  } catch (error) {
+    // 新建课程需要"管理员或本班班主任"权限（与课表管理一致），科任老师会被 403 拦截
+    ElMessage.error(
+      `新建科目「${name}」失败：${
+        error instanceof Error ? error.message : '仅班主任/管理员可以在班级下新建课程'
+      }，可改用已有课程或直接留空发布`,
+    );
+    throw error;
+  }
 }
 
 async function submitForm(): Promise<void> {
   const valid = await formRef.value?.validate().catch(() => false);
   if (!valid) return;
 
+  let courseId: string | null;
+  try {
+    courseId = await resolveCourseId();
+  } catch {
+    // 建课失败的提示已在 resolveCourseId 里给出，这里保持弹窗打开让老师改选
+    return;
+  }
+
   const payload = {
     classId: form.classId,
-    courseId: form.courseId || null,
+    courseId,
     title: form.title.trim(),
     content: form.content,
     attachmentUrl: form.attachmentUrl.trim() || null,
@@ -281,14 +362,43 @@ onUnmounted(() => {
     <el-dialog v-model="formVisible" :title="editingId ? '编辑作业' : '发布作业'" width="560px">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="目标班级" prop="classId">
-          <el-select v-model="form.classId" style="width: 100%" :disabled="Boolean(editingId)">
+          <el-select
+            v-model="form.classId"
+            style="width: 100%"
+            :disabled="Boolean(editingId)"
+            @change="onFormClassChange"
+          >
             <el-option v-for="item in classes" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="所属课程">
-          <el-select v-model="form.courseId" placeholder="可选" clearable style="width: 100%">
-            <el-option v-for="item in courses" :key="item.id" :label="item.name" :value="item.id" />
+          <el-select
+            v-model="form.courseId"
+            placeholder="可选"
+            clearable
+            filterable
+            :loading="formCoursesLoading"
+            style="width: 100%"
+          >
+            <el-option-group v-if="formCourses.length" label="已有课程">
+              <el-option v-for="item in formCourses" :key="item.id" :label="item.name" :value="item.id" />
+            </el-option-group>
+            <el-option-group v-if="!formCoursesLoading && newSubjectOptions.length" label="其他科目（新建）">
+              <el-option
+                v-for="name in newSubjectOptions"
+                :key="`new-${name}`"
+                :label="name"
+                :value="`${NEW_SUBJECT_PREFIX}${name}`"
+              />
+            </el-option-group>
           </el-select>
+          <div class="form-hint">
+            {{
+              formCoursesLoading
+                ? '正在加载该班课程…'
+                : '该班还没有的科目在「其他科目（新建）」里，选中后会自动建课再发布（需班主任/管理员）'
+            }}
+          </div>
         </el-form-item>
         <el-form-item label="标题" prop="title">
           <el-input v-model="form.title" maxlength="120" show-word-limit />
@@ -394,6 +504,14 @@ onUnmounted(() => {
 <style scoped>
 .text-danger {
   color: #f56c6c;
+}
+
+.form-hint {
+  width: 100%;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #909399;
+  margin-top: 4px;
 }
 
 .content-block {

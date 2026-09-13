@@ -10,6 +10,7 @@
  *   teacher2 / teacher123   - 李老师（高一(2)班班主任，高二(3)班协作教师）
  *   student01..student15 / student123
  */
+import { SUBJECT_CATALOG } from '@classhelper/shared';
 import { disconnectPrisma, prisma } from '../src/lib/db.js';
 import { logger } from '../src/lib/logger.js';
 import { hashPassword } from '../src/lib/password.js';
@@ -33,7 +34,8 @@ const STUDENT_NAMES = [
   '胡一鸣',
 ];
 
-const COURSE_NAMES = ['语文', '数学', '英语', '物理', '化学'];
+// 课程目录：与 shared 的 SUBJECT_CATALOG 保持一致（演示数据覆盖全部常见科目）
+const COURSE_NAMES = [...SUBJECT_CATALOG];
 
 /** 每天的上课节次模板（dayOfWeek 1-5） */
 const PERIOD_TEMPLATE = [

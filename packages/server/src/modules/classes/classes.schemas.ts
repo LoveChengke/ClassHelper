@@ -17,6 +17,8 @@ export const createClassSchema = z.object({
 export const updateClassSchema = z.object({
   name: z.string().trim().min(1).max(64).optional(),
   grade: z.string().trim().min(1).max(32).optional(),
+  /** 本学期教学周数（1~40，班主任可调） */
+  termWeeks: z.coerce.number().int().min(1).max(40).optional(),
 });
 
 /** 设置 / 重置班级账号（班级码 + 班级密码）：仅管理员 */

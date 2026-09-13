@@ -19,7 +19,6 @@ import {
 } from '@classhelper/shared';
 import { classApi, courseApi, dashboardApi, scheduleApi } from '@/api';
 import ClassPlanImportDialog from '@/components/ClassPlanImportDialog.vue';
-import TimeLayoutImportDialog from '@/components/TimeLayoutImportDialog.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 
@@ -73,13 +72,27 @@ function cellItems(period: { items: ScheduleDto[] }, dayOfWeek: number): Schedul
   return period.items.filter((item) => item.dayOfWeek === dayOfWeek);
 }
 
+/**
+ * 学期信息（班级维度）：`maxWeek` = 该班教学周数（`Class.termWeeks`，默认 20）。
+ * 切换班级时要重新取一次，并按新上限收敛周次下拉与当前选中周，
+ * 避免出现"实际 20 周却给到 30 周"或选中一个不存在的周。
+ */
+async function loadTerm(): Promise<void> {
+  const term = await dashboardApi.term(query.classId || undefined).catch(() => null);
+  if (!term) return;
+  weekOptions.value = buildWeekOptions(term.maxWeek);
+  const maxWeek = weekOptions.value.at(-1) ?? term.maxWeek;
+  if (query.week > maxWeek) query.week = maxWeek;
+  if (query.week < 1) query.week = 1;
+}
+
 async function loadBase(): Promise<void> {
   const [classList, term] = await Promise.all([classApi.list(), dashboardApi.term()]);
   classes.value = classList;
   weekOptions.value = buildWeekOptions(term.maxWeek);
-  query.week = term.currentWeek;
+  query.week = Math.min(Math.max(term.currentWeek, 1), weekOptions.value.at(-1) ?? term.maxWeek);
   if (!query.classId && classList.length > 0) query.classId = classList[0]?.id ?? '';
-  if (query.classId) await loadCourses();
+  if (query.classId) await Promise.all([loadCourses(), loadTerm()]);
 }
 
 async function loadCourses(): Promise<void> {
@@ -106,6 +119,7 @@ async function loadSchedules(): Promise<void> {
 }
 
 async function onClassChange(): Promise<void> {
+  await loadTerm();
   await loadCourses();
   await loadSchedules();
 }
@@ -211,18 +225,6 @@ function onScheduleEvent(): void {
   void loadSchedules();
 }
 
-/* ------------------------------------------------------------ ClassIsland 时间配置导入 */
-
-const timeLayoutVisible = ref(false);
-
-function openTimeLayoutImport(): void {
-  if (!query.classId) {
-    ElMessage.warning('请先选择班级');
-    return;
-  }
-  timeLayoutVisible.value = true;
-}
-
 /* ------------------------------------------------------------ ClassIsland 课程表导入（支持单双周） */
 
 const classPlanVisible = ref(false);
@@ -276,9 +278,6 @@ onUnmounted(() => {
         <el-button v-if="canManageSchedule" type="primary" :icon="'Plus'" @click="openCreate">
           新增课表
         </el-button>
-        <el-button v-if="canManageSchedule" type="warning" :icon="'Upload'" @click="openTimeLayoutImport">
-          导入时间配置
-        </el-button>
         <el-button
           v-if="canManageSchedule"
           type="warning"
@@ -291,7 +290,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <el-card v-loading="loading" shadow="never" class="table-card">
+    <el-card v-loading="loading" shadow="never" class="table-card timetable-card">
       <template #header>
         <div class="toolbar">
           <span>
@@ -386,13 +385,6 @@ onUnmounted(() => {
       </template>
     </el-dialog>
 
-    <!-- ClassIsland 时间配置导入（覆盖 / 合并，失败不改动原配置） -->
-    <TimeLayoutImportDialog
-      v-model="timeLayoutVisible"
-      :class-id="query.classId"
-      :class-name="classes.find((item) => item.id === query.classId)?.name"
-    />
-
     <!-- ClassIsland 课程表导入（支持单双周；导入成功后刷新周视图与列表） -->
     <ClassPlanImportDialog
       v-model="classPlanVisible"
@@ -402,3 +394,17 @@ onUnmounted(() => {
     />
   </div>
 </template>
+
+<style scoped>
+/*
+ * 手机端周视图：7 天列各 130px + 节次列 120px ≈ 1030px，
+ * 直接把表格最小宽度撑到 1040px，让单元格保持可读宽度；
+ * 外层 el-card__body（全局 .table-card 规则）已是 overflow-x:auto，
+ * 因此手指左右拖动能在卡片内看全周一~周日，页面本身不横向滚动。
+ */
+@media (max-width: 768px) {
+  .timetable-card .el-table {
+    min-width: 1040px;
+  }
+}
+</style>

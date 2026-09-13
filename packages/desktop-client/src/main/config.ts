@@ -9,6 +9,7 @@ const DEFAULT_HOMEWORK_BOARD: HomeworkBoardSettings = {
   mode: 'board',
   showTime: false,
   fontSize: 15,
+  todayOnly: true,
 };
 
 interface PersistedConfig {
@@ -42,6 +43,7 @@ function normalizeHomeworkBoard(input?: Partial<HomeworkBoardSettings>): Homewor
   return {
     mode,
     showTime: input?.showTime === true,
+    todayOnly: input?.todayOnly !== false,
     fontSize: Math.min(28, Math.max(11, Math.round(rawFont))),
   };
 }

@@ -85,13 +85,46 @@ async function main() {
   record('管理员登录 admin', Boolean(adminToken), `status=${adminLogin.status}`);
   if (!adminToken) process.exit(1);
 
-  const studentLogin = await api('/auth/login', {
+  // 学生端主体 = 班级：用「班级码 + 班级密码」登录（个人学生账号已停用登录入口）
+  const classesForLogin = await api('/classes', { token: teacherToken });
+  const loginClass = classesForLogin.payload?.data?.[0];
+  if (!loginClass?.code) {
+    record(
+      '学生端班级登录（班级码 + 班级密码 → classSession）',
+      false,
+      '没有可用班级码，请先执行 pnpm db:seed',
+    );
+    process.exit(1);
+  }
+  let studentLogin = await api('/auth/class-login', {
     method: 'POST',
-    body: { username: 'student01', password: 'student123' },
+    body: { code: loginClass.code, password: '123456' },
   });
+  if (studentLogin.status !== 200) {
+    // 演示库密码被改过时，由管理员重置为已知值（仅验证环境）
+    await api(`/classes/${loginClass.id}/class-account`, {
+      method: 'PATCH',
+      token: adminToken,
+      body: { code: loginClass.code, password: '123456' },
+    });
+    studentLogin = await api('/auth/class-login', {
+      method: 'POST',
+      body: { code: loginClass.code, password: '123456' },
+    });
+  }
   const studentToken = studentLogin.payload?.data?.token;
   const studentUser = studentLogin.payload?.data?.user;
-  record('学生登录 student01', Boolean(studentToken), `classId=${studentUser?.classId}`);
+  record(
+    '学生端班级登录（班级码 + 班级密码 → classSession）',
+    Boolean(studentToken) && studentUser?.classSession === true,
+    `code=${loginClass.code} status=${studentLogin.status} classId=${studentUser?.classId ?? studentUser?.id}`,
+  );
+  record(
+    '个人学生账号登录已停用（403）',
+    (await api('/auth/login', { method: 'POST', body: { username: 'student01', password: 'student123' } }))
+      .status === 403,
+    'student01 → 403',
+  );
 
   const wrongPassword = await api('/auth/login', {
     method: 'POST',
@@ -128,7 +161,8 @@ async function main() {
 
   const studentList = await api(`/students?classId=${classId}`, { token: adminToken });
   const classmates = studentList.payload?.data ?? [];
-  const targetStudent = classmates.find((item) => item.id === studentUser?.id) ?? classmates[0];
+  // 班级会话下没有"当前学生"，目标学生固定取班里第一位（用于成绩/叫人等需要具体学生 id 的用例）
+  const targetStudent = classmates[0];
   record('教师获取学生名单', classmates.length > 0, `共 ${classmates.length} 人`);
 
   const courses = await api(`/courses?classId=${classId}`, { token: teacherToken });
@@ -468,8 +502,8 @@ async function main() {
     body: { notSubmittedUserIds: [] },
   });
   record(
-    '普通学生不能维护未交名单（403）',
-    studentSubmissions.status === 403,
+    '班级设备可以维护未交名单（非教师/非班级会话会被拒）',
+    studentSubmissions.status === 200,
     `status=${studentSubmissions.status}`,
   );
 
@@ -497,7 +531,7 @@ async function main() {
   });
   record('教师录入成绩', createdGrade.status === 201, `status=${createdGrade.status}`);
 
-  if (targetStudent?.id === studentUser?.id) {
+  if (targetStudent) {
     try {
       const { payload, elapsed } = await gradeWait;
       record(
@@ -808,7 +842,7 @@ async function main() {
       token: teacherToken,
       body: {
         classId,
-        studentId: studentUser.id,
+        studentId: targetStudent?.id,
         quickPhrase: '请到办公室找我',
       },
     });
@@ -829,7 +863,7 @@ async function main() {
       token: teacherToken,
       body: {
         classId,
-        studentId: studentUser.id,
+        studentId: targetStudent?.id,
         quickPhrase: '请立刻到办公室',
         urgent: true,
       },
@@ -845,7 +879,7 @@ async function main() {
       token: teacherToken,
       body: {
         classId,
-        studentId: studentUser.id,
+        studentId: targetStudent?.id,
         quickPhrase: '请到讲台找我',
         message: '带上昨天的数学作业本',
       },
@@ -860,7 +894,7 @@ async function main() {
     const callDuringClass = await api('/calls', {
       method: 'POST',
       token: teacherToken,
-      body: { classId, studentId: studentUser.id, quickPhrase: '请马上来一趟' },
+      body: { classId, studentId: targetStudent?.id, quickPhrase: '请马上来一趟' },
     });
     record(
       '上课时段允许叫人（普通叫人同样不受紧急通知 409 限制）',
@@ -871,7 +905,7 @@ async function main() {
     const studentCalls = await api('/calls', {
       method: 'POST',
       token: studentToken,
-      body: { classId, studentId: studentUser.id, quickPhrase: '学生不能叫人' },
+      body: { classId, studentId: targetStudent?.id, quickPhrase: '学生不能叫人' },
     });
     record('学生调用叫人接口被拒绝（403）', studentCalls.status === 403, `status=${studentCalls.status}`);
 
@@ -1006,7 +1040,13 @@ async function main() {
       const subjectGrades = await api('/grades', {
         method: 'POST',
         token: teacher2Token,
-        body: { classId: classId, userId: studentUser?.id, examName: '越权成绩', score: 90, totalScore: 100 },
+        body: {
+          classId: classId,
+          userId: targetStudent?.id,
+          examName: '越权成绩',
+          score: 90,
+          totalScore: 100,
+        },
       });
       record('科任老师录入成绩被拒绝（403）', subjectGrades.status === 403, `status=${subjectGrades.status}`);
 
@@ -1016,7 +1056,7 @@ async function main() {
         token: teacherToken,
         body: {
           classId: classId,
-          userId: studentUser?.id,
+          userId: targetStudent?.id,
           examName: '班主任本班成绩',
           score: 90,
           totalScore: 100,
@@ -1037,7 +1077,7 @@ async function main() {
           token: teacherToken,
           body: {
             classId: foreignClass.id,
-            userId: studentUser?.id,
+            userId: targetStudent?.id,
             examName: '班主任跨班成绩',
             score: 90,
             totalScore: 100,
@@ -1055,7 +1095,7 @@ async function main() {
         token: adminToken,
         body: {
           classId: classId,
-          userId: studentUser?.id,
+          userId: targetStudent?.id,
           examName: '管理员录入成绩',
           score: 88,
           totalScore: 100,
@@ -1132,7 +1172,7 @@ async function main() {
   const studentVisible = studentClasses.payload?.data ?? [];
   record(
     '学生班级列表仅含自己所在班级',
-    studentVisible.length === 1 && studentVisible[0]?.id === studentUser?.classId,
+    studentVisible.length === 1 && studentVisible[0]?.id === classId,
     `共 ${studentVisible.length} 个`,
   );
 
@@ -1140,7 +1180,7 @@ async function main() {
   const homeworkClassIds = new Set((studentHomeworkAll.payload?.data ?? []).map((item) => item.classId));
   record(
     '学生作业列表已按班级收敛',
-    homeworkClassIds.size <= 1 && (homeworkClassIds.size === 0 || homeworkClassIds.has(studentUser?.classId)),
+    homeworkClassIds.size <= 1 && (homeworkClassIds.size === 0 || homeworkClassIds.has(classId)),
     `涉及 ${homeworkClassIds.size} 个班级`,
   );
 
@@ -1750,7 +1790,7 @@ async function main() {
   const classGradesWrite = await api('/grades', {
     method: 'POST',
     token: classToken,
-    body: { classId, userId: studentUser?.id, examName: '班级账号越权成绩', score: 90, totalScore: 100 },
+    body: { classId, userId: targetStudent?.id, examName: '班级账号越权成绩', score: 90, totalScore: 100 },
   });
   record(
     '班级账号录入成绩被拒绝（403）',
@@ -1843,7 +1883,7 @@ async function main() {
   const classNameGrade = await api('/grades', {
     method: 'POST',
     token: adminToken,
-    body: { classId, userId: studentUser?.id, examName: '班级总览回归', score: 77, totalScore: 100 },
+    body: { classId, userId: targetStudent?.id, examName: '班级总览回归', score: 77, totalScore: 100 },
   });
   const classMyGrades = await api('/grades/my', { token: classToken });
   const gradeStudentIds = new Set((classMyGrades.payload?.data ?? []).map((item) => item.userId));

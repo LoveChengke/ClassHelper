@@ -498,6 +498,9 @@ async function main() {
   await sleep(300);
 
   // 7.7 ClassIsland 时间配置导入弹窗（班主任可见：粘贴 JSON → 解析预览 → 确认导入）
+  // 7.7 ClassIsland 课程表导入弹窗（班主任可见：粘贴 JSON → 解析预览 → 单双周识别）
+  //     注：需求调整后课表页只保留「导入 ClassIsland 课程表」入口（"导入时间配置"按钮已下线，
+  //     时间表由课程表 JSON 里的 TimeLayouts 一起带进来）。
   const layoutDialog = await win.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
@@ -509,17 +512,18 @@ async function main() {
     while (Date.now() < deadline && location.pathname !== '/schedules') await sleep(80);
     await sleep(600);
 
-    const openButton = Array.from(document.querySelectorAll('button')).find((node) =>
-      (node.textContent ?? '').trim() === '导入时间配置',
-    );
-    if (!openButton) return { ok: false, reason: '课表页没有"导入时间配置"按钮（班主任权限未生效？）' };
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const openButton = buttons.find((node) => (node.textContent ?? '').trim() === '导入 ClassIsland 课程表');
+    if (!openButton) return { ok: false, reason: '课表页没有"导入 ClassIsland 课程表"按钮（班主任权限未生效？）' };
+    // 旧入口必须已经下线（需求 ⑩）
+    const legacy = buttons.some((node) => (node.textContent ?? '').trim() === '导入时间配置');
     openButton.click();
     await sleep(700);
 
     const dialog = Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
       (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('ClassIsland'),
     );
-    if (!dialog) return { ok: false, reason: '时间配置导入弹窗未打开' };
+    if (!dialog) return { ok: false, reason: '课程表导入弹窗未打开' };
 
     const sampleButton = Array.from(dialog.querySelectorAll('button')).find((node) =>
       (node.textContent ?? '').trim() === '填入示例',
@@ -534,35 +538,54 @@ async function main() {
     if (!previewButton) return { ok: false, reason: '缺少"解析预览"按钮' };
     previewButton.click();
 
-    const previewDeadline = Date.now() + 8000;
+    const previewDeadline = Date.now() + 9000;
     let rows = 0;
     let importEnabled = false;
     let errors = 0;
+    let parityTags = 0;
+    let content = '';
     while (Date.now() < previewDeadline) {
       rows = dialog.querySelectorAll('.el-table__body tbody tr').length;
       errors = dialog.querySelectorAll('.el-alert--error').length;
-      const confirm = Array.from(dialog.querySelectorAll('.el-dialog__footer button')).find((node) =>
-        (node.textContent ?? '').trim() === '确认导入',
+      const tags = Array.from(dialog.querySelectorAll('.el-tag')).map((node) => (node.textContent ?? '').trim());
+      parityTags = tags.filter((text) => text === '单周' || text === '双周').length;
+      content = (dialog.textContent ?? '').replace(/\s+/g, ' ');
+      const confirm = Array.from(dialog.querySelectorAll('.el-dialog__footer button')).find(
+        (node) => (node.textContent ?? '').trim() === '开始导入',
       );
       importEnabled = Boolean(confirm) && !confirm.disabled;
       if (rows >= 2) break;
       await sleep(150);
     }
-    return { ok: true, rows, importEnabled, errors, hasFileInput: Boolean(dialog.querySelector('input[type=file]')) };
+    return {
+      ok: true,
+      rows,
+      importEnabled,
+      errors,
+      parityTags,
+      legacyGone: !legacy,
+      hasFileInput: Boolean(dialog.querySelector('input[type=file]')) || content.includes('选择 .json 文件'),
+    };
   })()`);
   record(
-    'ClassIsland 时间配置导入弹窗（示例 → 解析预览 → 可导入）',
+    'ClassIsland 课程表导入弹窗（示例 → 解析预览 → 识别单双周，旧"导入时间配置"入口已下线）',
     Boolean(layoutDialog?.ok) &&
       (layoutDialog?.rows ?? 0) >= 2 &&
       layoutDialog?.importEnabled === true &&
-      layoutDialog?.errors === 0,
-    `节次行=${layoutDialog?.rows ?? 0} 可导入=${layoutDialog?.importEnabled} 校验错误=${layoutDialog?.errors ?? '-'} 文件选择=${layoutDialog?.hasFileInput}` +
+      layoutDialog?.errors === 0 &&
+      (layoutDialog?.parityTags ?? 0) >= 1 &&
+      layoutDialog?.legacyGone === true,
+    `解析行=${layoutDialog?.rows ?? 0} 可导入=${layoutDialog?.importEnabled} 校验错误=${layoutDialog?.errors ?? '-'} ` +
+      `单双周标签=${layoutDialog?.parityTags ?? 0} 旧入口已下线=${layoutDialog?.legacyGone} 文件选择=${layoutDialog?.hasFileInput}` +
       `${layoutDialog?.reason ? ` 原因=${layoutDialog.reason}` : ''}`,
   );
+  // 关闭导入弹窗（用标题栏关闭按钮，兼容不同对话框的底部按钮文案）
   await win.webContents.executeJavaScript(`(() => {
-    const buttons = Array.from(document.querySelectorAll('.el-dialog__footer button'));
-    const close = buttons.find((node) => (node.textContent ?? '').trim() === '关闭');
-    if (close) close.click();
+    const dialog = Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
+      (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('ClassIsland'),
+    );
+    const closeBtn = dialog?.querySelector('.el-dialog__headerbtn');
+    if (closeBtn) closeBtn.click();
     return true;
   })()`);
   await sleep(300);

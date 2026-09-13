@@ -93,6 +93,8 @@ export interface ClassLike {
   name: string;
   grade: string;
   teacherId: string;
+  /** 本学期教学周数（班主任可调，默认 20） */
+  termWeeks?: number;
   createdAt: Date;
   teacher?: TeacherBriefLike | null;
   _count?: {
@@ -110,6 +112,7 @@ export function toClassDto(item: ClassLike): ClassDto {
     name: item.name,
     grade: item.grade,
     teacherId: item.teacherId,
+    termWeeks: item.termWeeks ?? 20,
     createdAt: toIso(item.createdAt),
     teacher: item.teacher ? toTeacherBrief(item.teacher) : null,
     studentCount: item._count?.students ?? undefined,

@@ -416,6 +416,15 @@ body {
     justify-content: center;
   }
 
+  /*
+   * 手机端按钮换行后各自独占整行：必须清掉 Element Plus 的 `.el-button + .el-button`
+   * 12px 左外边距，否则第二个按钮的"内容盒 + 12px"超出容器被 flex 压缩，
+   * 出现「宽度不一致、右边不齐」（通知页的「叫人 / 发布通知」就是这样）。
+   */
+  .toolbar > .el-button + .el-button {
+    margin-left: 0;
+  }
+
   /* 统计卡片：小屏两列 */
   .stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

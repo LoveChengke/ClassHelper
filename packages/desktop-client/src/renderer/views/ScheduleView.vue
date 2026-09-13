@@ -171,7 +171,8 @@ function remainText(minutes: number): string {
 }
 
 async function loadTerm(): Promise<void> {
-  const result = await fetchWithCache('classes', 'term', () => dashboardApi.term(), {
+  // 带 classId：周次上限取本班"教学周数"（班主任可调，默认 20 周）
+  const result = await fetchWithCache('classes', 'term', () => dashboardApi.term(auth.classId ?? undefined), {
     currentWeek: 1,
     maxWeek: 20,
   });

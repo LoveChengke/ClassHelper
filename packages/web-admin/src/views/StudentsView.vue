@@ -47,18 +47,14 @@ function openImport(): void {
 const formVisible = ref(false);
 const formRef = ref<FormInstance>();
 const editingId = ref<string | null>(null);
-const form = reactive({ username: '', name: '', password: '', classId: '' });
+/** 表单不再暴露「用户名」：新建时由前端自动生成学号式登录名（见 autoCreateStudent） */
+const form = reactive({ name: '', password: '', classId: '' });
 const rules: FormRules = {
-  username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    { min: 3, message: '用户名至少 3 位', trigger: 'blur' },
-  ],
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
 };
 
 function openCreate(): void {
   editingId.value = null;
-  form.username = '';
   form.name = '';
   form.password = '';
   form.classId = filter.classId;
@@ -67,11 +63,52 @@ function openCreate(): void {
 
 function openEdit(row: StudentDto): void {
   editingId.value = row.id;
-  form.username = row.username;
   form.name = row.name;
   form.password = '';
   form.classId = row.classId ?? '';
   formVisible.value = true;
+}
+
+/**
+ * 自动生成学生登录名（学号式：student01、student02 …，与种子数据 student01~student15 同风格）。
+ *
+ * 后端 `POST /api/students` 的 username 是必填且全局唯一的（教师/管理员账号同样占位），
+ * 界面已按需求隐藏「用户名」输入，因此这里用「全量学生账号 + 递增序号」生成，
+ * 并在服务端返回 409（唯一约束冲突，例如并发创建或撞上教师账号）时换下一个序号重试；
+ * 其它错误（姓名/密码不合法等）立即抛出，不再重试，避免刷屏。
+ */
+function studentUsernameAt(index: number): string {
+  return index < 100 ? `student${String(index).padStart(2, '0')}` : `student${index}`;
+}
+
+async function autoCreateStudent(): Promise<void> {
+  const existing = new Set((await studentApi.list()).map((item) => item.username));
+  let index = existing.size + 1;
+  let lastError: unknown = new Error('自动生成学生账号失败');
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    let username = studentUsernameAt(index);
+    while (existing.has(username)) {
+      index += 1;
+      username = studentUsernameAt(index);
+    }
+    try {
+      await studentApi.create({
+        username,
+        name: form.name.trim(),
+        classId: form.classId || null,
+        ...(form.password ? { password: form.password } : {}),
+      });
+      return;
+    } catch (error) {
+      const status = (error as { response?: { status?: number } }).response?.status;
+      if (status !== 409) throw error;
+      lastError = error;
+      existing.add(username);
+      index += 1;
+    }
+  }
+  throw lastError;
 }
 
 async function submitForm(): Promise<void> {
@@ -79,20 +116,21 @@ async function submitForm(): Promise<void> {
   if (!valid) return;
 
   if (editingId.value) {
+    // 用户名不再由界面维护：编辑只改姓名与班级
     await studentApi.update(editingId.value, {
-      username: form.username.trim(),
       name: form.name.trim(),
       classId: form.classId || null,
     });
     ElMessage.success('学生信息已更新');
   } else {
-    await studentApi.create({
-      username: form.username.trim(),
-      name: form.name.trim(),
-      classId: form.classId || null,
-      ...(form.password ? { password: form.password } : {}),
-    });
-    ElMessage.success('学生账号创建成功');
+    try {
+      await autoCreateStudent();
+      ElMessage.success('学生账号创建成功（登录名已自动生成）');
+    } catch {
+      // 接口层已弹出服务端原因，这里补充可执行的兜底建议
+      ElMessage.error('创建失败：可稍后重试，或用「导入名单」在表格里显式指定用户名');
+      return;
+    }
   }
   formVisible.value = false;
   await loadStudents();
@@ -185,7 +223,7 @@ async function submitCall(): Promise<void> {
         </el-select>
         <el-input
           v-model="filter.keyword"
-          placeholder="姓名 / 用户名"
+          placeholder="姓名"
           clearable
           style="width: 180px"
           @keyup.enter="loadStudents"
@@ -199,7 +237,6 @@ async function submitCall(): Promise<void> {
 
     <el-card shadow="never" class="table-card">
       <el-table v-loading="loading" :data="students" empty-text="暂无学生数据">
-        <el-table-column prop="username" label="用户名" width="140" />
         <el-table-column prop="name" label="姓名" width="120" />
         <el-table-column label="角色" width="90">
           <template #default="{ row }">{{ ROLE_LABELS[row.role as 'STUDENT'] ?? row.role }}</template>
@@ -289,9 +326,6 @@ async function submitCall(): Promise<void> {
 
     <el-dialog v-model="formVisible" :title="editingId ? '编辑学生' : '新建学生'" width="460px">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
-        <el-form-item label="用户名" prop="username">
-          <el-input v-model="form.username" :disabled="Boolean(editingId)" />
-        </el-form-item>
         <el-form-item label="姓名" prop="name">
           <el-input v-model="form.name" />
         </el-form-item>

@@ -44,7 +44,7 @@ async function loadClasses(): Promise<void> {
 const formVisible = ref(false);
 const formRef = ref<FormInstance>();
 const editingId = ref<string | null>(null);
-const form = reactive({ name: '', grade: '', code: '' });
+const form = reactive({ name: '', grade: '', code: '', termWeeks: 20 });
 const rules: FormRules = {
   name: [{ required: true, message: '请输入班级名称', trigger: 'blur' }],
   grade: [{ required: true, message: '请输入年级', trigger: 'blur' }],
@@ -55,6 +55,7 @@ function openCreate(): void {
   form.name = '';
   form.grade = '';
   form.code = '';
+  form.termWeeks = 20;
   formVisible.value = true;
 }
 
@@ -63,6 +64,7 @@ function openEdit(row: ClassDto): void {
   form.name = row.name;
   form.grade = row.grade;
   form.code = '';
+  form.termWeeks = row.termWeeks ?? 20;
   formVisible.value = true;
 }
 
@@ -71,7 +73,11 @@ async function submitForm(): Promise<void> {
   if (!valid) return;
 
   if (editingId.value) {
-    await classApi.update(editingId.value, { name: form.name, grade: form.grade });
+    await classApi.update(editingId.value, {
+      name: form.name,
+      grade: form.grade,
+      termWeeks: form.termWeeks,
+    });
     ElMessage.success('班级已更新');
   } else {
     await classApi.create({
@@ -394,6 +400,12 @@ onUnmounted(() => {
         </el-form-item>
         <el-form-item v-if="!editingId" label="班级码">
           <el-input v-model="form.code" placeholder="留空自动生成（4~16 位字母数字）" />
+        </el-form-item>
+        <el-form-item label="学期周数">
+          <el-input-number v-model="form.termWeeks" :min="1" :max="40" :step="1" />
+          <span class="text-muted ml-8">
+            本学期一共多少教学周（默认 20）；课表周次选择与默认结束周都按它来
+          </span>
         </el-form-item>
       </el-form>
       <template #footer>

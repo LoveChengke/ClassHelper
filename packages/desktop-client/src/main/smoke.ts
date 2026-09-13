@@ -457,6 +457,61 @@ async function dumpIslandDom(_label: string): Promise<string> {
   }
 }
 
+/**
+ * 冒烟用：用教师账号发一条普通通知，返回通知 id（失败返回空串）。
+ * 用于"未读红点位置"这类需要真实未读数据的断言。
+ */
+async function createSmokeNotification(): Promise<string> {
+  const base = process.env.ELECTRON_SMOKE_API ?? 'http://127.0.0.1:4000/api';
+  try {
+    const login = (await fetch(`${base}/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'teacher1', password: 'teacher123' }),
+    }).then((response) => response.json())) as { data?: { token?: string } };
+    const token = login?.data?.token;
+    if (!token) return '';
+    const classes = (await fetch(`${base}/classes`, {
+      headers: { authorization: `Bearer ${token}` },
+    }).then((response) => response.json())) as { data?: Array<{ id?: string }> };
+    const classId = classes?.data?.[0]?.id ?? '';
+    if (!classId) return '';
+    const created = (await fetch(`${base}/notifications`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        classId,
+        title: '红点位置校验',
+        content: '自动化验证用通知（断言未读红点位置后会删除）。',
+        priority: 'NORMAL',
+      }),
+    }).then((response) => response.json())) as { data?: { id?: string } };
+    return created?.data?.id ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/** 冒烟用：删除上面造的通知（失败忽略） */
+async function deleteSmokeNotification(id: string): Promise<void> {
+  const base = process.env.ELECTRON_SMOKE_API ?? 'http://127.0.0.1:4000/api';
+  try {
+    const login = (await fetch(`${base}/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'teacher1', password: 'teacher123' }),
+    }).then((response) => response.json())) as { data?: { token?: string } };
+    const token = login?.data?.token;
+    if (!token) return;
+    await fetch(`${base}/notifications/${id}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${token}` },
+    });
+  } catch {
+    // 清理失败不影响冒烟结论
+  }
+}
+
 function makeNotification(
   id: string,
   priority: IslandNotification['priority'],
@@ -492,6 +547,9 @@ async function runIslandChecks(
   if (!island.isReady()) return;
 
   const islandWindow = island.getWindow();
+  // 默认关掉"失焦自动收起"：冒烟是自动化环境，系统/其它窗口抢焦点会随时触发 blur，
+  // 把展开态收回会让断言随机失败。专门验证该行为的用例（4.5）会临时打开它。
+  island.setBlurCollapseEnabled(false);
 
   // 1) 上课期间：普通通知必须完全不显示（窗口隐藏）并进入队列
   island.setClassState({ inClass: true, currentPeriodEnd: '08:45', week: 1 });
@@ -837,6 +895,7 @@ async function runIslandChecks(
   await sleep(700);
   const focusable = islandWindow?.isFocusable() ?? false;
   // 程序化触发失焦：等价于用户点到别处（冒烟窗口本身不显示，无法真的点击桌面）
+  island.setBlurCollapseEnabled(true); // 这一条专门验证"失焦收起"，先打开该行为
   islandWindow?.emit('blur');
   await sleep(700);
   const afterBlur = island.getState();
@@ -845,6 +904,8 @@ async function runIslandChecks(
     focusable && islandWindow?.isFocusable() === false && afterBlur.mode === 'pill',
     `展开时 focusable=${focusable} 失焦后 mode=${afterBlur.mode} focusable=${islandWindow?.isFocusable() ?? '-'}`,
   );
+  // 其余用例关掉"失焦收起"：避免无关的焦点变化（系统抢焦点等）把展开态收回，干扰断言
+  island.setBlurCollapseEnabled(false);
 
   // 4.6) 新作业上岛（kind=homework）：胶囊 + 展开显示作业要求
   //（截止时间功能已下线：这里同时守住"作业卡上不再出现截止时间"）
@@ -1149,6 +1210,9 @@ async function runIslandChecks(
   await sleep(500);
   // 命中兜底：把窗口显式置为"穿透"，再把光标位置注入到胶囊中心 ——
   // 主进程每 120ms 按光标校正一次命中，必须自己恢复（这正是"点开再收起后点不开"的兜底修复）。
+  // 先把光标注入到屏幕左上角（等价于指针离开岛体），否则轮询会立刻把命中又打开。
+  island.setHitTestCursor({ x: 1, y: 1 });
+  await sleep(260);
   island.setInteractive(false);
   await sleep(60);
   const forcedThrough = island.getInteractive();
@@ -1316,6 +1380,66 @@ async function runIslandChecks(
     `mode=${previewDismissed.mode} active=${previewDismissed.active?.id ?? '-'}`,
   );
 
+  // 4.12) 用户复现路径：紧急通知 + 新作业（联合通知）时，收起后点击必须能打开**新作业**
+  //       之前 active 仍是紧急那条，点击只会反复打开紧急，表现为"点不开新作业"。
+  await drainForCollapseCheck();
+  await sleep(300);
+  island.setClassState({ inClass: true, currentPeriodEnd: '08:45', week: 1 });
+  await sleep(300);
+  island.pushNotification(makeNotification('smoke-mixed-urgent', 'URGENT', '上课期间的紧急通知'), {
+    inClass: true,
+  });
+  await sleep(700);
+  const mixedUrgent = island.getState();
+  // 收起（学生点空白处）
+  await islandWindow?.webContents
+    .executeJavaScript(
+      `(() => {
+         document.querySelector('.island-card')?.click();
+         return true;
+       })()`,
+    )
+    .catch(() => undefined);
+  await sleep(600);
+  const mixedCollapsed = island.getState();
+  // 又来了新作业（上课时段，属普通通知 → 进队列，但胶囊已把这个类型汇总出来了）
+  island.pushNotification(
+    {
+      ...makeNotification('smoke-mixed-homework', 'NORMAL', '今天的新作业'),
+      kind: 'homework',
+    },
+    { inClass: true },
+  );
+  await sleep(600);
+  const mixedPillDom = await islandWindow?.webContents.executeJavaScript(
+    `document.querySelector('.island-card.pill .pill-title')?.textContent?.trim() ?? ''`,
+  );
+  // 点击胶囊：必须打开**新作业**这条
+  await islandWindow?.webContents
+    .executeJavaScript(
+      `(() => {
+         document.querySelector('.island-card')?.click();
+         return true;
+       })()`,
+    )
+    .catch(() => undefined);
+  await sleep(750);
+  const mixedOpened = island.getState();
+  record(
+    '紧急通知后来了新作业：收起再点击打开的是新作业（联合通知回归）',
+    mixedUrgent.mode === 'expanded' &&
+      mixedCollapsed.mode === 'pill' &&
+      (mixedPillDom ?? '').includes('作业') &&
+      mixedOpened.mode === 'expanded' &&
+      mixedOpened.active?.id === 'smoke-mixed-homework',
+    `紧急态=${mixedUrgent.mode} 收起=${mixedCollapsed.mode} 胶囊标题="${mixedPillDom ?? '-'}" ` +
+      `点击后=${mixedOpened.mode} active=${mixedOpened.active?.id ?? '-'}`,
+  );
+  island.handleAction({ action: 'dismiss' });
+  await sleep(300);
+  island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1 });
+  await sleep(300);
+
   // 5) 截图留档的像素级断言：每张图必须有实际绘制内容、颜色丰富，且宽高比与
   //    状态机配置的窗口尺寸一致（DPI 无关），紧急形态还必须出现红色描边/内部光晕像素。
   const shotDetails = islandShots.map((shot) => {
@@ -1389,6 +1513,74 @@ async function runIslandChecks(
 
   // 8) 个性化外观：高度/宽度/圆角/字号/透明度/动画速度实时生效，且不破坏布局
   const appearanceBefore = island.getAppearance();
+  // 8.1) 设置页真实链路（渲染进程 → IPC → 主进程）：用户反馈"设置不生效"，
+  //      因此必须走设置页用的 `window.desktop.islandSetAppearance`，而不是直接调主进程 API。
+  const rendererApplied = await mainWin?.webContents
+    .executeJavaScript(
+      `(() => {
+         if (!window.desktop?.islandSetAppearance) return false;
+         window.desktop.islandSetAppearance({
+           height: 62,
+           width: 320,
+           radius: 28,
+           fontSize: 16,
+           opacity: 0.9,
+           accent: '#ff7043',
+         });
+         return true;
+       })()`,
+    )
+    .catch(() => false);
+  await sleep(450);
+  const rendererAppearance = island.getAppearance();
+  const rendererCssVars = await islandWindow?.webContents
+    .executeJavaScript(
+      `(() => {
+         const style = getComputedStyle(document.documentElement);
+         return {
+           h: style.getPropertyValue('--island-h').trim(),
+           w: style.getPropertyValue('--island-w').trim(),
+           font: style.getPropertyValue('--island-font').trim(),
+           accent: style.getPropertyValue('--island-accent').trim(),
+         };
+       })()`,
+    )
+    .catch(() => null);
+  record(
+    '设置页链路：渲染进程 islandSetAppearance 实时生效（尺寸/字号/主题色）',
+    rendererApplied === true &&
+      rendererAppearance.height === 62 &&
+      rendererAppearance.width === 320 &&
+      rendererAppearance.fontSize === 16 &&
+      rendererAppearance.accent.toLowerCase() === '#ff7043' &&
+      rendererCssVars?.h === '62px' &&
+      rendererCssVars?.w === '320px' &&
+      rendererCssVars?.font === '16px' &&
+      rendererCssVars?.accent.toLowerCase() === '#ff7043',
+    `渲染进程调用=${rendererApplied} 主进程外观=${rendererAppearance.width}x${rendererAppearance.height} ` +
+      `字号=${rendererAppearance.fontSize} 主题色=${rendererAppearance.accent} ` +
+      `CSS 变量 h=${rendererCssVars?.h} w=${rendererCssVars?.w} font=${rendererCssVars?.font} accent=${rendererCssVars?.accent}`,
+  );
+  // 岛**可见**时改尺寸也要立刻生效（用户在设置页调滑块时岛正显示着）
+  island.pushNotification(makeNotification('smoke-appearance-live', 'NORMAL', '实时预览校验'), {
+    inClass: false,
+  });
+  await sleep(500);
+  await mainWin?.webContents
+    .executeJavaScript(
+      `(() => {
+         window.desktop?.islandSetAppearance({ height: 66, width: 336, fontSize: 17 });
+         return true;
+       })()`,
+    )
+    .catch(() => undefined);
+  await sleep(450);
+  const liveBounds = (await readIslandGeometry())?.island ?? null;
+  record(
+    '设置页链路：岛显示中改尺寸也立刻生效（实时预览）',
+    liveBounds?.height === 66 && Math.abs((liveBounds?.width ?? 0) - 336) <= 1,
+    `岛=${liveBounds?.width?.toFixed(0) ?? '-'}x${liveBounds?.height?.toFixed(0) ?? '-'}（期望 336x66）`,
+  );
   island.setAppearance({ height: 56, width: 300, radius: 26, fontSize: 14, opacity: 0.92, speed: 1.5 });
   island.handleAction({ action: 'dismiss' });
   await sleep(300);
@@ -2280,6 +2472,60 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
        })()`,
     );
     record('侧边栏点击导航（逐一点击 5 个菜单）', Boolean(navigation?.ok), String(navigation?.detail ?? ''));
+
+    // 未读红点必须挂在"通知"图标右上方（用户反馈：原来挂在文字后面，位置不对）
+    const readBadgeGeometry = async (): Promise<{
+      ok: boolean;
+      skipped?: string;
+      reason?: string;
+      dx?: number;
+      dy?: number;
+      text?: string;
+    } | null> =>
+      await win.webContents
+        .executeJavaScript(
+          `(() => {
+             const item = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
+               (node.textContent ?? '').includes('通知'),
+             );
+             if (!item) return { ok: false, reason: '找不到通知菜单项' };
+             const badge = item.querySelector('.menu-badge');
+             const icon = item.querySelector('.menu-icon-slot .el-icon');
+             if (!badge) return { ok: true, skipped: '当前没有未读消息' };
+             if (!icon) return { ok: false, reason: '通知图标没有 .menu-icon-slot 定位父级' };
+             const b = badge.getBoundingClientRect();
+             const i = icon.getBoundingClientRect();
+             return {
+               ok: true,
+               dx: Math.round(b.left + b.width / 2 - (i.left + i.width / 2)),
+               dy: Math.round(b.top + b.height / 2 - (i.top + i.height / 2)),
+               text: (badge.textContent ?? '').trim(),
+             };
+           })()`,
+        )
+        .catch(() => null);
+
+    let badgeCheck = await readBadgeGeometry();
+    let injectedId = '';
+    if (badgeCheck?.skipped) {
+      // 没有未读消息时红点不会渲染：造一条未读通知（教师账号），等实时推送刷新后再断言位置
+      const created = await createSmokeNotification();
+      if (created) {
+        injectedId = created;
+        await sleep(1400);
+        badgeCheck = await readBadgeGeometry();
+      }
+    }
+    record(
+      '未读红点位置正确（挂在"通知"图标右上方）',
+      badgeCheck?.ok === true &&
+        (badgeCheck?.skipped !== undefined || ((badgeCheck?.dx ?? 0) > 0 && (badgeCheck?.dy ?? 0) < 0)),
+      badgeCheck?.skipped
+        ? `${badgeCheck.skipped}（未能构造未读消息，已跳过位置断言）`
+        : `红点=${badgeCheck?.text} 相对图标中心 dx=${badgeCheck?.dx} dy=${badgeCheck?.dy}（要求 dx>0 且 dy<0）` +
+            `${badgeCheck?.reason ? ` 原因=${badgeCheck.reason}` : ''}`,
+    );
+    if (injectedId) await deleteSmokeNotification(injectedId);
 
     const cleanup = await win.webContents.executeJavaScript(
       `(async () => {

@@ -106,13 +106,17 @@ onUnmounted(() => {
       </div>
       <el-menu :default-active="activeMenu" class="menu" @select="handleMenuSelect">
         <el-menu-item v-for="item in menuItems" :key="item.path" :index="item.path">
-          <el-icon><component :is="item.icon" /></el-icon>
+          <!-- 未读红点挂在图标右上角（之前挂在文字后面，位置不对） -->
+          <span class="menu-icon-slot">
+            <el-icon><component :is="item.icon" /></el-icon>
+            <el-badge
+              v-if="item.path === '/notifications' && notifications.unreadCount > 0"
+              :value="notifications.unreadCount"
+              :max="99"
+              class="menu-badge"
+            />
+          </span>
           <span>{{ item.title }}</span>
-          <el-badge
-            v-if="item.path === '/notifications' && notifications.unreadCount > 0"
-            :value="notifications.unreadCount"
-            class="menu-badge"
-          />
         </el-menu-item>
       </el-menu>
       <div class="aside-footer">
@@ -217,8 +221,40 @@ onUnmounted(() => {
   --el-menu-active-color: var(--ch-text);
 }
 
+/* 图标槽：作为未读红点的定位父级（红点在图标右上角） */
+.menu-icon-slot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/*
+ * 未读红点：定位到图标"右上角外侧"。
+ * el-badge 默认把角标中线压在包裹元素右上角（translateY(-50%) translateX(100%)），
+ * 这里显式覆盖成相对图标槽的负 top / 负 right，保证红点在图标右上方而不是右侧或下方。
+ */
 .menu-badge {
-  margin-left: 10px;
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+  pointer-events: none;
+}
+
+.menu-badge :deep(.el-badge__content) {
+  position: absolute;
+  top: -7px;
+  right: -11px;
+  transform: none;
+  height: 16px;
+  min-width: 16px;
+  padding: 0 4px;
+  line-height: 16px;
+  font-size: 11px;
+  border: none;
 }
 
 .aside-footer {

@@ -8,13 +8,24 @@ import { hashPassword, verifyPassword } from '../../lib/password.js';
 import { isClassSession } from '../../lib/session.js';
 import type { ChangePasswordInput, ClassLoginInput, LoginInput } from './auth.schemas.js';
 
-/** 登录：校验用户名密码并签发 JWT（教师/管理员/个人学生账号） */
+/**
+ * 登录：校验用户名密码并签发 JWT。
+ *
+ * 学生端主体是**班级**（班级码 + 班级密码）：个人学生账号（student01…）**不再允许登录**，
+ * 它们的用户名只是"作业完成 / 通知已读 / 成绩"等个人数据的记录键（由班级会话代全班读写）。
+ * 教师与管理员仍用用户名登录。
+ */
 export async function login(input: LoginInput): Promise<LoginResponse> {
   const user = await prisma.user.findUnique({ where: { username: input.username } });
   if (!user) throw ApiError.unauthorized('用户名或密码错误');
 
   const passwordMatched = await verifyPassword(input.password, user.passwordHash);
   if (!passwordMatched) throw ApiError.unauthorized('用户名或密码错误');
+
+  // 个人学生账号已停用登录入口（需求：以班级为单位，删掉学生用自己用户名登录）
+  if (user.role === 'STUDENT') {
+    throw ApiError.forbidden('学生请使用「班级码 + 班级密码」登录（个人学生账号已停用）');
+  }
 
   const payload: TokenPayload = {
     sub: user.id,
