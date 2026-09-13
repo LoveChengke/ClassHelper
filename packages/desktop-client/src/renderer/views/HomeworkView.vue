@@ -148,22 +148,91 @@ const boardScale = ref(1);
 const fullscreenHostRef = ref<HTMLElement | null>(null);
 const fullscreenInnerRef = ref<HTMLElement | null>(null);
 const fullscreenScale = ref(1);
+/** 全屏单个科目视图（列表型）：与整块看板分开持有 ref，避免两个全屏弹窗互相覆盖 */
+const courseHostRef = ref<HTMLElement | null>(null);
+const courseInnerRef = ref<HTMLElement | null>(null);
+const fullscreenCourseScale = ref(1);
+/** 全屏看板的列数（由"铺满屏幕"算法动态算出；见 computeColumns） */
+const fullscreenColumns = ref(0);
 
-function computeScale(host: HTMLElement | null, inner: HTMLElement | null): number {
+function computeScale(host: HTMLElement | null, inner: HTMLElement | null, minScale = 0.45): number {
   if (!host || !inner) return 1;
   const available = host.clientHeight;
   // 先按 1 倍量一次内容高度（transform 不影响 offsetHeight）
   const content = inner.offsetHeight;
   if (available <= 0 || content <= 0) return 1;
   const scale = Math.min(1, available / content);
-  return Math.max(0.45, Math.round(scale * 1000) / 1000);
+  return Math.max(minScale, Math.round(scale * 1000) / 1000);
+}
+
+/**
+ * 全屏看板列数：在"可用宽 × 可用高"里枚举 1..count 列，
+ * 选出"单卡面积最大"的方案（面积越大越铺满屏幕），并用宽高比惩罚避免出现
+ * 又扁又长的卡片。这样无论 2 个科目还是 12 个科目，全屏都是一屏铺满。
+ */
+function computeColumns(count: number, host: HTMLElement | null): number {
+  if (count <= 1) return 1;
+  if (!host) return count;
+  const width = host.clientWidth || 0;
+  const height = host.clientHeight || 0;
+  if (width <= 0 || height <= 0) return Math.min(3, count);
+  const gap = Math.max(8, boardFontSize.value * 1.53);
+  const wantRatio = 1.15;
+  let bestCols = 1;
+  let bestScore = -Infinity;
+  for (let cols = 1; cols <= count; cols += 1) {
+    const rows = Math.ceil(count / cols);
+    const cardWidth = (width - gap * (cols - 1)) / cols;
+    const cardHeight = (height - gap * (rows - 1)) / rows;
+    if (cardWidth <= 0 || cardHeight <= 0) continue;
+    const ratio = cardWidth / cardHeight;
+    const ratioPenalty = Math.max(ratio / wantRatio, wantRatio / ratio);
+    const score = (cardWidth * cardHeight) / ratioPenalty;
+    if (score > bestScore) {
+      bestScore = score;
+      bestCols = cols;
+    }
+  }
+  return bestCols;
 }
 
 function fitBoards(): void {
   void nextTick(() => {
     boardScale.value = computeScale(boardHostRef.value, boardInnerRef.value);
     fullscreenScale.value = computeScale(fullscreenHostRef.value, fullscreenInnerRef.value);
+    fullscreenCourseScale.value = computeScale(courseHostRef.value, courseInnerRef.value);
   });
+}
+
+/**
+ * 全屏看板适配：弹窗是异步挂载的（有过渡），刚打开时容器尺寸可能是 0，
+ * 因此这里轮询等待布局就绪，再算列数与缩放，保证"一屏铺满、不用滚动"。
+ * 列数改变会重排，所以排完再量一次缩放系数。
+ */
+async function fitFullscreen(kind: 'board' | 'course' = 'board'): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const host = kind === 'board' ? fullscreenHostRef.value : courseHostRef.value;
+    const inner = kind === 'board' ? fullscreenInnerRef.value : courseInnerRef.value;
+    if (host && inner && host.clientHeight > 60 && host.clientWidth > 60) {
+      if (kind === 'board') {
+        const count = inner.children.length || boardColumns.value.length || 1;
+        fullscreenColumns.value = computeColumns(count, host);
+        await nextTick();
+        fullscreenScale.value = computeScale(host, fullscreenInnerRef.value, 0.3);
+      } else {
+        fullscreenCourseScale.value = computeScale(host, inner, 0.3);
+      }
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  }
+}
+
+/** 视口/窗口尺寸变化：全屏看板重新自适应 */
+function onResize(): void {
+  fitBoards();
+  if (fullscreenBoard.value) void fitFullscreen('board');
+  if (fullscreenCourse.value) void fitFullscreen('course');
 }
 
 /* ------------------------------------------------------------ 数据加载 */
@@ -355,6 +424,7 @@ onMounted(async () => {
     resizeObserver = new ResizeObserver(() => fitBoards());
     if (boardHostRef.value) resizeObserver.observe(boardHostRef.value);
   }
+  window.addEventListener('resize', onResize);
   fitBoards();
   realtime.on(SOCKET_EVENTS.homeworkNew, onHomeworkEvent);
   realtime.on(SOCKET_EVENTS.homeworkUpdated, onHomeworkEvent);
@@ -364,6 +434,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (clockTimer) clearInterval(clockTimer);
   resizeObserver?.disconnect();
+  window.removeEventListener('resize', onResize);
   realtime.off(SOCKET_EVENTS.homeworkNew, onHomeworkEvent);
   realtime.off(SOCKET_EVENTS.homeworkUpdated, onHomeworkEvent);
   appStore.offServerRecovered(onRecovered);
@@ -512,6 +583,7 @@ onUnmounted(() => {
       fullscreen
       :title="`${fullscreenCourse ?? ''} · 作业`"
       class="board-fullscreen"
+      @opened="fitFullscreen('course')"
     >
       <template #header="{ titleId, titleClass }">
         <div class="board-dialog-head">
@@ -520,11 +592,11 @@ onUnmounted(() => {
           <span v-if="boardShowTime" class="board-dialog-clock">{{ todayText }}</span>
         </div>
       </template>
-      <div ref="fullscreenHostRef" class="board-host board-host-lg">
+      <div ref="courseHostRef" class="board-host board-host-lg">
         <ol
-          ref="fullscreenInnerRef"
+          ref="courseInnerRef"
           class="board-list board-list-lg"
-          :style="{ ...fullscreenStyle, '--board-scale': fullscreenScale }"
+          :style="{ ...fullscreenStyle, '--board-scale': fullscreenCourseScale }"
         >
           <li
             v-for="(item, index) in fullscreenItems"
@@ -547,7 +619,7 @@ onUnmounted(() => {
     </el-dialog>
 
     <!-- 全屏：整块看板放大 -->
-    <el-dialog v-model="fullscreenBoard" fullscreen class="board-fullscreen">
+    <el-dialog v-model="fullscreenBoard" fullscreen class="board-fullscreen" @opened="fitFullscreen('board')">
       <template #header="{ titleId, titleClass }">
         <div class="board-dialog-head">
           <span :id="titleId" :class="titleClass">今日作业看板</span>
@@ -558,7 +630,11 @@ onUnmounted(() => {
         <div
           ref="fullscreenInnerRef"
           class="board board-lg"
-          :style="{ ...fullscreenStyle, '--board-scale': fullscreenScale }"
+          :style="{
+            ...fullscreenStyle,
+            '--board-scale': fullscreenScale,
+            '--board-cols': String(fullscreenColumns || 1),
+          }"
         >
           <section v-for="column in boardColumns" :key="column.course" class="board-card">
             <header class="board-card-head">
@@ -738,9 +814,12 @@ onUnmounted(() => {
   transform-origin: top center;
 }
 
+/* 全屏看板：列数由脚本按"铺满屏幕"算好后注入（--board-cols），不再靠 auto-fit 猜；
+   行高保持内容自然高度，交给 transform: scale() 适配，避免卡片被压扁截断内容。 */
 .board-lg {
-  grid-template-columns: repeat(auto-fit, minmax(calc(var(--board-font, 15px) * 16), 1fr));
+  grid-template-columns: repeat(var(--board-cols, 2), minmax(0, 1fr));
   gap: calc(var(--board-font, 15px) * 0.9);
+  align-content: start;
 }
 
 .board-card {
@@ -875,6 +954,12 @@ onUnmounted(() => {
   color: #0a84ff;
 }
 
+.board-list-lg {
+  width: 100%;
+  transform: scale(var(--board-scale, 1));
+  transform-origin: top center;
+}
+
 .board-list-lg .board-item {
   padding: 6px 8px;
 }
@@ -899,6 +984,14 @@ onUnmounted(() => {
 }
 
 .board-fullscreen :deep(.el-dialog__body) {
+  padding-top: 6px;
+  height: calc(100vh - 84px);
+  overflow: hidden;
+}
+
+/* 兜底：`class` 由 el-dialog 透传时可能不携带 scoped 属性，这里用全局选择器保证
+   全屏弹窗内容区一定铺满整屏（否则看板会缩在左上角）。 */
+:global(.board-fullscreen .el-dialog__body) {
   padding-top: 6px;
   height: calc(100vh - 84px);
   overflow: hidden;

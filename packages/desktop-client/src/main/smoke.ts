@@ -1220,6 +1220,11 @@ async function runIslandChecks(
   island.setHitTestCursor(pillPoint);
   await sleep(260);
   const interactiveWhilePill = island.getInteractive();
+  // 点击前记录渲染进程当前形态：若渲染进程停在 expanded（状态推送滞后），
+  // 合成点击会被解释成"点空白处 → 收起"，表现为"点了没反应"，这里留证据便于定位。
+  const classBeforeClick = await islandWindow?.webContents
+    .executeJavaScript(`document.querySelector('.island-card')?.className ?? '-'`)
+    .catch(() => '-');
   await islandWindow?.webContents
     .executeJavaScript(
       `(() => {
@@ -1228,16 +1233,24 @@ async function runIslandChecks(
        })()`,
     )
     .catch(() => undefined);
-  await sleep(750);
-  const reopened = island.getState();
+  // 轮询等待主进程状态落到 expanded（不同环境 IPC/动画耗时不同，固定 sleep 会误判）
+  let reopened = island.getState();
+  for (let attempt = 0; attempt < 12 && reopened.mode !== 'expanded'; attempt += 1) {
+    await sleep(120);
+    reopened = island.getState();
+  }
+  const classAfterClick = await islandWindow?.webContents
+    .executeJavaScript(`document.querySelector('.island-card')?.className ?? '-'`)
+    .catch(() => '-');
   record(
     '收起态点击可再次展开（胶囊命中恢复 + 点击后展开）',
     forcedThrough === false &&
       interactiveWhilePill === true &&
       reopened.mode === 'expanded' &&
       reopened.active?.id === 'smoke-collapse-reopen',
-    `置穿透后=${forcedThrough} 光标在胶囊上时=${interactiveWhilePill} 点击后 mode=${reopened.mode} ` +
-      `active=${reopened.active?.id ?? '-'}`,
+    `置穿透后=${forcedThrough} 光标在胶囊上时=${interactiveWhilePill} ` +
+      `点击前渲染类名=${classBeforeClick} 点击后 mode=${reopened.mode} ` +
+      `active=${reopened.active?.id ?? '-'} 点击后渲染类名=${classAfterClick}`,
   );
 
   const sliverForInteractive = getSliverSize();
@@ -1979,10 +1992,16 @@ async function runIslandChecks(
     )
     .catch(() => undefined);
   await sleep(180);
-  // 兜底轮询读的是主进程光标坐标：注入到岛体中心，等价于"指针停在岛内"
+  // 兜底轮询读的是主进程光标坐标：注入到岛体中心，等价于"指针停在岛内"。
+  // 命中判定链路是异步的（渲染进程上报矩形 → 主进程 120ms 轮询校正），
+  // 因此这里**轮询等待**而不是固定 sleep 后读一次，避免偶发误判。
   island.setHitTestCursor(islandCardScreenPoint(0.5, 0.5));
-  await sleep(260);
-  const interactiveInside = island.getInteractive();
+  let interactiveInside = island.getInteractive();
+  for (let index = 0; index < 10 && interactiveInside !== true; index += 1) {
+    await sleep(120);
+    island.setHitTestCursor(islandCardScreenPoint(0.5, 0.5));
+    interactiveInside = island.getInteractive();
+  }
   await islandWindow?.webContents
     .executeJavaScript(
       `(() => {
@@ -1993,13 +2012,20 @@ async function runIslandChecks(
     .catch(() => undefined);
   // 光标的权威判定在主进程（兜底轮询）：这里把光标注入到屏幕左上角，等价于"指针离开岛体"
   island.setHitTestCursor({ x: 1, y: 1 });
-  await sleep(260);
-  const interactiveOutside = island.getInteractive();
+  let interactiveOutside = island.getInteractive();
+  for (let index = 0; index < 10 && interactiveOutside !== false; index += 1) {
+    await sleep(120);
+    island.setHitTestCursor({ x: 1, y: 1 });
+    interactiveOutside = island.getInteractive();
+  }
+  const hitCheckGeometry = island.getHitRect();
   island.setHitTestCursor(null);
   record(
     '岛外鼠标穿透（固定大窗口不吞桌面点击）',
     interactiveInside === true && interactiveOutside === false,
-    `指针在岛内 interactive=${interactiveInside}，指针在岛外 interactive=${interactiveOutside}（要求 true / false）`,
+    `指针在岛内 interactive=${interactiveInside}，指针在岛外 interactive=${interactiveOutside}（要求 true / false）` +
+      ` 窗口可见=${islandWindow?.isVisible() ?? false} 状态=${island.getState().mode}` +
+      ` 岛体矩形=${hitCheckGeometry ? `${Math.round(hitCheckGeometry.x)},${Math.round(hitCheckGeometry.y)} ${Math.round(hitCheckGeometry.width)}x${Math.round(hitCheckGeometry.height)}` : 'null'}`,
   );
   island.setAppearance({ ...appearanceBefore, style: 'black' });
   await sleep(200);
@@ -2462,6 +2488,20 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
       '课表「今天」时间轴（当前课高亮/倒计时/大时钟）',
       Boolean(timeline?.ok),
       String(timeline?.detail ?? ''),
+    );
+
+    // 作业看板全屏自适应（用户反馈：全屏看板没有铺满屏幕）：
+    // 进作业页 → 切看板 → 打开全屏 → 量布局宽度/可视底部，要求铺满且不需要滚动
+    const boardFullscreen = await win.webContents.executeJavaScript(
+      `(async () => {
+         if (!window.__classhelperSmoke__?.homeworkBoardSelfTest) return { ok: false, detail: '缺少看板自适应自检钩子' };
+         return await window.__classhelperSmoke__.homeworkBoardSelfTest();
+       })()`,
+    );
+    record(
+      '作业看板全屏自适应（铺满屏幕、内容不溢出）',
+      Boolean(boardFullscreen?.ok),
+      String(boardFullscreen?.detail ?? ''),
     );
 
     // 侧边栏点击导航（回归测试：曾因把 index 当路由名导致点击无反应）

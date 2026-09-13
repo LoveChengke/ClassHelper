@@ -475,6 +475,113 @@ export async function scheduleTimelineSelfTest(): Promise<SmokeCheckResult> {
     }
   }
 }
+/**
+ * 冒烟自检 8（需后端在线）：作业看板**全屏自适应**。
+ *
+ * 用户反馈"全屏模式没有自适应"：点开全屏后卡片挤在左上角、内容显示不全。
+ * 这里走真实界面链路：进入作业页 → 切到「看板」→ 点「全屏看板」→
+ * 断言 ①布局宽度铺满视口（列数由算法注入 `--board-cols`）②缩放后可视底部不超出屏幕（无需滚动）。
+ */
+export async function homeworkBoardSelfTest(): Promise<SmokeCheckResult> {
+  const { router } = await import('../router/index.js');
+  try {
+    await router.push('/homeworks');
+    if (!(await waitUntil(() => Boolean(document.querySelector('.homework-page')), 6000))) {
+      return { ok: false, detail: '作业页未挂载' };
+    }
+
+    // 必须是「看板」模式（列表模式没有全屏看板入口）
+    const boardTab = Array.from(document.querySelectorAll('.el-radio-button')).find((node) =>
+      (node.textContent ?? '').includes('看板'),
+    );
+    if (!(boardTab instanceof HTMLElement)) return { ok: false, detail: '找不到「看板」切换按钮' };
+    boardTab.click();
+    await waitUntil(() => Boolean(document.querySelector('.board-config')), 3000);
+
+    // 今天可能恰好没有作业：先关掉「只看今天」，保证看板一定有卡片（断言才有意义）
+    if (!document.querySelector('.board-host')) {
+      const todaySwitch = document.querySelector('.page-header .el-switch');
+      if (todaySwitch instanceof HTMLElement) todaySwitch.click();
+    }
+    const hasBoard = await waitUntil(() => Boolean(document.querySelector('.board-host')), 4000);
+
+    const fullscreenButton = Array.from(document.querySelectorAll('button')).find((node) =>
+      (node.textContent ?? '').includes('全屏看板'),
+    );
+    if (!(fullscreenButton instanceof HTMLElement)) return { ok: false, detail: '找不到「全屏看板」按钮' };
+    fullscreenButton.click();
+
+    const dialogReady = await waitUntil(
+      () => Boolean(document.querySelector('.board-fullscreen .board-lg')),
+      6000,
+    );
+    if (!dialogReady) return { ok: false, detail: '全屏看板弹窗未出现' };
+
+    // 等自适应轮询跑完（最多 20 次 × 60ms）
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+
+    const board = document.querySelector('.board-fullscreen .board-lg');
+    const host = document.querySelector('.board-fullscreen .board-host-lg');
+    if (!(board instanceof HTMLElement) || !(host instanceof HTMLElement)) {
+      return { ok: false, detail: '全屏看板容器缺失' };
+    }
+    const rect = board.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const layoutWidth = board.offsetWidth;
+    const columns = Number(board.style.getPropertyValue('--board-cols') || 0);
+    const cards = board.querySelectorAll('.board-card').length;
+    const scale = Number((getComputedStyle(board).transform.match(/matrix\(([-\d.]+)/) ?? [])[1] ?? 1);
+
+    const fillsWidth = layoutWidth >= viewportWidth * 0.9;
+    const fitsScreen = rect.bottom <= viewportHeight + 2 && rect.width <= viewportWidth + 2;
+
+    // 第二阶段：模拟"科目很多"（真实班级看板常有 5~8 个科目）。
+    // 克隆卡片到 6 张 → 触发 resize 让自适应算法重算 → 断言列数自动变多且仍然铺满、不溢出。
+    let manyCards = '';
+    let manyOk = false;
+    const sample = board.querySelector('.board-card');
+    if (sample instanceof HTMLElement) {
+      while (board.querySelectorAll('.board-card').length < 6) {
+        const clone = sample.cloneNode(true) as HTMLElement;
+        clone.setAttribute('data-smoke-filler', '1');
+        board.appendChild(clone);
+      }
+      window.dispatchEvent(new Event('resize'));
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const cardsMany = board.querySelectorAll('.board-card').length;
+      const columnsMany = Number(board.style.getPropertyValue('--board-cols') || 0);
+      const layoutWidthMany = board.offsetWidth;
+      const rectMany = board.getBoundingClientRect();
+      manyOk =
+        cardsMany === 6 &&
+        columnsMany >= 2 &&
+        columnsMany <= cardsMany &&
+        layoutWidthMany >= viewportWidth * 0.9 &&
+        rectMany.bottom <= viewportHeight + 2;
+      manyCards =
+        `多科目：卡片=${cardsMany} 列数=${columnsMany} 排版宽=${layoutWidthMany} ` +
+        `可视底=${Math.round(rectMany.bottom)} 通过=${manyOk}`;
+    }
+
+    const closeButton = document.querySelector('.board-fullscreen .el-dialog__headerbtn');
+    if (closeButton instanceof HTMLElement) closeButton.click();
+
+    return {
+      ok: hasBoard && cards > 0 && columns >= 1 && columns <= cards && fillsWidth && fitsScreen && manyOk,
+      detail:
+        `卡片=${cards} 列数=${columns} 缩放=${Number.isFinite(scale) ? scale.toFixed(3) : '-'} ` +
+        `排版宽=${layoutWidth}（视口宽=${viewportWidth}）可视底=${Math.round(rect.bottom)}（视口高=${viewportHeight}） ` +
+        `铺满宽=${fillsWidth} 不超出屏幕=${fitsScreen}；${manyCards}`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: `看板自适应自检异常：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
 /** 冒烟收尾：断开实时通道并退出登录，保证下次冒烟从登录页开始 */
 export async function sessionCleanup(): Promise<SmokeCheckResult> {
   const [{ useAuthStore }, { useRealtimeStore }] = await Promise.all([
@@ -501,6 +608,7 @@ export function registerSmokeHooks(): void {
     islandRealtimeCleanup,
     islandReadState,
     scheduleTimelineSelfTest,
+    homeworkBoardSelfTest,
     sessionCleanup,
   };
 }
