@@ -65,6 +65,9 @@ export const classApi = {
     api.delete(`${API_PATHS.classes}/${id}/students/${userId}`),
   assignTeacher: (id: string, teacherId: string): Promise<unknown> =>
     api.post(`${API_PATHS.classes}/${id}/teachers`, { teacherId }),
+  /** 设置 / 更改班主任：仅管理员 */
+  assignHeadTeacher: (id: string, teacherId: string): Promise<ClassDto> =>
+    api.patch(`${API_PATHS.classes}/${id}/head-teacher`, { teacherId }),
   removeTeacher: (id: string, teacherId: string): Promise<unknown> =>
     api.delete(`${API_PATHS.classes}/${id}/teachers/${teacherId}`),
   /** 设置 / 重置班级账号（班级码 + 班级密码）：仅管理员 */
@@ -200,7 +203,7 @@ export const dashboardApi = {
     api.get('/dashboard/term', classId ? { classId } : undefined),
 };
 
-/* ------------------------------------------------------------------ 协作教师 */
+/* ------------------------------------------------------------------ 教师管理（仅管理员） */
 
 export const teacherApi = {
   list: (keyword?: string): Promise<UserDto[]> =>
@@ -208,9 +211,16 @@ export const teacherApi = {
   create: (payload: {
     username: string;
     name: string;
-    password: string;
+    password?: string;
     role?: 'TEACHER' | 'ADMIN';
   }): Promise<UserDto> => api.post(API_PATHS.teachers, payload),
+  update: (
+    id: string,
+    payload: { username?: string; name?: string; role?: 'TEACHER' | 'ADMIN' },
+  ): Promise<UserDto> => api.patch(`${API_PATHS.teachers}/${id}`, payload),
+  remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.teachers}/${id}`),
+  resetPassword: (id: string, newPassword?: string): Promise<unknown> =>
+    api.post(`${API_PATHS.teachers}/${id}/reset-password`, newPassword ? { newPassword } : {}),
   /** 班级详情中的 teachers 字段即为已分配的协作教师 */
   fromClass: (classId: string): Promise<ClassDetailDto> => classApi.detail(classId),
 };
@@ -220,22 +230,22 @@ export const teacherApi = {
 export const importApi = {
   /** 模板下载地址（CSV 走 JSON，XLSX 走二进制） */
   template: (
-    kind: 'grades' | 'students',
+    kind: 'grades' | 'students' | 'teachers',
     format: 'csv' | 'xlsx' = 'csv',
   ): Promise<{ kind: string; format: string; fileName: string; content: string }> =>
     api.get(`${API_PATHS.imports}/template`, { kind, format }),
 
   /** 上传表格并预览（解析 + 必填列校验 + 建议映射，不写库） */
   previewTable: (payload: {
-    kind: 'grades' | 'students';
+    kind: 'grades' | 'students' | 'teachers';
     fileName: string;
     contentBase64: string;
   }): Promise<TableImportPreview> => api.post(`${API_PATHS.imports}/table/preview`, payload),
 
-  /** 确认字段映射与写入模式后执行导入 */
+  /** 确认字段映射与写入模式后执行导入（教师名单与班级无关，classId 可省略） */
   commitTable: (payload: {
-    kind: 'grades' | 'students';
-    classId: string;
+    kind: 'grades' | 'students' | 'teachers';
+    classId?: string;
     fileName: string;
     contentBase64: string;
     mapping: Record<string, string>;

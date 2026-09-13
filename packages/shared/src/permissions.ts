@@ -74,11 +74,11 @@ export function canManageGrades(classRole: ClassRole): boolean {
 }
 
 /** 可导入的数据类型 */
-export type ImportKind = 'grades' | 'students' | 'scheduleTimes';
+export type ImportKind = 'grades' | 'students' | 'teachers' | 'scheduleTimes';
 
-/** 导入权限：成绩=管理员或本班班主任；名单=仅管理员；课表时间=管理员或本班班主任 */
+/** 导入权限：成绩=管理员或本班班主任；学生/教师名单=仅管理员；课表时间=管理员或本班班主任 */
 export function canImport(role: UserRole, classRole: ClassRole, kind: ImportKind): boolean {
-  if (kind === 'students') return canManageRoster(role);
+  if (kind === 'students' || kind === 'teachers') return canManageRoster(role);
   if (kind === 'scheduleTimes') return canManageSchedule(classRole);
   return canManageGrades(classRole);
 }
@@ -93,6 +93,7 @@ export const PERMISSION_MATRIX: readonly {
   { action: '班级创建 / 修改 / 删除', admin: true, head: false, subject: false },
   { action: '分配班主任与科任老师', admin: true, head: false, subject: false },
   { action: '学生名单管理（增删 / 重置密码 / 导入）', admin: true, head: false, subject: false },
+  { action: '教师录入（新建 / 导入名单 / 重置密码）', admin: true, head: false, subject: false },
   { action: '课表管理（增删改 / 时间配置导入）', admin: true, head: true, subject: false },
   { action: '布置作业', admin: true, head: true, subject: true },
   { action: '叫人', admin: true, head: true, subject: true },

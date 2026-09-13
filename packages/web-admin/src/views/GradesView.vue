@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import * as echarts from 'echarts';
 import {
   SOCKET_EVENTS,
+  SUBJECT_CATALOG,
   formatDate,
   gradeLevel,
   gradePercent,
@@ -138,6 +139,30 @@ function handleResize(): void {
   courseChart.value?.resize();
 }
 
+/* ------------------------------------------------------------ 统一科目
+ *
+ * 与课表一致："科目"是全校统一的固定目录（shared 的 SUBJECT_CATALOG），
+ * 下拉里直接列出该班还没有的科目，选中后自动建课 —— 不需要先按班级单独录入课程。
+ */
+
+const SUBJECT_PREFIX = 'subject:';
+
+const subjectOptions = computed(() => {
+  const existing = new Set(courses.value.map((item) => item.name));
+  return SUBJECT_CATALOG.filter((name) => !existing.has(name));
+});
+
+/** 把下拉值解析成真实 courseId：`subject:语文` 这类伪值先建课（已存在则复用） */
+async function resolveCourseId(value: string): Promise<string | null> {
+  if (!value.startsWith(SUBJECT_PREFIX)) return value || null;
+  const name = value.slice(SUBJECT_PREFIX.length);
+  const existing = courses.value.find((item) => item.name === name);
+  if (existing) return existing.id;
+  const created = await courseApi.create({ classId: filter.classId, name });
+  courses.value = [...courses.value, created];
+  return created.id;
+}
+
 /* ------------------------------------------------------------ 单条录入 */
 
 const singleVisible = ref(false);
@@ -163,7 +188,7 @@ async function submitSingle(): Promise<void> {
   }
   await gradeApi.create({
     classId: filter.classId,
-    courseId: singleForm.courseId || null,
+    courseId: await resolveCourseId(singleForm.courseId),
     userId: singleForm.userId,
     examName: singleForm.examName.trim(),
     score: singleForm.score,
@@ -213,7 +238,7 @@ async function submitBulk(): Promise<void> {
 
   const result = await gradeApi.bulkCreate({
     classId: filter.classId,
-    courseId: bulkForm.courseId || null,
+    courseId: await resolveCourseId(bulkForm.courseId),
     examName: bulkForm.examName.trim(),
     totalScore: bulkForm.totalScore,
     items,
@@ -391,9 +416,17 @@ onUnmounted(() => {
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="课程">
-          <el-select v-model="singleForm.courseId" clearable style="width: 100%">
+        <el-form-item label="科目">
+          <el-select v-model="singleForm.courseId" clearable filterable style="width: 100%">
             <el-option v-for="item in courses" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option-group v-if="subjectOptions.length" label="统一科目（自动建课）">
+              <el-option
+                v-for="name in subjectOptions"
+                :key="name"
+                :label="name"
+                :value="`${SUBJECT_PREFIX}${name}`"
+              />
+            </el-option-group>
           </el-select>
         </el-form-item>
         <el-form-item label="考试名称">
@@ -414,14 +447,22 @@ onUnmounted(() => {
     <!-- 批量录入 -->
     <el-dialog v-model="bulkVisible" title="批量录入成绩" width="620px">
       <el-form :model="bulkForm" label-width="90px" inline>
-        <el-form-item label="课程">
-          <el-select v-model="bulkForm.courseId" clearable style="width: 150px">
+        <el-form-item label="科目">
+          <el-select v-model="bulkForm.courseId" clearable filterable style="width: 150px">
             <el-option
               v-for="item in teacherCourseSuggestions"
               :key="item.id"
               :label="item.name"
               :value="item.id"
             />
+            <el-option-group v-if="subjectOptions.length" label="统一科目（自动建课）">
+              <el-option
+                v-for="name in subjectOptions"
+                :key="name"
+                :label="name"
+                :value="`${SUBJECT_PREFIX}${name}`"
+              />
+            </el-option-group>
           </el-select>
         </el-form-item>
         <el-form-item label="考试">

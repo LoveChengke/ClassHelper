@@ -73,6 +73,7 @@ async function main() {
     body: { username: 'teacher1', password: 'teacher123' },
   });
   const teacherToken = teacherLogin.payload?.data?.token;
+  const teacher1Id = teacherLogin.payload?.data?.user?.id;
   record('教师登录 teacher1', Boolean(teacherToken), `status=${teacherLogin.status}`);
   if (!teacherToken) process.exit(1);
 
@@ -144,19 +145,38 @@ async function main() {
     process.exit(1);
   }
 
-  // teacher2 名下但 teacher1 无权访问的班级，用于验证教师间权限隔离
+  // teacher2 名下但 teacher1 无权访问的班级，用于验证教师间权限隔离。
+  // 注意：演示库里可能被人工改过（管理员自己建班、给别的班加协作教师），
+  // 因此这里**不允许依赖种子数据的班级布局**：没有现成的就现建一个临时班级，收尾删除。
   const teacher2Login = await api('/auth/login', {
     method: 'POST',
     body: { username: 'teacher2', password: 'teacher123' },
   });
   const teacher2Token = teacher2Login.payload?.data?.token;
+  const teacher2Id = teacher2Login.payload?.data?.user?.id;
   const teacher1ClassIds = new Set(classes.map((item) => item.id));
   const teacher2Classes = (await api('/classes', { token: teacher2Token })).payload?.data ?? [];
-  const foreignClass = teacher2Classes.find((item) => !teacher1ClassIds.has(item.id)) ?? null;
+  /** 本次验证临时创建的班级（收尾统一删除，不污染演示数据） */
+  const probeClassIds = [];
+  let foreignClass = teacher2Classes.find((item) => !teacher1ClassIds.has(item.id)) ?? null;
+  if (!foreignClass) {
+    const created = await api('/classes', {
+      method: 'POST',
+      token: adminToken,
+      body: {
+        name: `权限校验班 ${Date.now()}`,
+        grade: '高一',
+        code: `PV${Date.now().toString().slice(-6)}`,
+        ...(teacher2Id ? { teacherId: teacher2Id } : {}),
+      },
+    });
+    foreignClass = created.payload?.data ?? null;
+    if (foreignClass?.id) probeClassIds.push(foreignClass.id);
+  }
   record(
-    '教师权限隔离测试数据就绪',
+    '教师权限隔离测试数据就绪（无现成班级时自建临时班级）',
     Boolean(foreignClass),
-    foreignClass ? `外部班级：${foreignClass.name}` : '未找到其它教师的班级',
+    foreignClass ? `外部班级：${foreignClass.name}` : '未能准备其它教师的班级',
   );
 
   const studentList = await api(`/students?classId=${classId}`, { token: adminToken });
@@ -835,6 +855,22 @@ async function main() {
     record('清理探测课表', removedProbe.status === 200, `status=${removedProbe.status}`);
   }
 
+  // 上课时段用例造的两条通知：立即清理，避免在用户的库里留下"验证通知"
+  const duringClassNoticeIds = [
+    confirmedUrgent.payload?.data?.id,
+    normalDuringClass.payload?.data?.id,
+  ].filter(Boolean);
+  for (const noticeId of duringClassNoticeIds) {
+    await api(`/notifications/${noticeId}`, { method: 'DELETE', token: teacherToken });
+  }
+  const duringClassNoticesLeft =
+    (await api(`/notifications?classId=${classId}`, { token: teacherToken })).payload?.data ?? [];
+  record(
+    '清理：上课时段用例的通知已删除（不在库里留验证通知）',
+    !duringClassNoticesLeft.some((item) => String(item.title).includes('上课时段')),
+    `剩余含"上课时段"的通知=${duringClassNoticesLeft.filter((item) => String(item.title).includes('上课时段')).length}`,
+  );
+
   // ---------------------------------------------------------------- 6.3 叫人
   if (classId && studentUser) {
     const callByTeacher = await api('/calls', {
@@ -935,13 +971,35 @@ async function main() {
   {
     record('管理员登录（用于权限矩阵校验）', Boolean(adminToken), '已在上文登录');
 
-    // 科任老师：teacher2 在高二(3)班是协作（科任）老师
-    const subjectClass = teacher2Classes.find(
-      (item) => item.teacherId !== teacher2Login.payload?.data?.user?.id,
-    );
+    // 科任老师：teacher2 是某班的协作（科任）老师。
+    // 同样不依赖演示数据：推断出来的班级不可用（被人工改过权限 / 与外部班级同一个）时现建一个：
+    // teacher1 当班主任 + teacher2 协作，收尾删除。
+    let subjectClass = teacher2Classes.find((item) => item.teacherId !== teacher2Id) ?? null;
+    if (!subjectClass || subjectClass.id === foreignClass?.id) {
+      const created = await api('/classes', {
+        method: 'POST',
+        token: adminToken,
+        body: {
+          name: `科任校验班 ${Date.now()}`,
+          grade: '高一',
+          code: `SJ${Date.now().toString().slice(-6)}`,
+          teacherId: teacher1Id,
+        },
+      });
+      const createdId = created.payload?.data?.id;
+      if (createdId) {
+        await api(`/classes/${createdId}/teachers`, {
+          method: 'POST',
+          token: adminToken,
+          body: { teacherId: teacher2Id },
+        });
+        subjectClass = { id: createdId, name: created.payload?.data?.name ?? '科任校验班' };
+        probeClassIds.push(createdId);
+      }
+    }
     const subjectClassId = subjectClass?.id;
     record(
-      '存在"科任老师"场景的班级',
+      '存在"科任老师"场景的班级（无现成班级时自建）',
       Boolean(subjectClassId) && subjectClassId !== foreignClass?.id,
       `classId=${subjectClassId ?? '-'} name=${subjectClass?.name ?? '-'}`,
     );
@@ -1956,6 +2014,248 @@ async function main() {
       (!originalClassAccount.code || restoreAccount.payload?.data?.code === originalClassAccount.code) &&
       restoredLogin.status === 200,
     `原值=${originalClassAccount.code || '（未设置）'} 还原后=${restoreAccount.payload?.data?.code ?? '-'} 登录=${restoredLogin.status}`,
+  );
+
+  // ---------------------------------------------------------------- 教师录入与班主任（仅管理员）
+  // 需求："支持录入学生也要支持录入老师，录入老师的权限只有 admin；
+  //       创建班级只有 admin 有权限，并且支持设置或更改班主任"
+  const adminTeachers = await api('/teachers', { token: adminToken });
+  const staffList = adminTeachers.payload?.data ?? [];
+  const teacher1 = staffList.find((item) => item.username === 'teacher1');
+  const teacher2 = staffList.find((item) => item.username === 'teacher2');
+  record(
+    '教师列表（管理员）可用',
+    adminTeachers.status === 200 && staffList.length >= 2,
+    `status=${adminTeachers.status} 教师数=${staffList.length}`,
+  );
+
+  const teacherSeesTeachers = await api('/teachers', { token: teacherToken });
+  const teacherCreatesTeacher = await api('/teachers', {
+    method: 'POST',
+    token: teacherToken,
+    body: { username: 'smoke_denied_teacher', name: '越权教师', password: 'smoke123456' },
+  });
+  record(
+    '仅管理员可录入教师（教师读取/新建均 403）',
+    teacherSeesTeachers.status === 403 && teacherCreatesTeacher.status === 403,
+    `列表=${teacherSeesTeachers.status} 新建=${teacherCreatesTeacher.status} message=${teacherCreatesTeacher.payload?.message ?? ''}`,
+  );
+
+  // 录入一个教师账号 → 编辑 → 重置密码 → 新密码可登录
+  const smokeTeacherUsername = `smoke_teacher_${Date.now()}`;
+  const createdTeacher = await api('/teachers', {
+    method: 'POST',
+    token: adminToken,
+    body: { username: smokeTeacherUsername, name: '冒烟教师', password: 'smoke123456', role: 'TEACHER' },
+  });
+  const smokeTeacherId = createdTeacher.payload?.data?.id;
+  record(
+    '管理员录入教师账号（POST /teachers → 201）',
+    createdTeacher.status === 201 &&
+      Boolean(smokeTeacherId) &&
+      createdTeacher.payload?.data?.role === 'TEACHER',
+    `status=${createdTeacher.status} id=${smokeTeacherId ?? '-'} 角色=${createdTeacher.payload?.data?.role ?? '-'}`,
+  );
+
+  const teacherLoginBefore = await api('/auth/login', {
+    method: 'POST',
+    body: { username: smokeTeacherUsername, password: 'smoke123456' },
+  });
+  record(
+    '新教师账号可登录（初始密码生效）',
+    teacherLoginBefore.status === 200 && Boolean(teacherLoginBefore.payload?.data?.token),
+    `status=${teacherLoginBefore.status} 角色=${teacherLoginBefore.payload?.data?.user?.role ?? '-'}`,
+  );
+
+  const updatedTeacher = await api(`/teachers/${smokeTeacherId}`, {
+    method: 'PATCH',
+    token: adminToken,
+    body: { name: '冒烟教师（改名）', role: 'ADMIN' },
+  });
+  record(
+    '编辑教师（姓名 + 角色升为管理员）',
+    updatedTeacher.status === 200 &&
+      updatedTeacher.payload?.data?.name === '冒烟教师（改名）' &&
+      updatedTeacher.payload?.data?.role === 'ADMIN',
+    `status=${updatedTeacher.status} 姓名=${updatedTeacher.payload?.data?.name ?? '-'} 角色=${updatedTeacher.payload?.data?.role ?? '-'}`,
+  );
+
+  const resetTeacherPassword = await api(`/teachers/${smokeTeacherId}/reset-password`, {
+    method: 'POST',
+    token: adminToken,
+    body: { newPassword: 'teach999999' },
+  });
+  const teacherLoginNew = await api('/auth/login', {
+    method: 'POST',
+    body: { username: smokeTeacherUsername, password: 'teach999999' },
+  });
+  const teacherLoginOld = await api('/auth/login', {
+    method: 'POST',
+    body: { username: smokeTeacherUsername, password: 'smoke123456' },
+  });
+  record(
+    '重置教师密码（新密码可用 / 旧密码失效）',
+    resetTeacherPassword.status === 200 && teacherLoginNew.status === 200 && teacherLoginOld.status === 401,
+    `重置=${resetTeacherPassword.status} 新密码=${teacherLoginNew.status} 旧密码=${teacherLoginOld.status}`,
+  );
+
+  // 教师名单表格导入：教师预览 403；管理员预览 + 提交（教师与班级无关，classId 可省略）
+  const teacherCsv =
+    '\ufeff用户名,姓名,初始密码,角色\n' +
+    `imp_t_${Date.now().toString().slice(-8)},冒烟导入教师,import123456,教师\n`;
+  const teacherCsvBase64 = Buffer.from(teacherCsv, 'utf8').toString('base64');
+  const importedTeacherUsername = teacherCsv.split('\n')[1]?.split(',')[0] ?? '';
+
+  const teacherPreviewDenied = await api('/imports/table/preview', {
+    method: 'POST',
+    token: teacherToken,
+    body: { kind: 'teachers', fileName: 'teachers.csv', contentBase64: teacherCsvBase64 },
+  });
+  const adminTeacherPreview = await api('/imports/table/preview', {
+    method: 'POST',
+    token: adminToken,
+    body: { kind: 'teachers', fileName: 'teachers.csv', contentBase64: teacherCsvBase64 },
+  });
+  const adminTeacherCommit = await api('/imports/table/commit', {
+    method: 'POST',
+    token: adminToken,
+    body: {
+      kind: 'teachers',
+      fileName: 'teachers.csv',
+      contentBase64: teacherCsvBase64,
+      mapping: { username: '用户名', name: '姓名', password: '初始密码', role: '角色' },
+      mode: 'upsert',
+    },
+  });
+  const importedTeacherLogin = await api('/auth/login', {
+    method: 'POST',
+    body: { username: importedTeacherUsername, password: 'import123456' },
+  });
+  record(
+    '教师名单表格导入（教师 403 / 管理员预览+导入成功，且导入账号可登录）',
+    teacherPreviewDenied.status === 403 &&
+      adminTeacherPreview.status === 200 &&
+      Boolean(adminTeacherPreview.payload?.data?.suggestedMapping?.username) &&
+      adminTeacherCommit.status === 200 &&
+      adminTeacherCommit.payload?.data?.inserted === 1 &&
+      importedTeacherLogin.status === 200,
+    `教师预览=${teacherPreviewDenied.status} 管理员预览=${adminTeacherPreview.status} ` +
+      `建议映射=${JSON.stringify(adminTeacherPreview.payload?.data?.suggestedMapping ?? {})} ` +
+      `导入新增=${adminTeacherCommit.payload?.data?.inserted ?? '-'} 登录=${importedTeacherLogin.status}`,
+  );
+
+  // 删除护栏：还是班主任的账号不允许删除；没有班级职责的可以删
+  const deleteHeadTeacher = teacher1
+    ? await api(`/teachers/${teacher1.id}`, { method: 'DELETE', token: adminToken })
+    : { status: 0, payload: null };
+  const deleteSmokeTeacher = await api(`/teachers/${smokeTeacherId}`, {
+    method: 'DELETE',
+    token: adminToken,
+  });
+  record(
+    '删除教师（有班级职责拒绝 409 / 无职责可删除）',
+    deleteHeadTeacher.status === 409 && deleteSmokeTeacher.status === 200,
+    `班主任账号=${deleteHeadTeacher.status}（${deleteHeadTeacher.payload?.message ?? ''}） 冒烟账号=${deleteSmokeTeacher.status}`,
+  );
+
+  // 创建班级仅管理员 + 设置/更改班主任
+  const teacherCreateClass = await api('/classes', {
+    method: 'POST',
+    token: teacherToken,
+    body: { name: '越权班级', grade: '高一' },
+  });
+  record(
+    '仅管理员可创建班级（教师 403）',
+    teacherCreateClass.status === 403,
+    `status=${teacherCreateClass.status} message=${teacherCreateClass.payload?.message ?? ''}`,
+  );
+
+  const tempClassCode = `SM${Date.now().toString().slice(-6)}`;
+  const createdClassWithHead = await api('/classes', {
+    method: 'POST',
+    token: adminToken,
+    body: {
+      name: `冒烟班级 ${Date.now()}`,
+      grade: '高一',
+      code: tempClassCode,
+      ...(teacher2 ? { teacherId: teacher2.id } : {}),
+    },
+  });
+  const tempClassId = createdClassWithHead.payload?.data?.id;
+  record(
+    '创建班级时可指定班主任',
+    createdClassWithHead.status === 201 &&
+      Boolean(tempClassId) &&
+      (!teacher2 || createdClassWithHead.payload?.data?.teacher?.id === teacher2.id),
+    `status=${createdClassWithHead.status} 班主任=${createdClassWithHead.payload?.data?.teacher?.name ?? '-'}`,
+  );
+
+  const teacherChangeHead = await api(`/classes/${tempClassId}/head-teacher`, {
+    method: 'PATCH',
+    token: teacherToken,
+    body: { teacherId: teacher1?.id ?? '' },
+  });
+  const changedHead = await api(`/classes/${tempClassId}/head-teacher`, {
+    method: 'PATCH',
+    token: adminToken,
+    body: { teacherId: teacher1?.id ?? '' },
+  });
+  const changedDetail = await api(`/classes/${tempClassId}`, { token: adminToken });
+  record(
+    '设置 / 更改班主任（教师 403 / 管理员生效并落库）',
+    teacherChangeHead.status === 403 &&
+      changedHead.status === 200 &&
+      changedDetail.payload?.data?.teacher?.id === teacher1?.id,
+    `教师改=${teacherChangeHead.status} 管理员改=${changedHead.status} 详情班主任=${changedDetail.payload?.data?.teacher?.name ?? '-'}`,
+  );
+
+  // 清理：删除实时推送用例造的通知/作业、冒烟班级、临时权限校验班级与冒烟教师账号
+  const realtimeNoticeId = createdNotification.payload?.data?.id;
+  if (realtimeNoticeId) {
+    await api(`/notifications/${realtimeNoticeId}`, { method: 'DELETE', token: teacherToken });
+  }
+  if (homeworkId) {
+    await api(`/homeworks/${homeworkId}`, { method: 'DELETE', token: teacherToken });
+  }
+  const realtimeLeftovers = await api(`/notifications?classId=${classId}`, { token: teacherToken });
+  const homeworkLeftovers = await api(`/homeworks?classId=${classId}`, { token: teacherToken });
+  record(
+    '清理：实时推送用例的通知/作业已删除',
+    !(realtimeLeftovers.payload?.data ?? []).some((item) => String(item.title).includes('联调验证')) &&
+      !(homeworkLeftovers.payload?.data ?? []).some((item) => String(item.title).includes('联调验证')),
+    `残留通知=${(realtimeLeftovers.payload?.data ?? []).filter((item) => String(item.title).includes('联调验证')).length} ` +
+      `残留作业=${(homeworkLeftovers.payload?.data ?? []).filter((item) => String(item.title).includes('联调验证')).length}`,
+  );
+
+  if (tempClassId) await api(`/classes/${tempClassId}`, { method: 'DELETE', token: adminToken });
+  for (const probeClassId of probeClassIds) {
+    if (probeClassId && probeClassId !== tempClassId) {
+      await api(`/classes/${probeClassId}`, { method: 'DELETE', token: adminToken });
+    }
+  }
+  const importedTeacherRow = (await api('/teachers', { token: adminToken })).payload?.data?.find(
+    (item) => item.username === importedTeacherUsername,
+  );
+  if (importedTeacherRow) {
+    await api(`/teachers/${importedTeacherRow.id}`, { method: 'DELETE', token: adminToken });
+  }
+  const isProbeAccount = (username) =>
+    String(username).startsWith('smoke_') || String(username).startsWith('imp_t_');
+  const teachersAfterCleanup = await api('/teachers', { token: adminToken });
+  const classesAfterCleanup = await api('/classes', { token: adminToken });
+  const leftoverClasses = (classesAfterCleanup.payload?.data ?? []).filter(
+    (item) => item.name?.includes('校验班') || item.name?.includes('冒烟'),
+  );
+  record(
+    '清理：临时班级与冒烟教师账号已删除（不污染演示数据）',
+    !(teachersAfterCleanup.payload?.data ?? []).some((item) => isProbeAccount(item.username)) &&
+      leftoverClasses.length === 0,
+    `剩余教师=${(teachersAfterCleanup.payload?.data ?? []).length} 冒烟残留=${
+      (teachersAfterCleanup.payload?.data ?? [])
+        .filter((item) => isProbeAccount(item.username))
+        .map((item) => item.username)
+        .join(',') || '无'
+    } 残留班级=${leftoverClasses.map((item) => item.name).join(',') || '无'}`,
   );
 
   socket.close();

@@ -15,17 +15,6 @@ const rules: FormRules = {
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 };
 
-const demoAccounts = [
-  { role: '管理员', username: 'admin', password: 'admin123' },
-  { role: '教师', username: 'teacher1', password: 'teacher123' },
-  { role: '教师', username: 'teacher2', password: 'teacher123' },
-];
-
-function fill(username: string, password: string): void {
-  form.username = username;
-  form.password = password;
-}
-
 async function submit(): Promise<void> {
   const valid = await formRef.value?.validate().catch(() => false);
   if (!valid) return;
@@ -70,20 +59,6 @@ async function submit(): Promise<void> {
           登录
         </el-button>
       </el-form>
-
-      <el-divider>演示账号（点击填充）</el-divider>
-      <div class="demo-list">
-        <el-tag
-          v-for="item in demoAccounts"
-          :key="item.username"
-          class="demo-tag"
-          effect="plain"
-          @click="fill(item.username, item.password)"
-        >
-          {{ item.role }}：{{ item.username }} / {{ item.password }}
-        </el-tag>
-      </div>
-      <p class="login-tip">学生请使用班级小助手桌面客户端登录；种子数据见 README。</p>
     </div>
   </div>
 </template>
@@ -121,11 +96,6 @@ async function submit(): Promise<void> {
   .login-brand {
     margin-bottom: 16px;
   }
-
-  .demo-tag {
-    width: 100%;
-    justify-content: center;
-  }
 }
 
 .login-brand {
@@ -148,23 +118,5 @@ async function submit(): Promise<void> {
 
 .login-button {
   width: 100%;
-}
-
-.demo-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.demo-tag {
-  cursor: pointer;
-  justify-content: flex-start;
-}
-
-.login-tip {
-  margin: 16px 0 0;
-  font-size: 12px;
-  color: #c0c4cc;
-  line-height: 1.6;
 }
 </style>

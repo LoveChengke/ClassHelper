@@ -21,7 +21,7 @@ import {
 import { API_BASE_URL } from '@/config';
 import { importApi } from '@/api';
 
-type Kind = 'grades' | 'students';
+type Kind = 'grades' | 'students' | 'teachers';
 
 interface FieldDef {
   key: string;
@@ -44,12 +44,19 @@ const FIELDS: Record<Kind, FieldDef[]> = {
     { key: 'name', label: '姓名', required: true },
     { key: 'password', label: '初始密码', required: false },
   ],
+  teachers: [
+    { key: 'username', label: '用户名', required: true },
+    { key: 'name', label: '姓名', required: true },
+    { key: 'password', label: '初始密码', required: false },
+    { key: 'role', label: '角色', required: false },
+  ],
 };
 
 const props = defineProps<{
   modelValue: boolean;
   kind: Kind;
-  classId: string;
+  /** 教师名单与班级无关，可以不传 */
+  classId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -73,7 +80,12 @@ const result = ref<TableImportResult | null>(null);
 const fileInputRef = ref<HTMLInputElement>();
 
 const fields = computed(() => FIELDS[props.kind]);
-const title = computed(() => (props.kind === 'grades' ? '导入成绩表格' : '导入学生名单'));
+const title = computed(() => {
+  if (props.kind === 'grades') return '导入成绩表格';
+  return props.kind === 'teachers' ? '导入教师名单' : '导入学生名单';
+});
+/** 教师名单不需要班级（教师不属于任何班级） */
+const needsClass = computed(() => props.kind !== 'teachers');
 
 watch(visible, (value) => {
   if (value) reset();
@@ -178,7 +190,7 @@ const mappedRequired = computed(() =>
 );
 
 async function submit(): Promise<void> {
-  if (!props.classId) {
+  if (needsClass.value && !props.classId) {
     ElMessage.warning('请先在页面上选择班级');
     return;
   }
@@ -195,7 +207,7 @@ async function submit(): Promise<void> {
   try {
     const data = await importApi.commitTable({
       kind: props.kind,
-      classId: props.classId,
+      ...(needsClass.value && props.classId ? { classId: props.classId } : {}),
       fileName: fileName.value,
       contentBase64: contentBase64.value,
       mapping: mapping.value,

@@ -50,6 +50,17 @@ export const IMPORT_FIELDS: Record<
     { key: 'name', label: '姓名', required: true, synonyms: ['姓名', 'name', '学生', '学生姓名'] },
     { key: 'password', label: '初始密码', required: false, synonyms: ['密码', 'password', '初始密码'] },
   ],
+  teachers: [
+    { key: 'username', label: '用户名', required: true, synonyms: ['用户名', 'username', '工号', '账号'] },
+    { key: 'name', label: '姓名', required: true, synonyms: ['姓名', 'name', '教师', '教师姓名'] },
+    { key: 'password', label: '初始密码', required: false, synonyms: ['密码', 'password', '初始密码'] },
+    {
+      key: 'role',
+      label: '角色',
+      required: false,
+      synonyms: ['角色', 'role', '身份', '权限', '管理员'],
+    },
+  ],
 };
 
 export interface TablePreview {
@@ -133,7 +144,9 @@ export function buildTemplateCsv(kind: ImportKind): string {
   const sample =
     kind === 'grades'
       ? ['student01', '王小明', '期中考试', '92', '100', '数学']
-      : ['student01', '王小明', 'student123'];
+      : kind === 'teachers'
+        ? ['teacher3', '王老师', 'teacher123', '教师']
+        : ['student01', '王小明', 'student123'];
   const sampleLine = fields
     .map((field) => sample[fields.findIndex((item) => item.key === field.key)] ?? '')
     .join(',');
@@ -147,10 +160,13 @@ export function buildTemplateXlsx(kind: ImportKind): string {
   const sample =
     kind === 'grades'
       ? ['student01', '王小明', '期中考试', 92, 100, '数学']
-      : ['student01', '王小明', 'student123'];
+      : kind === 'teachers'
+        ? ['teacher3', '王老师', 'teacher123', '教师']
+        : ['student01', '王小明', 'student123'];
   const sheet = XLSX.utils.aoa_to_sheet([header, sample]);
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, sheet, kind === 'grades' ? '成绩' : '学生名单');
+  const sheetName = kind === 'grades' ? '成绩' : kind === 'teachers' ? '教师名单' : '学生名单';
+  XLSX.utils.book_append_sheet(workbook, sheet, sheetName);
   return XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
 }
 
@@ -221,19 +237,21 @@ function cellValue(row: string[], columns: string[], mapping: Record<string, str
 
 /** 导入成绩：学生按用户名/姓名匹配；重复（同班级+学生+考试+课程）按 mode 处理 */
 export async function commitGrades(user: TokenPayload, input: TableCommitInput): Promise<ImportResult> {
+  const classId = input.classId;
+  if (!classId) throw ApiError.badRequest('导入成绩需要先选择班级');
   // 成绩导入：管理员或本班班主任（需求 6）；科任 403
-  await assertCanManageGrades(user, input.classId);
+  await assertCanManageGrades(user, classId);
   const buffer = decodeBase64(input.contentBase64);
   const parsed = parseTable(buffer, input.fileName);
 
   const students = await prisma.user.findMany({
-    where: { classId: input.classId, role: 'STUDENT' },
+    where: { classId, role: 'STUDENT' },
     select: { id: true, username: true, name: true },
   });
   const byUsername = new Map(students.map((item) => [item.username.toLowerCase(), item]));
   const byName = new Map(students.map((item) => [item.name.toLowerCase(), item]));
   const courses = await prisma.course.findMany({
-    where: { classId: input.classId },
+    where: { classId },
     select: { id: true, name: true },
   });
 
@@ -287,7 +305,7 @@ export async function commitGrades(user: TokenPayload, input: TableCommitInput):
       warnings.push(`第 ${rowNumber} 行：课程「${courseName}」不存在，已按"不指定课程"导入`);
 
     const existing = await prisma.grade.findFirst({
-      where: { classId: input.classId, userId: student.id, examName, courseId: course?.id ?? null },
+      where: { classId: classId, userId: student.id, examName, courseId: course?.id ?? null },
       select: { id: true },
     });
 
@@ -304,7 +322,7 @@ export async function commitGrades(user: TokenPayload, input: TableCommitInput):
     } else {
       await prisma.grade.create({
         data: {
-          classId: input.classId,
+          classId: classId,
           userId: student.id,
           courseId: course?.id ?? null,
           examName,
@@ -327,7 +345,7 @@ export async function commitGrades(user: TokenPayload, input: TableCommitInput):
     warnings,
   };
   logger.info(
-    `成绩导入：班级=${input.classId} 模式=${input.mode} 新增=${inserted} 更新=${updated} 跳过=${skipped} 失败=${errors.length}`,
+    `成绩导入：班级=${classId} 模式=${input.mode} 新增=${inserted} 更新=${updated} 跳过=${skipped} 失败=${errors.length}`,
   );
   return result;
 }
@@ -335,10 +353,12 @@ export async function commitGrades(user: TokenPayload, input: TableCommitInput):
 /** 导入学生名单：按用户名去重（append 跳过 / upsert 更新姓名与班级），仅管理员可用 */
 export async function commitStudents(user: TokenPayload, input: TableCommitInput): Promise<ImportResult> {
   assertCanManageRoster(user);
+  const classId = input.classId;
+  if (!classId) throw ApiError.badRequest('导入学生名单需要先选择班级');
   const buffer = decodeBase64(input.contentBase64);
   const parsed = parseTable(buffer, input.fileName);
 
-  const cls = await prisma.class.findUnique({ where: { id: input.classId }, select: { id: true } });
+  const cls = await prisma.class.findUnique({ where: { id: classId }, select: { id: true } });
   if (!cls) throw ApiError.notFound('班级不存在');
 
   const errors: ImportRowError[] = [];
@@ -372,7 +392,7 @@ export async function commitStudents(user: TokenPayload, input: TableCommitInput
         skipped += 1;
         continue;
       }
-      await prisma.user.update({ where: { id: existing.id }, data: { name, classId: input.classId } });
+      await prisma.user.update({ where: { id: existing.id }, data: { name, classId: classId } });
       updated += 1;
     } else {
       const initialPassword = password || env.defaultStudentPassword;
@@ -381,7 +401,7 @@ export async function commitStudents(user: TokenPayload, input: TableCommitInput
           username,
           name,
           role: 'STUDENT',
-          classId: input.classId,
+          classId: classId,
           passwordHash: await bcrypt.hash(initialPassword, 10),
         },
       });
@@ -400,11 +420,97 @@ export async function commitStudents(user: TokenPayload, input: TableCommitInput
     warnings,
   };
   logger.info(
-    `学生名单导入：班级=${input.classId} 模式=${input.mode} 新增=${inserted} 更新=${updated} 跳过=${skipped} 失败=${errors.length}`,
+    `学生名单导入：班级=${classId} 模式=${input.mode} 新增=${inserted} 更新=${updated} 跳过=${skipped} 失败=${errors.length}`,
   );
   return result;
 }
 
+/**
+ * 导入教师名单：按用户名去重（append 跳过 / upsert 更新姓名与角色），**仅管理员**可用。
+ *
+ * 与班级无关（教师不属于班级），因此不需要 classId，模板里也没有班级列。
+ * 角色列可选：填「管理员 / ADMIN / admin」建管理员账号，其余一律建教师账号。
+ */
+export async function commitTeachers(user: TokenPayload, input: TableCommitInput): Promise<ImportResult> {
+  assertCanManageRoster(user);
+  const buffer = decodeBase64(input.contentBase64);
+  const parsed = parseTable(buffer, input.fileName);
+
+  const errors: ImportRowError[] = [];
+  const warnings: string[] = [];
+  let inserted = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  for (const [index, row] of parsed.rows.entries()) {
+    const rowNumber = index + 2;
+    const username = cellValue(row, parsed.columns, input.mapping, 'username');
+    const name = cellValue(row, parsed.columns, input.mapping, 'name');
+    const password = cellValue(row, parsed.columns, input.mapping, 'password');
+    const roleCell = cellValue(row, parsed.columns, input.mapping, 'role');
+
+    if (!username || !name) {
+      errors.push({ row: rowNumber, message: '用户名与姓名都必须填写' });
+      continue;
+    }
+    if (!/^[A-Za-z0-9_.-]{3,32}$/.test(username)) {
+      errors.push({ row: rowNumber, message: `用户名「${username}」格式不合法（3~32 位字母/数字/_.-）` });
+      continue;
+    }
+
+    const existing = await prisma.user.findUnique({ where: { username }, select: { id: true, role: true } });
+    if (existing) {
+      if (existing.role === 'STUDENT') {
+        errors.push({ row: rowNumber, message: `用户名「${username}」已被学生账号占用` });
+        continue;
+      }
+      if (input.mode === 'append') {
+        skipped += 1;
+        continue;
+      }
+      const nextRole = parseTeacherRole(roleCell) ?? existing.role;
+      await prisma.user.update({ where: { id: existing.id }, data: { name, role: nextRole } });
+      updated += 1;
+    } else {
+      const initialPassword = password || env.defaultTeacherPassword;
+      await prisma.user.create({
+        data: {
+          username,
+          name,
+          role: parseTeacherRole(roleCell) ?? 'TEACHER',
+          passwordHash: await bcrypt.hash(initialPassword, 10),
+        },
+      });
+      inserted += 1;
+    }
+  }
+
+  const result: ImportResult = {
+    kind: 'teachers',
+    total: parsed.rows.length,
+    inserted,
+    updated,
+    skipped,
+    failed: errors.length,
+    errors,
+    warnings,
+  };
+  logger.info(
+    `教师名单导入：模式=${input.mode} 新增=${inserted} 更新=${updated} 跳过=${skipped} 失败=${errors.length}`,
+  );
+  return result;
+}
+
+/** 角色列解析：只认「管理员」类词；其余（含空）返回 null 交给调用方取默认值 */
+function parseTeacherRole(cell: string): 'TEACHER' | 'ADMIN' | null {
+  const value = cell.trim().toUpperCase();
+  if (!value) return null;
+  if (value === 'ADMIN' || cell.includes('管理员') || value === '管理员') return 'ADMIN';
+  return 'TEACHER';
+}
+
 export async function commitTable(user: TokenPayload, input: TableCommitInput): Promise<ImportResult> {
-  return input.kind === 'grades' ? commitGrades(user, input) : commitStudents(user, input);
+  if (input.kind === 'teachers') return commitTeachers(user, input);
+  if (input.kind === 'grades') return commitGrades(user, input);
+  return commitStudents(user, input);
 }

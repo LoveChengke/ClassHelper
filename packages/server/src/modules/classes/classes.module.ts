@@ -6,6 +6,7 @@ import { validate, validatedParams, validatedQuery } from '../../middleware/vali
 import { defineModule } from '../module.types.js';
 import {
   addStudentSchema,
+  assignHeadTeacherSchema,
   assignTeacherSchema,
   classStudentParamSchema,
   classTeacherParamSchema,
@@ -86,6 +87,22 @@ router.patch(
       await classService.updateClassAccount(user, id, req.body as UpdateClassAccountInput),
       '班级账号已更新',
     );
+  },
+);
+
+/**
+ * PATCH /api/classes/:id/head-teacher - 设置 / 更改班主任
+ * 仅管理员：班主任决定谁能管这个班的课表与成绩，属于人员分配权限
+ */
+router.patch(
+  '/:id/head-teacher',
+  requireRole('ADMIN'),
+  validate({ params: idParamSchema, body: assignHeadTeacherSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { id } = validatedParams<{ id: string }>(req);
+    const { teacherId } = req.body as { teacherId: string };
+    sendOk(res, await classService.updateHeadTeacher(user, id, teacherId), '班主任已更新');
   },
 );
 

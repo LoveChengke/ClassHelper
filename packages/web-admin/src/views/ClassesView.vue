@@ -44,11 +44,20 @@ async function loadClasses(): Promise<void> {
 const formVisible = ref(false);
 const formRef = ref<FormInstance>();
 const editingId = ref<string | null>(null);
-const form = reactive({ name: '', grade: '', code: '', termWeeks: 20 });
+const form = reactive({ name: '', grade: '', code: '', termWeeks: 20, headTeacherId: '' });
 const rules: FormRules = {
   name: [{ required: true, message: '请输入班级名称', trigger: 'blur' }],
   grade: [{ required: true, message: '请输入年级', trigger: 'blur' }],
 };
+
+/** 管理员可选班主任（教师 + 管理员账号）；「新建班级」才设置，「编辑」走单独的"更换班主任" */
+const staffOptions = ref<UserDto[]>([]);
+
+async function loadStaffOptions(): Promise<void> {
+  if (!isAdmin.value) return;
+  if (staffOptions.value.length > 0) return;
+  staffOptions.value = await teacherApi.list().catch(() => []);
+}
 
 function openCreate(): void {
   editingId.value = null;
@@ -56,6 +65,8 @@ function openCreate(): void {
   form.grade = '';
   form.code = '';
   form.termWeeks = 20;
+  form.headTeacherId = auth.user?.id ?? '';
+  void loadStaffOptions();
   formVisible.value = true;
 }
 
@@ -65,6 +76,7 @@ function openEdit(row: ClassDto): void {
   form.grade = row.grade;
   form.code = '';
   form.termWeeks = row.termWeeks ?? 20;
+  void loadStaffOptions();
   formVisible.value = true;
 }
 
@@ -78,17 +90,42 @@ async function submitForm(): Promise<void> {
       grade: form.grade,
       termWeeks: form.termWeeks,
     });
+    // 编辑弹窗里也能直接换班主任（仅管理员；班主任决定谁能管这个班的课表与成绩）
+    if (isAdmin.value && form.headTeacherId) {
+      const target = classes.value.find((item) => item.id === editingId.value);
+      if (target && target.teacher?.id !== form.headTeacherId) {
+        await classApi.assignHeadTeacher(editingId.value, form.headTeacherId);
+      }
+    }
     ElMessage.success('班级已更新');
   } else {
     await classApi.create({
       name: form.name,
       grade: form.grade,
       ...(form.code.trim() ? { code: form.code.trim().toUpperCase() } : {}),
+      ...(isAdmin.value && form.headTeacherId ? { teacherId: form.headTeacherId } : {}),
     });
     ElMessage.success('班级创建成功');
   }
   formVisible.value = false;
   await loadClasses();
+}
+
+/* ------------------------------------------------------------ 更换班主任（仅管理员） */
+
+const headTeacherSaving = ref(false);
+
+/** 详情页更换班主任：写 PATCH /api/classes/:id/head-teacher */
+async function changeHeadTeacher(classId: string, teacherId: string): Promise<void> {
+  if (!teacherId) return;
+  headTeacherSaving.value = true;
+  try {
+    await classApi.assignHeadTeacher(classId, teacherId);
+    ElMessage.success('班主任已更换');
+    await Promise.all([loadClasses(), refreshDetail()]);
+  } finally {
+    headTeacherSaving.value = false;
+  }
 }
 
 /* ------------------------------------------------------------ 班级账号（班级码 + 班级密码） */
@@ -401,6 +438,19 @@ onUnmounted(() => {
         <el-form-item v-if="!editingId" label="班级码">
           <el-input v-model="form.code" placeholder="留空自动生成（4~16 位字母数字）" />
         </el-form-item>
+        <el-form-item v-if="isAdmin" label="班主任">
+          <el-select v-model="form.headTeacherId" placeholder="选择班主任" style="width: 100%" filterable>
+            <el-option
+              v-for="item in staffOptions"
+              :key="item.id"
+              :label="`${item.name}（${item.username}）`"
+              :value="item.id"
+            />
+          </el-select>
+          <span class="text-muted" style="width: 100%">
+            班主任可以管理本班课表与成绩；留空则默认由创建者本人担任
+          </span>
+        </el-form-item>
         <el-form-item label="学期周数">
           <el-input-number v-model="form.termWeeks" :min="1" :max="40" :step="1" />
           <span class="text-muted ml-8">
@@ -422,6 +472,27 @@ onUnmounted(() => {
           <el-descriptions-item label="班主任">{{ detail.teacher?.name ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="学生数">{{ detail.students.length }}</el-descriptions-item>
         </el-descriptions>
+
+        <!-- 更换班主任（仅管理员）：班主任决定谁能管这个班的课表与成绩 -->
+        <div v-if="isAdmin && detail" class="toolbar mt-12">
+          <span class="text-muted">更换班主任</span>
+          <el-select
+            :model-value="detail.teacher?.id ?? ''"
+            placeholder="选择教师"
+            style="width: 240px"
+            filterable
+            :loading="headTeacherSaving"
+            @change="(value: string) => changeHeadTeacher(detail!.id, value)"
+          >
+            <el-option
+              v-for="item in staffOptions"
+              :key="item.id"
+              :label="`${item.name}（${item.username}）`"
+              :value="item.id"
+            />
+          </el-select>
+          <span class="text-muted">切换后立即生效：原班主任仍保留在下方「协作教师」名单里</span>
+        </div>
 
         <el-tabs v-model="activeTab" class="mt-12">
           <el-tab-pane label="学生名单" name="students">

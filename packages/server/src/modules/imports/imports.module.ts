@@ -4,6 +4,7 @@ import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js
 import { validate, validatedBody, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
+  IMPORT_KINDS,
   tableCommitSchema,
   tableFileSchema,
   timeLayoutImportSchema,
@@ -26,15 +27,29 @@ import {
 const router = Router();
 router.use(authenticate());
 
+/** 名单类导入（学生/教师账号）只有管理员能做；成绩类按班级权限判定 */
+function assertImportKindAllowed(kind: (typeof IMPORT_KINDS)[number], role: string): void {
+  if ((kind === 'students' || kind === 'teachers') && role !== 'ADMIN') {
+    throw ApiError.forbidden(
+      kind === 'teachers' ? '只有管理员可以录入或导入教师账号' : '只有管理员可以导入学生名单',
+    );
+  }
+}
+
+/** 查询参数里的 kind 收敛为合法值（默认 grades，避免非法值被当成成绩悄悄写入） */
+function resolveImportKind(value: unknown): (typeof IMPORT_KINDS)[number] {
+  return IMPORT_KINDS.includes(value as (typeof IMPORT_KINDS)[number])
+    ? (value as (typeof IMPORT_KINDS)[number])
+    : 'grades';
+}
+
 /**
- * GET /api/imports/template?kind=grades|students&format=csv|xlsx - 下载导入模板
- * 成绩模板：管理员或班主任（空白模板，不含任何业务数据）；名单模板：仅管理员
+ * GET /api/imports/template?kind=grades|students|teachers&format=csv|xlsx - 下载导入模板
+ * 成绩模板：管理员或班主任（空白模板，不含任何业务数据）；学生/教师名单模板：仅管理员
  */
 router.get('/template', requireRole('ADMIN', 'TEACHER'), (req, res) => {
-  if (req.query.kind === 'students' && getAuthUser(req).role !== 'ADMIN') {
-    throw ApiError.forbidden('只有管理员可以导入学生名单');
-  }
-  const kind = req.query.kind === 'students' ? 'students' : 'grades';
+  const kind = resolveImportKind(req.query.kind);
+  assertImportKindAllowed(kind, getAuthUser(req).role);
   const format = req.query.format === 'xlsx' ? 'xlsx' : 'csv';
   if (format === 'xlsx') {
     const base64 = buildTemplateXlsx(kind);
@@ -52,7 +67,7 @@ router.get('/template', requireRole('ADMIN', 'TEACHER'), (req, res) => {
 
 /**
  * POST /api/imports/table/preview - 上传表格并预览（解析 + 必填列校验 + 建议字段映射）
- * 成绩：管理员或班主任；学生名单：仅管理员（与写入权限保持一致）
+ * 成绩：管理员或班主任；学生/教师名单：仅管理员（与写入权限保持一致）
  */
 router.post(
   '/table/preview',
@@ -60,9 +75,7 @@ router.post(
   validate({ body: tableFileSchema }),
   (req, res) => {
     const input = validatedBody<TableFileInput>(req);
-    if (input.kind === 'students' && getAuthUser(req).role !== 'ADMIN') {
-      throw ApiError.forbidden('只有管理员可以导入学生名单');
-    }
+    assertImportKindAllowed(input.kind, getAuthUser(req).role);
     sendOk(res, previewTable(input), '表格解析成功');
   },
 );
@@ -78,7 +91,13 @@ router.post(
   requireRole('ADMIN', 'TEACHER'),
   validate({ body: tableCommitSchema }),
   async (req, res) => {
-    const result = await commitTable(getAuthUser(req), validatedBody<TableCommitInput>(req));
+    const input = validatedBody<TableCommitInput>(req);
+    assertImportKindAllowed(input.kind, getAuthUser(req).role);
+    // 教师名单与班级无关；成绩/学生名单必须带班级，否则拒绝（避免写到"全局"）
+    if (input.kind !== 'teachers' && !input.classId) {
+      throw ApiError.badRequest('请先选择要导入的班级');
+    }
+    const result = await commitTable(getAuthUser(req), input);
     sendOk(
       res,
       result,

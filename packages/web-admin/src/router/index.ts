@@ -23,13 +23,19 @@ const routes: RouteRecordRaw[] = [
         path: 'classes',
         name: 'classes',
         component: () => import('@/views/ClassesView.vue'),
-        meta: { title: '班级管理', icon: 'School' },
+        meta: { title: '班级管理', icon: 'School', roles: ['ADMIN'] },
       },
       {
         path: 'students',
         name: 'students',
         component: () => import('@/views/StudentsView.vue'),
-        meta: { title: '学生管理', icon: 'User' },
+        meta: { title: '学生管理', icon: 'User', roles: ['ADMIN'] },
+      },
+      {
+        path: 'teachers',
+        name: 'teachers',
+        component: () => import('@/views/TeachersView.vue'),
+        meta: { title: '教师管理', icon: 'UserFilled', roles: ['ADMIN'] },
       },
       {
         path: 'schedules',
@@ -70,6 +76,18 @@ export const router = createRouter({
   routes,
 });
 
+/** 读取已保存的登录用户角色（路由守卫用；未登录/解析失败返回 null） */
+function storedRole(): string | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.user);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { role?: string };
+    return parsed?.role ?? null;
+  } catch {
+    return null;
+  }
+}
+
 router.beforeEach((to) => {
   const token = localStorage.getItem(STORAGE_KEYS.token);
   if (to.meta.public) {
@@ -78,6 +96,15 @@ router.beforeEach((to) => {
   }
   if (!token) {
     return { name: 'login', query: { redirect: to.fullPath } };
+  }
+  // 仅管理员可见的页面（班级/学生/教师管理）：直接输网址也要挡回去，
+  // 不能依赖"菜单隐藏"——菜单隐藏只是看不见，不是权限。
+  const roles = to.meta.roles;
+  if (Array.isArray(roles) && roles.length > 0) {
+    const role = storedRole();
+    if (!role || !(roles as string[]).includes(role)) {
+      return { name: 'dashboard' };
+    }
   }
   return true;
 });

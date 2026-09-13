@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
   SOCKET_EVENTS,
+  SUBJECT_CATALOG,
   WEEKDAYS,
   WEEKDAY_LABELS,
   WEEK_PARITY_LABELS,
@@ -99,6 +100,33 @@ async function loadCourses(): Promise<void> {
   courses.value = query.classId ? await courseApi.list(query.classId) : [];
 }
 
+/**
+ * 统一授课科目（需求："课表统一而不是单个班级录入"）。
+ *
+ * 学校固定的科目目录来自 shared 的 `SUBJECT_CATALOG`（语文/数学/…/听力），
+ * 与班级无关：**该班还没有的科目也直接出现在下拉里**，选中后自动为该班建好同名课程，
+ * 因此不需要为了排课先去"班级 → 课程"里一个个录一遍。
+ * 下拉只有一个 v-model，统一科目用 `subject:语文` 这种带前缀的伪值表达。
+ */
+const SUBJECT_PREFIX = 'subject:';
+
+const subjectOptions = computed(() => {
+  const existing = new Set(courses.value.map((item) => item.name));
+  return SUBJECT_CATALOG.filter((name) => !existing.has(name));
+});
+
+/** 把表单里的选中值解析成真实 courseId：伪值先建课（已存在则复用） */
+async function resolveCourseId(): Promise<string | null> {
+  const value = form.courseId;
+  if (!value.startsWith(SUBJECT_PREFIX)) return value || null;
+  const name = value.slice(SUBJECT_PREFIX.length);
+  const existing = courses.value.find((item) => item.name === name);
+  if (existing) return existing.id;
+  const created = await courseApi.create({ classId: query.classId, name });
+  courses.value = [...courses.value, created];
+  return created.id;
+}
+
 async function loadSchedules(): Promise<void> {
   if (!query.classId) {
     grid.value = null;
@@ -153,7 +181,9 @@ function openCreate(): void {
     return;
   }
   editingId.value = null;
-  form.courseId = courses.value[0]?.id ?? '';
+  // 默认选第一个统一科目（不是"该班已建课程"，避免新班级下拉为空）
+  form.courseId =
+    courses.value[0]?.id ?? (SUBJECT_CATALOG[0] ? `${SUBJECT_PREFIX}${SUBJECT_CATALOG[0]}` : '');
   form.dayOfWeek = 1;
   form.startTime = '08:00';
   form.endTime = '08:45';
@@ -185,9 +215,15 @@ async function submitForm(): Promise<void> {
     return;
   }
 
+  const courseId = await resolveCourseId();
+  if (!courseId) {
+    ElMessage.warning('请选择科目');
+    return;
+  }
+
   const payload: CreateScheduleRequest = {
     classId: query.classId,
-    courseId: form.courseId,
+    courseId,
     dayOfWeek: Number(form.dayOfWeek),
     startTime: form.startTime,
     endTime: form.endTime,
@@ -205,7 +241,7 @@ async function submitForm(): Promise<void> {
     ElMessage.success('课表已新增');
   }
   formVisible.value = false;
-  await loadSchedules();
+  await Promise.all([loadCourses(), loadSchedules()]);
 }
 
 async function removeSchedule(item: ScheduleDto): Promise<void> {
@@ -341,10 +377,22 @@ onUnmounted(() => {
 
     <el-dialog v-model="formVisible" :title="editingId ? '编辑课表' : '新增课表'" width="480px">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
-        <el-form-item label="课程" prop="courseId">
-          <el-select v-model="form.courseId" placeholder="选择课程" style="width: 100%">
+        <el-form-item label="科目" prop="courseId">
+          <el-select v-model="form.courseId" placeholder="选择科目" style="width: 100%" filterable>
             <el-option v-for="item in courses" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option-group v-if="subjectOptions.length" label="统一科目（选中后自动建课）">
+              <el-option
+                v-for="name in subjectOptions"
+                :key="name"
+                :label="name"
+                :value="`${SUBJECT_PREFIX}${name}`"
+              />
+            </el-option-group>
           </el-select>
+          <span class="text-muted" style="width: 100%">
+            科目是全校统一的固定目录（语文/数学/…/听力），不必按班级单独录入；
+            选这里没有的科目时会自动为该班建好同名课程
+          </span>
         </el-form-item>
         <el-form-item label="星期" prop="dayOfWeek">
           <el-select v-model="form.dayOfWeek" style="width: 100%">

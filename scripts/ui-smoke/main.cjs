@@ -43,7 +43,11 @@ const MENU_ITEMS = [
 ];
 
 /** 教师端必须隐藏的入口（前端隐藏 + 后端 403，双重保障） */
-const HIDDEN_MENU_LABELS = ['班级管理', '学生管理'];
+const HIDDEN_MENU_LABELS = ['班级管理', '学生管理', '教师管理'];
+
+/** 管理员账号（教师录入用例）：与种子/安装初始化账号一致 */
+const ADMIN_USERNAME = process.env.UI_SMOKE_ADMIN ?? 'admin';
+const ADMIN_PASSWORD = process.env.UI_SMOKE_ADMIN_PASS ?? 'admin123';
 
 const results = [];
 function record(name, ok, detail = '') {
@@ -66,6 +70,152 @@ async function waitFor(win, expression, timeoutMs = 15000) {
     await sleep(150);
   }
   return false;
+}
+
+/**
+ * 管理员专属用例：登录 → 教师管理 → 录入教师 → 断言出现在列表 → 删除清理。
+ *
+ * 用户要求"支持录入学生也要支持录入老师，且录入老师的权限只有 admin"：
+ * 因此这里用**管理员账号真实点一遍**（表单 → 接口 → 列表刷新），并在收尾删掉测试账号，
+ * 保证"更支持录入教师"这条不是只有接口能跑、界面点不动。
+ */
+async function runAdminTeacherChecks(win) {
+  const username = `smoke_teacher_${Date.now()}`;
+  // 姓名固定用这个值：界面上要能看出"这是冒烟建的账号"，方便人工排查残留
+  const teacherName = '冒烟测试老师';
+
+  const fillLoginAndSubmit = async (user, password) => {
+    await win.webContents.executeJavaScript(`(() => {
+      const setValue = (element, value) => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(element, value);
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      const inputs = Array.from(document.querySelectorAll('input'));
+      setValue(inputs[0], ${JSON.stringify(user)});
+      const passwordInput = inputs.find((item) => item.type === 'password') ?? inputs[1];
+      setValue(passwordInput, ${JSON.stringify(password)});
+      const button = Array.from(document.querySelectorAll('button')).find((item) =>
+        (item.textContent ?? '').includes('登录'),
+      );
+      if (button) button.click();
+      return true;
+    })()`);
+    return waitFor(win, `document.querySelectorAll('.el-menu-item').length >= 6`, 20000);
+  };
+
+  // 1) 换管理员账号（清掉教师登录态 → 整页重载更接近真人操作）
+  await win.webContents.executeJavaScript(`(() => { localStorage.clear(); return true; })()`);
+  await win.loadURL(TARGET_URL);
+  const loginReady = await waitFor(win, `document.querySelectorAll('input').length >= 2`, 15000);
+  if (!loginReady) {
+    record('管理员登录（教师录入前置）', false, '登录页未渲染');
+    return;
+  }
+  const adminReady = await fillLoginAndSubmit(ADMIN_USERNAME, ADMIN_PASSWORD);
+  record('管理员登录（教师录入前置）', adminReady, `账号=${ADMIN_USERNAME}`);
+  if (!adminReady) return;
+
+  // 2) 打开「教师管理」→ 新建教师（表单 → 保存 → 列表出现）
+  const created = await win.webContents.executeJavaScript(`(async () => {
+    const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
+      (node.textContent ?? '').trim().startsWith('教师管理'),
+    );
+    if (!menu) return { ok: false, reason: '管理员菜单里没有「教师管理」' };
+    menu.click();
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline && location.pathname !== '/teachers') {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const title = document.querySelector('.page-title')?.textContent?.trim() ?? '';
+    const openButton = Array.from(document.querySelectorAll('button')).find((node) =>
+      (node.textContent ?? '').trim() === '新建教师',
+    );
+    if (!openButton) return { ok: false, reason: '教师管理页没有「新建教师」按钮', title };
+    openButton.click();
+    const dialogDeadline = Date.now() + 5000;
+    while (Date.now() < dialogDeadline && !document.querySelector('.el-dialog')) {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const dialog = Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
+      (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('新建教师'),
+    );
+    if (!dialog) return { ok: false, reason: '新建教师弹窗未打开', title };
+    const setValue = (element, value) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(element, value);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const inputs = Array.from(dialog.querySelectorAll('input'));
+    setValue(inputs[0], ${JSON.stringify(teacherName)});
+    setValue(inputs[1], ${JSON.stringify(username)});
+    const passwordInput = inputs.find((item) => item.type === 'password');
+    if (passwordInput) setValue(passwordInput, 'smoke123456');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const save = Array.from(dialog.querySelectorAll('.el-dialog__footer button')).find((node) =>
+      (node.textContent ?? '').trim() === '保存',
+    );
+    if (!save) return { ok: false, reason: '弹窗没有保存按钮', title };
+    save.click();
+    // 等列表刷新出这条账号
+    const rowDeadline = Date.now() + 8000;
+    let rowText = '';
+    while (Date.now() < rowDeadline) {
+      const rows = Array.from(document.querySelectorAll('.el-table__row'));
+      const hit = rows.find((row) => (row.textContent ?? '').includes(${JSON.stringify(username)}));
+      if (hit) {
+        rowText = (hit.textContent ?? '').replace(/\\s+/g, ' ').trim();
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    return { ok: Boolean(rowText), title, rowText };
+  })()`);
+  record(
+    '管理员录入教师（新建教师弹窗 → 保存 → 列表出现该账号）',
+    Boolean(created?.ok),
+    `页面标题=${created?.title ?? '-'} 新账号行="${created?.rowText ?? ''}"${created?.reason ? ` 原因=${created.reason}` : ''}`,
+  );
+
+  // 3) 删除刚建的测试账号（接口有护栏：班主任/有课程时拒绝），保持库干净
+  const removed = await win.webContents.executeJavaScript(`(async () => {
+    const rows = Array.from(document.querySelectorAll('.el-table__row'));
+    const row = rows.find((item) => (item.textContent ?? '').includes(${JSON.stringify(username)}));
+    if (!row) return { ok: false, reason: '列表里找不到刚建的账号' };
+    const removeButton = Array.from(row.querySelectorAll('button')).find((node) =>
+      (node.textContent ?? '').trim() === '删除',
+    );
+    if (!removeButton) return { ok: false, reason: '行内没有删除按钮' };
+    removeButton.click();
+    const confirmDeadline = Date.now() + 5000;
+    while (Date.now() < confirmDeadline && !document.querySelector('.el-message-box')) {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const confirm = Array.from(document.querySelectorAll('.el-message-box__btns button')).find((node) =>
+      (node.textContent ?? '').trim().includes('确认删除'),
+    );
+    if (!confirm) return { ok: false, reason: '确认弹窗没有「确认删除」按钮' };
+    confirm.click();
+    const goneDeadline = Date.now() + 8000;
+    while (Date.now() < goneDeadline) {
+      const still = Array.from(document.querySelectorAll('.el-table__row')).some((item) =>
+        (item.textContent ?? '').includes(${JSON.stringify(username)}),
+      );
+      if (!still) return { ok: true };
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    return { ok: false, reason: '删除后列表里仍然存在' };
+  })()`);
+  record(
+    '管理员删除教师账号（收尾清理，接口护栏保留）',
+    Boolean(removed?.ok),
+    `${removed?.ok ? `已删除 ${username}` : `原因=${removed?.reason ?? '-'}`}`,
+  );
 }
 
 async function main() {
@@ -97,6 +247,18 @@ async function main() {
   // 2. 登录页
   const loginReady = await waitFor(win, `document.querySelectorAll('input').length >= 2`, 15000);
   record('登录页渲染（用户名/密码输入框）', loginReady);
+
+  // 2.1 登录页不允许出现任何示例/演示内容（用户要求："删掉登录页所有示例内容"）
+  const loginContent = await win.webContents.executeJavaScript(`(() => {
+    const text = (document.body.innerText || '').replace(/\\s+/g, ' ').trim();
+    const tokens = ['演示', '示例账号', 'admin123', 'teacher123', 'student123', 'G101', '种子数据', '点击填充'];
+    return { text: text.slice(0, 160), leaked: tokens.filter((item) => text.includes(item)) };
+  })()`);
+  record(
+    '登录页不含示例/演示内容（无演示账号、无示例凭据）',
+    (loginContent?.leaked ?? ['?']).length === 0,
+    `越界文案=[${(loginContent?.leaked ?? []).join(',')}] 可见文本="${loginContent?.text ?? ''}"`,
+  );
 
   // 3. 填写表单并点击登录（用原生 setter + input 事件，保证 Vue 双向绑定生效）
   await win.webContents.executeJavaScript(`(() => {
@@ -356,9 +518,22 @@ async function main() {
     return { labels, leaked };
   })()`);
   record(
-    '教师端隐藏无权入口（班级管理/学生管理）',
+    '教师端隐藏无权入口（班级管理/学生管理/教师管理）',
     (hiddenCheck?.leaked ?? ['?']).length === 0,
     `可见菜单=[${(hiddenCheck?.labels ?? []).join(',')}] 越权入口=[${(hiddenCheck?.leaked ?? []).join(',')}]`,
+  );
+
+  // 7.51 仅管理员页面：教师**直接输网址**也必须被路由守卫挡回仪表盘
+  //      （菜单隐藏只是"看不见"，不等于没有权限 —— 这里验证真的进不去）
+  await win.loadURL(`${TARGET_URL.replace(/\/$/, '')}/teachers`);
+  const teachersBlocked = await waitFor(win, `location.pathname === '/dashboard'`, 15000);
+  const blockedTitle = await win.webContents.executeJavaScript(
+    `document.querySelector('.page-title')?.textContent?.trim() ?? ''`,
+  );
+  record(
+    '教师端直接访问 /teachers 被挡回仪表盘（录入教师仅管理员）',
+    teachersBlocked && blockedTitle !== '教师管理',
+    `落地=${await win.webContents.executeJavaScript('location.pathname')} 标题=${blockedTitle}`,
   );
 
   // 7.6 "叫人"入口（通知发布 → 叫人 → 快捷短语/自定义消息）
@@ -589,6 +764,138 @@ async function main() {
     return true;
   })()`);
   await sleep(300);
+
+  // 7.8 授课科目统一：新增课表的科目下拉直接列出"全校统一科目"（不必按班级先录入课程），
+  //     选中后自动建课并写入课表；用例结束把这条课表删掉，保证不污染演示数据。
+  const unifiedSubject = await win.webContents.executeJavaScript(`(async () => {
+    const openButton = Array.from(document.querySelectorAll('button')).find((node) =>
+      (node.textContent ?? '').trim() === '新增课表',
+    );
+    if (!openButton) return { ok: false, reason: '课表页没有「新增课表」按钮（当前账号不是班主任？）' };
+    openButton.click();
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && !document.querySelector('.el-dialog')) {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const dialog = Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
+      (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('新增课表'),
+    );
+    if (!dialog) return { ok: false, reason: '新增课表弹窗未打开' };
+    const selects = Array.from(dialog.querySelectorAll('.el-select__wrapper'));
+    if (selects.length < 2) return { ok: false, reason: '弹窗里没有科目/星期下拉' };
+
+    // 打开科目下拉，读取"统一科目"分组
+    selects[0].click();
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    const groups = Array.from(document.querySelectorAll('.el-select-group__title')).map((node) =>
+      node.textContent.trim(),
+    );
+    // Element Plus 的 el-option-group 结构是：.el-select-group__wrap > (.el-select-group__title + ul.el-select-group)
+    const unifiedWrap = Array.from(document.querySelectorAll('.el-select-group__wrap')).find((node) =>
+      (node.querySelector('.el-select-group__title')?.textContent ?? '').includes('统一科目'),
+    );
+    const unifiedNames = unifiedWrap
+      ? Array.from(unifiedWrap.querySelectorAll('.el-select-dropdown__item')).map((node) =>
+          node.textContent.trim(),
+        )
+      : [];
+    if (unifiedNames.length === 0) {
+      return { ok: false, reason: '科目下拉里没有「统一科目」分组（该班已把所有科目都建好了？）', groups };
+    }
+    const subjectName = unifiedNames[0];
+    const subjectOption = Array.from(unifiedWrap.querySelectorAll('.el-select-dropdown__item')).find(
+      (node) => node.textContent.trim() === subjectName,
+    );
+    subjectOption.click();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // 星期改成周日（避开演示课表的周一~周五），时间用默认值
+    selects[1].click();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const sunday = Array.from(document.querySelectorAll('.el-select-dropdown__item')).find((node) =>
+      (node.textContent ?? '').trim() === '周日',
+    );
+    if (!sunday) return { ok: false, reason: '星期下拉里没有「周日」' };
+    sunday.click();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const save = Array.from(dialog.querySelectorAll('.el-dialog__footer button')).find((node) =>
+      (node.textContent ?? '').trim() === '保存',
+    );
+    if (!save) return { ok: false, reason: '弹窗没有保存按钮' };
+    save.click();
+
+    // 等课表列表出现这条（课程名 = 统一科目名）
+    const listDeadline = Date.now() + 8000;
+    let rowText = '';
+    while (Date.now() < listDeadline) {
+      const rows = Array.from(document.querySelectorAll('.el-table__row'));
+      const hit = rows.find((row) => (row.textContent ?? '').includes(subjectName));
+      if (hit) {
+        rowText = (hit.textContent ?? '').replace(/\\s+/g, ' ').trim();
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    return { ok: Boolean(rowText), subjectName, groups, unifiedCount: unifiedNames.length, rowText };
+  })()`);
+  record(
+    '课表科目为全校统一目录（选中自动建课并写入课表）',
+    Boolean(unifiedSubject?.ok) && (unifiedSubject?.unifiedCount ?? 0) >= 1,
+    `统一科目分组=${(unifiedSubject?.groups ?? []).join('/') || '-'} 可选项=${unifiedSubject?.unifiedCount ?? 0} ` +
+      `科目=${unifiedSubject?.subjectName ?? '-'} 新行="${unifiedSubject?.rowText ?? ''}"` +
+      `${unifiedSubject?.reason ? ` 原因=${unifiedSubject.reason}` : ''}`,
+  );
+
+  // 删掉刚写入的那条课表**以及自动建出来的课程**，保持演示数据不变
+  const removedUnified = await win.webContents.executeJavaScript(`(async () => {
+    const rows = Array.from(document.querySelectorAll('.el-table__row'));
+    const row = rows.find((item) => (item.textContent ?? '').includes(${JSON.stringify(
+      unifiedSubject?.subjectName ?? '',
+    )}));
+    if (!row) return { ok: false, reason: '列表里找不到刚写入的课表行' };
+    const removeButton = Array.from(row.querySelectorAll('button')).find((node) =>
+      (node.textContent ?? '').trim() === '删除',
+    );
+    if (!removeButton) return { ok: false, reason: '行内没有删除按钮' };
+    removeButton.click();
+    const confirmDeadline = Date.now() + 5000;
+    while (Date.now() < confirmDeadline && !document.querySelector('.el-message-box')) {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const confirm = Array.from(document.querySelectorAll('.el-message-box__btns button')).find((node) =>
+      (node.textContent ?? '').trim() === '确定',
+    );
+    if (!confirm) return { ok: false, reason: '确认弹窗没有确定按钮' };
+    confirm.click();
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    // 自动建课留下的课程行也一并删掉（该科目本来不在这个班里）
+    const token = localStorage.getItem('classhelper.token') ?? '';
+    const headers = { authorization: 'Bearer ' + token };
+    // 工具栏第一个选择器就是班级选择器；el-select 非 filterable 时选中项是 span 文本，读 textContent
+    const classLabel = (document.querySelector('.toolbar .el-select')?.textContent ?? '').trim();
+    const classes = (await (await fetch('/api/classes', { headers })).json()).data ?? [];
+    const target = classes.find((item) => item.name === classLabel);
+    if (!target) return { ok: true, courseRemoved: false, reason: '未能定位当前班级：' + classLabel };
+    const courses = (await (await fetch('/api/courses?classId=' + target.id, { headers })).json()).data ?? [];
+    const created = courses.find((item) => item.name === ${JSON.stringify(unifiedSubject?.subjectName ?? '')});
+    if (!created) return { ok: true, courseRemoved: false };
+    const removed = await fetch('/api/courses/' + created.id, { method: 'DELETE', headers });
+    return { ok: true, courseRemoved: removed.ok, className: target.name };
+  })()`);
+  record(
+    '课表用例收尾：统一科目课表与自动建的课程都已删除（不污染演示数据）',
+    Boolean(removedUnified?.ok),
+    removedUnified?.ok
+      ? `课表已删除；课程已删除=${removedUnified.courseRemoved === true}（班级=${removedUnified.className ?? '-'}）`
+      : `原因=${removedUnified?.reason ?? '-'}`,
+  );
+
+  // 7.9 管理员专属：教师录入（本轮新增「教师管理」页，仅管理员可见可用）
+  await runAdminTeacherChecks(win);
 
   // 8. 手机小屏适配（390×844，1Panel 风格：侧边栏收进抽屉 + 卡片内横向滚动）
   await runMobileChecks(win);

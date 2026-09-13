@@ -126,7 +126,13 @@ async function captureIsland(
   // 截图统计总是执行（像素断言不依赖环境变量）；ISLAND_SHOTS_DIR 只控制是否落盘留档
   const dir = process.env.ISLAND_SHOTS_DIR ?? '';
   const win = island.getWindow();
-  if (!win || win.isDestroyed() || !win.isVisible()) return null;
+  if (!win || win.isDestroyed()) return null;
+  // 窗口可能正处在"隐藏 → 重新显示"的过渡里（例如下课后自动弹出）：
+  // 先等它可见，避免偶发丢掉一张留档图导致"形态尺寸递增"这类断言缺数据。
+  for (let attempt = 0; attempt < 15 && !win.isVisible(); attempt += 1) {
+    await sleep(100);
+  }
+  if (!win.isVisible()) return null;
   try {
     // 透明窗口直接 capturePage 会得到空白图：把它临时放到不透明背景上再截图
     await win.webContents.executeJavaScript(
@@ -1475,11 +1481,19 @@ async function runIslandChecks(
   const urgentReddish = urgentShot?.reddish ?? 0;
   const outsideReddish = urgentShot?.outsideReddish ?? 0;
   const pillShot = shotDetails.find((shot) => shot.name.includes('pill'));
+  // "形态尺寸递增"：胶囊 < 某个展开形态 < 紧急形态。
+  // 展开形态优先取 after-class 留档，缺图时退回其它展开态（避免一张可选留档缺失就误判）。
+  const expandedShot = [
+    shotDetails.find((shot) => shot.name.includes('after-class')),
+    shotDetails.find((shot) => shot.name.includes('clicked')),
+    shotDetails.find((shot) => shot.name.includes('homework')),
+  ].find(Boolean);
   const sizesOrdered = Boolean(
     pillShot &&
+    expandedShot &&
     urgentShot &&
-    pillShot.height < (shotDetails.find((shot) => shot.name.includes('after-class'))?.height ?? 0) &&
-    (shotDetails.find((shot) => shot.name.includes('after-class'))?.height ?? 0) < urgentShot.height,
+    pillShot.height < expandedShot.height &&
+    expandedShot.height < urgentShot.height,
   );
 
   record(
@@ -2401,6 +2415,22 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     '登录页渲染（服务器地址/用户名/密码输入框）',
     Boolean(dom?.hasLoginPage && dom?.hasInput),
     `text=${dom?.text ?? ''}`,
+  );
+
+  // 需求："删掉登录页所有示例内容" —— 占位符/提示里不允许出现示例班级码或示例账号
+  const loginExampleLeak = await win.webContents.executeJavaScript(
+    `(() => {
+       const text = (document.body.innerText || '') + ' ' + Array.from(document.querySelectorAll('input'))
+         .map((node) => node.getAttribute('placeholder') || '')
+         .join(' ');
+       const tokens = ['例如 G101', 'G101', '例如G101', 'admin123', 'teacher123', '演示', '示例'];
+       return { leaked: tokens.filter((item) => text.includes(item)) };
+     })()`,
+  );
+  record(
+    '登录页不含示例内容（无示例班级码/演示账号）',
+    (loginExampleLeak?.leaked ?? ['?']).length === 0,
+    `越界文案=[${(loginExampleLeak?.leaked ?? []).join(',')}]`,
   );
 
   // preload 桥接

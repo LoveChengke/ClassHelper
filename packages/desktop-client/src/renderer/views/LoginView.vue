@@ -106,12 +106,7 @@ async function enterOffline(): Promise<void> {
         </el-form-item>
 
         <el-form-item label="班级码" prop="code">
-          <el-input
-            v-model="form.code"
-            placeholder="例如 G101（由老师在班级管理中提供）"
-            clearable
-            @keyup.enter="submit"
-          >
+          <el-input v-model="form.code" placeholder="请输入班级码" clearable @keyup.enter="submit">
             <template #prefix>
               <el-icon><School /></el-icon>
             </template>

@@ -142,7 +142,37 @@ export async function createClass(user: TokenPayload, input: CreateClassInput): 
 }
 
 /**
- * 设置 / 重置班级账号（班级码 + 班级密码）：仅管理员。
+ * 设置 / 更改班主任（仅管理员）。
+ *
+ * 班主任决定了"谁能管这个班的课表与成绩"，所以更换时要保证目标账号确实是教师/管理员；
+ * 原班主任保留在协作教师名单里（`ClassTeacher`）不变，避免换人后丢掉历史协作关系。
+ */
+export async function updateHeadTeacher(
+  user: TokenPayload,
+  classId: string,
+  teacherId: string,
+): Promise<ClassDto> {
+  assertCanAssignTeachers(user);
+
+  const target = await prisma.user.findUnique({ where: { id: teacherId } });
+  if (!target || (target.role !== 'TEACHER' && target.role !== 'ADMIN')) {
+    throw ApiError.badRequest('指定的班主任不存在或角色不是教师');
+  }
+
+  const updated = await prisma.class.update({
+    where: { id: classId },
+    data: { teacherId: target.id },
+    include: {
+      teacher: { select: { id: true, name: true, username: true } },
+      _count: { select: countSelect },
+    },
+  });
+
+  emitToClass(classId, SOCKET_EVENTS.classUpdated, { classId, action: 'head-teacher-changed' });
+  return toClassDtoWithAccount(user, updated);
+}
+
+/** 设置 / 重置班级账号（班级码 + 班级密码）：仅管理员。
  * 班级码即学生端"班级登录"的账号；密码留空表示不修改。
  */
 export async function updateClassAccount(

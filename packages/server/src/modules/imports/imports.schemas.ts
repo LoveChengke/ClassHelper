@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-/** 导入类型：成绩 / 学生名单 / 课表时间配置 */
-export const IMPORT_KINDS = ['grades', 'students'] as const;
+/** 导入类型：成绩 / 学生名单 / 教师名单（仅管理员） */
+export const IMPORT_KINDS = ['grades', 'students', 'teachers'] as const;
 
 /** 表格导入：上传的文件（base64）+ 类型 */
 export const tableFileSchema = z.object({
@@ -17,7 +17,8 @@ export const tableFileSchema = z.object({
 
 /** 表格提交：在预览基础上带字段映射、目标班级与写入模式 */
 export const tableCommitSchema = tableFileSchema.extend({
-  classId: z.string().min(1, '请选择班级'),
+  /** 目标班级：成绩/学生名单必填；教师名单与班级无关（可省略） */
+  classId: z.string().min(1, '请选择班级').optional(),
   /** 列映射：规范字段 → 文件列名（或列索引字符串） */
   mapping: z.record(z.string(), z.string().min(1)),
   /** append = 仅新增；upsert = 已存在则更新（成绩按 学生+考试+课程，名单按用户名） */

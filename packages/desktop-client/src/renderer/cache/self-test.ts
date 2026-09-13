@@ -123,6 +123,93 @@ export async function layoutNavigationSelfTest(): Promise<SmokeCheckResult> {
   };
 }
 
+/** 自检临时造的作业/通知（收尾必须删掉，避免污染用户的库） */
+let temporaryContent: { token: string; homeworks: string[]; notifications: string[] } | null = null;
+
+/**
+ * 服务端业务数据可能被管理员清空（用户明确要求过"删掉所有作业和通知"），
+ * 因此联网自检在列表为空时**自建**一条作业/通知来验证链路，收尾（sessionCleanup）删除。
+ */
+async function seedSmokeContent(
+  classId: string | null,
+  need: { homework: boolean; notification: boolean },
+): Promise<SmokeCheckResult> {
+  if (!classId) return { ok: false, detail: '缺少班级，无法自建数据' };
+  const serverUrl = 'http://127.0.0.1:4000';
+  const stamp = `自检 ${new Date().toLocaleTimeString('zh-CN')}`;
+
+  try {
+    const login = await fetch(`${serverUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'teacher1', password: 'teacher123' }),
+    }).then((response) => response.json());
+    const token: string | undefined = login?.data?.token;
+    if (!token) return { ok: false, detail: `教师登录失败：${JSON.stringify(login).slice(0, 120)}` };
+
+    const homeworks: string[] = [];
+    const notifications: string[] = [];
+
+    if (need.homework) {
+      const created = await fetch(`${serverUrl}/api/homeworks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          classId,
+          courseId: null,
+          title: `自动化验证作业 ${stamp}`,
+          content: '服务端没有作业数据时由冒烟自检临时创建，验证结束后立即删除，不会留在库里。',
+        }),
+      }).then((response) => response.json());
+      const id: string | undefined = created?.data?.id;
+      if (!id) return { ok: false, detail: `自建作业失败：${JSON.stringify(created).slice(0, 160)}` };
+      homeworks.push(id);
+    }
+
+    if (need.notification) {
+      const created = await fetch(`${serverUrl}/api/notifications`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          classId,
+          title: `自动化验证通知 ${stamp}`,
+          content: '服务端没有通知数据时由冒烟自检临时创建，验证结束后立即删除，不会留在库里。',
+          priority: 'NORMAL',
+        }),
+      }).then((response) => response.json());
+      const id: string | undefined = created?.data?.id;
+      if (!id) return { ok: false, detail: `自建通知失败：${JSON.stringify(created).slice(0, 160)}` };
+      notifications.push(id);
+    }
+
+    temporaryContent = { token, homeworks, notifications };
+    return { ok: true, detail: `作业+${homeworks.length} 通知+${notifications.length}` };
+  } catch (error) {
+    return { ok: false, detail: `自建数据异常：${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+/** 删除自检临时造的作业/通知 */
+async function cleanupTemporaryContent(): Promise<string> {
+  if (!temporaryContent) return '';
+  const { token, homeworks, notifications } = temporaryContent;
+  temporaryContent = null;
+  const serverUrl = 'http://127.0.0.1:4000';
+  const removals = [
+    ...homeworks.map((id) => `/api/homeworks/${id}`),
+    ...notifications.map((id) => `/api/notifications/${id}`),
+  ];
+  let failed = 0;
+  for (const path of removals) {
+    const response = await fetch(`${serverUrl}${path}`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${token}` },
+    }).catch(() => null);
+    if (!response?.ok) failed += 1;
+  }
+  return `自检临时数据已清理 ${removals.length - failed}/${removals.length} 条`;
+}
+
 /**
  * 冒烟自检 4（需后端在线）：真实登录 + 拉取四类数据 + Socket.IO 连接。
  * 覆盖渲染进程里实际使用的 API 封装、JWT 注入、实时通道与缓存写入。
@@ -165,12 +252,31 @@ export async function onlineScenario(credentials?: {
     await appStore.init(serverUrl);
     detail.push(`reachable=${appStore.serverReachable}`);
 
-    const [classes, homeworks, notifications, grades] = await Promise.all([
+    const [classes, initialHomeworks, initialNotifications, grades] = await Promise.all([
       api.classApi.list(),
       api.homeworkApi.list(),
       api.notificationApi.list(),
       api.gradeApi.my(),
     ]);
+
+    /**
+     * 自检**不允许依赖演示种子数据**：管理员随时可能清空业务数据
+     * （例如"删掉服务端所有作业和通知"），此时这几条联网断言不能变成"数据被清空就失败"。
+     * 因此列表为空时用教师账号造一条**本次自检专用**的作业/通知，收尾在 sessionCleanup 里删除。
+     */
+    let homeworks = initialHomeworks;
+    let notifications = initialNotifications;
+    if (homeworks.length === 0 || notifications.length === 0) {
+      const seeded = await seedSmokeContent(auth.classId ?? null, {
+        homework: homeworks.length === 0,
+        notification: notifications.length === 0,
+      });
+      detail.push(`自建数据(${seeded.detail})`);
+      if (seeded.ok) {
+        [homeworks, notifications] = await Promise.all([api.homeworkApi.list(), api.notificationApi.list()]);
+      }
+    }
+
     const term = await api.dashboardApi.term();
     const schedules = await api.scheduleApi.list({ week: term.currentWeek });
 
@@ -582,16 +688,17 @@ export async function homeworkBoardSelfTest(): Promise<SmokeCheckResult> {
   }
 }
 
-/** 冒烟收尾：断开实时通道并退出登录，保证下次冒烟从登录页开始 */
+/** 冒烟收尾：删除自检临时数据 → 断开实时通道 → 退出登录，保证下次冒烟从登录页开始 */
 export async function sessionCleanup(): Promise<SmokeCheckResult> {
   const [{ useAuthStore }, { useRealtimeStore }] = await Promise.all([
     import('../stores/auth.js'),
     import('../stores/realtime.js'),
   ]);
   try {
+    const cleaned = await cleanupTemporaryContent();
     useRealtimeStore().disconnect();
     await useAuthStore().logout();
-    return { ok: true, detail: '已断开实时通道并清理登录态' };
+    return { ok: true, detail: `已断开实时通道并清理登录态${cleaned ? `；${cleaned}` : ''}` };
   } catch (error) {
     return { ok: false, detail: error instanceof Error ? error.message : String(error) };
   }

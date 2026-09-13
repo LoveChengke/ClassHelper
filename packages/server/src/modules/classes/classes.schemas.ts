@@ -49,6 +49,11 @@ export const assignTeacherSchema = z.object({
   teacherId: z.string().min(1, '请选择教师'),
 });
 
+/** 设置 / 更改班主任（仅管理员） */
+export const assignHeadTeacherSchema = z.object({
+  teacherId: z.string().min(1, '请选择班主任'),
+});
+
 export const classStudentParamSchema = z.object({
   id: z.string().min(1),
   userId: z.string().min(1),

@@ -16,7 +16,7 @@ const { isMobile } = useResponsive();
 
 /**
  * 菜单项与可见角色（与后端 `@classhelper/shared/permissions` 矩阵保持一致）：
- * - 班级管理 / 学生管理：仅管理员（班主任与科任老师都没有班级增删改与人员分配权限）
+ * - 班级管理 / 学生管理 / 教师管理：仅管理员（班主任与科任老师都没有班级增删改与人员分配权限）
  * - 课表管理：管理员 + 班主任（页面内再按"是否本班班主任"控制增删改按钮）
  * - 成绩录入：管理员 + 教师；页面内只对"管理员或所选班级的班主任"显示写入/导入按钮
  *   （需求 6：成绩与表格导入老师端可用且不越权；科任老师只能看，写入会被后端 403）
@@ -26,6 +26,7 @@ const menuItems = [
   { path: '/dashboard', title: '仪表盘', icon: 'Odometer', roles: ['ADMIN', 'TEACHER'] },
   { path: '/classes', title: '班级管理', icon: 'School', roles: ['ADMIN'] },
   { path: '/students', title: '学生管理', icon: 'User', roles: ['ADMIN'] },
+  { path: '/teachers', title: '教师管理', icon: 'UserFilled', roles: ['ADMIN'] },
   { path: '/schedules', title: '课表管理', icon: 'Calendar', roles: ['ADMIN', 'TEACHER'] },
   { path: '/homeworks', title: '作业发布', icon: 'Notebook', roles: ['ADMIN', 'TEACHER'] },
   { path: '/notifications', title: '通知发布', icon: 'Bell', roles: ['ADMIN', 'TEACHER'] },
