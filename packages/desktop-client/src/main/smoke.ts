@@ -928,10 +928,32 @@ async function runIslandChecks(
   await sleep(700);
   const afterBlur = island.getState();
   record(
-    '点击屏幕任意位置回缩为胶囊（展开时可聚焦 + 失焦收起）',
-    focusable && islandWindow?.isFocusable() === false && afterBlur.mode === 'pill',
+    '点击屏幕任意位置回缩为胶囊（失焦收起；窗口始终可激活）',
+    focusable && islandWindow?.isFocusable() === true && afterBlur.mode === 'pill',
     `展开时 focusable=${focusable} 失焦后 mode=${afterBlur.mode} focusable=${islandWindow?.isFocusable() ?? '-'}`,
   );
+
+  // 4.5.2) 胶囊态窗口**必须始终可激活**：Windows 下 WS_EX_NOACTIVATE 且非活动窗口会丢掉
+  //        鼠标**按下**事件（实测只到 mouseup、没有 mousedown/click）→ 胶囊"点不动"。
+  //        这是用户反馈的根因，用"胶囊态 isFocusable() 必须为 true"固化下来。
+  for (let index = 0; index < 10; index += 1) {
+    const current = island.getState();
+    if (!current.active && current.queued.length === 0) break;
+    island.handleAction({ action: 'dismiss' });
+    await sleep(120);
+  }
+  island.pushNotification(makeNotification('smoke-pill-focusable', 'NORMAL', '胶囊可激活校验'), {
+    inClass: false,
+  });
+  await sleep(500);
+  const pillFocusState = island.getState();
+  record(
+    '胶囊态窗口仍可激活（否则 Windows 丢掉 mousedown，胶囊"点不动"）',
+    pillFocusState.mode === 'pill' && (islandWindow?.isFocusable() ?? false) === true,
+    `mode=${pillFocusState.mode} focusable=${islandWindow?.isFocusable() ?? '-'} 当前是否聚焦=${islandWindow?.isFocused() ?? '-'}`,
+  );
+  island.handleAction({ action: 'dismiss' });
+  await sleep(300);
 
   // 4.5.1) 展开动作自身引发的**假失焦**不能把刚展开的岛缩回胶囊。
   //        用户复现："收起后再次点击灵动岛没反应" —— 点开胶囊后约 0.5s 被系统收回焦点，

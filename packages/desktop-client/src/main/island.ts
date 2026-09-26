@@ -198,8 +198,16 @@ class IslandController {
       fullscreenable: false,
       skipTaskbar: true,
       hasShadow: false,
-      // 不抢焦点：通知不应该打断学生正在做的事（键盘焦点仍留在原应用）
-      focusable: false,
+      /**
+       * **必须可激活**（focusable: true）。
+       *
+       * Windows 下 `WS_EX_NOACTIVATE` 且窗口不是活动窗口时，鼠标**按下**事件会被丢掉：
+       * 渲染进程只会收到 mouseup、收不到 mousedown/click，于是胶囊怎么点都没反应
+       * （真机实测：胶囊态只有 mouseup；展开态 focusable 时是完整的 mousedown+mouseup+click）。
+       * "不抢焦点"靠 `showInactive()`（显示时不激活）+ 收起时 `blur()` 保证，而不是靠
+       * 关掉可激活性 —— 关掉可激活性的代价就是"点不动"。
+       */
+      focusable: true,
       alwaysOnTop: true,
       type: 'toolbar',
       webPreferences: {
@@ -637,7 +645,8 @@ class IslandController {
       this.emit();
     }
     if (!this.win || this.win.isDestroyed()) return;
-    this.win.setFocusable(false);
+    // 焦点/可激活性统一由 applyFocusable 维护（窗口必须始终可激活，否则丢 mousedown）
+    if (this.win.isFocused()) this.win.blur();
     if (this.win.isVisible()) this.win.hide();
     this.win.setOpacity(1);
   }
@@ -893,16 +902,21 @@ class IslandController {
   }
 
   /**
-   * 展开态允许聚焦（用于"点击屏幕任意处收起"），其余时间不抢焦点。
+   * 焦点策略：**窗口始终可激活**，只有展开态才真正持有键盘焦点。
    *
-   * 注意：这个开关本身就是 Windows 上那次"假失焦"的来源（见 blur 处理器注释），
-   * 因此收起时的判断不能只依赖 blur，必须结合指针位置。
+   * 为什么不能把可激活性关掉（focusable=false）：Windows 下 `WS_EX_NOACTIVATE` 且非活动窗口
+   * 会**丢掉鼠标按下事件**（实测只到 mouseup、没有 mousedown/click），胶囊就"点不动"了。
+   * 因此收起/隐藏时改为 `blur()`：既不占着用户的键盘焦点，又保持可激活（点击能正常送达）。
+   * 展开态 `focus()` 是为了"点屏幕别处 → 失焦 → 回缩为胶囊"这条交互生效。
    */
   private applyFocusable(): void {
     if (!this.win || this.win.isDestroyed()) return;
-    const shouldFocus = this.state.mode === 'expanded';
-    if (this.win.isFocusable() !== shouldFocus) this.win.setFocusable(shouldFocus);
-    if (shouldFocus) this.win.focus();
+    if (!this.win.isFocusable()) this.win.setFocusable(true);
+    if (this.state.mode === 'expanded') {
+      this.win.focus();
+      return;
+    }
+    if (this.win.isFocused()) this.win.blur();
   }
 
   private fadeIn(): void {
