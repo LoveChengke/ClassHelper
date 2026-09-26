@@ -89,7 +89,11 @@ export interface IslandRendererBridge {
   getAppearance(): Promise<IslandAppearance>;
   sendAction(action: 'expand' | 'collapse' | 'dismiss' | 'mark-read' | 'open-app', id?: string): void;
   getState(): Promise<IslandState>;
-  /** 命中测试结果：指针是否在岛体上（决定固定大窗口是否接收鼠标） */
+  /**
+   * 命中提示：指针在岛体上时应让固定大窗口接收鼠标（比主进程 60ms 轮询更快）。
+   * **只会上报 true**：关闭命中（穿透）一律由主进程按真实光标决定，
+   * 两边都下发会让窗口在"接收/穿透"之间抖动（用户反馈的"点了没反应"）。
+   */
   setInteractive(interactive: boolean): void;
   /** 上报岛体矩形（窗口内 CSS px）：主进程据此按光标位置兜底校正命中 */
   setHitRect(rect: { x: number; y: number; width: number; height: number } | null): void;

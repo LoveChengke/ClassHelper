@@ -536,6 +536,25 @@ function makeNotification(
 }
 
 /**
+ * 岛体矩形上的相对点（fx/fy ∈ [0,1]）→ 屏幕坐标。
+ * 主进程的命中兜底轮询读的是屏幕坐标，冒烟里用注入点代替"挪动用户鼠标"。
+ */
+function islandCardScreenPoint(fx: number, fy: number): { x: number; y: number } {
+  const bounds = island.getWindowBounds();
+  const rect = island.getHitRect();
+  if (!rect) {
+    return {
+      x: bounds.x + Math.round(bounds.width / 2),
+      y: bounds.y + Math.round(bounds.height / 2),
+    };
+  }
+  return {
+    x: Math.round(bounds.x + rect.x + rect.width * fx),
+    y: Math.round(bounds.y + rect.y + rect.height * fy),
+  };
+}
+
+/**
  * 灵动岛行为验证（对应产品需求）：
  * 1. 上课时间段收到普通通知 → 不显示灵动岛（窗口真正隐藏）并暂存
  * 2. 下课后 → 自动在桌面中上方弹出详情
@@ -900,6 +919,9 @@ async function runIslandChecks(
   island.handleAction({ action: 'expand' });
   await sleep(700);
   const focusable = islandWindow?.isFocusable() ?? false;
+  // "点到别处"的另一半含义是**指针不在岛上**：这里把注入光标放到屏幕左上角（远离岛体），
+  // 否则会被下面 4.5.1 的"指针还在岛上 = 假失焦"保护逻辑判为无效失焦。
+  island.setHitTestCursor({ x: 1, y: 1 });
   // 程序化触发失焦：等价于用户点到别处（冒烟窗口本身不显示，无法真的点击桌面）
   island.setBlurCollapseEnabled(true); // 这一条专门验证"失焦收起"，先打开该行为
   islandWindow?.emit('blur');
@@ -910,6 +932,33 @@ async function runIslandChecks(
     focusable && islandWindow?.isFocusable() === false && afterBlur.mode === 'pill',
     `展开时 focusable=${focusable} 失焦后 mode=${afterBlur.mode} focusable=${islandWindow?.isFocusable() ?? '-'}`,
   );
+
+  // 4.5.1) 展开动作自身引发的**假失焦**不能把刚展开的岛缩回胶囊。
+  //        用户复现："收起后再次点击灵动岛没反应" —— 点开胶囊后约 0.5s 被系统收回焦点，
+  //        岛立刻缩回胶囊，看起来就像"点了没反应"。此时指针必然还在岛上，必须忽略该失焦。
+  island.pushNotification(makeNotification('smoke-phantom-blur', 'NORMAL', '假失焦回归'), {
+    inClass: false,
+  });
+  await sleep(400);
+  island.handleAction({ action: 'expand' });
+  await sleep(300);
+  island.setHitTestCursor(islandCardScreenPoint(0.5, 0.5)); // 指针停在岛上（用户刚点的位置）
+  await sleep(160);
+  islandWindow?.emit('blur'); // 模拟展开后到达的那次假失焦
+  await sleep(500);
+  const afterPhantomBlur = island.getState();
+  const phantomStillInteractive = island.getInteractive();
+  record(
+    '假失焦（指针仍在岛上）不回缩：展开后必须保持展开',
+    afterPhantomBlur.mode === 'expanded' &&
+      afterPhantomBlur.active?.id === 'smoke-phantom-blur' &&
+      phantomStillInteractive === true,
+    `mode=${afterPhantomBlur.mode} active=${afterPhantomBlur.active?.id ?? '-'} 命中=${phantomStillInteractive}`,
+  );
+  island.setHitTestCursor(null);
+  // 清掉这一条通知（队列为空 → 岛自行隐藏），避免影响后续用例的"空闲态"断言
+  island.handleAction({ action: 'dismiss' });
+  await sleep(400);
   // 其余用例关掉"失焦收起"：避免无关的焦点变化（系统抢焦点等）把展开态收回，干扰断言
   island.setBlurCollapseEnabled(false);
 
@@ -1148,24 +1197,6 @@ async function runIslandChecks(
       island.handleAction({ action: 'dismiss' });
       await sleep(120);
     }
-  };
-  /**
-   * 岛体矩形上的相对点（fx/fy ∈ [0,1]）→ 屏幕坐标。
-   * 主进程的命中兜底轮询读的是屏幕坐标，冒烟里用注入点代替"挪动用户鼠标"。
-   */
-  const islandCardScreenPoint = (fx: number, fy: number): { x: number; y: number } => {
-    const bounds = island.getWindowBounds();
-    const rect = island.getHitRect();
-    if (!rect) {
-      return {
-        x: bounds.x + Math.round(bounds.width / 2),
-        y: bounds.y + Math.round(bounds.height / 2),
-      };
-    }
-    return {
-      x: Math.round(bounds.x + rect.x + rect.width * fx),
-      y: Math.round(bounds.y + rect.y + rect.height * fy),
-    };
   };
   /** 合成"指针移到卡片上"：命中测试由渲染进程按指针位置决定（真实场景由系统转发 mousemove） */
   const hoverCard = async (): Promise<boolean> =>

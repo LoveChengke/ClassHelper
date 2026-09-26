@@ -12,7 +12,7 @@ export interface IslandBridge {
   /** 订阅个性化外观（设置页改动后实时生效） */
   onAppearance(handler: (appearance: IslandAppearance) => void): void;
   getAppearance(): Promise<IslandAppearance>;
-  /** 命中测试结果：指针是否在岛体上（决定窗口是否接收鼠标） */
+  /** 命中提示：指针在岛上 → 让窗口接收鼠标（只上报 true，关闭由主进程轮询决定） */
   setInteractive(interactive: boolean): void;
   /** 上报岛体矩形（窗口内 CSS px）：主进程据此按光标位置兜底校正命中 */
   setHitRect(rect: { x: number; y: number; width: number; height: number } | null): void;

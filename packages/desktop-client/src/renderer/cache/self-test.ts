@@ -85,9 +85,14 @@ const EXPECTED_MENU: Array<{ label: string; path: string }> = [
 export async function layoutNavigationSelfTest(): Promise<SmokeCheckResult> {
   const { router } = await import('../router/index.js');
 
+  // 按**文案那一层 span 的完整文本**匹配，而不是整项 textContent：
+  // "通知"项里还有一个未读红点徽标（sup），整项 textContent 会变成 "2通知"，
+  // 用 startsWith 匹配就会误报"菜单项缺失"（历史失败原因）。
   const findMenuItem = (label: string): HTMLElement | undefined =>
     (Array.from(document.querySelectorAll('.el-menu-item')) as HTMLElement[]).find((element) =>
-      (element.textContent ?? '').trim().startsWith(label),
+      Array.from(element.querySelectorAll('span')).some(
+        (span) => (span.textContent ?? '').trim() === label,
+      ),
     );
 
   if (!findMenuItem('课表')) {

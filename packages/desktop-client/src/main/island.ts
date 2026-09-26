@@ -224,9 +224,11 @@ class IslandController {
      * 点击屏幕任意位置收起：展开态临时允许窗口获得焦点，
      * 用户点到别处（桌面、浏览器、其他应用）时窗口失焦 → 回缩为胶囊。
      *
-     * 加一个宽限期（`BLUR_GRACE_MS`）：刚弹出/刚激活的瞬间，系统可能因为换前台窗口、
-     * 抢焦点或截图等操作立刻产生一次 blur，此时收起会让"刚弹出的通知一闪就没了"。
-     * 只在激活满 500ms 后才把 blur 当作"用户点击了别处"。
+     * 但 `win.focus()` 在 Windows 上并不可靠：展开时 `setFocusable(true) + focus()`
+     * 常常先给焦点、再被系统收回，产生一次与用户操作无关的 blur（实测 70ms~520ms 后到达）。
+     * 它落在 `BLUR_GRACE_MS` 宽限期内会被忽略，落在之后就会把刚展开的岛缩回胶囊 ——
+     * 用户看到的就是「点了没反应 / 点开又立刻缩回去」。
+     * 因此这里再用**指针位置**兜一层：指针还在岛上就绝不收起（详见 isCursorOnIsland）。
      */
     win.on('blur', () => {
       // 冒烟里可以临时关掉"失焦收起"，避免测试过程被无关的焦点变化打断（默认开启）
@@ -235,6 +237,12 @@ class IslandController {
       // 设置页预览：示例岛要继续留在屏幕上（用户在调滑块时主窗口一直是焦点）
       if (this.previewId && this.state.active?.id === this.previewId) return;
       const sinceActivated = Date.now() - this.state.updatedAt;
+      if (this.isCursorOnIsland()) {
+        logger.info(
+          `灵动岛：忽略失焦（指针仍在岛上，判定为展开时的激活抖动）距上次状态=${sinceActivated}ms`,
+        );
+        return;
+      }
       if (sinceActivated < BLUR_GRACE_MS) {
         logger.info(`灵动岛：忽略激活后 ${sinceActivated}ms 内的失焦（宽限期内不收起）`);
         return;
@@ -436,6 +444,10 @@ class IslandController {
   }
 
   handleAction(payload: IslandActionPayload): void {
+    // 渲染进程（胶囊/卡片/按钮）点进来的动作：日志是排查"点了没反应"的关键证据
+    logger.info(
+      `灵动岛：收到用户动作 ${payload.action}${payload.id ? ` id=${payload.id}` : ''}（当前 ${this.state.mode}）`,
+    );
     switch (payload.action) {
       case 'expand': {
         // 上课时段：普通通知（含普通叫人）一律不显示；但紧急通知 / 紧急叫人本来就是必须
@@ -558,6 +570,7 @@ class IslandController {
   hideImmediately(): void {
     this.clearTimers();
     this.cancelBoundsAnimation();
+    this.setInteractive(false, '立即隐藏');
     this.explicitShowId = null;
     this.fadeToken += 1;
     const changed = this.state.mode !== 'hidden' || this.state.reason !== null;
@@ -743,25 +756,28 @@ class IslandController {
     if (this.state.mode === 'hidden') {
       // 空闲"细缝"（参考 WinIsland）：打开后空闲不再完全隐藏，而是留一条很窄的圆角柱；
       // 关闭时保持原行为（完全淡出并隐藏）。
+      this.setInteractive(false, '隐藏态');
       if (this.appearance.idleSliver) {
         this.cancelFade();
-        this.setInteractive(false);
         this.win.setOpacity(this.appearance.opacity);
         if (!this.win.isVisible()) this.win.showInactive();
+        // 细缝也要"可见即可点"：按真实光标位置决定是否接收鼠标
+        this.syncHitFromCursor();
         return;
       }
       this.fadeOut();
       return;
     }
 
-    this.setInteractive(true);
     if (!this.win.isVisible()) {
       // 窗口位置由固定包围盒决定（applyWindowLayout），这里只负责显示 + 透明度
       this.cancelFade();
       this.win.setOpacity(this.appearance.opacity);
       this.win.showInactive();
-      return;
     }
+    // 命中一律按"真实光标是否落在岛上"决定：**绝不**整块固定包围盒吃鼠标，
+    // 否则岛一旦弹出，屏幕上方就会有一块看不见却点不动的区域。
+    this.syncHitFromCursor();
   }
 
   /**
@@ -814,7 +830,12 @@ class IslandController {
     this.fadeToken += 1;
   }
 
-  /** 展开态允许聚焦（用于"点击屏幕任意处收起"），其余时间不抢焦点 */
+  /**
+   * 展开态允许聚焦（用于"点击屏幕任意处收起"），其余时间不抢焦点。
+   *
+   * 注意：这个开关本身就是 Windows 上那次"假失焦"的来源（见 blur 处理器注释），
+   * 因此收起时的判断不能只依赖 blur，必须结合指针位置。
+   */
   private applyFocusable(): void {
     if (!this.win || this.win.isDestroyed()) return;
     const shouldFocus = this.state.mode === 'expanded';
@@ -937,9 +958,15 @@ class IslandController {
    * 一旦"展开 → 收起"后转发丢失，窗口会永远停在穿透状态 —— 用户看到的就是
    * "点开了再收起，就再也点不开了"。
    */
-  setInteractive(interactive: boolean): void {
+  setInteractive(interactive: boolean, source = '未知'): void {
     if (this.interactive === interactive) return;
     this.interactive = interactive;
+    logger.info(
+      `灵动岛：鼠标命中=${interactive}（来自${source}）mode=${this.state.mode} ` +
+        `窗口可见=${this.win?.isVisible() ?? false} 岛体矩形=${
+          this.hitRect ? `${Math.round(this.hitRect.width)}x${Math.round(this.hitRect.height)}` : '无'
+        }`,
+    );
     if (!this.win || this.win.isDestroyed()) return;
     // forward: true 让窗口在"忽略鼠标"时仍把 mousemove 转发给渲染进程，
     // 这样渲染进程才能发现指针进入岛体并重新打开命中。
@@ -973,33 +1000,63 @@ class IslandController {
     this.syncHitFromCursor();
   }
 
+  /**
+   * 光标相对窗口左上角的本地坐标（CSS px / DIP，与渲染进程上报的岛体矩形同一坐标系）。
+   * 冒烟里用 `setHitTestCursor` 注入，真实场景读系统光标。
+   */
+  private cursorLocal(): { x: number; y: number } | null {
+    if (!this.win || this.win.isDestroyed()) return null;
+    const bounds = this.win.getBounds();
+    const point = this.cursorOverride ?? screen.getCursorScreenPoint();
+    return { x: point.x - bounds.x, y: point.y - bounds.y };
+  }
+
+  /** 本地坐标是否落在岛体矩形内（含 2px 容差） */
+  private isInsideHitRect(local: { x: number; y: number } | null): boolean {
+    const rect = this.hitRect;
+    if (!local || !rect) return false;
+    const margin = 2;
+    return (
+      local.x >= rect.x - margin &&
+      local.x <= rect.x + rect.width + margin &&
+      local.y >= rect.y - margin &&
+      local.y <= rect.y + rect.height + margin
+    );
+  }
+
+  /**
+   * 指针当前是否落在岛体（卡片）上。
+   *
+   * 用途：区分"用户点了屏幕别处"和"展开自身引发的激活抖动" —— 两者都会让窗口失焦，
+   * 但只有前者会把指针留在岛外。岛是置顶窗口，用户点到岛上时点击必然落在岛上，
+   * 因此"指针还在岛上却收到 blur"一定是系统/程序造成的假失焦，此时绝不能收起
+   * （否则表现为「点了没反应 / 点开又立刻缩回胶囊」）。
+   */
+  private isCursorOnIsland(): boolean {
+    if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) return false;
+    return this.isInsideHitRect(this.cursorLocal());
+  }
+
   /** 按光标位置校正命中（不依赖渲染进程是否收到 mousemove） */
   private syncHitFromCursor(): void {
     if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) {
-      this.setInteractive(false);
+      this.setInteractive(false, '窗口不可见');
       return;
     }
-    const rect = this.hitRect;
-    if (!rect) {
-      this.setInteractive(false);
+    // 完全隐藏（含淡出过程中）：一律不再接收鼠标，避免窗口在消失的几百毫秒里吞掉桌面点击。
+    // 空闲细缝态（idleSliver）是"可见即可点"，不走这条。
+    if (this.state.mode === 'hidden' && !this.appearance.idleSliver) {
+      this.setInteractive(false, '隐藏态');
       return;
     }
-    const bounds = this.win.getBounds();
-    const point = this.cursorOverride ?? screen.getCursorScreenPoint();
-    const localX = point.x - bounds.x;
-    const localY = point.y - bounds.y;
-    const margin = 2;
-    const inside =
-      localX >= rect.x - margin &&
-      localX <= rect.x + rect.width + margin &&
-      localY >= rect.y - margin &&
-      localY <= rect.y + rect.height + margin;
-    this.setInteractive(inside);
+    this.setInteractive(this.isInsideHitRect(this.cursorLocal()), '光标轮询');
   }
 
   private startHitPoll(): void {
     if (this.hitTimer) return;
-    this.hitTimer = setInterval(() => this.syncHitFromCursor(), 120);
+    // 60ms：渲染进程的 mousemove 转发在 Windows 上并不可靠，这里是命中的**权威来源**，
+    // 间隔必须足够小，否则"指针移上胶囊后立刻点击"会因窗口还没接收鼠标而点空（用户反馈过）。
+    this.hitTimer = setInterval(() => this.syncHitFromCursor(), 60);
     // 定时器不应拖住进程退出
     this.hitTimer.unref?.();
   }
@@ -1162,9 +1219,12 @@ export function registerIslandIpc(): void {
 
   ipcMain.handle('island:get-appearance', () => island.getAppearance());
 
-  // 渲染进程命中测试结果 → 切换窗口是否接收鼠标
+  // 渲染进程命中测试结果 → **只用于立刻打开命中**（比 60ms 轮询更快）。
+  // 关闭命中一律由主进程按真实光标决定：两边都下发 true/false 会互相覆盖，
+  // 窗口在"接收/穿透"之间抖动，用户点下去时可能正好穿透（表现为"点了没反应"）。
   ipcMain.on('island:set-interactive', (_event, interactive: boolean) => {
-    island.setInteractive(interactive === true);
+    if (interactive !== true) return;
+    island.setInteractive(true, '渲染进程');
   });
 
   // 渲染进程上报岛体矩形 → 主进程按光标位置做命中兜底（不依赖 mousemove 转发）

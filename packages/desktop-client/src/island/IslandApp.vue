@@ -341,7 +341,12 @@ let lastPointer: { x: number; y: number } | null = null;
 /** 最近一次上报给主进程的岛体矩形（去重 + 限流，避免形变期间刷屏 IPC 拖慢渲染） */
 let lastHitRectKey: string | null = null;
 let lastHitRectAt = 0;
-const HIT_RECT_MIN_INTERVAL_MS = 100;
+/**
+ * 岛体矩形上报的最小间隔：主进程按它做命中判定，限流太大就会在形变结束后留下
+ * 一段"矩形比实际卡片大"的死区（那段时间窗口会吃掉看不见区域的点击）。
+ * 50ms 既不会刷爆 IPC，也能让死区短到无感。
+ */
+const HIT_RECT_MIN_INTERVAL_MS = 50;
 let hitRectTrailingTimer: number | null = null;
 
 /** 把岛体矩形上报给主进程：主进程按光标位置兜底校正命中（不依赖 mousemove 转发） */
@@ -378,6 +383,14 @@ function reportHitRect(rect: DOMRect | null): void {
   }, HIT_RECT_MIN_INTERVAL_MS);
 }
 
+/**
+ * 命中测试：把"指针在岛上"告诉主进程（照搬 WinIsland 的 set_cursor_hittest 思路）。
+ *
+ * **只上报 true**：窗口关闭命中一律由主进程按真实光标位置（60ms 轮询）决定。
+ * 为什么不能两边都下发：渲染进程与主进程的几何不可能逐帧一致（弹簧形变 + 岛体矩形上报限流），
+ * 两边都下发 true/false 时会互相覆盖，窗口就在"接收鼠标 / 穿透"之间来回抖动 ——
+ * 用户点下去时窗口恰好处于穿透态，表现就是**点了没反应**（实测日志里 true/false 每几毫秒翻转一次）。
+ */
 function updateInteractive(clientX: number, clientY: number): void {
   lastPointer = { x: clientX, y: clientY };
   const node = document.querySelector('.island-card') as HTMLElement | null;
@@ -391,9 +404,15 @@ function updateInteractive(clientX: number, clientY: number): void {
       clientY >= rect.top - margin &&
       clientY <= rect.bottom + margin;
   }
-  if (inside === lastInteractive) return;
-  lastInteractive = inside;
-  bridge?.setInteractive?.(inside);
+  if (!inside) {
+    // 离开岛体不做任何下发：交给主进程轮询关闭；这里只复位本地标记，
+    // 保证下次指针进入时能立刻重新打开命中（不必等下一次轮询）。
+    lastInteractive = false;
+    return;
+  }
+  if (lastInteractive === true) return;
+  lastInteractive = true;
+  bridge?.setInteractive?.(true);
 }
 
 /**
@@ -406,16 +425,15 @@ function updateInteractive(clientX: number, clientY: number): void {
  *
  * 另外这里会把当前岛体矩形上报主进程（`setHitRect`）：即使 Windows 下 mousemove 转发丢失，
  * 主进程也能按光标位置把命中校正回来 —— 这是"点开→收起→再也点不开"的兜底修复。
+ * 注意：关闭命中（穿透）不由这里下发，见 updateInteractive 的说明。
  */
 function refreshInteractive(): void {
   const node = document.querySelector('.island-card') as HTMLElement | null;
   const fullyHidden = state.value?.mode === 'hidden' && !appearance.value.idleSliver;
   reportHitRect(node && !fullyHidden ? node.getBoundingClientRect() : null);
   if (fullyHidden) {
-    if (lastInteractive !== false) {
-      lastInteractive = false;
-      bridge?.setInteractive?.(false);
-    }
+    // 完全隐藏：本地复位即可（不下发关闭，窗口隐藏后由主进程轮询兜底关掉命中）
+    lastInteractive = false;
     return;
   }
   if (!lastPointer) return;
