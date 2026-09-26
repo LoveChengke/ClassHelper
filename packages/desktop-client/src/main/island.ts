@@ -143,6 +143,12 @@ class IslandController {
   private explicitShowId: string | null = null;
   /** 预览示例岛的自动收尾定时器 */
   private previewTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 渲染进程最近一次心跳/存活信号（用于发现"卡死的幽灵窗口"） */
+  private lastAliveAt = 0;
+  /** 正在重建窗口（避免并发重建） */
+  private recovering = false;
+  /** 最近的窗口重建时刻（限流用） */
+  private recoverAt: number[] = [];
 
   private state: IslandState = {
     mode: 'hidden',
@@ -252,6 +258,25 @@ class IslandController {
     });
 
     this.win = win;
+    this.lastAliveAt = Date.now();
+
+    /**
+     * 渲染进程没了/卡了时的自愈：隐藏死窗口（避免留下"幽灵胶囊"）并重建窗口。
+     * 三种触发：进程崩溃、系统判定无响应、心跳超时（见 checkRendererAlive）。
+     */
+    win.webContents.on('render-process-gone', (_event, details) => {
+      logger.error(
+        `灵动岛渲染进程已退出（reason=${details.reason} exitCode=${details.exitCode}），开始重建窗口`,
+      );
+      this.recoverWindow('渲染进程退出');
+    });
+    win.webContents.on('unresponsive', () => {
+      logger.warn('灵动岛渲染进程无响应（等待心跳恢复，超时将重建窗口）');
+    });
+    win.webContents.on('responsive', () => {
+      logger.info('灵动岛渲染进程已恢复响应');
+      this.lastAliveAt = Date.now();
+    });
 
     // 开发/冒烟时把灵动岛渲染进程的日志转发到主进程，便于排查"窗口空白"之类问题
     win.webContents.on('console-message', (...args) => {
@@ -316,13 +341,46 @@ class IslandController {
   }
 
   /**
+   * 同一条消息**可能经由两条广播链路到达**：服务端 `createCall` 既发 `notification:new`
+   * （班级房间）又发 `call:new`（学生/班级 user 房间），两条 DTO 的 id 相同、
+   * 只有"是否叫人"的语义不同。后到的那条绝不能把已有的"叫人"降级成普通通知 ——
+   * 否则胶囊显示成"新消息"、上课时段还会被当成普通通知隐藏（用户实测截图：
+   * 叫人胶囊写着"新消息 / 系统管理员 · 点击查看"）。
+   *
+   * 合并规则：类型取更特殊的（call 优先），优先级取更高的（URGENT > HIGH > NORMAL）。
+   */
+  private mergeNotification(
+    existing: IslandNotification | null,
+    incoming: IslandNotification,
+  ): IslandNotification {
+    if (!existing || existing.id !== incoming.id) return incoming;
+    const kind = existing.kind === 'call' || incoming.kind === 'call' ? 'call' : incoming.kind;
+    const rank: Record<IslandNotification['priority'], number> = {
+      LOW: 0,
+      NORMAL: 1,
+      HIGH: 2,
+      URGENT: 3,
+    };
+    const priority = rank[incoming.priority] >= rank[existing.priority] ? incoming.priority : existing.priority;
+    return { ...incoming, kind, priority };
+  }
+
+  /** 找到同 id 的已知消息（正在展示的或队列里的） */
+  private findKnownNotification(id: string): IslandNotification | null {
+    if (this.state.active?.id === id) return this.state.active;
+    return this.state.queued.find((item) => item.id === id) ?? null;
+  }
+
+  /**
    * 收到一条消息。
    * - 紧急（含紧急叫人）：立刻展开（无视上课时段）
    * - 预览（设置页"预览效果"）：直接展开，且不因失焦收起
    * - 上课中：普通通知进队列并保持隐藏；**叫人**仍以胶囊形式可见（可点开、不自动展开）
    * - 其它：显示"新消息/新作业/叫人"胶囊，等待点击展开
    */
-  pushNotification(notification: IslandNotification, context: IslandPushContext = {}): void {
+  pushNotification(raw: IslandNotification, context: IslandPushContext = {}): void {
+    // 同一 id 的第二条链路（通知/叫人双播）：合并而不是覆盖，保住"叫人/紧急"语义
+    const notification = this.mergeNotification(this.findKnownNotification(raw.id), raw);
     const inClass = context.inClass ?? this.state.inClass;
     this.state.inClass = inClass;
     if (context.currentPeriodEnd !== undefined)
@@ -769,10 +827,14 @@ class IslandController {
       return;
     }
 
-    if (!this.win.isVisible()) {
-      // 窗口位置由固定包围盒决定（applyWindowLayout），这里只负责显示 + 透明度
-      this.cancelFade();
+    // 岛应该可见：**必须**先取消可能还在跑的淡出 —— 否则那次淡出会继续把透明度降到 0
+    // 并 hide() 掉窗口，造成"状态是胶囊/展开、窗口却被隐藏"的错位（岛看着在、点不动或直接消失）。
+    this.cancelFade();
+    if (this.win.getOpacity() !== this.appearance.opacity) {
       this.win.setOpacity(this.appearance.opacity);
+    }
+    if (!this.win.isVisible()) {
+      // 窗口位置由固定包围盒决定（applyWindowLayout），这里只负责显示
       this.win.showInactive();
     }
     // 命中一律按"真实光标是否落在岛上"决定：**绝不**整块固定包围盒吃鼠标，
@@ -1011,9 +1073,43 @@ class IslandController {
     return { x: point.x - bounds.x, y: point.y - bounds.y };
   }
 
+  /**
+   * 岛体矩形：优先用渲染进程上报的真实几何；渲染进程还没上报时用**主进程按当前形态算出的
+   * 目标矩形**兜底 —— 否则会出现"岛明明可见、窗口却一直不接收鼠标（点了没反应）"这种死局。
+   */
+  private effectiveHitRect(): { x: number; y: number; width: number; height: number } | null {
+    return this.hitRect ?? this.expectedHitRect();
+  }
+
+  /** 按当前形态/停靠位置算出岛体目标矩形（窗口内 CSS px），仅作兜底 */
+  private expectedHitRect(): { x: number; y: number; width: number; height: number } {
+    let size = SIZES.pill;
+    if (this.state.mode === 'expanded') {
+      size =
+        this.state.active?.kind === 'call'
+          ? CALL_SIZE
+          : this.state.active?.priority === 'URGENT'
+            ? URGENT_SIZE
+            : SIZES.expanded;
+    } else if (this.state.mode === 'hidden' && this.appearance.idleSliver) {
+      size = SLIVER_SIZE;
+    }
+    const pad = ISLAND_SHADOW_PAD;
+    const position = this.appearance.position;
+    const width = Math.round(BBOX_SIZE.width);
+    const height = Math.round(BBOX_SIZE.height);
+    const x = position.endsWith('left')
+      ? pad
+      : position.endsWith('right')
+        ? width - pad - size.width
+        : Math.round((width - size.width) / 2);
+    const y = position.startsWith('bottom') ? height - pad - size.height : pad;
+    return { x, y, width: size.width, height: size.height };
+  }
+
   /** 本地坐标是否落在岛体矩形内（含 2px 容差） */
   private isInsideHitRect(local: { x: number; y: number } | null): boolean {
-    const rect = this.hitRect;
+    const rect = this.effectiveHitRect();
     if (!local || !rect) return false;
     const margin = 2;
     return (
@@ -1056,7 +1152,10 @@ class IslandController {
     if (this.hitTimer) return;
     // 60ms：渲染进程的 mousemove 转发在 Windows 上并不可靠，这里是命中的**权威来源**，
     // 间隔必须足够小，否则"指针移上胶囊后立刻点击"会因窗口还没接收鼠标而点空（用户反馈过）。
-    this.hitTimer = setInterval(() => this.syncHitFromCursor(), 60);
+    this.hitTimer = setInterval(() => {
+      this.syncHitFromCursor();
+      this.checkRendererAlive();
+    }, 60);
     // 定时器不应拖住进程退出
     this.hitTimer.unref?.();
   }
@@ -1065,6 +1164,79 @@ class IslandController {
     if (!this.hitTimer) return;
     clearInterval(this.hitTimer);
     this.hitTimer = null;
+  }
+
+  /** 渲染进程心跳（渲染进程每隔几秒上报一次） */
+  noteRendererAlive(): void {
+    this.lastAliveAt = Date.now();
+  }
+
+  /**
+   * 心跳检查：岛可见（非隐藏态）却长时间收不到渲染进程心跳 → 判定渲染进程卡死，
+   * 隐藏死窗口并重建。这是"幽灵胶囊（看着在、点不动）"的兜底自愈。
+   */
+  private checkRendererAlive(): void {
+    if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) return;
+    if (this.state.mode === 'hidden' && !this.appearance.idleSliver) return;
+    if (Date.now() - this.lastAliveAt <= RENDERER_ALIVE_TIMEOUT_MS) return;
+    logger.error(
+      `灵动岛渲染进程超过 ${Math.round(RENDERER_ALIVE_TIMEOUT_MS / 1000)}s 没有心跳（疑似卡死），重建窗口`,
+    );
+    this.lastAliveAt = Date.now(); // 先重置，避免 60ms 轮询里重复触发
+    this.recoverWindow('心跳超时');
+  }
+
+  /**
+   * 重建灵动岛窗口（渲染进程崩溃/卡死后的自愈）。
+   *
+   * 关键：先把**窗口隐藏**，否则 Windows 会保留最后一帧 —— 用户看到"岛还挂在屏幕上，
+   * 但怎么点都没反应"。随后销毁旧窗口并重新 init（状态与外观会重新下发）。
+   * 限流：10 分钟内最多重建 RECOVER_MAX_TIMES 次，超出则暂停并隐藏，避免无限重建。
+   */
+  private recoverWindow(reason: string): void {
+    if (this.recovering) return;
+    const now = Date.now();
+    this.recoverAt = this.recoverAt.filter((at) => now - at < RECOVER_WINDOW_MS);
+    if (this.recoverAt.length >= RECOVER_MAX_TIMES) {
+      logger.error(`灵动岛已连续重建 ${RECOVER_MAX_TIMES} 次（${reason}），暂停自动恢复并隐藏窗口`);
+      this.hideImmediately();
+      return;
+    }
+    this.recoverAt.push(now);
+    this.recovering = true;
+    // 1) 立刻隐藏死窗口：不然屏幕上会留一帧"点不动的幽灵胶囊"
+    try {
+      this.setInteractive(false, '重建窗口');
+      this.win?.hide();
+    } catch {
+      // 忽略：窗口可能已销毁
+    }
+    // 2) 销毁旧窗口并重建
+    const old = this.win;
+    this.win = null;
+    this.ready = false;
+    try {
+      if (old && !old.isDestroyed()) old.destroy();
+    } catch {
+      // 忽略
+    }
+    void this.init(this.rendererUrl)
+      .then(() => {
+        // 新窗口是 show:false 创建的，必须按当前状态同步一次可见性/命中
+        this.syncWindow();
+        logger.info(`灵动岛窗口已重建（${reason}），状态与外观已重新下发`);
+      })
+      .catch((error) => {
+        logger.error(`灵动岛窗口重建失败：${(error as Error).message}`);
+      })
+      .finally(() => {
+        this.recovering = false;
+      });
+  }
+
+  /** 当前是否在重建窗口（供冒烟验证） */
+  isRecovering(): boolean {
+    return this.recovering;
   }
 
   /** 当前是否接收鼠标（供冒烟验证） */
@@ -1179,6 +1351,18 @@ const BLUR_GRACE_MS = 500;
 /** 设置页"预览效果"的示例岛停留时长（到点自动收尾，避免一直挂在桌面上） */
 const PREVIEW_DURATION_MS = 30_000;
 
+/**
+ * 渲染进程心跳（渲染进程每 5s 上报一次）：超过这个时间没上报就认为它已经卡死/不响应。
+ * 岛是"无边框透明置顶窗口"，渲染进程一旦挂掉，Windows 会把**最后一帧留在屏幕上**
+ * 形成"幽灵胶囊"：窗口还在、看着正常，但怎么点都没反应（实测复现：崩掉渲染进程后
+ * 点击完全不产生任何动作）。所以必须有心跳 + 重建来兜底。
+ */
+const RENDERER_ALIVE_INTERVAL_MS = 5_000;
+const RENDERER_ALIVE_TIMEOUT_MS = 20_000;
+/** 窗口重建限流：一段时间内最多重建几次，避免持续崩坏时无限重建 */
+const RECOVER_MAX_TIMES = 3;
+const RECOVER_WINDOW_MS = 10 * 60_000;
+
 interface Bounds {
   x: number;
   y: number;
@@ -1209,6 +1393,11 @@ export function registerIslandIpc(): void {
   ipcMain.on('island:class-state', (_event, payload: IslandClassStatePayload) => {
     if (!payload) return;
     island.setClassState(payload);
+  });
+
+  // 渲染进程心跳：用于发现"幽灵窗口"（渲染进程卡死但窗口还留在屏幕上，点了没反应）
+  ipcMain.on('island:alive', () => {
+    island.noteRendererAlive();
   });
 
   ipcMain.handle('island:get-state', () => island.getState());

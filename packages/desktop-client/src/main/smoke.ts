@@ -2077,13 +2077,35 @@ async function runIslandChecks(
 
   // 10.8) 空闲细缝（参考 WinIsland hidden_width）：开启后空闲留一条细缝，来消息再展开
   const sliver = getSliverSize();
+  /**
+   * 等岛体几何收敛到目标尺寸（不等固定时长）。
+   * 原因：Windows 有时会把置顶透明小窗判定为"被遮挡/后台"，Chromium 会把 rAF 压到 1 帧/秒
+   * （实测打包版细缝态出现过 1.1fps），此时形变会明显变慢；渲染进程 1.2s 后会自动 snap 到目标，
+   * 所以这里轮询等待即可，固定 sleep 会误判成"细缝尺寸不对"。
+   */
+  const waitIslandSize = async (
+    target: { width: number; height: number },
+    timeoutMs = 4000,
+  ): Promise<{ width: number; height: number } | null> => {
+    const deadline = Date.now() + timeoutMs;
+    let last: { width: number; height: number } | null = null;
+    while (Date.now() < deadline) {
+      last = (await readIslandGeometry())?.island ?? null;
+      if (last && Math.abs(last.width - target.width) <= 1 && Math.abs(last.height - target.height) <= 1) {
+        return last;
+      }
+      await sleep(120);
+    }
+    return last;
+  };
   island.setAppearance({ ...appearanceBefore, idleSliver: true });
   await drainIsland();
-  await sleep(420);
-  const sliverBounds = (await readIslandGeometry())?.island ?? null;
+  const sliverBounds = await waitIslandSize(sliver);
   island.pushNotification(makeNotification('smoke-sliver', 'NORMAL', '空闲细缝校验'), { inClass: false });
-  await sleep(700);
-  const afterSliverNotification = (await readIslandGeometry())?.island ?? null;
+  const afterSliverNotification = await waitIslandSize({
+    width: island.getAppearance().width,
+    height: island.getAppearance().height,
+  });
   record(
     '空闲细缝：空闲缩为细缝、来消息自动展开（WinIsland hidden_width）',
     Math.abs((sliverBounds?.width ?? 0) - sliver.width) <= 1 &&
@@ -2247,6 +2269,75 @@ async function runIslandChecks(
   );
 
   island.setAppearance(appearanceBefore);
+  await sleep(300);
+
+  // 4.12) 同一条消息的"双广播"不能把"叫人"降级成普通通知。
+  //       服务端 createCall 既发 notification:new（班级房间）又发 call:new（user 房间），
+  //       两条 DTO 同 id；后到的那条若直接覆盖，胶囊会显示成"新消息"（用户实测截图正是如此），
+  //       紧急叫人还会被降级成"课中只排队、不立即展开"。
+  const mergeCallId = 'smoke-call-merge';
+  island.pushNotification(
+    { ...makeNotification(mergeCallId, 'HIGH', '请 王小明 同学找 张老师'), kind: 'call' },
+    { inClass: false },
+  );
+  await sleep(250);
+  island.pushNotification(makeNotification(mergeCallId, 'HIGH', '请 王小明 同学找 张老师'), {
+    inClass: false,
+  });
+  await sleep(450);
+  const mergedCall = island.getState();
+  record(
+    '双广播（叫人 + 通知）不降级：同 id 合并后仍按"叫人"处理',
+    mergedCall.active?.id === mergeCallId && mergedCall.active?.kind === 'call' && mergedCall.mode === 'pill',
+    `mode=${mergedCall.mode} kind=${mergedCall.active?.kind ?? '-'} priority=${mergedCall.active?.priority ?? '-'}`,
+  );
+  const mergeUrgentId = 'smoke-call-merge-urgent';
+  island.pushNotification(makeNotification(mergeUrgentId, 'NORMAL', '请 王小明 同学找 张老师'), {
+    inClass: true,
+  });
+  await sleep(250);
+  island.pushNotification(
+    { ...makeNotification(mergeUrgentId, 'URGENT', '请 王小明 同学找 张老师'), kind: 'call' },
+    { inClass: true },
+  );
+  await sleep(450);
+  const mergedUrgent = island.getState();
+  record(
+    '紧急叫人双广播：合并后仍 URGENT 立即展开（课中不被降级为暂存）',
+    mergedUrgent.active?.id === mergeUrgentId &&
+      mergedUrgent.mode === 'expanded' &&
+      mergedUrgent.active?.priority === 'URGENT',
+    `mode=${mergedUrgent.mode} priority=${mergedUrgent.active?.priority ?? '-'} kind=${mergedUrgent.active?.kind ?? '-'}`,
+  );
+  island.setClassState({ inClass: false, currentPeriodEnd: null });
+  island.handleAction({ action: 'dismiss' });
+  await sleep(300);
+
+  // 4.13) 渲染进程崩溃自愈：岛窗口绝不能变成"屏幕上一帧点不动的幽灵胶囊"。
+  //       真实现象（本机实测）：崩掉岛渲染进程后，Windows 保留最后一帧 —— 胶囊看着还在，
+  //       窗口也还在，但点击全部丢失（主进程日志里再无"收到用户动作"）。
+  //       这里断言主进程会隐藏死窗口并重建，重建后状态回来了、也能重新命中。
+  island.pushNotification(makeNotification('smoke-renderer-recover', 'NORMAL', '渲染进程自愈'), {
+    inClass: false,
+  });
+  await sleep(500);
+  const windowBeforeCrash = island.getWindow();
+  islandWindow?.webContents.forcefullyCrashRenderer();
+  await sleep(3000);
+  const windowAfterCrash = island.getWindow();
+  const recovered = island.isReady() && Boolean(windowAfterCrash) && windowAfterCrash !== windowBeforeCrash;
+  island.setHitTestCursor(islandCardScreenPoint(0.5, 0.5));
+  await sleep(250);
+  const recoveredInteractive = island.getInteractive();
+  const recoveredState = island.getState();
+  record(
+    '渲染进程崩溃后自愈（隐藏死窗口 + 重建 + 恢复命中，不再留"点不动的幽灵胶囊"）',
+    recovered && recoveredInteractive && recoveredState.mode === 'pill',
+    `窗口已重建=${windowAfterCrash !== windowBeforeCrash} ready=${island.isReady()} ` +
+      `mode=${recoveredState.mode} 命中=${recoveredInteractive}`,
+  );
+  island.setHitTestCursor(null);
+  island.handleAction({ action: 'dismiss' });
   await sleep(300);
 
   // 收尾：隐藏灵动岛，避免影响后续用例

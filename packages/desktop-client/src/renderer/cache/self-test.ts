@@ -573,7 +573,9 @@ export async function scheduleTimelineSelfTest(): Promise<SmokeCheckResult> {
       ok,
       detail:
         `卡片=${dom.count} 进行中=${dom.hasCurrent} 进度条=${dom.hasProgress} 倒计时=${countdown} ` +
-        `已结束=${hasPast} 下一节=${hasNext} 大时钟=${dom.clock} 摘要="${dom.headline}"`,
+        `已结束=${hasPast} 下一节=${hasNext} 大时钟=${dom.clock} 摘要="${dom.headline}"` +
+        // 失败时能看出"到底渲染了哪几节、各自什么状态"，否则只看到"已结束=false"无法定位
+        ` 卡片状态=[${dom.tags.map((tag) => `${tag.state}:${tag.text.slice(0, 24)}`).join(' | ')}]`,
     };
   } catch (error) {
     return { ok: false, detail: `时间轴自检异常：${error instanceof Error ? error.message : String(error)}` };

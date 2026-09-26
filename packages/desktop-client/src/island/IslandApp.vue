@@ -213,6 +213,10 @@ const progress = ref(0);
 
 let rafHandle: number | null = null;
 let lastFrameAt = 0;
+/** 形变兜底定时器：rAF 被系统限流时用它 snap 到目标几何（见 startFrameLoop） */
+let morphFallbackTimer: number | null = null;
+/** 兜底等待时长：正常形变约 300~500ms，超出这个时间说明帧被限流了 */
+const MORPH_FALLBACK_MS = 1200;
 
 function syncTargets(snap = false): void {
   const size = targetSize();
@@ -237,6 +241,24 @@ function syncTargets(snap = false): void {
 function startFrameLoop(): void {
   if (rafHandle !== null) return;
   lastFrameAt = performance.now();
+  // 形变兜底：某些情况下（Windows 把置顶透明小窗判定为"被遮挡/后台"、GPU 进程刚重启等）
+  // requestAnimationFrame 会被 Chromium 压到 1 帧/秒 —— 实测打包版细缝态出现过 1.1fps。
+  // 那种情况下"点击后形变"看起来就是**没反应**（用户反馈的"点不动"）。因此这里挂一个定时器，
+  // 到点若还没收敛就直接 snap 到目标几何：宁可少一段动画，也不能让点击看上去无效。
+  if (morphFallbackTimer !== null) window.clearTimeout(morphFallbackTimer);
+  morphFallbackTimer = window.setTimeout(() => {
+    morphFallbackTimer = null;
+    if (rafHandle === null) return; // 已经收敛
+    if (rafHandle !== null) window.cancelAnimationFrame(rafHandle);
+    rafHandle = null;
+    const size = targetSize();
+    springs.width.snap(size.width);
+    springs.height.snap(size.height);
+    springs.radius.snap(targetRadius(size));
+    morph.value = { width: size.width, height: size.height, radius: springs.radius.value };
+    progress.value = mode.value === 'expanded' ? 1 : 0;
+    refreshInteractive();
+  }, MORPH_FALLBACK_MS);
   const frame = (now: number): void => {
     const delta = now - lastFrameAt;
     lastFrameAt = now;
@@ -270,6 +292,10 @@ function startFrameLoop(): void {
     springs.radius.snap(targetRadius(size));
     morph.value = { width: size.width, height: size.height, radius: springs.radius.value };
     progress.value = mode.value === 'expanded' ? 1 : 0;
+    if (morphFallbackTimer !== null) {
+      window.clearTimeout(morphFallbackTimer);
+      morphFallbackTimer = null;
+    }
     refreshInteractive();
     rafHandle = null;
   };
@@ -457,6 +483,10 @@ function applyAppearance(next: IslandAppearance | null | undefined): void {
 
 onMounted(async () => {
   window.addEventListener('mousemove', (event) => updateInteractive(event.clientX, event.clientY));
+  // 心跳：主进程据此判断本渲染进程是否还活着。一旦卡死/崩溃，主进程会隐藏这扇"幽灵窗口"
+  // 并重建（否则 Windows 会把最后一帧留在屏幕上：岛看着还在，怎么点都没反应）。
+  bridge?.alive?.();
+  window.setInterval(() => bridge?.alive?.(), 5000);
   bridge?.onState((next) => {
     state.value = next;
     syncTargets();

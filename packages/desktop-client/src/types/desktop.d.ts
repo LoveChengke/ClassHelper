@@ -97,6 +97,8 @@ export interface IslandRendererBridge {
   setInteractive(interactive: boolean): void;
   /** 上报岛体矩形（窗口内 CSS px）：主进程据此按光标位置兜底校正命中 */
   setHitRect(rect: { x: number; y: number; width: number; height: number } | null): void;
+  /** 心跳：主进程据此发现"渲染进程卡死的幽灵窗口"（岛还在屏幕上但点不动）并重建窗口 */
+  alive(): void;
 }
 
 declare global {
