@@ -1,0 +1,55 @@
+# ---------------------------------------------------------------------------
+# 班级小助手 · 服务端 systemd 单元（Linux）
+#
+# 这是**模板**：deploy/install-linux.sh 会把 __NODE__ / __DIR__ / __USER__ 替换成真实值后
+# 安装到 /etc/systemd/system/classhelper.service。手动部署时直接改这三处即可：
+#
+#   sudo sed -e 's#__NODE__#/usr/bin/node#' \
+#            -e 's#__DIR__#/opt/classhelper#' \
+#            -e 's#__USER__#classhelper#' \
+#            deploy/classhelper.service | sudo tee /etc/systemd/system/classhelper.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now classhelper
+#
+# 常用命令：
+#   systemctl status classhelper
+#   journalctl -u classhelper -f          # 实时日志
+#   systemctl restart classhelper         # 重启（改完 .env 需要）
+# ---------------------------------------------------------------------------
+
+[Unit]
+Description=ClassHelper Server (班级小助手服务端)
+Documentation=file://__DIR__/README.txt
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__DIR__
+# .env 由服务端自己从 WorkingDirectory 加载（工作目录即安装根目录）
+ExecStart=__NODE__ server/dist/index.js
+Environment=NODE_ENV=production
+
+Restart=always
+RestartSec=3
+# Socket.IO 长连接较多：提高文件描述符上限
+LimitNOFILE=65535
+# 优雅退出：给在途请求与 websocket 收尾时间
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# 日志进 journald：journalctl -u classhelper
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=classhelper
+
+# 基础加固（服务只需要读程序、写 data/logs）
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=__DIR__/data __DIR__/logs
+
+[Install]
+WantedBy=multi-user.target

@@ -43,8 +43,14 @@
 | **学生客户端单文件版**          | `packages/desktop-client/release/班级小助手-0.1.0-x64-portable.exe`（106.9 MB） | 免安装直接运行（U 盘分发）                                                                   |
 | Web 管理端（PWA）               | 由服务端在 `/` 直接托管                                                         | 浏览器打开即用，可在 Edge/Chrome 中「安装为应用」；**已适配手机小屏**（1Panel 风格抽屉导航） |
 
-生产部署（Windows 安装包 / Docker + MySQL / 手动部署）请看
-**[docs/production.md](docs/production.md)**。
+生产部署请看 **[docs/production.md](docs/production.md)**，四种形态按场景选：
+
+| 场景                                | 形态                                                            | 入口                                                                                   |
+| ----------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| 学校机房 / 教师电脑（Windows 单机） | Windows 服务端安装程序（内置 Node，双击即用）                   | `release-server/班级小助手服务端-0.1.0-x64-setup.exe`                                  |
+| 云服务器 / 多终共享（推荐长期方案） | Docker Compose + MySQL                                          | `deploy/Dockerfile`、`deploy/docker-compose.yml`                                       |
+| **已有 Linux 服务器**               | **systemd + SQLite 一键脚本（含 Nginx 反代与 WebSocket 配置）** | `sudo bash deploy/install-linux.sh`（先 `--check` 体检）、`deploy/classhelper.service` |
+| 自定义 / 已有 Node 环境             | 手动部署免安装目录                                              | `pnpm dist:server` → `release-server/classhelper-server/`                              |
 
 ## 目录结构
 
@@ -64,8 +70,11 @@ class-helper/
 │   ├── nsis/server-installer.nsi# 安装程序脚本模板
 │   └── ui-smoke/                # Web 管理端 UI 真实点击回归测试（Electron 驱动 + 上课时段探针）
 ├── deploy/                      # 生产部署：Dockerfile / docker-compose.yml / nginx.conf
+│   ├── install-linux.sh          # Linux 一键部署（systemd + SQLite，含 .env 生成与就绪探针）
+│   ├── classhelper.service       # systemd 单元模板（脚本会替换 __NODE__/__DIR__/__USER__）
+│   └── package.runtime.json      # 运行时依赖清单（安装包 / 容器 / Linux 部署共用）
 ├── docs/
-│   ├── production.md            # 生产部署指南（三种形态 + 运维 + 安全清单）
+│   ├── production.md            # 生产部署指南（四种形态 + Linux systemd + 运维 + 安全清单）
 │   └── mysql.md                 # MySQL 切换指南
 └── packages/
     ├── shared/                  # 三端共享：类型契约、常量、工具函数
@@ -1070,15 +1079,15 @@ pnpm db:migrate && pnpm db:seed
 
 当前实测：
 
-| 验证                                                                                                                                                                      | 结果                                |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                                                                                                               | **163/163** ✅                      |
-| `pnpm verify:web`（Web 管理端真实点击 + 权限入口隐藏 + 手机适配 + 叫人 + 成绩/时间配置导入 + 教师录入 + 统一科目 + PWA）                                                  | **27/27** ✅                        |
-| `pnpm verify:desktop`（客户端冒烟 + WinIsland 架构/连续圆角/收起常驻 + 命中兜底与"展开收起再展开" + 作业看板全屏自适应 + 登录页无示例 + 个性化全参数 + 托盘与退出无残留） | **77/77** ✅（离线复跑 69/69）      |
-| `pnpm verify:packaged`（对 `release/win-unpacked` 与 `D:\class\@classhelperdesktop-client` 实测）                                                                         | **77/77**，`packaged: true` ✅      |
-| `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                                                                                                                      | 全部通过 ✅                         |
-| 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）                                                                                                                        | 通过 ✅                             |
-| Docker / Nginx 部署样例                                                                                                                                                   | 文件已提供，本机无 Docker 未实测 ⚠️ |
+| 验证                                                                                                                                                                      | 结果                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `pnpm verify:e2e`（开发环境与**安装后的生产实例**各跑一次）                                                                                                               | **163/163** ✅                                                     |
+| `pnpm verify:web`（Web 管理端真实点击 + 权限入口隐藏 + 手机适配 + 叫人 + 成绩/时间配置导入 + 教师录入 + 统一科目 + PWA）                                                  | **27/27** ✅                                                       |
+| `pnpm verify:desktop`（客户端冒烟 + WinIsland 架构/连续圆角/收起常驻 + 命中兜底与"展开收起再展开" + 作业看板全屏自适应 + 登录页无示例 + 个性化全参数 + 托盘与退出无残留） | **77/77** ✅（离线复跑 69/69）                                     |
+| `pnpm verify:packaged`（对 `release/win-unpacked` 与 `D:\class\@classhelperdesktop-client` 实测）                                                                         | **77/77**，`packaged: true` ✅                                     |
+| `pnpm typecheck` / `pnpm lint` / `pnpm format:check`                                                                                                                      | 全部通过 ✅                                                        |
+| 安装程序完整生命周期（静默安装 → 启停脚本 → 卸载）                                                                                                                        | 通过 ✅                                                            |
+| Docker / Nginx 部署样例                                                                                                                                                   | 文件已提供（含 Linux systemd 脚本），本机无 Docker/Linux 未实测 ⚠️ |
 
 ## 常见问题（本机环境已知坑）
 
@@ -1150,18 +1159,18 @@ pnpm db:migrate && pnpm db:seed
 
 ## 交付清单（阶段 7 · 生产化）
 
-| 路径                                                | 说明                                                             |
-| --------------------------------------------------- | ---------------------------------------------------------------- |
-| `scripts/dist-server.mjs`                           | 服务端 + Web 端打包（内置 Node、依赖、迁移、启停脚本、安装程序） |
-| `scripts/nsis/server-installer.nsi`                 | NSIS 安装程序模板（安装/快捷方式/开机自启/卸载保留数据）         |
-| `scripts/generate-icons.mjs` + `scripts/icons/`     | 图标生成（Electron 渲染 SVG → PNG/ICO）                          |
-| `scripts/ui-smoke/`                                 | Web 管理端 UI 真实点击回归测试                                   |
-| `packages/server/src/middleware/security.ts`        | helmet + 限流（通用/登录）+ 请求耗时日志                         |
-| `packages/server/src/lib/web-static.ts`             | Web 管理端静态托管 + SPA 回退 + 缓存策略                         |
-| `packages/server/src/lib/db-bootstrap.ts`           | 首启动自动迁移 + 自动创建管理员                                  |
-| `packages/web-admin/public/{manifest,sw.js}`        | PWA：可安装为应用 + 离线外壳                                     |
-| `deploy/{Dockerfile,docker-compose.yml,nginx.conf}` | 云部署与 HTTPS 反代样例                                          |
-| `docs/production.md`                                | 生产部署指南（三种形态 + 运维 + 安全清单 + 故障排查）            |
+| 路径                                                | 说明                                                                                          |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `scripts/dist-server.mjs`                           | 服务端 + Web 端打包（内置 Node、依赖、迁移、启停脚本、安装程序）                              |
+| `scripts/nsis/server-installer.nsi`                 | NSIS 安装程序模板（安装/快捷方式/开机自启/卸载保留数据）                                      |
+| `scripts/generate-icons.mjs` + `scripts/icons/`     | 图标生成（Electron 渲染 SVG → PNG/ICO）                                                       |
+| `scripts/ui-smoke/`                                 | Web 管理端 UI 真实点击回归测试                                                                |
+| `packages/server/src/middleware/security.ts`        | helmet + 限流（通用/登录）+ 请求耗时日志                                                      |
+| `packages/server/src/lib/web-static.ts`             | Web 管理端静态托管 + SPA 回退 + 缓存策略                                                      |
+| `packages/server/src/lib/db-bootstrap.ts`           | 首启动自动迁移 + 自动创建管理员                                                               |
+| `packages/web-admin/public/{manifest,sw.js}`        | PWA：可安装为应用 + 离线外壳                                                                  |
+| `deploy/{Dockerfile,docker-compose.yml,nginx.conf}` | 云部署与 HTTPS 反代样例                                                                       |
+| `docs/production.md`                                | 生产部署指南（Windows / Docker+MySQL / **Linux systemd** / 手动，含运维、安全清单与故障排查） |
 
 阶段 8（灵动岛 + 上课时段策略）新增文件：
 

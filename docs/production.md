@@ -2,11 +2,12 @@
 
 本文档覆盖三种上线形态，按适用场景选择：
 
-| 形态                  | 适用场景                                     | 产物                                                   | 本机验证情况                           |
-| --------------------- | -------------------------------------------- | ------------------------------------------------------ | -------------------------------------- |
-| **A. Windows 安装包** | 学校机房、教师办公电脑（单机即完整系统）     | `release-server/班级小助手服务端-<版本>-x64-setup.exe` | ✅ 已完整实测（静默安装/启停/卸载/UI） |
-| **B. Docker + MySQL** | 云服务器、多终端共享一套数据（推荐长期方案） | `deploy/Dockerfile` + `deploy/docker-compose.yml`      | ⚠️ 文件已提供，本机无 Docker 未实测    |
-| **C. 手动部署**       | 已有 Node 环境的服务器、需要自定义           | `pnpm dist:server` 的免安装目录                        | ✅ 免安装目录已实测（54 项端到端）     |
+| 形态                  | 适用场景                                     | 产物                                                     | 本机验证情况                           |
+| --------------------- | -------------------------------------------- | -------------------------------------------------------- | -------------------------------------- |
+| **A. Windows 安装包** | 学校机房、教师办公电脑（单机即完整系统）     | `release-server/班级小助手服务端-<版本>-x64-setup.exe`   | ✅ 已完整实测（静默安装/启停/卸载/UI） |
+| **B. Docker + MySQL** | 云服务器、多终端共享一套数据（推荐长期方案） | `deploy/Dockerfile` + `deploy/docker-compose.yml`        | ⚠️ 文件已提供，本机无 Docker 未实测    |
+| **C. Linux 原生部署** | 已有 Linux 服务器（systemd + SQLite）        | `deploy/install-linux.sh` + `deploy/classhelper.service` | ⚠️ 脚本已提供，本机无 Linux 未实测     |
+| **D. 手动部署**       | 已有 Node 环境的服务器、需要自定义           | `pnpm dist:server` 的免安装目录                          | ✅ 免安装目录已实测（163 项端到端）    |
 
 ---
 
@@ -126,7 +127,153 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 
 ---
 
-## 三、手动部署（形态 C）
+## 三、Linux 原生部署（形态 C，systemd + SQLite）
+
+适用：Ubuntu / Debian / CentOS / Rocky 等有 systemd 的服务器，单机跑一套（SQLite），
+用 Nginx 挂 HTTPS 给校内网/公网访问。
+
+### 3.1 一键脚本（推荐）
+
+在**仓库根目录**先构建，然后执行脚本（需要 root）：
+
+```bash
+# 1) 构建（Node ≥ 20.19，推荐 22 LTS；目标机没有 pnpm 时可在别的机器上构建后拷仓库过来）
+corepack enable && corepack prepare pnpm@11.8.0 --activate
+pnpm install
+pnpm build:shared
+pnpm --filter @classhelper/server build
+pnpm --filter @classhelper/web-admin build
+
+# 2) 安装成 systemd 服务
+sudo bash deploy/install-linux.sh                     # 默认端口 4000、目录 /opt/classhelper
+# 常用变体：
+#   bash deploy/install-linux.sh --check               # 只体检（不需要 root）：校验构建产物/Node/端口探针
+#   sudo bash deploy/install-linux.sh --port 8080
+#   sudo bash deploy/install-linux.sh --dir /srv/classhelper
+#   sudo bash deploy/install-linux.sh --no-service     # 只铺文件，自己托管进程
+#   sudo bash deploy/install-linux.sh --uninstall      # 停服务并移除 unit（保留 data 与 .env）
+```
+
+> 建议先跑一次 `--check`：它只读地校验"构建产物齐不齐、Node 版本够不够、目标端口上有没有旧实例"，
+> 不需要 root，也不会改任何东西。输出示例见 `deploy/install-linux.sh` 头部注释。
+
+脚本做的事：建系统用户 `classhelper` → 把后端产物、`prisma/migrations`、Web 管理端拷到
+`/opt/classhelper` → `npm install --omit=dev`（清单就是 `deploy/package.runtime.json`，与
+容器运行时同一份）→ 生成 `.env`（随机 `JWT_SECRET`、`AUTO_MIGRATE=true`）→ 装 systemd unit →
+`enable --now` → 轮询 `/healthz` 就绪后打印地址与初始管理员。
+
+安装后的目录（与已验证的 Windows 免安装目录同构，因此 `.env` 里的相对路径语义一致）：
+
+```
+/opt/classhelper/
+├── .env                  全部配置（权限 600）
+├── server/dist           后端程序（入口 index.js）
+├── server/prisma         迁移 SQL（首启动自动执行）
+├── web/                  Web 管理端（后端托管，单端口）
+├── node_modules/         仅生产依赖
+├── data/                 classhelper.db + server.pid（备份只复制这里）
+└── logs/
+```
+
+首次启动会自动建表并创建管理员 `admin / admin123`（**登录后立刻改密码**）。
+
+### 3.2 手动部署（不想用脚本 / 没有 systemd）
+
+等价的手工步骤，便于排查：
+
+```bash
+sudo useradd --system --shell /usr/sbin/nologin classhelper
+sudo mkdir -p /opt/classhelper/{server,web,data,logs}
+
+# 程序产物
+sudo cp -R packages/server/dist        /opt/classhelper/server/dist
+sudo cp -R packages/server/prisma      /opt/classhelper/server/prisma
+sudo cp -R packages/web-admin/dist     /opt/classhelper/web
+sudo cp deploy/package.runtime.json    /opt/classhelper/package.json
+
+# 生产依赖 + 工作区共享包
+cd /opt/classhelper && sudo npm install --omit=dev --no-audit --no-fund
+sudo mkdir -p /opt/classhelper/node_modules/@classhelper/shared
+sudo cp -R packages/shared/dist         /opt/classhelper/node_modules/@classhelper/shared/dist
+sudo cp packages/shared/package.json    /opt/classhelper/node_modules/@classhelper/shared/package.json
+
+# 配置（参考脚本生成的 .env，务必自己生成 JWT_SECRET）
+sudo tee /opt/classhelper/.env >/dev/null <<'EOF'
+NODE_ENV=production
+HOST=0.0.0.0
+PORT=4000
+DATABASE_PROVIDER=sqlite
+DATABASE_URL="file:../data/classhelper.db"
+AUTO_MIGRATE=true
+JWT_SECRET=换成 openssl rand -hex 48 的输出
+JWT_EXPIRES_IN=7d
+CORS_ORIGIN=https://class.example.com
+TRUST_PROXY=1
+RATE_LIMIT_ENABLED=true
+STARTUP_DB_CHECK=true
+PID_FILE=../data/server.pid
+LOG_LEVEL=info
+EOF
+
+sudo chown -R classhelper:classhelper /opt/classhelper/{data,logs,node_modules} /opt/classhelper/.env
+sudo chmod 600 /opt/classhelper/.env
+
+# systemd
+sudo sed -e 's#__NODE__#/usr/bin/node#' -e 's#__DIR__#/opt/classhelper#' -e 's#__USER__#classhelper#' \
+  deploy/classhelper.service | sudo tee /etc/systemd/system/classhelper.service
+sudo systemctl daemon-reload && sudo systemctl enable --now classhelper
+systemctl status classhelper --no-pager
+```
+
+也可以用 PM2 之类托管（`pm2 start /opt/classhelper/server/dist/index.js --name classhelper`），
+但 systemd 更省心：`Restart=always`、日志进 journald、开机自启一次配好。
+
+### 3.3 Nginx + HTTPS
+
+```bash
+sudo cp deploy/nginx.conf /etc/nginx/conf.d/classhelper.conf
+sudo nano /etc/nginx/conf.d/classhelper.conf     # 改 server_name 与证书路径
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+`deploy/nginx.conf` 已经处理了最容易踩的两点：`/socket.io/` 的 WebSocket 升级头，
+以及 `X-Forwarded-For/X-Forwarded-Proto` 透传（配合 `.env` 里 `TRUST_PROXY=1`，限流才会按真实 IP 统计）。
+用 certbot 签证书：
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d class.example.com
+```
+
+### 3.4 升级 / 备份 / 排障
+
+升级（不会动 `.env`，JWT 密钥不变，学生端不用重新登录）：
+
+```bash
+git pull && pnpm install
+pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build
+sudo bash deploy/install-linux.sh        # 覆盖程序文件 + 自动补迁移（AUTO_MIGRATE）
+journalctl -u classhelper -n 30 --no-pager
+```
+
+| 事项     | 命令                                                                                                       |
+| -------- | ---------------------------------------------------------------------------------------------------------- |
+| 备份     | `systemctl stop classhelper && cp -a /opt/classhelper/data /root/classhelper-data-$(date +%F)`（然后启动） |
+| 恢复     | 停服务 → 用备份覆盖 `data/` → 启动                                                                         |
+| 看日志   | `journalctl -u classhelper -f`                                                                             |
+| 重启     | `systemctl restart classhelper`（改 `.env` 后必须重启）                                                    |
+| 探针     | `curl -s localhost:4000/healthz` / `/readyz`（就绪 200，数据库不可用 503）                                 |
+| 换端口   | 改 `.env` 的 `PORT` → 重启；同时改 Nginx 的 `upstream`                                                     |
+| 换数据库 | 见 `docs/mysql.md`：切 provider + 装 `@prisma/adapter-mariadb` + `npx prisma migrate deploy`               |
+
+> 注意：本机（开发环境）是 Windows 且无 Docker/WSL 发行版，因此 **3.1 的脚本没有在 Linux 实机跑过**。
+> 它复用的两套东西都已验证：Windows 免安装目录（同样的目录结构、`.env` 相对路径与
+> `AUTO_MIGRATE` 首启动行为）和 `deploy/Dockerfile` 的 runtime 阶段（同样的依赖清单与产物布局）。
+> 首次在服务器上执行后请按 3.4 的探针 + Web 登录 + `pnpm verify:e2e`（把 `VERIFY_BASE_URL` 指向服务器）确认。
+
+---
+
+## 四、手动部署（形态 D）
 
 ```bash
 pnpm install
@@ -140,7 +287,7 @@ pnpm dist:server -- --reuse-deps      # 得到 release-server/classhelper-server
 
 ```cmd
 start.cmd      :: Windows
-# 或直接：node server/dist/index.js   （Linux/macOS 用系统 node）
+# 或直接：node server/dist/index.js   （Linux/macOS 用系统 node，见上面的形态 C）
 ```
 
 数据库初始化二选一：
@@ -150,7 +297,7 @@ start.cmd      :: Windows
 
 ---
 
-## 四、环境变量清单
+## 五、环境变量清单
 
 | 变量                                                | 默认                   | 说明                                                      |
 | --------------------------------------------------- | ---------------------- | --------------------------------------------------------- |
@@ -168,15 +315,17 @@ start.cmd      :: Windows
 | `PID_FILE`                                          | —                      | PID 文件路径（安装包启停脚本依赖），相对 `server` 根      |
 | `WEB_DIST_DIR`                                      | 自动探测               | Web 管理端产物目录（`../web-admin/dist` 或 `./web`）      |
 | `LOG_LEVEL`                                         | `info`                 | `debug` / `info` / `warn` / `error`                       |
-| `DEFAULT_STUDENT_PASSWORD`                          | `123456`               | 新增学生的默认密码                                        |
+| `DEFAULT_STUDENT_PASSWORD`                          | `123456`               | 新增/重置学生账号的默认密码                               |
+| `DEFAULT_CLASS_PASSWORD`                            | `123456`               | 新建班级时班级账号（学生端登录）的默认密码                |
+| `DEFAULT_TEACHER_PASSWORD`                          | `123456`               | 新增/重置教师账号的默认密码（管理员录入教师用）           |
 | `TERM_START_DATE`                                   | —                      | 第 1 教学周的周一，用于"当前周次"与课表默认视图           |
 | `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` | `admin` / `admin123`   | 空库首启动创建的管理员                                    |
 
 ---
 
-## 五、运维
+## 六、运维
 
-### 5.1 探针与监控
+### 6.1 探针与监控
 
 | 端点          | 用途                                                 |
 | ------------- | ---------------------------------------------------- |
@@ -184,22 +333,22 @@ start.cmd      :: Windows
 | `/readyz`     | 就绪探针：数据库可连才 200，否则 503（负载均衡摘流） |
 | `/api/health` | 详情：环境、数据库、已挂载模块、运行时长             |
 
-### 5.2 日志
+### 6.2 日志
 
 - 输出到 stdout/stderr，安装包形态由启停脚本重定向到 `logs\server.log`（UTF-8）。
 - 访问日志含方法、路径、状态码与耗时；5xx 记 error、4xx 记 warn。
 - 容器形态建议交给 Docker 日志驱动或采集到 ELK/Loki。
 
-### 5.3 备份与恢复
+### 6.3 备份与恢复
 
-| 形态   | 备份                                                   | 恢复                     |
-| ------ | ------------------------------------------------------ | ------------------------ |
-| SQLite | 停止服务后复制 `data/classhelper.db`                   | 替换该文件后启动         |
-| MySQL  | `mysqldump -u classhelper -p classhelper > backup.sql` | `mysql ... < backup.sql` |
+| 形态   | 备份                                                                   | 恢复                     |
+| ------ | ---------------------------------------------------------------------- | ------------------------ |
+| SQLite | 停止服务后复制 `data/classhelper.db`（Linux：`/opt/classhelper/data`） | 替换该文件后启动         |
+| MySQL  | `mysqldump -u classhelper -p classhelper > backup.sql`                 | `mysql ... < backup.sql` |
 
 建议：每日自动备份 + 保留 7 份；变更 `JWT_SECRET` 会导致所有用户重新登录，请勿在无必要时更换。
 
-### 5.4 安全清单（上线前逐项确认）
+### 6.4 安全清单（上线前逐项确认）
 
 - [ ] 修改 `admin` 与教师账号的默认密码
 - [ ] `JWT_SECRET` 使用随机值（≥48 字节），且妥善保管
@@ -212,7 +361,7 @@ start.cmd      :: Windows
 
 ---
 
-## 六、故障排查
+## 七、故障排查
 
 | 现象                                        | 排查方向                                                                                                                                                                                                       |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -226,10 +375,14 @@ start.cmd      :: Windows
 | 升级后需要重新登录                          | 说明 `.env` 被覆盖（JWT 密钥变化）；覆盖安装应保留 `.env`，请检查安装目录权限                                                                                                                                  |
 | 报 `does not provide an export named ...`   | 安装包内的 `node_modules/@classhelper/shared/dist` 是旧构建（打包机没有先构建 shared）。重新执行 `pnpm dist:server`，该脚本会先构建 shared/server/web 并校验产物新鲜度                                         |
 | 报 `node.exe` 不是有效应用 / 服务启动即退出 | 安装包内置的 `node.exe` 被误打成 Electron 可执行文件（打包机在 Electron 宿主里跑 pnpm 时会取到 `process.execPath`）。已由 `scripts/lib/node-runtime.mjs` 修正；可用 `install\node.exe -v` 确认能打印 Node 版本 |
+| **Linux**：`systemctl start` 后立刻退出     | `journalctl -u classhelper -n 50`；常见原因：`.env` 里 `JWT_SECRET` 为空/太短、`node` 路径在 unit 里不对（脚本用 `command -v node` 的结果）、`data/` 不可写（`chown classhelper:classhelper`）                 |
+| **Linux**：403/500 且日志提示 `EACCES`      | `ProtectSystem=full` 下服务只能写 `ReadWritePaths`；若自定义了数据目录，记得同步改 unit 里的这两项                                                                                                             |
+| **Linux**：`npm install` 报网络/代理错误    | 目标机需要能访问 npm registry；离线环境可在别的机器 `npm install --omit=dev` 后把整个 `node_modules` 一起拷过去                                                                                                |
+| **Linux**：SQLite 提示 `database is locked` | 同一数据库文件只允许一个服务实例；确认没有重复启动（`systemctl status` + `pgrep -af 'server/dist/index.js'`），需要并发就换 MySQL                                                                              |
 
 ---
 
-## 七、性能与容量参考
+## 八、性能与容量参考
 
 - 单机 SQLite 形态适合**单校规模**（数千用户、每天数百次写操作），实测 62 项接口与实时推送全部达标。
 - 多校区 / 高并发建议切 MySQL，并横向扩容服务端（Socket.IO 需要配置 Redis adapter 才能多实例广播，
