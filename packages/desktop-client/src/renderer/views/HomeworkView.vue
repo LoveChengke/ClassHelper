@@ -1,13 +1,26 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { SOCKET_EVENTS, formatDate, type HomeworkDto, type HomeworkSubmissionDto } from '@classhelper/shared';
-import { homeworkApi } from '../api/index.js';
+import {
+  HOMEWORK_PHRASE_DEFAULTS,
+  SOCKET_EVENTS,
+  dayKeyLocal,
+  formatDate,
+  isDayKey,
+  shiftDayKey,
+  type CourseDto,
+  type HomeworkDto,
+  type HomeworkSubmissionDto,
+} from '@classhelper/shared';
+import { courseApi, homeworkApi } from '../api/index.js';
 import { fetchWithCache } from '../cache/index.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useRealtimeStore } from '../stores/realtime.js';
 
+const route = useRoute();
+const router = useRouter();
 const appStore = useAppStore();
 const auth = useAuthStore();
 const realtime = useRealtimeStore();
@@ -17,45 +30,65 @@ const DEFAULT_BOARD = {
   mode: 'board' as 'board' | 'list',
   showTime: false,
   fontSize: 15,
-  todayOnly: true,
 };
 
 const loading = ref(false);
 const homeworks = ref<HomeworkDto[]>([]);
-const filter = ref<'all' | 'pending' | 'done'>('all');
 const fromCache = ref(false);
 const updatedAt = ref<number | null>(null);
 const detailVisible = ref(false);
 const current = ref<HomeworkDto | null>(null);
-const submitting = ref(false);
 
 const viewMode = ref<'board' | 'list'>(DEFAULT_BOARD.mode);
 const boardShowTime = ref(DEFAULT_BOARD.showTime);
 const boardFontSize = ref(DEFAULT_BOARD.fontSize);
-const todayOnly = ref(DEFAULT_BOARD.todayOnly);
 const savingBoard = ref(false);
 
 /** 全屏放大的科目（null = 未打开） */
 const fullscreenCourse = ref<string | null>(null);
 const fullscreenBoard = ref(false);
 
-/* ------------------------------------------------------------ 当天的判定 */
+/* ------------------------------------------------------------ 按天查看 */
 
-/** 本地"今天"的日期串（YYYY-MM-DD） */
-function localDayKey(value: string | Date): string {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+/**
+ * 当前查看的日期（YYYY-MM-DD，本地）：默认今天，可用日期选择器或前后一天切换。
+ * 支持 `?date=YYYY-MM-DD` 深链（冒烟测试与"直接打开某天的作业"都靠它）。
+ */
+const selectedDate = ref(
+  typeof route.query.date === 'string' && isDayKey(route.query.date)
+    ? route.query.date
+    : dayKeyLocal(new Date()),
+);
+/** 有作业的日期（日期选择器高亮）：来自 GET /homeworks/days */
+const dayMarks = ref<Map<string, number>>(new Map());
+/** 录入作业的科目下拉 */
+const courses = ref<CourseDto[]>([]);
+
+/** 选中的是否就是今天（标题与按钮文案用） */
+const isToday = computed(() => selectedDate.value === dayKeyLocal(now.value));
+
+/** 日期选择器：给有作业的日期加高亮类 */
+function dayCellClass(date: Date): string {
+  return dayMarks.value.has(dayKeyLocal(date)) ? 'day-has-homework' : '';
+}
+
+async function selectDate(value: string | null): Promise<void> {
+  if (!value || !isDayKey(value)) return;
+  selectedDate.value = value;
+  // 同步到地址栏：刷新/分享/冒烟测试都能落在同一天
+  await router.replace({ path: '/homeworks', query: { date: value } });
+  await loadHomework();
+}
+
+/** 前后一天（教室电脑上不用打开日历也能翻） */
+async function shiftDate(delta: number): Promise<void> {
+  await selectDate(shiftDayKey(selectedDate.value, delta));
 }
 
 /** 每分钟刷新一次"现在"，用于标题栏时钟与"今天"的判定 */
 const now = ref(new Date());
 let clockTimer: ReturnType<typeof setInterval> | null = null;
 
-const todayKey = computed(() => localDayKey(now.value));
 const todayText = computed(
   () =>
     `${now.value.getFullYear()} 年 ${now.value.getMonth() + 1} 月 ${now.value.getDate()} 日 ` +
@@ -63,20 +96,18 @@ const todayText = computed(
     `${String(now.value.getHours()).padStart(2, '0')}:${String(now.value.getMinutes()).padStart(2, '0')}`,
 );
 
-/** 按"今天"与完成状态过滤 */
-const filtered = computed(() => {
-  let list = homeworks.value;
-  if (todayOnly.value) list = list.filter((item) => localDayKey(item.createdAt) === todayKey.value);
-  if (filter.value === 'pending') return list.filter((item) => item.completed !== true);
-  if (filter.value === 'done') return list.filter((item) => item.completed === true);
-  return list;
+/**
+ * 列表内容 = 服务端按天返回的结果（`?date=`），因此这里不再做二次过滤。
+ *
+ * 注意："已完成"是老师端/通知中心的概念，客户端作业模块只做**展示 + 录入**，
+ * 因此这里没有任何完成状态相关的筛选与统计。
+ */
+const filtered = computed(() => homeworks.value);
+const selectedDayText = computed(() => {
+  if (isToday.value) return '今天';
+  const [year, month, day] = selectedDate.value.split('-');
+  return `${Number(year)} 年 ${Number(month)} 月 ${Number(day)} 日`;
 });
-
-const todayCount = computed(
-  () => homeworks.value.filter((item) => localDayKey(item.createdAt) === todayKey.value).length,
-);
-const pendingCount = computed(() => filtered.value.filter((item) => item.completed !== true).length);
-const doneCount = computed(() => filtered.value.filter((item) => item.completed === true).length);
 
 /**
  * 看板分组：按科目聚合成卡片（未关联课程的归到「其他」），
@@ -102,7 +133,6 @@ const COURSE_ORDER = [
 interface BoardColumn {
   course: string;
   items: HomeworkDto[];
-  pending: number;
 }
 
 const boardColumns = computed<BoardColumn[]>(() => {
@@ -116,7 +146,6 @@ const boardColumns = computed<BoardColumn[]>(() => {
   const columns: BoardColumn[] = [...groups.entries()].map(([course, items]) => ({
     course,
     items: [...items].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
-    pending: items.filter((item) => item.completed !== true).length,
   }));
   const rank = (name: string): number => {
     const index = COURSE_ORDER.findIndex((item) => name.includes(item));
@@ -241,16 +270,19 @@ async function loadHomework(): Promise<void> {
   loading.value = true;
   try {
     const classId = auth.classId ?? undefined;
+    const day = selectedDate.value;
+    // 缓存按"班级 + 日期"分键：翻到别的天不会串数据，离线也能看回看过的那些天
     const result = await fetchWithCache<HomeworkDto[]>(
       'homeworks',
-      'self',
-      () => homeworkApi.list(classId ? { classId } : undefined),
+      `${classId ?? 'self'}@${day}`,
+      () => homeworkApi.list(classId ? { classId, date: day } : { date: day }),
       [],
     );
     homeworks.value = result.data;
     fromCache.value = result.fromCache;
     updatedAt.value = result.updatedAt;
     if (!result.fromCache) appStore.markSynced();
+    void loadDayMarks(classId);
     if (current.value) {
       current.value = homeworks.value.find((item) => item.id === current.value?.id) ?? current.value;
     }
@@ -260,6 +292,28 @@ async function loadHomework(): Promise<void> {
   }
 }
 
+/**
+ * 拉取"哪些天有作业"（日期选择器高亮）。
+ *
+ * 范围取当前查看日期前后各 45 天：教室电脑上翻月份也能看到有作业的日子。
+ */
+async function loadDayMarks(classId: string | undefined): Promise<void> {
+  try {
+    const from = shiftDayKey(selectedDate.value, -45);
+    const to = shiftDayKey(selectedDate.value, 45);
+    const result = await homeworkApi.days({ classId, from, to });
+    dayMarks.value = new Map(result.days.map((item) => [item.date, item.count]));
+  } catch {
+    // 离线/失败时保留上一次的高亮，不打断展示
+  }
+}
+
+/** 科目下拉（录入作业时可选） */
+async function loadCourses(): Promise<void> {
+  if (!auth.classId) return;
+  courses.value = await courseApi.list(auth.classId).catch(() => []);
+}
+
 /** 读取看板偏好（主进程配置为单一事实来源） */
 async function loadBoardSettings(): Promise<void> {
   const config = await window.desktop?.getConfig?.();
@@ -267,7 +321,6 @@ async function loadBoardSettings(): Promise<void> {
   if (!saved) return;
   if (saved.mode === 'board' || saved.mode === 'list') viewMode.value = saved.mode;
   if (typeof saved.showTime === 'boolean') boardShowTime.value = saved.showTime;
-  if (typeof saved.todayOnly === 'boolean') todayOnly.value = saved.todayOnly;
   if (typeof saved.fontSize === 'number' && Number.isFinite(saved.fontSize)) {
     boardFontSize.value = Math.min(28, Math.max(11, Math.round(saved.fontSize)));
   }
@@ -282,7 +335,6 @@ async function saveBoardSettings(): Promise<void> {
         mode: viewMode.value,
         showTime: boardShowTime.value,
         fontSize: boardFontSize.value,
-        todayOnly: todayOnly.value,
       },
     });
     fitBoards();
@@ -308,31 +360,72 @@ function openBoardFullscreen(): void {
   fitBoards();
 }
 
-async function toggleComplete(item: HomeworkDto | null): Promise<void> {
-  if (!item) return;
-  if (appStore.offline) {
-    ElMessage.warning('离线状态下无法提交，请恢复网络后重试');
+/* ------------------------------------------------------------ 录入作业（教室机器） */
+
+const createVisible = ref(false);
+const createSaving = ref(false);
+/** 快捷短语：来自客户端本地配置（设置 → 作业录入可增删） */
+const phrases = ref<string[]>([...HOMEWORK_PHRASE_DEFAULTS]);
+/** 短语插入到哪个输入框：跟着最后一次聚焦的字段走 */
+const lastFocused = ref<'title' | 'content'>('content');
+const createForm = ref({ courseId: '', title: '', content: '' });
+
+async function loadPhrases(): Promise<void> {
+  const config = await window.desktop?.getConfig?.();
+  if (config?.homeworkPhrases) phrases.value = [...config.homeworkPhrases];
+}
+
+function openCreate(): void {
+  createForm.value = { courseId: '', title: '', content: '' };
+  lastFocused.value = 'content';
+  createVisible.value = true;
+}
+
+/** 点快捷短语：把词追加到当前字段末尾（空格分隔，避免连成一坨） */
+function insertPhrase(phrase: string): void {
+  const field = lastFocused.value;
+  const current = createForm.value[field];
+  const next = current.trim() ? `${current.trimEnd()} ${phrase}` : phrase;
+  createForm.value = { ...createForm.value, [field]: next };
+}
+
+async function submitCreate(): Promise<void> {
+  const classId = auth.classId;
+  if (!classId) {
+    ElMessage.error('当前会话没有班级信息，无法录入作业');
     return;
   }
-  submitting.value = true;
+  if (appStore.offline) {
+    ElMessage.warning('离线状态下无法录入作业，请恢复网络后重试');
+    return;
+  }
+  const title = createForm.value.title.trim();
+  const content = createForm.value.content.trim();
+  if (!title) {
+    ElMessage.warning('请填写作业标题');
+    return;
+  }
+  if (!content) {
+    ElMessage.warning('请填写作业要求');
+    return;
+  }
+
+  createSaving.value = true;
   try {
-    const next = item.completed !== true;
-    await homeworkApi.updateStatus(item.id, next);
-    item.completed = next;
-    if (item.homeworkStatus) item.homeworkStatus.completed = next;
-    else
-      item.homeworkStatus = {
-        id: `local-${item.id}`,
-        homeworkId: item.id,
-        userId: auth.user?.id ?? '',
-        completed: next,
-        updatedAt: new Date().toISOString(),
-      };
-    ElMessage.success(next ? '已标记为完成' : '已取消完成标记');
+    await homeworkApi.create({
+      classId,
+      courseId: createForm.value.courseId || null,
+      title,
+      content,
+      assignDate: selectedDate.value,
+    });
+    ElMessage.success(`已录入到 ${selectedDate.value}`);
+    createVisible.value = false;
+    await loadHomework();
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '提交失败');
+    ElMessage.error(error instanceof Error ? error.message : '录入失败');
   } finally {
-    submitting.value = false;
+    createSaving.value = false;
   }
 }
 
@@ -415,6 +508,8 @@ let resizeObserver: ResizeObserver | null = null;
 
 onMounted(async () => {
   await loadBoardSettings();
+  await loadPhrases();
+  await loadCourses();
   await loadHomework();
   clockTimer = setInterval(() => {
     now.value = new Date();
@@ -448,26 +543,30 @@ onUnmounted(() => {
       <div>
         <h2 class="page-title">我的作业</h2>
         <p class="page-subtitle">
-          今天 {{ todayCount }} 份 · 待完成 {{ pendingCount }} · 已完成 {{ doneCount }}
+          {{ selectedDayText }} · {{ filtered.length }} 份
           <el-tag v-if="fromCache" size="small" type="warning" effect="plain">离线缓存</el-tag>
         </p>
       </div>
       <div class="toolbar">
-        <el-switch
-          v-model="todayOnly"
-          active-text="只看今天"
-          inactive-text="全部日期"
-          @change="saveBoardSettings"
+        <el-button-group>
+          <el-button :icon="'ArrowLeft'" @click="shiftDate(-1)">前一天</el-button>
+          <el-button :disabled="isToday" @click="selectDate(dayKeyLocal(now))">今天</el-button>
+          <el-button @click="shiftDate(1)">后一天<el-icon class="ml-4"><ArrowRight /></el-icon></el-button>
+        </el-button-group>
+        <el-date-picker
+          :model-value="selectedDate"
+          type="date"
+          value-format="YYYY-MM-DD"
+          placeholder="选择日期"
+          class="day-picker"
+          :cell-class-name="dayCellClass"
+          @update:model-value="(value: string | null) => selectDate(value)"
         />
-        <el-radio-group v-model="filter">
-          <el-radio-button value="all">全部</el-radio-button>
-          <el-radio-button value="pending">未完成</el-radio-button>
-          <el-radio-button value="done">已完成</el-radio-button>
-        </el-radio-group>
         <el-radio-group v-model="viewMode" @change="saveBoardSettings">
           <el-radio-button value="board">看板</el-radio-button>
           <el-radio-button value="list">列表</el-radio-button>
         </el-radio-group>
+        <el-button type="primary" :icon="'Plus'" @click="openCreate">录入作业</el-button>
         <el-button :icon="'Refresh'" @click="loadHomework">刷新</el-button>
       </div>
     </div>
@@ -499,7 +598,7 @@ onUnmounted(() => {
     </el-card>
 
     <el-card v-loading="loading" shadow="never" class="homework-body">
-      <el-empty v-if="filtered.length === 0" description="今天没有作业" />
+      <el-empty v-if="filtered.length === 0" :description="`${selectedDayText}没有作业`" />
 
       <!-- 看板模式：按科目分卡片，点击卡片放大全屏、点击条目看详情 -->
       <div v-else-if="viewMode === 'board'" ref="boardHostRef" class="board-host">
@@ -508,19 +607,17 @@ onUnmounted(() => {
             v-for="column in boardColumns"
             :key="column.course"
             class="board-card"
-            :class="{ 'has-pending': column.pending > 0 }"
             @click="openCourseFullscreen(column)"
           >
             <header class="board-card-head">
               <span class="board-course">{{ column.course }}</span>
-              <span v-if="column.pending > 0" class="board-badge">{{ column.pending }}</span>
+              <span class="board-badge">{{ column.items.length }}</span>
             </header>
             <ol class="board-list">
               <li
                 v-for="(item, index) in column.items"
                 :key="item.id"
                 class="board-item"
-                :class="{ done: item.completed }"
                 @click.stop="openDetail(item)"
               >
                 <span class="board-index">{{ index + 1 }}.</span>
@@ -530,7 +627,6 @@ onUnmounted(() => {
                   <span v-if="item.content.trim()" class="board-content">{{ item.content }}</span>
                 </span>
                 <span v-if="boardShowTime" class="board-time">{{ formatDate(item.createdAt, true) }}</span>
-                <span v-if="item.completed" class="board-done-tag">已完成</span>
               </li>
             </ol>
             <footer class="board-card-foot">
@@ -543,35 +639,23 @@ onUnmounted(() => {
 
       <!-- 列表模式（默认表格视图） -->
       <el-table v-else :data="filtered" @row-click="openDetail">
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag :type="row.completed ? 'success' : 'info'" size="small" effect="light">
-              {{ row.completed ? '已完成' : '待完成' }}
-            </el-tag>
-          </template>
-        </el-table-column>
         <el-table-column prop="title" label="作业标题" min-width="200" show-overflow-tooltip />
         <el-table-column prop="content" label="作业要求" min-width="240" show-overflow-tooltip />
         <el-table-column label="课程" width="110">
           <template #default="{ row }">{{ row.course?.name ?? '-' }}</template>
         </el-table-column>
-        <el-table-column label="发布时间" width="170">
+        <el-table-column label="所属日期" width="120">
+          <template #default="{ row }">{{ row.assignDate }}</template>
+        </el-table-column>
+        <el-table-column label="录入时间" width="170">
           <template #default="{ row }">{{ formatDate(row.createdAt, true) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="130" fixed="right">
           <template #default="{ row }">
             <el-button v-if="auth.isClassSession" link type="primary" @click.stop="openSubmissions(row)">
               未交名单
             </el-button>
-            <el-button
-              v-else
-              link
-              :type="row.completed ? 'warning' : 'primary'"
-              :loading="submitting"
-              @click.stop="toggleComplete(row)"
-            >
-              {{ row.completed ? '取消完成' : '标记完成' }}
-            </el-button>
+            <el-button v-else link type="primary" @click.stop="openDetail(row)">查看</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -602,7 +686,6 @@ onUnmounted(() => {
             v-for="(item, index) in fullscreenItems"
             :key="item.id"
             class="board-item"
-            :class="{ done: item.completed }"
             @click="openDetail(item)"
           >
             <span class="board-index">{{ index + 1 }}.</span>
@@ -611,11 +694,10 @@ onUnmounted(() => {
               <span v-if="item.content.trim()" class="board-content">{{ item.content }}</span>
             </span>
             <span v-if="boardShowTime" class="board-time">{{ formatDate(item.createdAt, true) }}</span>
-            <span v-if="item.completed" class="board-done-tag">已完成</span>
           </li>
         </ol>
       </div>
-      <el-empty v-if="fullscreenItems.length === 0" description="该科目今天没有作业" />
+      <el-empty v-if="fullscreenItems.length === 0" :description="`该科目 ${selectedDayText}没有作业`" />
     </el-dialog>
 
     <!-- 全屏：整块看板放大 -->
@@ -639,14 +721,13 @@ onUnmounted(() => {
           <section v-for="column in boardColumns" :key="column.course" class="board-card">
             <header class="board-card-head">
               <span class="board-course">{{ column.course }}</span>
-              <span v-if="column.pending > 0" class="board-badge">{{ column.pending }}</span>
+              <span class="board-badge">{{ column.items.length }}</span>
             </header>
             <ol class="board-list">
               <li
                 v-for="(item, index) in column.items"
                 :key="item.id"
                 class="board-item"
-                :class="{ done: item.completed }"
                 @click="openDetail(item)"
               >
                 <span class="board-index">{{ index + 1 }}.</span>
@@ -660,6 +741,65 @@ onUnmounted(() => {
           </section>
         </div>
       </div>
+    </el-dialog>
+
+    <!-- 录入作业（教室机器）：快捷短语点一下就追加到标题/内容 -->
+    <el-dialog v-model="createVisible" title="录入作业" width="620px">
+      <el-form label-width="90px">
+        <el-form-item label="所属日期">
+          <el-date-picker
+            :model-value="selectedDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            :cell-class-name="dayCellClass"
+            @update:model-value="(value: string | null) => selectDate(value)"
+          />
+          <span class="text-muted ml-8">默认就是当前正在查看的这一天</span>
+        </el-form-item>
+        <el-form-item label="科目">
+          <el-select v-model="createForm.courseId" clearable placeholder="可不选" style="width: 220px">
+            <el-option v-for="item in courses" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="标题">
+          <el-input
+            v-model="createForm.title"
+            maxlength="120"
+            show-word-limit
+            placeholder="例如：第 3 课生字"
+            @focus="lastFocused = 'title'"
+          />
+        </el-form-item>
+        <el-form-item label="作业要求">
+          <el-input
+            v-model="createForm.content"
+            type="textarea"
+            :rows="3"
+            maxlength="5000"
+            placeholder="例如：P 12 大本，背诵第 3 段"
+            @focus="lastFocused = 'content'"
+          />
+        </el-form-item>
+        <el-form-item v-if="phrases.length > 0" label="快捷短语">
+          <div class="phrase-row">
+            <el-tag
+              v-for="item in phrases"
+              :key="item"
+              class="phrase-chip"
+              type="info"
+              effect="plain"
+              @click="insertPhrase(item)"
+            >
+              {{ item }}
+            </el-tag>
+            <span class="text-muted">点一下追加到「{{ lastFocused === 'title' ? '标题' : '作业要求' }}」</span>
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createVisible = false">取消</el-button>
+        <el-button type="primary" :loading="createSaving" @click="submitCreate">保存作业</el-button>
+      </template>
     </el-dialog>
 
     <!-- 未交名单：勾选谁没交（其余学生一律视为已交） -->
@@ -693,13 +833,9 @@ onUnmounted(() => {
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="课程">{{ current.course?.name ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="发布人">{{ current.creator?.name ?? '-' }}</el-descriptions-item>
-          <el-descriptions-item label="发布时间">
+          <el-descriptions-item label="所属日期">{{ current.assignDate }}</el-descriptions-item>
+          <el-descriptions-item label="录入时间">
             {{ formatDate(current.createdAt, true) }}
-          </el-descriptions-item>
-          <el-descriptions-item label="我的状态" :span="2">
-            <el-tag :type="current.completed ? 'success' : 'info'" size="small">
-              {{ current.completed ? '已完成' : '未完成' }}
-            </el-tag>
           </el-descriptions-item>
         </el-descriptions>
 
@@ -714,23 +850,9 @@ onUnmounted(() => {
           </el-button>
         </div>
 
-        <div class="mt-16">
-          <el-button
-            v-if="auth.isClassSession"
-            type="primary"
-            :disabled="appStore.offline"
-            @click="openSubmissions(current)"
-          >
+        <div v-if="auth.isClassSession" class="mt-16">
+          <el-button type="primary" :disabled="appStore.offline" @click="openSubmissions(current)">
             维护未交名单
-          </el-button>
-          <el-button
-            v-else
-            type="primary"
-            :loading="submitting"
-            :disabled="appStore.offline"
-            @click="toggleComplete(current)"
-          >
-            {{ current.completed ? '取消完成标记' : '标记为已完成' }}
           </el-button>
           <span v-if="appStore.offline" class="text-muted" style="margin-left: 10px">离线状态下不可提交</span>
         </div>
@@ -740,6 +862,35 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* 日期选择器：有作业的日子加一个圆点，翻月份时一眼看出哪天有作业 */
+:deep(.day-has-homework .el-date-table-cell__text)::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.day-picker {
+  width: 168px;
+}
+
+.phrase-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.phrase-chip {
+  cursor: pointer;
+  user-select: none;
+}
+
 .text-danger {
   color: #f56c6c;
 }
@@ -932,7 +1083,7 @@ onUnmounted(() => {
   color: #8e8e93;
 }
 
-.board-done-tag {
+.board-done-tag-unused {
   flex: 0 0 auto;
   font-size: calc(var(--board-font, 15px) * 0.66);
   color: #32d74b;

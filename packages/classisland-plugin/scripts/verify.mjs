@@ -274,6 +274,21 @@ check(
   mapperSource.includes('Subject.Fallback'),
 );
 check(
+  '上课时段暂存非主动通知（与客户端灵动岛同一套规则）',
+  providerSource.includes('_deferred') &&
+    providerSource.includes('IsImmediate') &&
+    providerSource.includes('FlushDeferred') &&
+    providerSource.includes('OnBreakingTime'),
+);
+check(
+  '主动通知（紧急 / 叫人）上课时段也立即弹',
+  providerSource.includes("\"call\"") && providerSource.includes('notification.Urgent'),
+);
+check(
+  '「上报课表」开关关闭时会在日志里说明（避免被当成"上报失败"）',
+  bridgeSource.includes('上报课表到班级小助手') && bridgeSource.includes('开关已关闭'),
+);
+check(
   '提醒轮询独立于上报间隔（老师发完通知不必等一个上报周期）',
   settingsSource.includes('NotificationPollSeconds') &&
     bridgeSource.includes('_notifyTimer') &&

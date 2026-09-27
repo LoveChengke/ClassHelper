@@ -103,6 +103,9 @@ public class PushNotificationDto
     [JsonPropertyName("speechContent")] public string? SpeechContent { get; set; }
     [JsonPropertyName("createdAt")] public string CreatedAt { get; set; } = "";
     [JsonPropertyName("urgent")] public bool Urgent { get; set; }
+
+    /// <summary>提醒类型：notification（默认）/ call（叫人，算"主动通知"，上课时段也立刻弹）</summary>
+    [JsonPropertyName("kind")] public string? Kind { get; set; }
     [JsonPropertyName("classId")] public string ClassId { get; set; } = "";
     [JsonPropertyName("className")] public string? ClassName { get; set; }
     [JsonPropertyName("teacherName")] public string? TeacherName { get; set; }

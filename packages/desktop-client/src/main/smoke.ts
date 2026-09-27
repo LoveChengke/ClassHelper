@@ -2209,6 +2209,38 @@ async function runIslandChecks(
     );
   }
   record('个性设置：停靠位置生效（6 个锚点）', positionOk, positionDetails.join(' '));
+
+  // 11.3b) 边距：左右/上下边距必须真的把岛挪走（用户反馈「调边距没反应」：
+  //        滑块在渲染层、定位在主进程，主进程没重跑就会出现「数字在变、岛不动」）
+  island.setAppearance({ ...appearanceBefore, position: 'top-left', marginX: 48, marginY: 40 });
+  await sleep(450);
+  const marginLeft = (await readIslandGeometry())?.island ?? null;
+  const marginLeftOk =
+    Boolean(marginLeft) &&
+    Math.abs((marginLeft as Electron.Rectangle).x - (workArea.x + 48)) <= 1 &&
+    Math.abs((marginLeft as Electron.Rectangle).y - (workArea.y + 40)) <= 1;
+
+  island.setAppearance({ ...appearanceBefore, position: 'top-right', marginX: 48, marginY: 8 });
+  await sleep(450);
+  const marginRight = (await readIslandGeometry())?.island ?? null;
+  const marginRightOk =
+    Boolean(marginRight) &&
+    Math.abs(
+      (marginRight as Electron.Rectangle).x +
+        (marginRight as Electron.Rectangle).width -
+        (workArea.x + workArea.width - 48),
+    ) <= 1;
+
+  record(
+    '个性设置：边距生效（左右 + 上下）',
+    marginLeftOk && marginRightOk,
+    'top-left(marginX=48,marginY=40)=' +
+      (marginLeft ? marginLeft.x + ',' + marginLeft.y : '-') +
+      (marginLeftOk ? '✓' : '✗') +
+      ' top-right(marginX=48)=' +
+      (marginRight ? marginRight.x + ',' + marginRight.y : '-') +
+      (marginRightOk ? '✓' : '✗'),
+  );
   island.setAppearance(appearanceBefore);
 
   // 11.4 置顶开关 → 窗口 alwaysOnTop
@@ -2557,10 +2589,10 @@ async function runSettingsPageChannelCheck(
          for (let i = 0; i < 40 && !group; i += 1) {
            await wait(100);
            group = Array.from(document.querySelectorAll('.el-card')).find((card) =>
-             (card.querySelector('.el-card__header')?.textContent ?? '').includes('通知显示位置'),
+             (card.querySelector('.el-card__header')?.textContent ?? '').includes('ClassIsland 联动'),
            );
          }
-         if (!group) return { ok: false, detail: '设置页没有「通知显示位置」卡片' };
+         if (!group) return { ok: false, detail: '设置页没有「ClassIsland 联动」卡片' };
          const radios = Array.from(group.querySelectorAll('.el-radio'));
           // 注意：这段脚本本身是外层模板字符串，里面不能再出现反引号（会截断外层字符串）
           if (radios.length < 3) return { ok: false, detail: '单选项只有 ' + radios.length + ' 个' };

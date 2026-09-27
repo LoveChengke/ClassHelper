@@ -163,6 +163,8 @@ model Homework {
   courseId      String?
   title         String
   content       String
+  /// 作业所属日期（YYYY-MM-DD，本地日期，不带时区）：客户端/Web 的按天查看与日期高亮都用它
+  assignDate    String   @default("")
   attachmentUrl String?
   /// 遗留字段：作业"截止时间"功能已下线（UI/接口均不再读写）。
   /// 保留列以免对已安装的库做破坏性迁移；新库该列恒为 null。
@@ -177,6 +179,7 @@ model Homework {
   statuses HomeworkStatus[]
 
   @@index([classId, createdAt])
+  @@index([classId, assignDate])
   @@index([courseId])
   @@index([dueAt])
 }
@@ -328,6 +331,8 @@ model ClassIslandPush {
   /// 语音朗读内容；null = 不朗读
   speechContent   String?
   urgent          Boolean @default(false)
+  /// 提醒类型：notification=通知类 / call=叫人（叫人算「主动通知」，上课时段也立刻弹）
+  kind            String  @default("notification")
   /// 发起人的用户 id（教师/管理员）
   createdBy String?
   /// 同时落库到通知中心的通知 id（saveToNotifications 时写入）

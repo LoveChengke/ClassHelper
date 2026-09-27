@@ -114,6 +114,17 @@ router.patch(
 );
 
 /**
+ * GET /api/classes/:id/classisland-status - 本班 ClassIsland 联动状态
+ *
+ * 教室机器（班级账号）也能读：客户端「设置 → ClassIsland 联动」据此显示"已接入 / 未接入"。
+ */
+router.get('/:id/classisland-status', validate({ params: idParamSchema }), async (req, res) => {
+  const user = getAuthUser(req);
+  const { id } = validatedParams<{ id: string }>(req);
+  sendOk(res, await classService.getClassIslandStatus(user, id), '获取联动状态成功');
+});
+
+/**
  * GET /api/classes/:id/notification-channel - 读取"通知显示到哪个端"
  *
  * 教室的班级客户端登录后会拉这个值，据此决定自己是弹窗/上岛还是静默；

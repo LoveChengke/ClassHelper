@@ -255,6 +255,18 @@ pnpm dist:classisland-plugin
     服务端据此决定是否推 ClassIsland（`shouldPushToClassIsland`）。改动这条链路要同时动三处：
     客户端设置页与本地配置、`lib/mappers` 的 DTO、服务端推送判断。
 
+16. **提醒分两类，决定"上课时段弹不弹"**：`ClassIslandPush.kind` = `notification`（通知类，上课时段
+    客户端与插件都**暂存**、下课补弹）/`call`（叫人，算「主动通知」，立刻弹）；`urgent` 同样立刻弹。
+    插件侧的实现在 `ClassHelperNotificationProvider`（`_deferred` + `FlushDeferred`，订阅课程事件），
+    客户端的实现在 `renderer/island/bridge.ts`。改这条规则要两端一起改。
+17. **作业按「所属日期」归类，不要用 createdAt 当"哪一天"**：`Homework.assignDate` 是本地日期
+    （`YYYY-MM-DD`，不带时区），按天查看 / 日期高亮 / 客户端"今天"都看它。
+    UTC 切片（`toISOString().slice(0,10)`）在晚上的录入会算到第二天 —— 统一用 `@classhelper/shared` 的
+    `dayKeyLocal / isDayKey / shiftDayKey`。新增按天接口时同样用 `?date=YYYY-MM-DD` + zod 的 `isDayKey` 校验。
+18. **教室机器能录入作业**：`POST /homeworks` 的路由**故意不加 `requireRole`**，权限在
+    `homeworks.service.createHomework` 里判（staff 或本班班级账号）。班级账号的 `sub` 是**班级 id**，
+    写 `createdBy` 前要换成该班班主任，否则撞 `User` 外键。
+
 ## 6. 代码风格
 
 - **TypeScript ESM + NodeNext**：`package.json` 全是 `"type": "module"`，相对导入**必须带 `.js` 后缀**
@@ -337,8 +349,20 @@ pnpm dist:classisland-plugin
     - 服务端"回执才算送达"，因此插件必须对**播放中的提醒按 id 去重**，否则轮询间隔 < 提醒时长时会反复弹；
     - `Subject.Fallback` 的名字就是 `???` 占位符，上报前要归一化成"没有科目"。
 
-18. **服务端改了代码要重启才生效**（`tsx src/index.ts` 不热载，`pnpm dev:server` 才有 watch）。
+18. **读 ClassIsland 控制台日志要用 GBK**：`.NET` 的控制台输出是**系统 ANSI（GBK）**编码，
+    用 `-Encoding UTF8` 读会变成乱码、**中文关键字一条都搜不到**（只能搜到 ASCII 的类名）。
+    正确姿势：`[System.IO.File]::ReadAllLines(path, [System.Text.Encoding]::GetEncoding(936))`；
+    日志文件被运行中的进程占用时先 `Copy-Item` 一份再读。
+19. **改插件设置要趁 ClassIsland 退出时改**：插件配置在 `F:\data\Config\Plugins\<id>\Settings.json`，
+    ClassIsland 运行时会在内存里持有并随时回写，运行中改文件会被覆盖。改完 DLL/设置都要重启 ClassIsland。
+20. **打包版服务端有生产自检**：`NODE_ENV=production` 时拒绝 `dev.db`（"生产环境仍在使用 dev.db"），
+    想用演示数据跑打包版就把库**复制**成 `data/classhelper.db` 再启动。
+21. **服务端改了代码要重启才生效**（`tsx src/index.ts` 不热载，`pnpm dev:server` 才有 watch）。
     验证脚本报「某个断言突然不对」时，先确认后端跑的是不是最新代码 —— 这个坑踩过一次。
+
+22. **灵动岛的位置由「屏幕工作区 + 边距」算，改边距默认值会改外观**：`appearance.marginX/marginY` 默认
+    必须与老行为一致（8px）—— `verify:desktop` 的「停靠位置生效（6 个锚点）」断言的是像素坐标，
+    默认值一动它就红（我先把 marginX 设成 16 踩过一次）。新增边距类设置请只改"可调范围"，别动默认值。
 
 ## 8. 交付前检查
 

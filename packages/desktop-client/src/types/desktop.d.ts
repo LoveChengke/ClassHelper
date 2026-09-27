@@ -17,8 +17,11 @@ export interface HomeworkBoardSettings {
   showTime: boolean;
   /** 看板字号（px） */
   fontSize: number;
-  /** 只看"今天布置"的作业（默认 true，避免昨天的过期作业混进来） */
-  todayOnly: boolean;
+  /**
+   * @deprecated 已由「按天查看 + 日期选择器」取代（作业页不再有"只看今天"开关）。
+   * 保留字段只为兼容旧配置文件，读写都忽略它。
+   */
+  todayOnly?: boolean;
 }
 
 export interface DesktopStoredConfig {
@@ -32,6 +35,11 @@ export interface DesktopStoredConfig {
   island: IslandAppearance;
   /** 作业页展示偏好（看板/列表、显示时间、看板字号） */
   homeworkBoard: HomeworkBoardSettings;
+  /**
+   * 作业录入的快捷短语（客户端「设置 → 作业录入」里增删，默认见 shared 的 HOMEWORK_PHRASE_DEFAULTS）。
+   * 录入作业时点一下就追加到标题/内容里，少打字（例如 P、大本、背诵）。
+   */
+  homeworkPhrases: string[];
   /**
    * 通知显示位置（both / client / classisland）。
    *

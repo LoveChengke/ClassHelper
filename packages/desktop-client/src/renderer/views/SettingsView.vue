@@ -6,6 +6,9 @@ import {
   CLASSISLAND_NOTIFICATION_CHANNEL_HINTS,
   CLASSISLAND_NOTIFICATION_CHANNEL_LABELS,
   CLASSISLAND_NOTIFICATION_CHANNELS,
+  HOMEWORK_PHRASE_DEFAULTS,
+  HOMEWORK_PHRASE_MAX_COUNT,
+  HOMEWORK_PHRASE_MAX_LENGTH,
   DEFAULT_ISLAND_APPEARANCE,
   ISLAND_APPEARANCE_RANGES as RANGES,
   ISLAND_POSITION_LABELS,
@@ -19,7 +22,7 @@ import {
   type IslandStyle,
 } from '@classhelper/shared';
 import type { DesktopAppInfo } from '../../types/desktop.js';
-import { classApi } from '../api/index.js';
+import { classIslandStatusApi } from '../api/index.js';
 import { pingHealth, setApiBaseUrl } from '../api/http.js';
 import { normalizeServerUrl } from '../config.js';
 import { useAppStore } from '../stores/app.js';
@@ -137,6 +140,22 @@ const channelSaving = ref(false);
  * 注意**不能**顺手把「两端都弹」也禁掉：那样教室一旦选过"只在客户端"，没设备时就再也切不回来了。
  */
 const classIslandConnected = ref(false);
+/** 本班 ClassIsland 设备的展示信息（设备名 / 最后上报），来自 /classes/:id/classisland-status */
+const classIslandStatus = ref<{
+  connected: boolean;
+  deviceName: string | null;
+  deviceCount: number;
+  lastSeenAt: string | null;
+  pluginVersion: string | null;
+  classIslandVersion: string | null;
+} | null>(null);
+
+const classIslandStatusText = computed(() => {
+  const status = classIslandStatus.value;
+  if (!status || !status.connected) return '未接入';
+  const seen = status.lastSeenAt ? `最后上报 ${formatDate(status.lastSeenAt, true)}` : '尚未上报过';
+  return `已接入 · ${status.deviceName ?? 'ClassIsland 设备'} · ${seen}`;
+});
 
 const channelOptions = computed(() =>
   CLASSISLAND_NOTIFICATION_CHANNELS.map((value) => ({
@@ -161,6 +180,63 @@ async function applyChannel(value: ClassIslandNotificationChannel): Promise<void
   } finally {
     channelSaving.value = false;
   }
+}
+
+/* ------------------------------------------------------------ 作业录入快捷短语 */
+
+/**
+ * 作业快捷短语：录作业时点一下就把词追加到标题/内容里（P、大本、背诵…）。
+ *
+ * 存在客户端本地配置（这台教室机器自己的习惯），不占用服务端字段；
+ * 空数组是合法值 —— 老师把短语全删了就是"不想用快捷短语"。
+ */
+const phrases = ref<string[]>([...HOMEWORK_PHRASE_DEFAULTS]);
+const phraseInput = ref('');
+const savingPhrases = ref(false);
+
+async function loadPhrases(): Promise<void> {
+  const config = await window.desktop?.getConfig?.();
+  if (config?.homeworkPhrases) phrases.value = [...config.homeworkPhrases];
+}
+
+async function savePhrases(): Promise<void> {
+  if (!window.desktop?.saveConfig) return;
+  savingPhrases.value = true;
+  try {
+    const saved = await window.desktop.saveConfig({ homeworkPhrases: [...phrases.value] });
+    phrases.value = [...saved.homeworkPhrases];
+  } finally {
+    savingPhrases.value = false;
+  }
+}
+
+async function addPhrase(): Promise<void> {
+  const value = phraseInput.value.trim().slice(0, HOMEWORK_PHRASE_MAX_LENGTH);
+  if (!value) return;
+  if (phrases.value.includes(value)) {
+    ElMessage.warning('这条短语已经有了');
+    return;
+  }
+  if (phrases.value.length >= HOMEWORK_PHRASE_MAX_COUNT) {
+    ElMessage.warning(`最多 ${HOMEWORK_PHRASE_MAX_COUNT} 条快捷短语`);
+    return;
+  }
+  phrases.value = [...phrases.value, value];
+  phraseInput.value = '';
+  await savePhrases();
+  ElMessage.success('已添加');
+}
+
+async function removePhrase(value: string): Promise<void> {
+  phrases.value = phrases.value.filter((item) => item !== value);
+  await savePhrases();
+}
+
+async function resetPhrases(): Promise<void> {
+  await ElMessageBox.confirm('恢复为默认快捷短语？', '恢复默认', { type: 'warning' });
+  phrases.value = [...HOMEWORK_PHRASE_DEFAULTS];
+  await savePhrases();
+  ElMessage.success('已恢复默认');
 }
 
 /* ------------------------------------------------------------ 灵动岛个性化 */
@@ -235,11 +311,13 @@ onMounted(async () => {
   await appStore.refreshCacheStats();
   await loadIslandAppearance();
   await loadClassChannel();
-  // 本班有没有 ClassIsland 设备：没接就禁用"弹在 ClassIsland"这一项，避免选了却没效果
-  const classList = await classApi.list().catch(() => []);
-  classIslandConnected.value = classList.some(
-    (item) => item.id === auth.classId && item.classIslandConnected === true,
-  );
+  await loadPhrases();
+  // 本班 ClassIsland 联动状态：没接设备就别让选「只在 ClassIsland 上弹」
+  if (auth.classId) {
+    const status = await classIslandStatusApi.get(auth.classId).catch(() => null);
+    classIslandStatus.value = status;
+    classIslandConnected.value = status?.connected === true;
+  }
 });
 </script>
 
@@ -380,6 +458,36 @@ onMounted(async () => {
                 />
               </el-select>
             </el-form-item>
+            <el-form-item :label="`左右边距 ${island.marginX}px`">
+              <el-slider
+                :model-value="island.marginX"
+                :min="RANGES.marginX.min"
+                :max="RANGES.marginX.max"
+                :step="2"
+                @input="(value: number) => applyIslandAppearance({ marginX: value })"
+              />
+              <span class="text-muted ml-8">停靠左/右时距屏幕边缘的距离</span>
+            </el-form-item>
+            <el-form-item :label="`上下边距 ${island.marginY}px`">
+              <el-slider
+                :model-value="island.marginY"
+                :min="RANGES.marginY.min"
+                :max="RANGES.marginY.max"
+                :step="2"
+                @input="(value: number) => applyIslandAppearance({ marginY: value })"
+              />
+              <span class="text-muted ml-8">停靠顶/底时距屏幕边缘的距离（任务栏在侧面时调大）</span>
+            </el-form-item>
+            <el-form-item label="跟随鼠标屏幕">
+              <el-switch
+                :model-value="island.followCursorDisplay"
+                @change="
+                  (value: boolean | string | number) =>
+                    applyIslandAppearance({ followCursorDisplay: Boolean(value) })
+                "
+              />
+              <span class="text-muted ml-8">多显示器教室电脑：岛出现在鼠标所在的那块屏幕</span>
+            </el-form-item>
             <el-form-item label="动画">
               <el-switch
                 :model-value="island.animations"
@@ -422,10 +530,16 @@ onMounted(async () => {
           />
         </el-card>
         <el-card shadow="never" class="mt-12">
-          <template #header><span>通知显示位置</span></template>
+          <template #header><span>ClassIsland 联动</span></template>
+          <el-descriptions :column="1" border size="small" class="mb-12">
+            <el-descriptions-item label="联动状态">{{ classIslandStatusText }}</el-descriptions-item>
+            <el-descriptions-item label="插件 / ClassIsland">
+              {{ classIslandStatus?.pluginVersion ?? '—' }} / {{ classIslandStatus?.classIslandVersion ?? '—' }}
+            </el-descriptions-item>
+          </el-descriptions>
           <p class="text-muted">
-            老师在班级小助手上发布通知 / 叫人时，提醒要弹在哪里由这台教室机器决定。选择会同步到班级，
-            服务端据此决定是否一并推送到教室的 ClassIsland。
+            <strong>通知模式</strong>：老师在班级小助手上发布通知 / 叫人时，提醒弹在灵动岛还是 ClassIsland，
+            由这台教室机器决定。选择会同步到班级，服务端据此决定是否推送到教室的 ClassIsland。
           </p>
           <el-radio-group
             :model-value="appStore.notificationChannel"
@@ -443,6 +557,38 @@ onMounted(async () => {
               <br />提示：本班还没有接入 ClassIsland 设备（在 Web 端「ClassIsland 联动」里接入后才能选"只在 ClassIsland 上弹"）。
             </template>
           </p>
+        </el-card>
+
+        <el-card shadow="never" class="mt-12">
+          <template #header><span>作业录入</span></template>
+          <p class="text-muted">
+            在教室电脑上录作业时，点一下短语就会追加到标题 / 内容里（例如 P、大本、背诵）。
+            最多 {{ HOMEWORK_PHRASE_MAX_COUNT }} 条、每条 {{ HOMEWORK_PHRASE_MAX_LENGTH }} 字；全部删掉即不在录入页显示。
+          </p>
+          <div class="phrase-row">
+            <el-tag
+              v-for="item in phrases"
+              :key="item"
+              closable
+              type="info"
+              effect="plain"
+              @close="removePhrase(item)"
+            >
+              {{ item }}
+            </el-tag>
+            <span v-if="phrases.length === 0" class="text-muted">（已清空）</span>
+          </div>
+          <div class="toolbar mt-12">
+            <el-input
+              v-model="phraseInput"
+              placeholder="新增短语，如 大本"
+              style="width: 200px"
+              :maxlength="HOMEWORK_PHRASE_MAX_LENGTH"
+              @keyup.enter="addPhrase"
+            />
+            <el-button type="primary" :loading="savingPhrases" @click="addPhrase">添加</el-button>
+            <el-button @click="resetPhrases">恢复默认</el-button>
+          </div>
         </el-card>
 
         <el-card shadow="never" class="mt-12">
@@ -515,6 +661,14 @@ onMounted(async () => {
 
 .channel-hint {
   margin-top: 10px;
+}
+
+.phrase-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .ml-8 {

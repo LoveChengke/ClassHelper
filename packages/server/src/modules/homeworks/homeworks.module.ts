@@ -6,11 +6,13 @@ import { validate, validatedParams, validatedQuery } from '../../middleware/vali
 import { defineModule } from '../module.types.js';
 import {
   createHomeworkSchema,
+  listHomeworkDaysQuerySchema,
   listHomeworksQuerySchema,
   updateHomeworkSchema,
   updateHomeworkStatusSchema,
   updateHomeworkSubmissionsSchema,
   type CreateHomeworkInput,
+  type ListHomeworkDaysInput,
   type UpdateHomeworkInput,
   type UpdateHomeworkStatusInput,
   type UpdateHomeworkSubmissionsInput,
@@ -33,16 +35,31 @@ router.get('/', validate({ query: listHomeworksQuerySchema }), async (req, res) 
 });
 
 /** GET /api/homeworks/:id - 作业详情 */
+/**
+ * GET /api/homeworks/days - 一段时间内"哪些天有作业"（客户端/Web 的日期选择器高亮）
+ *
+ * 必须注册在 /:id 之前，否则 "days" 会被当成作业 id 命中 /:id 路由。
+ */
+router.get('/days', validate({ query: listHomeworkDaysQuerySchema }), async (req, res) => {
+  const user = getAuthUser(req);
+  const query = validatedQuery<ListHomeworkDaysInput>(req);
+  sendOk(res, await homeworkService.listHomeworkDays(user, query), '获取作业日历成功');
+});
+
 router.get('/:id', validate({ params: idParamSchema }), async (req, res) => {
   const user = getAuthUser(req);
   const { id } = validatedParams<{ id: string }>(req);
   sendOk(res, await homeworkService.getHomework(user, id), '获取作业详情成功');
 });
 
-/** POST /api/homeworks - 发布作业（发布后广播 homework:new） */
+/**
+ * POST /api/homeworks - 发布作业（发布后广播 homework:new）
+ *
+ * 这里**不加 requireRole**：教室机器的班级账号也要能录入作业（需求「支持作业在客户端录入」），
+ * 能不能发由服务层的 createHomework 判定（staff 或本班班级账号，其余 403）。
+ */
 router.post(
   '/',
-  requireRole('ADMIN', 'TEACHER'),
   validate({ body: createHomeworkSchema }),
   async (req, res) => {
     const user = getAuthUser(req);

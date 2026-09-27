@@ -3,6 +3,8 @@ import {
   type ClassDetailDto,
   type ClassDto,
   type ClassIslandNotificationChannel,
+  type CourseDto,
+  type HomeworkDaysDto,
   type DashboardSummary,
   type GradeDto,
   type HomeworkDto,
@@ -49,6 +51,20 @@ export const classChannelApi = {
     api.patch(`${API_PATHS.classes}/${classId}/notification-channel`, { notificationChannel }),
 };
 
+/** 本班 ClassIsland 联动状态（教室客户端「设置 → ClassIsland 联动」展示） */
+export const classIslandStatusApi = {
+  get: (
+    classId: string,
+  ): Promise<{
+    connected: boolean;
+    deviceName: string | null;
+    deviceCount: number;
+    lastSeenAt: string | null;
+    pluginVersion: string | null;
+    classIslandVersion: string | null;
+  }> => api.get(`${API_PATHS.classes}/${classId}/classisland-status`),
+};
+
 export const scheduleApi = {
   list: (params: { classId?: string; week?: number }): Promise<ScheduleDto[]> =>
     api.get(API_PATHS.schedules, params),
@@ -56,9 +72,30 @@ export const scheduleApi = {
     api.get(`${API_PATHS.schedules}/grid`, params),
 };
 
+export const courseApi = {
+  list: (classId?: string): Promise<CourseDto[]> =>
+    api.get(API_PATHS.courses, classId ? { classId } : undefined),
+};
+
 export const homeworkApi = {
-  list: (params?: { classId?: string; pendingOnly?: boolean; courseId?: string }): Promise<HomeworkDto[]> =>
-    api.get(API_PATHS.homeworks, params),
+  list: (params?: {
+    classId?: string;
+    pendingOnly?: boolean;
+    courseId?: string;
+    /** 只看某一天（YYYY-MM-DD，按作业所属日期） */
+    date?: string;
+  }): Promise<HomeworkDto[]> => api.get(API_PATHS.homeworks, params),
+  /** 哪些天有作业（日期选择器高亮） */
+  days: (params: { classId?: string; from?: string; to?: string; days?: number }): Promise<HomeworkDaysDto> =>
+    api.get(`${API_PATHS.homeworks}/days`, params),
+  /** 在教室机器上直接录入作业（班级账号可调用；也可选所属日期） */
+  create: (payload: {
+    classId: string;
+    courseId?: string | null;
+    title: string;
+    content: string;
+    assignDate?: string | null;
+  }): Promise<HomeworkDto> => api.post(API_PATHS.homeworks, payload),
   detail: (id: string): Promise<HomeworkDto> => api.get(`${API_PATHS.homeworks}/${id}`),
   updateStatus: (id: string, completed: boolean): Promise<HomeworkStatusDto> =>
     api.patch(`${API_PATHS.homeworks}/${id}/status`, { completed }),

@@ -304,6 +304,12 @@ async function main() {
     published.status === 201 && Boolean(publishPush),
     `status=${published.status} 待提醒=${(pendingAfterPublish.payload?.data?.notifications ?? []).length}`,
   );
+  // kind 决定插件"上课时段弹不弹"：通知类会被暂存，叫人属于主动通知要立刻弹
+  record(
+    '通知类推送的 kind=notification（上课时段插件会暂存）',
+    publishPush?.kind === 'notification',
+    `kind=${publishPush?.kind}`,
+  );
   if (publishPush) {
     await api('/integrations/classisland/ack', {
       method: 'POST',
@@ -325,6 +331,11 @@ async function main() {
     '叫人也会推送到 ClassIsland',
     Boolean(firstStudent) && call.status === 201 && Boolean(callPush),
     firstStudent ? `status=${call.status}` : '班级里没有学生，跳过',
+  );
+  record(
+    '叫人推送的 kind=call（算主动通知，上课时段也立刻弹）',
+    callPush?.kind === 'call',
+    `kind=${callPush?.kind}`,
   );
   if (callPush) {
     await api('/integrations/classisland/ack', {

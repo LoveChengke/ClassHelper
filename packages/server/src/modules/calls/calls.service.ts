@@ -73,6 +73,8 @@ export async function createCall(user: TokenPayload, input: CreateCallInput): Pr
         title: created.title,
         content: created.content,
         urgent: input.urgent === true,
+        // 叫人属于「主动通知」：教室的 ClassIsland 上课时段也要立刻弹
+        kind: 'call',
         createdBy: user.sub,
         notificationId: created.id,
         teacherName,

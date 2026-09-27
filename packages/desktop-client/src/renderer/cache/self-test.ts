@@ -611,10 +611,19 @@ export async function homeworkBoardSelfTest(): Promise<SmokeCheckResult> {
     boardTab.click();
     await waitUntil(() => Boolean(document.querySelector('.board-config')), 3000);
 
-    // 今天可能恰好没有作业：先关掉「只看今天」，保证看板一定有卡片（断言才有意义）
+    // 今天可能恰好没有作业：切到「最近一个有作业的日期」保证看板一定有卡片（断言才有意义）。
+    // 按天查看支持 ?date=YYYY-MM-DD 深链，切天不需要去操作日期选择器。
     if (!document.querySelector('.board-host')) {
-      const todaySwitch = document.querySelector('.page-header .el-switch');
-      if (todaySwitch instanceof HTMLElement) todaySwitch.click();
+      const [{ homeworkApi }, { useAuthStore }] = await Promise.all([
+        import('../api/index.js'),
+        import('../stores/auth.js'),
+      ]);
+      const classId = useAuthStore().classId ?? undefined;
+      const days = await homeworkApi.days({ classId }).catch(() => ({ days: [] }));
+      const latest = days.days.length > 0 ? days.days[days.days.length - 1].date : null;
+      if (latest) {
+        await router.push({ path: '/homeworks', query: { date: latest } });
+      }
     }
     const hasBoard = await waitUntil(() => Boolean(document.querySelector('.board-host')), 4000);
 

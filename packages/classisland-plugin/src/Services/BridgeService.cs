@@ -242,14 +242,30 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
 
             var entryCount = 0;
             var layoutCount = 0;
+            // 开关关着时也要留下原因：否则日志只有"上报成功：仅状态"，
+            // 用户会以为"服务端拿不到 ClassIsland 课表"是插件坏了。
+            if (includeSchedule && !_settings.UploadSchedule)
+            {
+                _logger.LogInformation(
+                    "班级小助手联动：本机设置里「上报课表到班级小助手」是关闭的，本次只上报状态；" +
+                    "需要把教室课表同步到班级小助手请打开该开关");
+            }
+
             if (includeSchedule && _settings.UploadSchedule && profile is not null)
             {
                 var entries = ScheduleMapper.MapAllClassPlans(profile, out var warnings);
                 foreach (var warning in warnings) _logger.LogWarning("班级小助手联动：{Warning}", warning);
                 entryCount = entries.Count;
                 request.Schedule = new SchedulePayloadDto { Mode = "merge", Entries = entries };
-                // 补上 endTime 之外的字段由服务端按需处理；课表为空时不发，免得把服务端已有课表"合并"没了
-                if (entries.Count == 0) request.Schedule = null;
+                // 课表为空时不发（否则会把服务端已有课表"合并"成空），但**必须把原因写清楚**：
+                // 日志里只出现"仅状态"时，用户会以为上报失败，实际是 ClassIsland 里还没有课表。
+                if (entries.Count == 0)
+                {
+                    request.Schedule = null;
+                    _logger.LogWarning(
+                        "班级小助手联动：ClassIsland 里没有**启用的课表**（0 条），本次未上报课表。" +
+                        "请在 ClassIsland 里排好课表，或在 Web 端打开「镜像课表」由班级小助手下发一份");
+                }
 
                 var layout = ResolvePrimaryTimeLayout(profile);
                 if (layout is not null)
@@ -285,7 +301,9 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
 
             var detail = entryCount > 0
                 ? $"课表 {entryCount} 节 / 节次 {layoutCount} 条"
-                : "仅状态";
+                : _settings.UploadSchedule
+                    ? "仅状态（ClassIsland 里还没有启用的课表）"
+                    : "仅状态（本机「上报课表到班级小助手」开关已关闭）";
             SetState(true, $"上报成功（{reason}）：{detail}，服务端第 {data.Week} 周",
                 entryCount, layoutCount, data.Week);
 
@@ -371,8 +389,11 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
         var (result, plan) = await _client.PullClassPlanAsync(_settings, CancellationToken.None).ConfigureAwait(false);
         if (!result.Ok || plan is null)
         {
-            // 服务端在"镜像开关没开"时会返回 data=null —— 这不是错误，只记信息
-            _logger.LogInformation("班级小助手联动：跳过课表镜像（{Message}）", result.Message);
+            // 服务端在"镜像开关没开"时会返回 data=null —— 这不是错误，但要告诉用户去哪儿开
+            _logger.LogInformation(
+                "班级小助手联动：跳过课表镜像（{Message}）。" +
+                "需要在 Web 端「ClassIsland 联动」页给这台设备打开「镜像课表」，然后点一次「立即上报」或等下一个上报周期",
+                result.Message);
             return;
         }
 

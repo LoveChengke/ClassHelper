@@ -279,6 +279,13 @@ export interface HomeworkDto {
   attachmentUrl: string | null;
   createdBy: string;
   createdAt: string;
+  /**
+   * 作业所属日期（YYYY-MM-DD，**不带时区**）。
+   *
+   * 与 createdAt 的区别：createdAt 是"什么时候录的"，assignDate 是"这天的作业"。
+   * 客户端 / Web 的按天查看与日期高亮都用它，避免跨时区把作业算到前一天。
+   */
+  assignDate: string;
   course?: CourseBrief | null;
   creator?: ClassTeacherBrief | null;
   /** 当前登录学生的完成状态（学生端接口返回） */
@@ -286,6 +293,19 @@ export interface HomeworkDto {
   homeworkStatus?: HomeworkStatusDto | null;
   /** 教师视角：已提交人数 */
   completedCount?: number;
+}
+
+/** 某一天有作业（用于日期选择器高亮） */
+export interface HomeworkDaySummary {
+  /** YYYY-MM-DD */
+  date: string;
+  /** 当天作业条数 */
+  count: number;
+}
+
+/** GET /api/homeworks/days 的返回 */
+export interface HomeworkDaysDto {
+  days: HomeworkDaySummary[];
 }
 
 export interface HomeworkStatusDto {
@@ -301,6 +321,8 @@ export interface CreateHomeworkRequest {
   courseId?: string | null;
   title: string;
   content: string;
+  /** 作业所属日期（YYYY-MM-DD）；不传按服务器当天处理 */
+  assignDate?: string | null;
   attachmentUrl?: string | null;
 }
 
@@ -541,6 +563,12 @@ export interface IslandAppearance {
    * 关闭时（默认）空闲即完全隐藏，与原行为一致。
    */
   idleSliver: boolean;
+  /** 距屏幕左右边缘的距离（px）：停靠左/右时生效 */
+  marginX: number;
+  /** 距屏幕上下边缘的距离（px）：停靠顶/底时生效 */
+  marginY: number;
+  /** 是否跟随鼠标所在屏幕（多显示器教室电脑用） */
+  followCursorDisplay: boolean;
 }
 
 /** 灵动岛停靠位置（6 个锚点，与 WinIsland 一致） */
@@ -882,6 +910,12 @@ export interface ClassIslandPushNotification {
   createdAt: string;
   /** 是否紧急（紧急时插件用更强的遮罩与更长的时长） */
   urgent: boolean;
+  /**
+   * 提醒类型：
+   * - `notification`：通知类提醒 —— **上课时段插件会暂存，下课后才弹**；
+   * - `call`：叫人等「主动通知」—— 不论是否上课都立刻弹（老师正在等学生）。
+   */
+  kind: 'notification' | 'call';
   classId: string;
   className?: string | null;
   teacherName?: string | null;

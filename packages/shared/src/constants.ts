@@ -126,6 +126,15 @@ export const DEFAULT_ISLAND_APPEARANCE = {
   style: 'black',
   /** 空闲时完全隐藏（与原行为一致；打开后空闲会留一条细缝） */
   idleSliver: false,
+  /**
+   * 距屏幕左右边缘的距离（px）：停靠左/右时生效。
+   * 默认与原行为一致（8px）—— 加这个设置是为了能调，不是为了改默认外观。
+   */
+  marginX: 8,
+  /** 距屏幕上下边缘的距离（px）：停靠顶/底时生效 */
+  marginY: 8,
+  /** 是否跟随鼠标所在屏幕（多显示器教室电脑：鼠标在哪块屏就在哪块屏显示） */
+  followCursorDisplay: false,
 } as const;
 
 /** 个性化设置项的合法区间（前端滑块与后端校验共用，避免越界导致布局错乱） */
@@ -136,6 +145,8 @@ export const ISLAND_APPEARANCE_RANGES = {
   opacity: { min: 0.4, max: 1 },
   fontSize: { min: 11, max: 20 },
   speed: { min: 0.5, max: 2 },
+  marginX: { min: 0, max: 200 },
+  marginY: { min: 0, max: 160 },
 } as const;
 
 /** 停靠位置可选值（与 WinIsland 的 DockPosition 一致：顶/底 × 左/中/右） */
@@ -264,19 +275,44 @@ export const CLASSISLAND_TIME_STATE_LABELS: Record<string, string> = {
 export const CLASSISLAND_NOTIFICATION_CHANNELS = ['both', 'client', 'classisland'] as const;
 
 export const CLASSISLAND_NOTIFICATION_CHANNEL_LABELS: Record<string, string> = {
-  both: 'ClassHelper 与 ClassIsland 都弹',
-  client: '只在 ClassHelper 客户端弹',
-  classisland: '只在 ClassIsland 上弹',
+  both: '两者都弹',
+  client: '灵动岛（ClassHelper 客户端）',
+  classisland: 'ClassIsland',
 };
 
 export const CLASSISLAND_NOTIFICATION_CHANNEL_HINTS: Record<string, string> = {
-  both: '教室的 ClassHelper 客户端与 ClassIsland 都会提醒（默认）',
-  client: '提醒只在 ClassHelper 客户端显示，不推送到 ClassIsland',
-  classisland: '提醒只推送到 ClassIsland，ClassHelper 客户端只留记录、不弹窗',
+  both: '灵动岛与 ClassIsland 都会提醒老师发的内容（默认）',
+  client: '只在 ClassHelper 客户端的灵动岛提醒，不推送到 ClassIsland',
+  classisland: '只推送到 ClassIsland 全屏提醒，灵动岛不弹（通知中心仍留记录）',
 };
 
 /** 默认显示位置：两端都弹 */
 export const DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL = 'both';
+/**
+ * 作业录入的默认快捷短语（客户端「设置 → 作业录入」可增删）。
+ *
+ * 教室里老师录作业的常见口径：科目简称（P=拼音）、本子类型（大本/小本）、
+ * 作业动作（背诵/默写/听写/预习/订正）—— 点一下就追加到内容里，少打字。
+ */
+export const HOMEWORK_PHRASE_DEFAULTS = [
+  'P',
+  '大本',
+  '小本',
+  '卷子',
+  '背诵',
+  '默写',
+  '听写',
+  '预习',
+  '订正',
+  '读书',
+] as const;
+
+/** 单条快捷短语的最大长度（防止把整篇作业粘进去） */
+export const HOMEWORK_PHRASE_MAX_LENGTH = 20;
+
+/** 快捷短语最多几条 */
+export const HOMEWORK_PHRASE_MAX_COUNT = 24;
+
 /** 默认提醒显示时长（秒），后端与插件共用同一口径 */
 export const CLASSISLAND_NOTIFICATION_DEFAULT_DURATION = 8;
 export const CLASSISLAND_NOTIFICATION_MAX_DURATION = 120;

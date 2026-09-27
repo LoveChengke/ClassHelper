@@ -17,6 +17,7 @@ import {
   type DashboardSummary,
   type GradeDto,
   type GradeStats,
+  type HomeworkDaysDto,
   type HomeworkDto,
   type HomeworkSubmissionsDto,
   type IntegrationDeviceDto,
@@ -116,7 +117,16 @@ export const homeworkApi = {
     courseId?: string;
     pendingOnly?: boolean;
     keyword?: string;
+    /** 只看某一天（YYYY-MM-DD，按作业所属日期） */
+    date?: string;
   }): Promise<HomeworkDto[]> => api.get(API_PATHS.homeworks, params),
+  /** 哪些天有作业（日期选择器高亮） */
+  days: (params: {
+    classId?: string;
+    from?: string;
+    to?: string;
+    days?: number;
+  }): Promise<HomeworkDaysDto> => api.get(`${API_PATHS.homeworks}/days`, params),
   detail: (id: string): Promise<HomeworkDto> => api.get(`${API_PATHS.homeworks}/${id}`),
   create: (payload: CreateHomeworkRequest): Promise<HomeworkDto> => api.post(API_PATHS.homeworks, payload),
   update: (id: string, payload: Partial<CreateHomeworkRequest>): Promise<HomeworkDto> =>

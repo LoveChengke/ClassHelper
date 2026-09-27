@@ -6,6 +6,9 @@ import {
   DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL,
   DEFAULT_ISLAND_APPEARANCE,
   DEFAULT_SERVER_URL,
+  HOMEWORK_PHRASE_DEFAULTS,
+  HOMEWORK_PHRASE_MAX_COUNT,
+  HOMEWORK_PHRASE_MAX_LENGTH,
   type ClassIslandNotificationChannel,
   type IslandAppearance,
 } from '@classhelper/shared';
@@ -16,7 +19,6 @@ const DEFAULT_HOMEWORK_BOARD: HomeworkBoardSettings = {
   mode: 'board',
   showTime: false,
   fontSize: 15,
-  todayOnly: true,
 };
 
 interface PersistedConfig {
@@ -31,6 +33,8 @@ interface PersistedConfig {
   homeworkBoard?: Partial<HomeworkBoardSettings>;
   /** 通知显示位置（向后兼容：旧配置文件没有该字段时按默认 both 补齐） */
   notificationChannel?: ClassIslandNotificationChannel;
+  /** 作业录入快捷短语（向后兼容：旧配置没有该字段时用默认那一组） */
+  homeworkPhrases?: string[];
 }
 
 const DEFAULT_CONFIG: PersistedConfig = {
@@ -41,7 +45,27 @@ const DEFAULT_CONFIG: PersistedConfig = {
   island: { ...DEFAULT_ISLAND_APPEARANCE },
   homeworkBoard: { ...DEFAULT_HOMEWORK_BOARD },
   notificationChannel: DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL,
+  homeworkPhrases: [...HOMEWORK_PHRASE_DEFAULTS],
 };
+
+/**
+ * 作业快捷短语的合法化：去空白、去重、限长限量。
+ * 空数组是**合法值**（老师把短语全删了 = 不想用快捷短语），因此不能拿默认值顶回去。
+ */
+function normalizeHomeworkPhrases(input?: string[]): string[] {
+  if (!Array.isArray(input)) return [...HOMEWORK_PHRASE_DEFAULTS];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of input) {
+    if (typeof raw !== 'string') continue;
+    const value = raw.trim().slice(0, HOMEWORK_PHRASE_MAX_LENGTH);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+    if (result.length >= HOMEWORK_PHRASE_MAX_COUNT) break;
+  }
+  return result;
+}
 
 /** 通知显示位置的白名单校验：非法值一律回落到默认值，避免坏配置把提醒"静默吞掉" */
 function normalizeNotificationChannel(
@@ -62,7 +86,6 @@ function normalizeHomeworkBoard(input?: Partial<HomeworkBoardSettings>): Homewor
   return {
     mode,
     showTime: input?.showTime === true,
-    todayOnly: input?.todayOnly !== false,
     fontSize: Math.min(28, Math.max(11, Math.round(rawFont))),
   };
 }
@@ -102,6 +125,9 @@ function normalizeIslandAppearance(input?: Partial<IslandAppearance>): IslandApp
       ? (input?.style as IslandAppearance['style'])
       : DEFAULT_ISLAND_APPEARANCE.style,
     idleSliver: input?.idleSliver === true,
+    marginX: clamp(input?.marginX, 0, 200, DEFAULT_ISLAND_APPEARANCE.marginX),
+    marginY: clamp(input?.marginY, 0, 160, DEFAULT_ISLAND_APPEARANCE.marginY),
+    followCursorDisplay: input?.followCursorDisplay === true,
   };
 }
 
@@ -146,6 +172,7 @@ function readPersisted(): PersistedConfig {
       island: normalizeIslandAppearance(parsed.island),
       homeworkBoard: normalizeHomeworkBoard(parsed.homeworkBoard),
       notificationChannel: normalizeNotificationChannel(parsed.notificationChannel),
+      homeworkPhrases: normalizeHomeworkPhrases(parsed.homeworkPhrases),
     };
   } catch {
     return { ...DEFAULT_CONFIG };
@@ -168,6 +195,7 @@ export function getConfig(): DesktopStoredConfig {
     island: normalizeIslandAppearance(persisted.island),
     homeworkBoard: normalizeHomeworkBoard(persisted.homeworkBoard),
     notificationChannel: normalizeNotificationChannel(persisted.notificationChannel),
+    homeworkPhrases: normalizeHomeworkPhrases(persisted.homeworkPhrases),
   };
 }
 
@@ -189,6 +217,9 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
       ...persisted.homeworkBoard,
       ...patch.homeworkBoard,
     });
+  }
+  if (patch.homeworkPhrases !== undefined) {
+    persisted.homeworkPhrases = normalizeHomeworkPhrases(patch.homeworkPhrases);
   }
   if (patch.notificationChannel !== undefined) {
     persisted.notificationChannel = normalizeNotificationChannel(patch.notificationChannel);

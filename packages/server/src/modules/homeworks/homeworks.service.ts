@@ -1,5 +1,8 @@
 import {
   SOCKET_EVENTS,
+  dayKeyLocal,
+  shiftDayKey,
+  type HomeworkDaysDto,
   type HomeworkDto,
   type HomeworkStatusDto,
   type HomeworkSubmissionDto,
@@ -16,7 +19,12 @@ import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { toHomeworkDto, toHomeworkStatusDto } from '../../lib/mappers.js';
-import { isClassSession, personalIdWhere, resolvePersonalIds } from '../../lib/session.js';
+import {
+  classSessionClassId,
+  isClassSession,
+  personalIdWhere,
+  resolvePersonalIds,
+} from '../../lib/session.js';
 import { emitToClass } from '../../realtime/bus.js';
 import type {
   CreateHomeworkInput,
@@ -33,6 +41,8 @@ export interface ListHomeworkOptions {
   courseId?: string;
   pendingOnly?: boolean;
   keyword?: string;
+  /** 只看某一天（Homework.assignDate，YYYY-MM-DD） */
+  date?: string;
 }
 
 /**
@@ -60,13 +70,15 @@ export async function listHomeworks(
       ...(student && options.pendingOnly
         ? { statuses: { none: { ...personalWhere, completed: true } } }
         : {}),
+      // 按天查看：作业「属于哪一天」看 assignDate（本地日期），不是 createdAt
+      ...(options.date ? { assignDate: options.date } : {}),
     },
     include: {
       course: courseSelect,
       creator: creatorSelect,
       statuses: student ? { where: personalWhere } : true,
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ assignDate: 'desc' }, { createdAt: 'desc' }],
     take: 200,
   });
 
@@ -75,6 +87,37 @@ export async function listHomeworks(
   );
 }
 
+/**
+ * 按天查看：查一段时间内「哪些天有作业」（日期选择器高亮用）。
+ *
+ * 只回有作业的日期（稀疏），避免把整月日历塞回前端；不传区间时默认回看 60 天。
+ */
+export async function listHomeworkDays(
+  user: TokenPayload,
+  options: { classId?: string; from?: string; to?: string; days?: number },
+): Promise<HomeworkDaysDto> {
+  const scope = await resolveClassScope(user, options.classId);
+  const today = dayKeyLocal(new Date());
+  const to = options.to ?? today;
+  const from = options.from ?? shiftDayKey(to, -(options.days ?? 60) + 1);
+
+  const rows = await prisma.homework.findMany({
+    where: { ...classScopeWhere(scope), assignDate: { gte: from, lte: to } },
+    select: { assignDate: true },
+  });
+
+  const counter = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.assignDate) continue;
+    counter.set(row.assignDate, (counter.get(row.assignDate) ?? 0) + 1);
+  }
+
+  return {
+    days: [...counter.entries()]
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => a.date.localeCompare(b.date)),
+  };
+}
 export async function getHomework(user: TokenPayload, homeworkId: string): Promise<HomeworkDto> {
   const student = isStudent(user);
   const personalIds = student ? await resolvePersonalIds(user) : [];
@@ -95,10 +138,31 @@ export async function getHomework(user: TokenPayload, homeworkId: string): Promi
   });
 }
 
-/** 发布作业并实时推送到班级房间 */
+/**
+ * 发布作业并实时推送到班级房间。
+ *
+ * 权限：管理员 / 班主任 / 科任老师，**以及本班的班级账号**（教室机器的客户端录入 ——
+ * 需求就是「支持作业在客户端录入」，老师在教室电脑上顺手就能记一条）。
+ */
 export async function createHomework(user: TokenPayload, input: CreateHomeworkInput): Promise<HomeworkDto> {
-  await assertCanPublishContent(user, input.classId);
+  if (isClassSession(user) && classSessionClassId(user) === input.classId) {
+    await assertClassAccess(user, input.classId);
+  } else {
+    await assertCanPublishContent(user, input.classId);
+  }
   if (input.courseId) await assertCourseInClass(input.courseId, input.classId);
+
+  // 班级账号的 sub 是**班级 id**（不是用户 id），直接写 createdBy 会撞外键；
+  // 教室机器录入的作业归属该班班主任，Web 端看到的作者才是真人。
+  let createdBy = user.sub;
+  if (isClassSession(user)) {
+    const owner = await prisma.class.findUnique({
+      where: { id: input.classId },
+      select: { teacherId: true },
+    });
+    if (!owner) throw ApiError.notFound('班级不存在');
+    createdBy = owner.teacherId;
+  }
 
   const created = await prisma.homework.create({
     data: {
@@ -107,7 +171,9 @@ export async function createHomework(user: TokenPayload, input: CreateHomeworkIn
       title: input.title,
       content: input.content,
       attachmentUrl: input.attachmentUrl ?? null,
-      createdBy: user.sub,
+      // 不传日期就记成「服务器当天」；教室在 UTC+8，用本地日期而不是 UTC 日期
+      assignDate: input.assignDate ?? dayKeyLocal(new Date()),
+      createdBy,
     },
     include: { course: courseSelect, creator: creatorSelect, statuses: true },
   });
@@ -135,6 +201,7 @@ export async function updateHomework(
       ...(input.content ? { content: input.content } : {}),
       ...(input.courseId !== undefined ? { courseId: input.courseId ?? null } : {}),
       ...(input.attachmentUrl !== undefined ? { attachmentUrl: input.attachmentUrl ?? null } : {}),
+      ...(input.assignDate !== undefined ? { assignDate: input.assignDate } : {}),
     },
     include: { course: courseSelect, creator: creatorSelect, statuses: true },
   });

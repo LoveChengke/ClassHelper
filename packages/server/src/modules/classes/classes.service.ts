@@ -355,6 +355,44 @@ export async function removeTeacher(user: TokenPayload, classId: string, teacher
   await prisma.classTeacher.deleteMany({ where: { classId, teacherId } });
 }
 
+/* ---------------------------------------------------------------- ClassIsland 联动状态 */
+
+/**
+ * 本班的 ClassIsland 联动状态（教室客户端的「ClassIsland 联动」面板展示）。
+ *
+ * 为什么单独开一个接口：设备列表（/integrations/devices）是管理面，只对教师/管理员开放；
+ * 而教室机器（班级账号）需要知道"本班接没接 ClassIsland、最后什么时候上报的"，
+ * 才能给出准确的提示（例如没接就别选"只在 ClassIsland 上弹"）。
+ */
+export async function getClassIslandStatus(
+  user: TokenPayload,
+  classId: string,
+): Promise<{
+  connected: boolean;
+  deviceName: string | null;
+  deviceCount: number;
+  lastSeenAt: string | null;
+  pluginVersion: string | null;
+  classIslandVersion: string | null;
+}> {
+  await assertClassAccess(user, classId);
+  const devices = await prisma.integrationDevice.findMany({
+    where: { classId, enabled: true, mode: 'plugin' },
+    select: { name: true, lastSeenAt: true, pluginVersion: true, classIslandVersion: true },
+    orderBy: { lastSeenAt: 'desc' },
+  });
+
+  const latest = devices[0];
+  return {
+    connected: devices.length > 0,
+    deviceName: latest?.name ?? null,
+    deviceCount: devices.length,
+    lastSeenAt: latest?.lastSeenAt ? latest.lastSeenAt.toISOString() : null,
+    pluginVersion: latest?.pluginVersion ?? null,
+    classIslandVersion: latest?.classIslandVersion ?? null,
+  };
+}
+
 /* ---------------------------------------------------------------- 通知显示位置 */
 
 /**

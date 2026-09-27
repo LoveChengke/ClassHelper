@@ -1,6 +1,9 @@
 using Avalonia.Threading;
 using ClassHelper.ClassIslandPlugin.Interop;
 using ClassHelper.ClassIslandPlugin.Models;
+using ClassIsland.Core.Abstractions.Services;
+using ClassIsland.Shared;
+using ClassIsland.Shared.Enums;
 using ClassIsland.Core.Abstractions.Services.NotificationProviders;
 using ClassIsland.Core.Attributes;
 using ClassIsland.Core.Models.Notification;
@@ -48,6 +51,19 @@ public sealed class ClassHelperNotificationProvider : NotificationProviderBase
     /// </summary>
     private readonly HashSet<string> _playing = new();
 
+    /// <summary>
+    /// 上课时段被暂存的提醒（与客户端灵动岛同一套规则）。
+    ///
+    /// 为什么要有它：老师在**上课时段**发通知，教室里正上着课，直接全屏弹会打断课堂。
+    /// 客户端的灵动岛就是"上课先收着、下课再弹"，ClassIsland 这侧必须一致，
+    /// 否则学生在客户端看不到、却在 ClassIsland 上被打断。
+    ///
+    /// 例外（"主动通知"）：紧急提醒与**叫人**，老师正在等学生，必须立刻弹。
+    /// </summary>
+    private readonly List<PushNotificationDto> _deferred = new();
+
+    private ILessonsService? _lessons;
+
     public ClassHelperNotificationProvider(
         BridgeService bridge,
         PluginSettings settings,
@@ -57,6 +73,54 @@ public sealed class ClassHelperNotificationProvider : NotificationProviderBase
         _settings = settings;
         _logger = logger;
         _bridge.NotificationReceived += OnNotificationReceived;
+
+        // 订阅课程事件：下课后把上课时段暂存的提醒补弹出来
+        try
+        {
+            _lessons = IAppHost.TryGetService<ILessonsService>();
+            if (_lessons is not null)
+            {
+                _lessons.OnBreakingTime += (_, _) => Dispatcher.UIThread.Post(FlushDeferred);
+                _lessons.OnAfterSchool += (_, _) => Dispatcher.UIThread.Post(FlushDeferred);
+                _lessons.CurrentTimeStateChanged += (_, _) => Dispatcher.UIThread.Post(FlushDeferred);
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "班级小助手联动：订阅课程事件失败，上课暂存将退化为「立即弹出」");
+        }
+    }
+
+    /// <summary>当前是否处于上课时段（读不到课程服务时按"不在上课"处理，宁可弹也不静默丢）</summary>
+    private bool IsInClass()
+    {
+        try
+        {
+            return _lessons?.CurrentState == TimeState.OnClass;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 这条提醒是否必须立刻弹（"主动通知"）：
+    /// 紧急提醒，或叫人（老师正在等学生）。
+    /// </summary>
+    private static bool IsImmediate(PushNotificationDto notification) =>
+        notification.Urgent || string.Equals(notification.Kind, "call", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>下课后补弹暂存的提醒（按进入顺序）</summary>
+    private void FlushDeferred()
+    {
+        if (IsInClass()) return; // 还在上课（例如只是状态在 OnClass 内部变化）
+        if (_deferred.Count == 0) return;
+
+        var pending = _deferred.ToList();
+        _deferred.Clear();
+        _logger.LogInformation("班级小助手联动：下课了，补弹 {Count} 条上课时段暂存的提醒", pending.Count);
+        foreach (var item in pending) ShowOnUiThread(item);
     }
 
     private void OnNotificationReceived(object? sender, PushNotificationDto notification)
@@ -83,6 +147,14 @@ public sealed class ClassHelperNotificationProvider : NotificationProviderBase
     {
         try
         {
+            // 上课时段：非"主动通知"先收着（与客户端灵动岛同一套规则），下课后补弹
+            if (IsInClass() && !IsImmediate(notification))
+            {
+                _deferred.Add(notification);
+                _logger.LogInformation("班级小助手联动：上课中，「{Title}」已暂存，下课后弹出", notification.Title);
+                return;
+            }
+
             var request = BuildRequest(notification);
             // 只有真正播完（或被用户关掉）才回执：中途退出 ClassIsland 时下次上报还会补发，不会静默丢失
             AckWhenFinished(request, notification);

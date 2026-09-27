@@ -758,21 +758,30 @@ class IslandController {
    * - 全部取整，避免 `Math.round` 在 0.5 边界上左右跳变（那会表现为 ±0.5px 的横向抖动）。
    */
   private resolveAnchor(): IslandAnchor {
-    const area = screen.getPrimaryDisplay().workArea;
-    const margin = ISLAND_MARGIN;
+    // 多显示器教室电脑：打开"跟随鼠标屏幕"后，岛出现在鼠标所在的那块屏（讲台切换投影时不用改设置）
+    const display = this.appearance.followCursorDisplay
+      ? screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+      : screen.getPrimaryDisplay();
+    const area = display.workArea;
+    const marginX = Math.round(this.appearance.marginX ?? ISLAND_MARGIN);
+    const marginY = Math.round(this.appearance.marginY ?? ISLAND_MARGIN);
     const center = Math.round(area.x + area.width / 2);
 
     // 6 个停靠位置（顶/底 × 左/中/右），与 WinIsland 的 DockPosition 一一对应
     const position = this.appearance.position;
     const vMode: IslandAnchor['vMode'] = position.startsWith('bottom') ? 'bottom' : 'top';
-    const vValue = vMode === 'bottom' ? area.y + area.height - margin : area.y + margin;
+    const vValue = vMode === 'bottom' ? area.y + area.height - marginY : area.y + marginY;
     const hMode: IslandAnchor['hMode'] = position.endsWith('left')
       ? 'left'
       : position.endsWith('right')
         ? 'right'
         : 'center';
     const hValue =
-      hMode === 'left' ? area.x + margin : hMode === 'right' ? area.x + area.width - margin : center;
+      hMode === 'left'
+        ? area.x + marginX
+        : hMode === 'right'
+          ? area.x + area.width - marginX
+          : center;
     return { hMode, hValue, vMode, vValue };
   }
 
@@ -1336,6 +1345,10 @@ export function normalizeAppearance(input: IslandAppearance): IslandAppearance {
     alwaysOnTop: input.alwaysOnTop !== false,
     style: ISLAND_STYLES.includes(input.style) ? input.style : 'black',
     idleSliver: input.idleSliver === true,
+    // 边距：0 表示贴着屏幕边缘，上限给到 200/160 是为了"多显示器 + 任务栏在侧面"这类布局
+    marginX: clamp(input.marginX ?? DEFAULT_ISLAND_APPEARANCE.marginX, 0, 200),
+    marginY: clamp(input.marginY ?? DEFAULT_ISLAND_APPEARANCE.marginY, 0, 160),
+    followCursorDisplay: input.followCursorDisplay === true,
   };
 }
 

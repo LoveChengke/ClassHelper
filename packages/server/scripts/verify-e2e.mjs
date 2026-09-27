@@ -455,6 +455,36 @@ async function main() {
     createdHomework.payload?.data?.dueAt === undefined,
     `dueAt=${String(createdHomework.payload?.data?.dueAt)}`,
   );
+  // 按天查看：作业带"所属日期"（本地日期），并且能按它过滤
+  const assignDate = createdHomework.payload?.data?.assignDate;
+  record(
+    '作业带所属日期（assignDate，默认服务器当天）',
+    typeof assignDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(assignDate),
+    `assignDate=${assignDate}`,
+  );
+  const byDay = await api(`/homeworks?classId=${classId}&date=${assignDate}`, { token: teacherToken });
+  record(
+    '按天查看（?date=）只返回该天的作业',
+    byDay.status === 200 &&
+      (byDay.payload?.data ?? []).length > 0 &&
+      (byDay.payload?.data ?? []).every((item) => item.assignDate === assignDate),
+    `当天条数=${(byDay.payload?.data ?? []).length}`,
+  );
+  const otherDay = await api(`/homeworks?classId=${classId}&date=2000-01-01`, { token: teacherToken });
+  record(
+    '没有作业的日期返回空列表',
+    otherDay.status === 200 && (otherDay.payload?.data ?? []).length === 0,
+    `条数=${(otherDay.payload?.data ?? []).length}`,
+  );
+  const dayMarks = await api(`/homeworks/days?classId=${classId}`, { token: teacherToken });
+  const marks = dayMarks.payload?.data?.days ?? [];
+  record(
+    '作业日历返回有作业的日期（供日期选择器高亮）',
+    dayMarks.status === 200 && marks.some((item) => item.date === assignDate && item.count >= 1),
+    `日期数=${marks.length} 命中=${marks.find((item) => item.date === assignDate)?.count ?? 0}`,
+  );
+  const badDay = await api(`/homeworks/days?classId=${classId}&from=2026-13-45`, { token: teacherToken });
+  record('作业日历非法日期被拒（422）', badDay.status === 422, `status=${badDay.status}`);
 
   try {
     const { payload, elapsed } = await homeworkWait;
@@ -1866,6 +1896,46 @@ async function main() {
     classScheduleWrite.status === 403,
     `status=${classScheduleWrite.status}`,
   );
+
+  // 教室机器录入作业（需求：支持作业在客户端录入）：班级账号可以发，跨班不行
+  const classHomeworkCreate = await api('/homeworks', {
+    method: 'POST',
+    token: classToken,
+    body: {
+      classId,
+      title: '教室录入验证作业',
+      content: 'P 大本 第 3 课',
+      assignDate: '2026-03-02',
+    },
+  });
+  record(
+    '班级账号可在教室机器上录入作业',
+    classHomeworkCreate.status === 201 && classHomeworkCreate.payload?.data?.assignDate === '2026-03-02',
+    `status=${classHomeworkCreate.status} assignDate=${classHomeworkCreate.payload?.data?.assignDate}`,
+  );
+  if (foreignClass) {
+    const classHomeworkCreateCross = await api('/homeworks', {
+      method: 'POST',
+      token: classToken,
+      body: { classId: foreignClass.id, title: '跨班录入作业', content: '不应成功' },
+    });
+    record(
+      '班级账号跨班录入作业被拒绝（403）',
+      classHomeworkCreateCross.status === 403,
+      `status=${classHomeworkCreateCross.status}`,
+    );
+  }
+  if (classHomeworkCreate.payload?.data?.id) {
+    const cleanupHomework = await api(`/homeworks/${classHomeworkCreate.payload.data.id}`, {
+      method: 'DELETE',
+      token: teacherToken,
+    });
+    record(
+      '清理：教室录入的验证作业已删除',
+      cleanupHomework.status === 200,
+      `status=${cleanupHomework.status}`,
+    );
+  }
 
   // 班级设备代全班操作：通知已读
   const classNameNotice = await api('/notifications', {

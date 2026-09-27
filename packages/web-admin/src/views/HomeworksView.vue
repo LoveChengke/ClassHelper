@@ -4,7 +4,9 @@ import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'elem
 import {
   SOCKET_EVENTS,
   SUBJECT_CATALOG,
+  dayKeyLocal,
   formatDate,
+  shiftDayKey,
   truncate,
   type ClassDto,
   type CourseDto,
@@ -25,7 +27,9 @@ const loading = ref(false);
 const classes = ref<ClassDto[]>([]);
 const courses = ref<CourseDto[]>([]);
 const homeworks = ref<HomeworkDto[]>([]);
-const filter = reactive({ classId: '', courseId: '', keyword: '' });
+const filter = reactive({ classId: '', courseId: '', keyword: '', date: '' });
+/** 有作业的日期（日期选择器高亮），来自 GET /homeworks/days */
+const dayMarks = ref<Map<string, number>>(new Map());
 const detailVisible = ref(false);
 const current = ref<HomeworkDto | null>(null);
 
@@ -108,10 +112,12 @@ async function loadCourses(): Promise<void> {
 async function loadHomeworks(): Promise<void> {
   loading.value = true;
   try {
-    const params: { classId?: string; courseId?: string; keyword?: string } = {};
+    const params: { classId?: string; courseId?: string; keyword?: string; date?: string } = {};
     if (filter.classId) params.classId = filter.classId;
     if (filter.courseId) params.courseId = filter.courseId;
     if (filter.keyword.trim()) params.keyword = filter.keyword.trim();
+    // 按天查看：选了日期就只列那一天的作业
+    if (filter.date) params.date = filter.date;
     homeworks.value = await homeworkApi.list(params);
   } finally {
     loading.value = false;
@@ -121,7 +127,28 @@ async function loadHomeworks(): Promise<void> {
 async function onClassChange(): Promise<void> {
   filter.courseId = '';
   await loadCourses();
+  await loadDayMarks();
   await loadHomeworks();
+}
+
+/** 拉取"哪些天有作业"（日期选择器高亮）；范围取今天前后各 45 天 */
+async function loadDayMarks(): Promise<void> {
+  try {
+    const today = dayKeyLocal(new Date());
+    const result = await homeworkApi.days({
+      classId: filter.classId || undefined,
+      from: shiftDayKey(today, -45),
+      to: shiftDayKey(today, 45),
+    });
+    dayMarks.value = new Map(result.days.map((item) => [item.date, item.count]));
+  } catch {
+    dayMarks.value = new Map();
+  }
+}
+
+/** 日期选择器：有作业的日期加高亮类 */
+function dayCellClass(date: Date): string {
+  return dayMarks.value.has(dayKeyLocal(date)) ? 'day-has-homework' : '';
 }
 
 /* ------------------------------------------------------------ 发布 / 编辑 */
@@ -135,6 +162,8 @@ const form = reactive({
   title: '',
   content: '',
   attachmentUrl: '',
+  /** 作业所属日期（YYYY-MM-DD）：决定它出现在哪一天的「按天查看」里 */
+  assignDate: dayKeyLocal(new Date()),
 });
 
 /**
@@ -182,6 +211,8 @@ function openCreate(): void {
   form.title = '';
   form.content = '';
   form.attachmentUrl = '';
+  // 默认跟当前「按天查看」的日期一致：老师多半就是在给这一天留作业
+  form.assignDate = filter.date || dayKeyLocal(new Date());
   formVisible.value = true;
   void loadFormCourses();
 }
@@ -193,6 +224,7 @@ function openEdit(row: HomeworkDto): void {
   form.title = row.title;
   form.content = row.content;
   form.attachmentUrl = row.attachmentUrl ?? '';
+  form.assignDate = row.assignDate;
   formVisible.value = true;
   void loadFormCourses();
 }
@@ -253,6 +285,7 @@ async function submitForm(): Promise<void> {
     title: form.title.trim(),
     content: form.content,
     attachmentUrl: form.attachmentUrl.trim() || null,
+    assignDate: form.assignDate || dayKeyLocal(new Date()),
   };
 
   if (editingId.value) {
@@ -325,6 +358,16 @@ onUnmounted(() => {
         >
           <el-option v-for="item in courses" :key="item.id" :label="item.name" :value="item.id" />
         </el-select>
+        <el-date-picker
+          v-model="filter.date"
+          type="date"
+          value-format="YYYY-MM-DD"
+          placeholder="按天查看"
+          clearable
+          class="day-picker"
+          :cell-class-name="dayCellClass"
+          @change="loadHomeworks"
+        />
         <el-input
           v-model="filter.keyword"
           placeholder="搜索标题/内容"
@@ -399,6 +442,16 @@ onUnmounted(() => {
                 : '该班还没有的科目在「其他科目（新建）」里，选中后会自动建课再发布（需班主任/管理员）'
             }}
           </div>
+        </el-form-item>
+        <el-form-item label="所属日期">
+          <el-date-picker
+            v-model="form.assignDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            :cell-class-name="dayCellClass"
+            style="width: 200px"
+          />
+          <span class="form-hint">作业会出现在这一天（按天查看与学生端都按它归类）</span>
         </el-form-item>
         <el-form-item label="标题" prop="title">
           <el-input v-model="form.title" maxlength="120" show-word-limit />
@@ -502,6 +555,29 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* 日期选择器：有作业的日子加一个圆点，翻月份时一眼看出哪天有作业 */
+:deep(.day-has-homework .el-date-table-cell__text)::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.day-picker {
+  width: 168px;
+}
+
+.form-hint {
+  margin-left: 10px;
+  opacity: 0.65;
+  font-size: 12px;
+}
+
 .text-danger {
   color: #f56c6c;
 }

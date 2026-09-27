@@ -11,6 +11,35 @@ function pad(input: number): string {
   return input < 10 ? `0${input}` : String(input);
 }
 
+/**
+ * 本地日期串（YYYY-MM-DD）。
+ *
+ * 「作业属于哪一天」用它是**本地**日期，不是 UTC 日期：教室在 UTC+8，晚上 8 点录的作业
+ * 应该算今天，而 `toISOString().slice(0, 10)` 会把它算成明天（UTC 已跨天）。
+ */
+export function dayKeyLocal(value: string | number | Date): string {
+  const date = toDate(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** 判断字符串是否形如 YYYY-MM-DD（并校验是真实存在的日期） */
+export function isDayKey(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  return (
+    date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
+  );
+}
+
+/** 在 YYYY-MM-DD 上加减天数（用于日期选择器的区间与"昨天/明天"） */
+export function shiftDayKey(value: string, deltaDays: number): string {
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, month - 1, day + deltaDays);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 /** 格式化为 YYYY-MM-DD，withTime=true 时追加 HH:mm */
 export function formatDate(value: string | number | Date | null | undefined, withTime = false): string {
   if (value === null || value === undefined || value === '') return '';

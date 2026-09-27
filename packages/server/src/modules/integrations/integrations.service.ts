@@ -225,6 +225,7 @@ function toPushDto(
     durationSeconds: number;
     speechContent: string | null;
     urgent: boolean;
+    kind?: string | null;
     createdAt: Date;
   },
   extras: { className?: string | null; teacherName?: string | null } = {},
@@ -237,6 +238,8 @@ function toPushDto(
     speechContent: record.speechContent,
     createdAt: record.createdAt.toISOString(),
     urgent: record.urgent,
+    // 老数据（迁移前）kind 为空：按普通通知处理
+    kind: record.kind === 'call' ? 'call' : 'notification',
     classId: record.classId,
     className: extras.className ?? null,
     teacherName: extras.teacherName ?? null,
@@ -325,6 +328,8 @@ export interface PushToClassIslandInput {
   notificationId?: string | null;
   /** 覆盖落库/广播时附带的教师名（三个入口的取法不同） */
   teacherName?: string | null;
+  /** 提醒类型：notification（默认）/ call（叫人，算「主动通知」） */
+  kind?: 'notification' | 'call';
 }
 
 /**
@@ -369,6 +374,7 @@ export async function pushToClassIsland(
       durationSeconds: input.durationSeconds ?? REPORT_DEFAULTS.notificationDuration,
       speechContent: input.speechContent ?? null,
       urgent: input.urgent === true,
+      kind: input.kind ?? 'notification',
       createdBy: input.createdBy ?? null,
       notificationId: input.notificationId ?? null,
       // 24 小时未送达/未确认的提醒不再补发，避免学生过几天突然看到旧提醒

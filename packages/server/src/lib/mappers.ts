@@ -1,3 +1,4 @@
+import { dayKeyLocal } from '@classhelper/shared';
 import type {
   ClassDto,
   ClassIslandNotificationChannel,
@@ -204,6 +205,8 @@ export interface HomeworkLike {
   title: string;
   content: string;
   attachmentUrl: string | null;
+  /** 作业所属日期（YYYY-MM-DD，本地日期）；老库可能为空串 */
+  assignDate?: string | null;
   createdBy: string;
   createdAt: Date;
   course?: CourseBriefLike | null;
@@ -243,6 +246,8 @@ export function toHomeworkDto(
     attachmentUrl: item.attachmentUrl,
     createdBy: item.createdBy,
     createdAt: toIso(item.createdAt),
+    // 老库兜底：assignDate 为空时按 createdAt 的本地日期回退，前端不必处理空值
+    assignDate: item.assignDate || dayKeyLocal(item.createdAt),
     course: item.course ? toCourseBrief(item.course) : null,
     creator: item.creator ? toTeacherBrief(item.creator) : null,
     completed: own ? own.completed : undefined,
