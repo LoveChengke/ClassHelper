@@ -1,7 +1,13 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import { STORAGE_KEYS, formatDate } from '@classhelper/shared';
+import {
+  DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL,
+  STORAGE_KEYS,
+  formatDate,
+  type ClassIslandNotificationChannel,
+} from '@classhelper/shared';
 import { pingHealth, setApiBaseUrl, setReachabilityReporter } from '../api/http.js';
+import { classChannelApi } from '../api/index.js';
 import { cacheClearAll, cacheStats, type CacheStoreStat } from '../cache/db.js';
 import { DEFAULT_SERVER, normalizeServerUrl } from '../config.js';
 
@@ -19,6 +25,13 @@ export const useAppStore = defineStore('app', () => {
   const currentWeek = ref(1);
   const maxWeek = ref(20);
   const initialized = ref(false);
+  /**
+   * 通知显示位置：这台教室机器把提醒弹在哪个端。
+   *
+   * 单一事实来源是**班级记录**（服务端），本地这份只是缓存：断网时也要能按上次的选择
+   * 决定本机弹不弹，所以启动时先读本地配置、登录后再向服务器对齐一次。
+   */
+  const notificationChannel = ref<ClassIslandNotificationChannel>(DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL);
 
   const offline = computed(() => !serverReachable.value);
   const lastSyncText = computed(() => (lastSyncAt.value ? formatDate(lastSyncAt.value, true) : '尚未同步'));
@@ -108,6 +121,53 @@ export const useAppStore = defineStore('app', () => {
     void refreshCacheStats();
   }
 
+  /* ------------------------------------------------------------ 通知显示位置 */
+
+  /** 启动时用本地配置兜底（此时可能还没登录/断网） */
+  function applyLocalNotificationChannel(value: ClassIslandNotificationChannel): void {
+    notificationChannel.value = value;
+  }
+
+  /**
+   * 向服务器对齐显示位置。
+   * 登录后调用：以服务端为准（多台机器/老师改过之后，本地缓存可能已经过期）。
+   */
+  async function loadNotificationChannel(classId: string | null): Promise<void> {
+    if (!classId) return;
+    try {
+      const result = await classChannelApi.get(classId);
+      notificationChannel.value = result.notificationChannel;
+      await window.desktop?.saveConfig({ notificationChannel: result.notificationChannel });
+    } catch {
+      // 离线/无权限：保留本地值，不影响展示
+    }
+  }
+
+  /**
+   * 改显示位置：先落本地（立刻生效），再写回班级记录。
+   * 服务端写失败时返回 false，由设置页提示"已保存在本机，联网后请重试"。
+   */
+  async function setNotificationChannel(
+    classId: string | null,
+    value: ClassIslandNotificationChannel,
+  ): Promise<boolean> {
+    notificationChannel.value = value;
+    await window.desktop?.saveConfig({ notificationChannel: value });
+    if (!classId) return false;
+    try {
+      const result = await classChannelApi.set(classId, value);
+      notificationChannel.value = result.notificationChannel;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 本次提醒是否要在本机弹（弹窗 + 灵动岛）；"只在 ClassIsland 上弹"时为 false */
+  function shouldPopupLocally(): boolean {
+    return notificationChannel.value !== 'classisland';
+  }
+
   return {
     serverUrl,
     serverReachable,
@@ -119,9 +179,14 @@ export const useAppStore = defineStore('app', () => {
     currentWeek,
     maxWeek,
     initialized,
+    notificationChannel,
     init,
     ping,
     applyServerUrl,
+    applyLocalNotificationChannel,
+    loadNotificationChannel,
+    setNotificationChannel,
+    shouldPopupLocally,
     refreshCacheStats,
     clearCache,
     markSynced,

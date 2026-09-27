@@ -60,6 +60,9 @@ model Class {
   passwordHash String?
   /// 本学期教学周数（班主任可调，默认 20）：课表周次选择与 weekEnd 默认值都用它
   termWeeks    Int      @default(20)
+  /// 通知显示位置（由教室的班级客户端在设置页里选）：
+  /// both=客户端与 ClassIsland 都弹 / client=只弹客户端 / classisland=只弹 ClassIsland
+  notificationChannel String @default("both")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -73,6 +76,8 @@ model Class {
   grades        Grade[]
   enrollments   Enrollment[]
   timeLayouts   TimeLayout[]
+  integrationDevices IntegrationDevice[]
+  classIslandPushes  ClassIslandPush[]
 
   @@index([teacherId])
 }
@@ -261,4 +266,81 @@ model Grade {
   @@index([userId, publishedAt])
   @@index([classId, examName])
   @@index([courseId])
+}
+
+/// ClassIsland 联动设备（一台装有联动插件的机器 = 某个班级的接入端）
+///
+/// 说明：
+/// 1) 令牌是「设备级」的，不是用户级：插件在本机保存明文，服务端只存 sha256 哈希 + 前缀提示；
+/// 2) 同一班级下按 deviceKey（机器码）唯一：插件重装后带同一 deviceKey 会自动重绑到原记录，
+///    避免设备列表里堆满重复项；
+/// 3) 状态字段是「最后一次上报的快照」，Web 端据此展示"某班现在上什么课"。
+model IntegrationDevice {
+  id        String  @id @default(cuid())
+  classId   String
+  /// 设备显示名（默认取机器名）
+  name      String
+  /// 设备唯一标识（插件上报的机器码）
+  deviceKey String
+  /// 联动方式：plugin=实时插件联动 / import=仅一次性导入
+  mode      String  @default("plugin")
+  /// 是否接入（关闭后插件上报与下发一律 403）
+  enabled   Boolean @default(true)
+  /// 设备令牌的 sha256（明文只在创建/重置时返回一次）
+  tokenHash String
+  /// 令牌前缀（chci_xxxxxxxx），设备列表里用于人眼识别与排查
+  tokenHint String
+  /// 是否允许插件把 ClassIsland 的课表回传到本服务
+  syncScheduleToServer       Boolean @default(true)
+  /// 是否允许把本班课表镜像回 ClassIsland（由插件执行）
+  mirrorScheduleToClassIsland Boolean @default(false)
+  classIslandVersion String?
+  pluginVersion      String?
+  lastSeenAt DateTime?
+  /// 以下为最后一次上报的快照
+  classPlanLoaded    Boolean @default(false)
+  currentSubject     String?
+  currentTimeState   String?
+  currentPeriodStart String?
+  currentPeriodEnd   String?
+  nextSubject        String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  class  Class             @relation(fields: [classId], references: [id], onDelete: Cascade)
+  pushes ClassIslandPush[]
+
+  @@unique([classId, deviceKey])
+  @@index([classId])
+  @@index([tokenHash])
+}
+
+/// 下发给 ClassIsland 的提醒：教师发通知 → 学生机器全屏弹出。
+/// 落库是为了「设备离线时通知不丢」——插件重连后拉取未确认的一条立即弹出。
+model ClassIslandPush {
+  id       String  @id @default(cuid())
+  classId  String
+  deviceId String?
+  title    String
+  content  String
+  /// 显示时长（秒）：映射到 ClassIsland 的 NotificationContent.Duration
+  durationSeconds Int     @default(8)
+  /// 语音朗读内容；null = 不朗读
+  speechContent   String?
+  urgent          Boolean @default(false)
+  /// 发起人的用户 id（教师/管理员）
+  createdBy String?
+  /// 同时落库到通知中心的通知 id（saveToNotifications 时写入）
+  notificationId String?
+  /// 插件确认弹出的时间（确认后不再重复下发）
+  ackedAt   DateTime?
+  createdAt DateTime  @default(now())
+  /// 过期时间：超过后不再补发（避免学生几天后突然弹出旧提醒）
+  expiresAt DateTime
+
+  class  Class              @relation(fields: [classId], references: [id], onDelete: Cascade)
+  device IntegrationDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([classId, createdAt])
+  @@index([deviceId, ackedAt])
 }

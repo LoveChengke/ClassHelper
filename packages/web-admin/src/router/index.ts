@@ -61,6 +61,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/GradesView.vue'),
         meta: { title: '成绩录入', icon: 'Trophy' },
       },
+      {
+        path: 'integrations',
+        name: 'integrations',
+        component: () => import('@/views/IntegrationsView.vue'),
+        // 与后端 requireRole('ADMIN','TEACHER') 对齐：学生角色不该看到这一页
+        meta: { title: 'ClassIsland 联动', icon: 'Connection', roles: ['ADMIN', 'TEACHER'] },
+      },
     ],
   },
   {

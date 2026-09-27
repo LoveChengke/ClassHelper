@@ -1,5 +1,6 @@
 import type {
   ClassDto,
+  ClassIslandNotificationChannel,
   ClassTeacherBrief,
   CourseBrief,
   CourseDto,
@@ -95,6 +96,8 @@ export interface ClassLike {
   teacherId: string;
   /** 本学期教学周数（班主任可调，默认 20） */
   termWeeks?: number;
+  /** 通知显示位置：both / client / classisland（由教室的班级客户端设置） */
+  notificationChannel?: string | null;
   createdAt: Date;
   teacher?: TeacherBriefLike | null;
   _count?: {
@@ -106,6 +109,11 @@ export interface ClassLike {
   };
 }
 
+/** 通知显示位置：库里存字符串，出参收敛成联合类型（非法值一律按默认 both 处理） */
+export function toNotificationChannel(value: string | null | undefined): ClassIslandNotificationChannel {
+  return value === 'client' || value === 'classisland' ? value : 'both';
+}
+
 export function toClassDto(item: ClassLike): ClassDto {
   return {
     id: item.id,
@@ -113,6 +121,7 @@ export function toClassDto(item: ClassLike): ClassDto {
     grade: item.grade,
     teacherId: item.teacherId,
     termWeeks: item.termWeeks ?? 20,
+    notificationChannel: toNotificationChannel(item.notificationChannel),
     createdAt: toIso(item.createdAt),
     teacher: item.teacher ? toTeacherBrief(item.teacher) : null,
     studentCount: item._count?.students ?? undefined,

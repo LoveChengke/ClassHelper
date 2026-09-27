@@ -23,6 +23,8 @@ export const API_PATHS = {
   teachers: '/teachers',
   /** 导入：模板下载 / 表格导入 / ClassIsland 课表时间配置 */
   imports: '/imports',
+  /** ClassIsland 联动：设备接入、状态上报、通知下发 */
+  integrations: '/integrations',
   dashboard: '/dashboard/summary',
 } as const;
 
@@ -214,8 +216,70 @@ export const SOCKET_EVENTS = {
   classUpdated: 'class:updated',
   /** "叫人"：老师点名让某位同学去找他（定向到 user:{studentId} 房间） */
   callNew: 'call:new',
+  /** ClassIsland 联动：设备状态上报（Web 端实时展示当前课程） */
+  classislandState: 'classisland:state',
+  /** ClassIsland 联动：教师发起的提醒已下发（插件据此全屏弹出） */
+  classislandNotification: 'classisland:notification',
   connected: 'connected',
 } as const;
+
+/** ClassIsland 联动：设备接入令牌的前缀（便于识别与日志排查） */
+export const CLASSISLAND_DEVICE_TOKEN_PREFIX = 'chci_';
+
+/** ClassIsland 联动：ClassIsland 的时间点类型（与 TimeLayoutItem.TimeType 一致） */
+export const CLASSISLAND_TIME_TYPES = {
+  class: 0,
+  break: 1,
+  divider: 2,
+  action: 3,
+} as const;
+
+/**
+ * ClassIsland 的时间点类型 -> 本系统的节次类型。
+ * 3（行动）在本系统里按"分割线"处理：它不占课时，只做视觉分隔。
+ */
+export const CLASSISLAND_TIME_TYPE_LABELS: Record<number, string> = {
+  0: '上课',
+  1: '课间',
+  2: '分割线',
+  3: '行动',
+};
+
+/** ClassIsland TimeState 字符串 -> 中文（插件上报 → Web 端展示） */
+export const CLASSISLAND_TIME_STATE_LABELS: Record<string, string> = {
+  None: '空闲',
+  OnClass: '上课中',
+  PrepareOnClass: '预备铃',
+  Breaking: '课间休息',
+  AfterSchool: '已放学',
+};
+
+/**
+ * 通知的显示位置（由**教室的班级客户端**在设置页里选，存在班级上）。
+ *
+ * - `both`：ClassHelper 客户端弹（弹窗 + 灵动岛），同时推给教室的 ClassIsland；
+ * - `client`：只在 ClassHelper 客户端弹，不打扰 ClassIsland；
+ * - `classisland`：只在 ClassIsland 上弹（客户端只进通知中心，不弹窗、不上岛）。
+ */
+export const CLASSISLAND_NOTIFICATION_CHANNELS = ['both', 'client', 'classisland'] as const;
+
+export const CLASSISLAND_NOTIFICATION_CHANNEL_LABELS: Record<string, string> = {
+  both: 'ClassHelper 与 ClassIsland 都弹',
+  client: '只在 ClassHelper 客户端弹',
+  classisland: '只在 ClassIsland 上弹',
+};
+
+export const CLASSISLAND_NOTIFICATION_CHANNEL_HINTS: Record<string, string> = {
+  both: '教室的 ClassHelper 客户端与 ClassIsland 都会提醒（默认）',
+  client: '提醒只在 ClassHelper 客户端显示，不推送到 ClassIsland',
+  classisland: '提醒只推送到 ClassIsland，ClassHelper 客户端只留记录、不弹窗',
+};
+
+/** 默认显示位置：两端都弹 */
+export const DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL = 'both';
+/** 默认提醒显示时长（秒），后端与插件共用同一口径 */
+export const CLASSISLAND_NOTIFICATION_DEFAULT_DURATION = 8;
+export const CLASSISLAND_NOTIFICATION_MAX_DURATION = 120;
 
 /**
  * "叫人"快捷短语（Web 管理端一键选择，学生端灵动岛同步展示）。

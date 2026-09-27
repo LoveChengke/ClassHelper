@@ -18,7 +18,8 @@
     "db:seed": "prisma db seed",
     "db:reset": "prisma migrate reset --force",
     "db:studio": "prisma studio",
-    "verify:e2e": "node scripts/verify-e2e.mjs"
+    "verify:e2e": "node scripts/verify-e2e.mjs",
+    "verify:classisland": "node scripts/verify-classisland.mjs"
   },
   "dependencies": {
     "@classhelper/shared": "workspace:*",

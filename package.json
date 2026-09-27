@@ -15,6 +15,7 @@
     "dev:desktop": "pnpm build:shared && pnpm --filter @classhelper/desktop-client dev",
     "build": "pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build && pnpm --filter @classhelper/desktop-client build",
     "build:desktop": "pnpm build:shared && pnpm --filter @classhelper/desktop-client build",
+    "build:classisland-plugin": "node packages/classisland-plugin/scripts/build.mjs",
     "typecheck": "pnpm build:shared && pnpm -r --no-bail typecheck",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -31,11 +32,14 @@
     "verify:desktop": "pnpm --filter @classhelper/desktop-client smoke",
     "verify:web": "node scripts/ui-smoke/run.mjs",
     "verify:packaged": "node scripts/verify-packaged.mjs",
+    "verify:classisland": "pnpm --filter @classhelper/server verify:classisland",
+    "verify:classisland-plugin": "node packages/classisland-plugin/scripts/verify.mjs",
     "icons": "node scripts/generate-icons.mjs",
     "dist:win": "pnpm --filter @classhelper/desktop-client dist:win",
     "dist:dir": "pnpm --filter @classhelper/desktop-client dist:dir",
     "dist:server": "pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build && node scripts/dist-server.mjs",
-    "dist:all": "pnpm dist:server && pnpm dist:win"
+    "dist:classisland-plugin": "node packages/classisland-plugin/scripts/build.mjs --cipx",
+    "dist:all": "pnpm dist:server && pnpm dist:win && pnpm dist:classisland-plugin"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

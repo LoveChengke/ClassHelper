@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      ClassIsland 2.0 / 2.1.0.x 面向 net8.0；2.1.1 起改为 net10.0。
+      本插件按 net8.0 交付，因此 SDK 版本固定到最后一个 net8.0 的版本（2.1.0.1），
+      这样 ClassIsland 2.0.x 与 2.1.0.x 都能加载（apiVersion 见 manifest.yml）。
+    -->
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>12</LangVersion>
+    <RootNamespace>ClassHelper.ClassIslandPlugin</RootNamespace>
+    <AssemblyName>ClassHelper.ClassIslandPlugin</AssemblyName>
+    <ClassIslandPluginSdkVersion>2.1.0.1</ClassIslandPluginSdkVersion>
+    <!-- 插件由 ClassIsland 加载，不需要生成自带运行时（ExcludeAssets 见下） -->
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- 设置页是 .axaml：需要让 Avalonia 的默认项把 **/*.axaml 收成 AvaloniaXaml 并编译 -->
+    <EnableDefaultItems>true</EnableDefaultItems>
+    <!-- 绑定走运行时解析：插件与主程序各自编译，编译期绑定会因看不到对方的类型而失败 -->
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 运行时与原生资源由 ClassIsland 本体提供，插件只编译期依赖 -->
+    <PackageReference Include="ClassIsland.PluginSdk" Version="$(ClassIslandPluginSdkVersion)">
+      <ExcludeAssets>runtime;native</ExcludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="manifest.yml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="README.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="icon.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

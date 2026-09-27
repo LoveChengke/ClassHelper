@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CLASSISLAND_NOTIFICATION_CHANNELS } from '@classhelper/shared';
 import { keywordSchema } from '../../lib/schemas.js';
 
 export const createClassSchema = z.object({
@@ -54,6 +55,17 @@ export const assignHeadTeacherSchema = z.object({
   teacherId: z.string().min(1, '请选择班主任'),
 });
 
+/**
+ * 通知显示位置（both / client / classisland）。
+ * 由**教室的班级客户端**在设置页里改，教师/管理员也可以在 Web 端改。
+ */
+export const updateNotificationChannelSchema = z.object({
+  notificationChannel: z.enum(
+    CLASSISLAND_NOTIFICATION_CHANNELS as unknown as [string, ...string[]],
+    { message: '显示位置只能是 both / client / classisland' },
+  ),
+});
+
 export const classStudentParamSchema = z.object({
   id: z.string().min(1),
   userId: z.string().min(1),
@@ -67,4 +79,5 @@ export const classTeacherParamSchema = z.object({
 export type CreateClassInput = z.infer<typeof createClassSchema>;
 export type UpdateClassInput = z.infer<typeof updateClassSchema>;
 export type UpdateClassAccountInput = z.infer<typeof updateClassAccountSchema>;
+export type UpdateNotificationChannelInput = z.infer<typeof updateNotificationChannelSchema>;
 export type AddStudentInput = z.infer<typeof addStudentSchema>;

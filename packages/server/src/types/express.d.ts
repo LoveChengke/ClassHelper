@@ -15,6 +15,15 @@ declare global {
       };
       validatedQuery?: unknown;
       validatedParams?: unknown;
+      /** ClassIsland 联动插件上报时解析出的设备上下文（见 modules/integrations/device-auth.ts） */
+      device?: {
+        deviceId: string;
+        classId: string;
+        name: string;
+        enabled: boolean;
+        syncScheduleToServer: boolean;
+        mirrorScheduleToClassIsland: boolean;
+      };
     }
   }
 }

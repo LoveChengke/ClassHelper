@@ -21,6 +21,7 @@ const { isMobile } = useResponsive();
  * - 成绩录入：管理员 + 教师；页面内只对"管理员或所选班级的班主任"显示写入/导入按钮
  *   （需求 6：成绩与表格导入老师端可用且不越权；科任老师只能看，写入会被后端 403）
  * - 作业 / 通知：所有教师
+ * - ClassIsland 联动：管理员 + 教师（设备令牌按班签发，页面内再按"能否管理该班"控制按钮）
  */
 const menuItems = [
   { path: '/dashboard', title: '仪表盘', icon: 'Odometer', roles: ['ADMIN', 'TEACHER'] },
@@ -31,6 +32,7 @@ const menuItems = [
   { path: '/homeworks', title: '作业发布', icon: 'Notebook', roles: ['ADMIN', 'TEACHER'] },
   { path: '/notifications', title: '通知发布', icon: 'Bell', roles: ['ADMIN', 'TEACHER'] },
   { path: '/grades', title: '成绩录入', icon: 'Trophy', roles: ['ADMIN', 'TEACHER'] },
+  { path: '/integrations', title: 'ClassIsland 联动', icon: 'Connection', roles: ['ADMIN', 'TEACHER'] },
 ];
 
 /** 当前账号可见的菜单（班级/学生管理仅管理员可见） */

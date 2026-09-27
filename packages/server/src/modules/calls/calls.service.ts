@@ -6,6 +6,7 @@ import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
 import { toNotificationDto } from '../../lib/mappers.js';
 import { emitToClass, emitToUser } from '../../realtime/bus.js';
+import { pushToClassIsland, shouldPushToClassIsland } from '../integrations/integrations.service.js';
 import type { CreateCallInput } from './calls.schemas.js';
 
 const creatorSelect = { select: { id: true, name: true, username: true } } as const;
@@ -62,6 +63,24 @@ export async function createCall(user: TokenPayload, input: CreateCallInput): Pr
   // 同时广播到 classId 对应的 user 房间：班级账号（班级设备）以此房间登录，
   // 因此"叫人"消息在班级设备上也会立即展开（学生姓名在标题里，全班都能看到叫谁）
   emitToUser(created.classId, SOCKET_EVENTS.callNew, dto);
+
+  // 叫人同样推到教室的 ClassIsland：老师点名时，教室大屏也弹一条（学生姓名在标题里）。
+  // 显示位置由教室客户端决定；推送失败不影响叫人本身。
+  try {
+    if (await shouldPushToClassIsland(input.classId)) {
+      await pushToClassIsland({
+        classId: input.classId,
+        title: created.title,
+        content: created.content,
+        urgent: input.urgent === true,
+        createdBy: user.sub,
+        notificationId: created.id,
+        teacherName,
+      });
+    }
+  } catch (error) {
+    logger.warn(`叫人推送 ClassIsland 失败（叫人本身已发出）：${String(error)}`);
+  }
 
   logger.info(`${input.urgent ? '紧急叫人' : '叫人'}：${teacherName} → ${studentName}（${message}）`);
   return dto;

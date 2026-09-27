@@ -1,0 +1,167 @@
+<controls:SettingsPageBase x:Class="ClassHelper.ClassIslandPlugin.Views.BridgeSettingsPage"
+      xmlns="https://github.com/avaloniaui"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+      xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+      xmlns:local="clr-namespace:ClassHelper.ClassIslandPlugin.Views"
+      xmlns:controls="clr-namespace:ClassIsland.Core.Abstractions.Controls;assembly=ClassIsland.Core"
+      xmlns:ci="clr-namespace:ClassIsland.Core.Controls;assembly=ClassIsland.Core"
+      xmlns:fa="clr-namespace:FluentAvalonia.UI.Controls;assembly=FluentAvalonia"
+      mc:Ignorable="d"
+      d:DesignHeight="450" d:DesignWidth="800"
+      d:DataContext="{d:DesignInstance local:BridgeSettingsPage}"
+      Loaded="OnLoaded"
+      Unloaded="OnUnloaded">
+    <ScrollViewer>
+        <StackPanel Classes="settings-container animated-intro" Spacing="0">
+            <!-- 连接 -->
+            <TextBlock Text="连接班级小助手"
+                       Theme="{StaticResource SubtitleTextBlockStyle}" />
+            <TextBlock Margin="0 6 0 12" TextWrapping="Wrap"
+                       Text="填入班级小助手后端的地址与设备令牌。设备令牌在班级小助手 Web 端「ClassIsland 联动」页面里为本班新建设备后生成，只显示一次。" />
+
+            <TextBox Watermark="http://127.0.0.1:4000"
+                     Text="{Binding Settings.ServerUrl, Mode=TwoWay}" />
+            <TextBox Margin="0 8 0 0"
+                     Watermark="chci_..."
+                     PasswordChar="●"
+                     Text="{Binding Settings.DeviceToken, Mode=TwoWay}" />
+
+            <StackPanel Orientation="Horizontal" Margin="0 12 0 0" Spacing="8">
+                <Button Content="立即上报" Command="{Binding ReportCommand}" IsEnabled="{Binding !Bridge.Busy}" />
+                <Button Content="检查连接" Command="{Binding TestCommand}" IsEnabled="{Binding !Bridge.Busy}" />
+                <Button Content="拉取待提醒" Command="{Binding PullCommand}" IsEnabled="{Binding !Bridge.Busy}" />
+                <Button Content="重建档案课表" Command="{Binding MirrorCommand}"
+                        IsEnabled="{Binding Settings.MirrorSchedule}" />
+            </StackPanel>
+
+            <!-- 状态 -->
+            <Border Margin="0 16 0 0" Padding="12" CornerRadius="4"
+                    Background="{DynamicResource SystemFillColorNeutralBackgroundBrush}">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Bridge.LastReportMessage}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding DetailText}" TextWrapping="Wrap" Opacity="0.8" />
+                </StackPanel>
+            </Border>
+
+            <!-- 同步 -->
+            <TextBlock Margin="0 24 0 0" Text="同步内容"
+                       Theme="{StaticResource SubtitleTextBlockStyle}" />
+            <TextBlock Margin="0 6 0 12" TextWrapping="Wrap"
+                       Text="课表以「合并」方式写入班级小助手：同一星期、同一时间的课目会被更新，不会产生重复行。" />
+
+            <fa:SettingsExpander Header="上报课表到班级小助手"
+                                 Description="把 ClassIsland 里启用的课表同步给班级小助手，Web 端与桌面客户端即可看到课程表。">
+                <fa:SettingsExpander.IconSource>
+                    <ci:FluentIconSource Glyph="&#xE8A5;" />
+                </fa:SettingsExpander.IconSource>
+                <fa:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.UploadSchedule, Mode=TwoWay}" />
+                </fa:SettingsExpander.Footer>
+            </fa:SettingsExpander>
+
+            <fa:SettingsExpander Header="把班级课表镜像回 ClassIsland"
+                                 Description="反方向同步：把班级小助手上排好的课表写回 ClassIsland，会新建一份以「班级小助手-」开头的档案课表，不会修改老师原有的课表。">
+                <fa:SettingsExpander.IconSource>
+                    <ci:FluentIconSource Glyph="&#xE8F1;" />
+                </fa:SettingsExpander.IconSource>
+                <fa:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MirrorSchedule, Mode=TwoWay}" />
+                </fa:SettingsExpander.Footer>
+            </fa:SettingsExpander>
+
+            <fa:SettingsExpander Header="自动上报"
+                                 Description="应用启动、课表变化以及每隔一段时间各上报一次；关闭后只能用上面的「立即上报」手动触发。">
+                <fa:SettingsExpander.IconSource>
+                    <ci:FluentIconSource Glyph="&#xE895;" />
+                </fa:SettingsExpander.IconSource>
+                <fa:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.AutoReport, Mode=TwoWay}" />
+                </fa:SettingsExpander.Footer>
+            </fa:SettingsExpander>
+
+            <Grid Margin="0 8 0 0" ColumnDefinitions="*,Auto">
+                <StackPanel>
+                    <TextBlock Text="上报间隔（秒）" />
+                    <TextBlock Text="最小 15 秒；教室机器建议 60 秒。" Opacity="0.7" TextWrapping="Wrap" />
+                </StackPanel>
+                <NumericUpDown Grid.Column="1" Width="140"
+                               Minimum="15" Maximum="3600" Increment="15"
+                               FormatString="0"
+                               IsEnabled="{Binding Settings.AutoReport}"
+                               Value="{Binding Settings.ReportIntervalSeconds, Mode=TwoWay}" />
+            </Grid>
+
+            <!-- 提醒 -->
+            <TextBlock Margin="0 24 0 0" Text="提醒"
+                       Theme="{StaticResource SubtitleTextBlockStyle}" />
+            <TextBlock Margin="0 6 0 12" TextWrapping="Wrap"
+                       Text="老师在班级小助手上发布的提醒会以 ClassIsland 的全屏提醒呈现；未弹出的提醒在应用重开后会自动补发，确认弹出后不再重复。" />
+
+            <fa:SettingsExpander Header="接收班级小助手提醒"
+                                 Description="关闭后本机会忽略老师在班级小助手上发布的提醒（提醒仍会留在班级通知中心）。">
+                <fa:SettingsExpander.IconSource>
+                    <ci:FluentIconSource Glyph="&#xE8BD;" />
+                </fa:SettingsExpander.IconSource>
+                <fa:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.ReceiveNotifications, Mode=TwoWay}" />
+                </fa:SettingsExpander.Footer>
+            </fa:SettingsExpander>
+
+            <fa:SettingsExpander Header="语音朗读"
+                                 Description="提醒弹出时按 ClassIsland 的语音设置为全机朗读提醒内容。">
+                <fa:SettingsExpander.IconSource>
+                    <ci:FluentIconSource Glyph="&#xE8D6;" />
+                </fa:SettingsExpander.IconSource>
+                <fa:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.SpeechEnabled, Mode=TwoWay}" />
+                </fa:SettingsExpander.Footer>
+            </fa:SettingsExpander>
+
+            <Grid Margin="0 8 0 0" ColumnDefinitions="*,Auto">
+                <StackPanel>
+                    <TextBlock Text="默认显示时长（秒）" />
+                    <TextBlock Text="老师在下发单条提醒时可以另外指定更长的时长。" Opacity="0.7" TextWrapping="Wrap" />
+                </StackPanel>
+                <NumericUpDown Grid.Column="1" Width="140"
+                               Minimum="1" Maximum="120" Increment="1"
+                               FormatString="0"
+                               Value="{Binding Settings.NotificationDurationSeconds, Mode=TwoWay}" />
+            </Grid>
+
+            <Grid Margin="0 8 0 0" ColumnDefinitions="*,Auto">
+                <StackPanel>
+                    <TextBlock Text="提醒轮询间隔（秒）" />
+                    <TextBlock Text="老师按下发送到教室弹出之间的最大延迟（插件不持有长连接，是轮询取回提醒）。默认 10 秒。"
+                               Opacity="0.7" TextWrapping="Wrap" />
+                </StackPanel>
+                <NumericUpDown Grid.Column="1" Width="140"
+                               Minimum="5" Maximum="600" Increment="5"
+                               FormatString="0"
+                               IsEnabled="{Binding Settings.ReceiveNotifications}"
+                               Value="{Binding Settings.NotificationPollSeconds, Mode=TwoWay}" />
+            </Grid>
+
+            <!-- 调试 -->
+            <TextBlock Margin="0 24 0 0" Text="调试"
+                       Theme="{StaticResource SubtitleTextBlockStyle}" />
+            <fa:SettingsExpander Header="显示调试信息"
+                                 Description="显示设备标识、时钟差等细节，排查「为什么同步不上」时打开。">
+                <fa:SettingsExpander.IconSource>
+                    <ci:FluentIconSource Glyph="&#xE7EF;" />
+                </fa:SettingsExpander.IconSource>
+                <fa:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.ShowDebugInfo, Mode=TwoWay}" />
+                </fa:SettingsExpander.Footer>
+            </fa:SettingsExpander>
+
+            <StackPanel Margin="0 8 0 0" Spacing="2" IsVisible="{Binding Settings.ShowDebugInfo}">
+                <TextBlock Text="{Binding DebugText}" TextWrapping="Wrap" FontFamily="Consolas,monospace" />
+            </StackPanel>
+
+            <TextBlock Margin="0 24 0 0" Opacity="0.6" TextWrapping="Wrap"
+                       Text="提示：班级小助手 Web 端 →「ClassIsland 联动」可以新建/重置设备令牌、开关同步项，并实时看到本机当前上的课。" />
+        </StackPanel>
+    </ScrollViewer>
+</controls:SettingsPageBase>

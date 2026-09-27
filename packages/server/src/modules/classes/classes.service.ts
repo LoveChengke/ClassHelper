@@ -1,4 +1,9 @@
-import type { ClassDetailDto, ClassDto, StudentDto } from '@classhelper/shared';
+import type {
+  ClassDetailDto,
+  ClassDto,
+  ClassIslandNotificationChannel,
+  StudentDto,
+} from '@classhelper/shared';
 import { env } from '../../config/env.js';
 import {
   assertClassAccess,
@@ -6,6 +11,7 @@ import {
   assertCanManageClasses,
   assertCanManageRoster,
   classScopeIdFilter,
+  isStaff,
   resolveClassScope,
 } from '../../lib/access.js';
 import {
@@ -15,11 +21,25 @@ import {
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
-import { toClassDto, toCourseDto, toStudentDto, toTeacherBrief } from '../../lib/mappers.js';
+import {
+  toClassDto,
+  toCourseDto,
+  toNotificationChannel,
+  toStudentDto,
+  toTeacherBrief,
+} from '../../lib/mappers.js';
 import { hashPassword } from '../../lib/password.js';
 import { emitToClass } from '../../realtime/bus.js';
 import { SOCKET_EVENTS } from '@classhelper/shared';
-import type { AddStudentInput, CreateClassInput, UpdateClassInput } from './classes.schemas.js';
+import type {
+  AddStudentInput,
+  CreateClassInput,
+  UpdateClassInput,
+  UpdateNotificationChannelInput,
+} from './classes.schemas.js';
+import { attachIntegrationFlag } from '../integrations/integrations.service.js';
+import { logger } from '../../lib/logger.js';
+import { isClassSession } from '../../lib/session.js';
 
 const countSelect = {
   students: true,
@@ -76,7 +96,8 @@ export async function listClasses(user: TokenPayload, keyword?: string): Promise
     orderBy: [{ grade: 'asc' }, { name: 'asc' }],
   });
 
-  return classes.map((item) => toClassDtoWithAccount(user, item));
+  // 附上「是否已接入 ClassIsland」徽标：Web 端班级列表/课表页据此提示
+  return attachIntegrationFlag(classes.map((item) => toClassDtoWithAccount(user, item)));
 }
 
 /** 班级详情：学生名单 + 课程 + 协作教师 */
@@ -332,4 +353,49 @@ export async function removeTeacher(user: TokenPayload, classId: string, teacher
   if (target?.teacherId === teacherId) throw ApiError.badRequest('班主任不能被移除，请先转移班级');
 
   await prisma.classTeacher.deleteMany({ where: { classId, teacherId } });
+}
+
+/* ---------------------------------------------------------------- 通知显示位置 */
+
+/**
+ * 读取班级的通知显示位置（both / client / classisland）。
+ *
+ * 这是**教室客户端**要读的值：客户端登录后拉一次，把自己的弹窗行为对齐到同一个选择。
+ * 学生也能读自己班的（只读），便于排查"为什么教室没弹"。
+ */
+export async function getNotificationChannel(
+  user: TokenPayload,
+  classId: string,
+): Promise<{ notificationChannel: ClassIslandNotificationChannel }> {
+  await assertClassAccess(user, classId);
+  const record = await prisma.class.findUnique({
+    where: { id: classId },
+    select: { notificationChannel: true },
+  });
+  return { notificationChannel: toNotificationChannel(record?.notificationChannel) };
+}
+
+/**
+ * 设置班级的通知显示位置。
+ *
+ * 允许两类人改：**该班的班级账号**（教室机器的客户端 —— 需求就是"由客户端自己选"）
+ * 与教师 / 管理员（Web 端也能改，便于老师统一要求）。
+ * 普通学生账号不允许：否则"教室里到底弹哪个端"会变成任意学生都能改的开关。
+ */
+export async function updateNotificationChannel(
+  user: TokenPayload,
+  classId: string,
+  input: UpdateNotificationChannelInput,
+): Promise<{ notificationChannel: ClassIslandNotificationChannel }> {
+  await assertClassAccess(user, classId);
+  if (!isClassSession(user) && !isStaff(user)) {
+    throw ApiError.forbidden('只有班级账号或教师/管理员可以修改通知显示位置');
+  }
+
+  const channel = toNotificationChannel(input.notificationChannel);
+  await prisma.class.update({ where: { id: classId }, data: { notificationChannel: channel } });
+  // 广播出去：其他端（Web 列表 / 同班客户端）能立刻看到这个选择变了
+  emitToClass(classId, SOCKET_EVENTS.classUpdated, { classId, action: 'updated' });
+  logger.info(`班级通知显示位置已更新：classId=${classId} channel=${channel} by=${user.sub}`);
+  return { notificationChannel: channel };
 }

@@ -6,6 +6,7 @@ import { dashboardModule } from './dashboard/dashboard.module.js';
 import { gradesModule } from './grades/grades.module.js';
 import { homeworksModule } from './homeworks/homeworks.module.js';
 import { importsModule } from './imports/imports.module.js';
+import { integrationsModule } from './integrations/integrations.module.js';
 import { notificationsModule } from './notifications/notifications.module.js';
 import { schedulesModule } from './schedules/schedules.module.js';
 import { studentsModule } from './students/students.module.js';
@@ -28,6 +29,7 @@ export const apiModules: ApiModule[] = [
   notificationsModule,
   callsModule,
   importsModule,
+  integrationsModule,
   gradesModule,
   studentsModule,
   teachersModule,

@@ -25,6 +25,7 @@
 | 6    | 测试账号与种子数据说明                                                                                     | ✅ 已完成（见下文）                                        |
 | 7    | 生产化：服务端安装程序（内置 Node）、Web 端 PWA 可安装、Docker + Nginx 部署、生产加固与运维文档            | ✅ 已完成（见 [`docs/production.md`](docs/production.md)） |
 | 8    | 客户端灵动岛（通知浮窗，上课隐藏 / 下课弹出 / 紧急立即展开）与上课时段紧急通知二次确认                     | ✅ 已完成（见"上课时段策略"）                              |
+| 12   | **ClassIsland 联动**：教室机器装插件 → 课表/上课状态上报、老师在 Web 端发提醒 → ClassIsland 全屏弹出       | ✅ 已完成（见"ClassIsland 联动"）                          |
 
 > **与原始提示词的两处偏差（已与你确认）**
 >
@@ -34,14 +35,15 @@
 > 2. 数据库 **先用 SQLite（libSQL 内嵌）跑通 MVP，并预留 MySQL 切换**：本机没有可用 MySQL
 >    实例；`docs/mysql.md` 给出云数据库切换的完整步骤，`deploy/` 提供 MySQL 版 Compose。
 
-## 三套交付产物
+## 四套交付产物
 
-| 产物                            | 文件                                                                            | 用途                                                                                         |
-| ------------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| **服务端 + Web 管理端安装程序** | `release-server/班级小助手服务端-0.1.0-x64-setup.exe`（34 MB）                  | 装到教师电脑/校服务器即完整系统，**内置 Node 运行时**，双击安装、开机自启、自动建库建号      |
-| **学生客户端安装程序**          | `packages/desktop-client/release/班级小助手-0.1.0-x64-setup.exe`（107 MB）      | 学生机安装（NSIS 安装包）                                                                    |
-| **学生客户端单文件版**          | `packages/desktop-client/release/班级小助手-0.1.0-x64-portable.exe`（106.9 MB） | 免安装直接运行（U 盘分发）                                                                   |
-| Web 管理端（PWA）               | 由服务端在 `/` 直接托管                                                         | 浏览器打开即用，可在 Edge/Chrome 中「安装为应用」；**已适配手机小屏**（1Panel 风格抽屉导航） |
+| 产物                            | 文件                                                                            | 用途                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| **服务端 + Web 管理端安装程序** | `release-server/班级小助手服务端-0.1.0-x64-setup.exe`（34 MB）                  | 装到教师电脑/校服务器即完整系统，**内置 Node 运行时**，双击安装、开机自启、自动建库建号       |
+| **学生客户端安装程序**          | `packages/desktop-client/release/班级小助手-0.1.0-x64-setup.exe`（107 MB）      | 学生机安装（NSIS 安装包）                                                                     |
+| **学生客户端单文件版**          | `packages/desktop-client/release/班级小助手-0.1.0-x64-portable.exe`（106.9 MB） | 免安装直接运行（U 盘分发）                                                                    |
+| Web 管理端（PWA）               | 由服务端在 `/` 直接托管                                                         | 浏览器打开即用，可在 Edge/Chrome 中「安装为应用」；**已适配手机小屏**（1Panel 风格抽屉导航）  |
+| **ClassIsland 联动插件**        | `releases/classisland-plugin/ClassHelper.ClassIslandPlugin.cipx`                | 装在教室机器的 ClassIsland 上（也可直接把 `ClassHelper.ClassIslandPlugin/` 目录丢进 Plugins） |
 
 生产部署请看 **[docs/production.md](docs/production.md)**，四种形态按场景选：
 
@@ -93,6 +95,14 @@ class-helper/
     │       ├── middleware/              # auth / error / validate / security(helmet+限流+耗时日志)
     │       ├── realtime/                # socket.ts + bus.ts（事件总线）
     │       └── modules/                 # 功能模块 + registry.ts
+    ├── classisland-plugin/      # ClassIsland 联动插件（.NET 8 / C#，独立于 pnpm workspace）
+    │   ├── src/Plugin.cs                # 插件入口（读配置 → 注册提醒提供方/设置页/联动服务）
+    │   ├── src/Services/                # BridgeService（上报/接收/镜像）/ ScheduleMapper / ClassPlanWriter
+    │   ├── src/Services/ClassHelperNotificationProvider.cs  # 把老师发的提醒显示到 ClassIsland 上
+    │   ├── src/Views/BridgeSettingsPage.axaml(.cs)          # 「班级小助手联动」设置页（Avalonia）
+    │   ├── src/Interop/ClassHelperClient.cs                 # 后端 HTTP 客户端 + 与服务端对齐的 DTO
+    │   ├── manifest.yml                 # ClassIsland 插件清单（id / apiVersion / entranceAssembly）
+    │   └── scripts/{build,verify}.mjs   # 构建打包（.cipx）与静态契约校验（54 项）
     ├── web-admin/               # Web 管理端（Vue 3 + Vite + Element Plus + PWA）
     │   ├── public/                      # manifest / sw.js / 图标（由 pnpm icons 生成）
     │   └── src/{api,stores,router,layouts,views,styles}
@@ -183,8 +193,13 @@ pnpm verify:desktop
 pnpm verify:e2e          # 后端 + REST + Socket.IO + RBAC + 上课时段拦截 + 紧急/普通叫人 + 单双周课表/ClassIsland 课程表导入 + 班级账号（个人学生登录停用）：163 项
 pnpm verify:web          # Web 管理端真实点击（含权限入口隐藏、手机适配、叫人入口 + 紧急/普通级别、多班批量发布、未交名单、课程表导入弹窗、手机端课表横向滚动、教师录入、统一科目）：27 项
 pnpm verify:desktop      # Electron 客户端（含灵动岛收起常驻/命中兜底/展开收起再展开/联合通知回归/胶囊类型汇总、未读红点位置、圆角四角一致、开合不震动、紧急与普通叫人、真实链路、课表时间轴、作业看板全屏自适应、个性化与设置页链路、托盘/退出无残留）：77 项
+pnpm verify:classisland  # ClassIsland 联动链路（设备令牌鉴权、课表/节次上报、提醒下发与回执、课表镜像契约）：24 项
+pnpm verify:classisland-plugin  # 插件静态契约校验（清单一致性、注册完整性、C# DTO ↔ 服务端 zod/路由、提醒链路硬约束）：54 项
 pnpm verify:packaged     # 对**打包后/已安装**的客户端 EXE 跑同一套冒烟（证明 packaged=true，默认 release/win-unpacked）
 ```
+
+> 插件要真正跑起来需要 ClassIsland 本体，本机没有（见"ClassIsland 联动"一节），
+> 因此 `verify:classisland-plugin` 是**静态**契约校验：它盯的是"装不上/对不上"这一类不需要运行就能发现的问题。
 
 后端脚本验证**实时推送时延、作业完成、成绩下发、权限隔离、上课时段紧急通知拦截、导入与失败回滚、班级账号代全班操作、老师端导入不越权、单双周课表与 ClassIsland 课程表导入、个人学生登录停用**等 163 项，
 实测通知 37ms、作业 26ms、成绩 25ms 到达（要求 < 5 秒），紧急通知 409 拦截与二次确认后发布均通过；
@@ -227,6 +242,8 @@ pnpm verify:packaged     # 对**打包后/已安装**的客户端 EXE 跑同一�
 | `pnpm dev:desktop`                          | 启动 EXE 客户端开发模式（Vite 5174 + Electron，热更新）                                                                                                      |
 | `pnpm build`                                | 构建 shared + 后端 + Web 端 + EXE 客户端                                                                                                                     |
 | `pnpm build:desktop`                        | 仅构建 EXE 客户端（esbuild 主进程/preload + Vite 渲染进程）                                                                                                  |
+| `pnpm build:classisland-plugin`             | 构建 ClassIsland 联动插件（.NET 8，产物在 `packages/classisland-plugin/bin/Release`）                                                                        |
+| `pnpm dist:classisland-plugin`              | 打包插件为 `.cipx` 并归集到 `releases/classisland-plugin/`（含免安装目录）                                                                                   |
 | `pnpm icons`                                | 生成应用图标（PNG/ICO，用 Electron 渲染 SVG）                                                                                                                |
 | **`pnpm dist:server`**                      | **打包服务端 + Web 管理端**（免安装目录 + NSIS 安装程序，内置 Node）                                                                                         |
 | `pnpm dist:dir`                             | 打包客户端免安装目录 `release/win-unpacked`（含可执行文件，最快）                                                                                            |
@@ -236,6 +253,8 @@ pnpm verify:packaged     # 对**打包后/已安装**的客户端 EXE 跑同一�
 | `pnpm verify:web`                           | Web 管理端 UI 真实点击测试（Electron 驱动，27 项，含权限入口隐藏、叫人紧急/普通与导入弹窗）                                                                  |
 | `pnpm verify:desktop`                       | EXE 客户端冒烟验证（77 项，含灵动岛圆角/收起常驻/命中兜底/展开收起再展开/开合不震动/已读/作业/紧急与普通叫人、课表时间轴、作业看板全屏自适应、个性化全参数） |
 | `pnpm verify:packaged`                      | 对打包后/已安装的客户端 EXE 跑同一套冒烟（`--exe` 指定路径，实测 `packaged: true`）                                                                          |
+| `pnpm verify:classisland`                   | ClassIsland 联动链路（设备令牌 / 课表上报 / 提醒下发与回执 / 镜像契约，需服务端已启动）                                                                      |
+| `pnpm verify:classisland-plugin`            | 插件静态契约校验（清单一致性 / 注册完整性 / C# DTO ↔ 服务端 zod 与路由）                                                                                     |
 | `pnpm typecheck`                            | 全仓库类型检查（含 `vue-tsc`）                                                                                                                               |
 | `pnpm lint` / `pnpm lint:fix`               | ESLint 检查 / 自动修复                                                                                                                                       |
 | `pnpm format` / `pnpm format:check`         | Prettier 格式化 / 检查                                                                                                                                       |
@@ -516,6 +535,8 @@ pnpm verify:packaged     # 对**打包后/已安装**的客户端 EXE 跑同一�
 > 后续可继续深化：迷你悬浮课表窗口（ClassIsland 的桌面课表条）、上课/下课提醒动画与铃声。
 
 ### 个性化设置与系统托盘
+
+**设置 → 通知显示位置**：提醒弹在 ClassHelper 还是 ClassIsland（见 [ClassIsland 联动](#classisland-联动)）。
 
 **设置 → 灵动岛 · 个性化**（改动即实时生效，保存后写入本地配置，重启仍生效）：
 
@@ -846,6 +867,75 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 > （会幂等补齐 `Schedule.weekParity` 与 `Class.termWeeks`；安装程序覆盖升级会自动补迁移，
 > 仅空库首次启动会执行随包迁移 SQL）。
 
+## ClassIsland 联动
+
+课堂里真正"知道现在第几节、在上什么课"的是 [ClassIsland](https://classisland.tech)。
+本项目通过一个**ClassIsland 插件**把两边接起来（插件源码在 `packages/classisland-plugin/`），两个方向各解决一件事：
+
+| 方向                       | 做什么                                                                                                                   | 老师在哪看                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
+| ClassIsland → 班级小助手   | 上报**课表 + 节次时间 + 上课状态**（现在上什么 / 下一节 / 本节的起止时间），写入本班课表                                 | Web 端「ClassIsland 联动」实时状态卡片 |
+| 班级小助手 → ClassIsland   | 老师在 Web 端发一条**提醒** → 落库 → 教室机器的插件取回 → ClassIsland 上**全屏弹出**（可语音朗读），播完回执、不会重复弹 | Web 端「ClassIsland 联动 → 下发提醒」  |
+| （可选）班级 → ClassIsland | 把班级小助手上排好的课表**镜像**回 ClassIsland：新建一份 `班级小助手-<班级名>` 档案课表，不动老师原有的课表              | 同上页面的「开镜像」开关               |
+
+### 接入流程（三步）
+
+1. **Web 端签发设备令牌**：管理员 / 本班班主任在「ClassIsland 联动」页点「接入新设备」，
+   选择班级并生成令牌（形如 `chci_xxxxxxxx…`，**明文只显示这一次**，服务端只存 sha256）；
+2. **教室机器填令牌**：在 ClassIsland 的「设置 → 班级小助手联动」里填入后端地址 + 令牌，点「立即上报」；
+3. **验证**：页面顶部出现设备卡片与「在线」标记，说明链路通了 —— 之后课表与上课状态会自动同步，
+   老师发的提醒也会在这台机器上弹出来。
+
+### 通知从哪些入口发都会联动
+
+三个发布入口共用同一份推送实现（服务端 `pushToClassIsland`），因此不存在「只有某个页面才联动」：
+
+| 入口                                 | 说明                                                 |
+| ------------------------------------ | ---------------------------------------------------- |
+| 「通知发布」页                       | 与班级通知中心同一条记录，同时推给教室的 ClassIsland |
+| 「叫人」                             | 老师点名让某位同学过去，教室大屏也会播报一条         |
+| 「ClassIsland 联动」页的「下发提醒」 | 专门发给教室大屏的提醒（支持时长 / 语音 / 优先级）   |
+
+### 提醒弹在哪个端：由教室客户端自己选
+
+教室机器的 ClassHelper 客户端「设置 → 通知显示位置」里选（选择会同步到班级记录）：
+
+| 选择                                      | ClassHelper 客户端             | ClassIsland |
+| ----------------------------------------- | ------------------------------ | ----------- |
+| `ClassHelper 与 ClassIsland 都弹`（默认） | 弹窗 + 灵动岛                  | 全屏提醒    |
+| `只在 ClassHelper 客户端弹`               | 弹窗 + 灵动岛                  | 不推送      |
+| `只在 ClassIsland 上弹`                   | 只进通知中心（不弹窗、不上岛） | 全屏提醒    |
+
+服务端据此决定要不要推 ClassIsland —— 规则只有一条，**任何入口都遵守**（包括联动页的「下发提醒」，
+此时会回一句「该班教室已设置为只在 ClassHelper 客户端显示」）。Web 端「ClassIsland 联动」页会展示每个班的当前选择；
+教师 / 管理员也可以通过 `PATCH /api/classes/:id/notification-channel` 改，但默认由教室机器自己定。
+
+> 与插件侧的开关是「与」关系：教室客户端要推 + 插件要开着「接收班级小助手提醒」，提醒才会在 ClassIsland 上出现。
+
+### 插件为什么这样设计
+
+- **不用 IPC，而是走 HTTP 上报**：ClassIsland 的跨进程 IPC 缓存的数据质量不足以还原课表，
+  插件内部直接读 `ILessonsService`（课程状态）与 `IProfileService`（档案课表）最准；
+  与后端之间用"上报即拉取"（每次上报的返回值里顺带带一条待弹出的提醒），
+  插件因此不需要 Socket/WebSocket 依赖，故障面更小 —— 上报间隔本身就是心跳。
+- **单双周按 ClassIsland 的口径换算**：`WeekCountDiv/WeekCountDivTotal` ⇄ `ALL/ODD/EVEN`
+  走 `@classhelper/shared` 的 `weekParityFromDiv` / `weekDivFromParity`（服务端与插件共用同一份语义）；
+  3 周以上的轮换无法用单双周表达，会降级为"每周"并在日志里给出提示。
+- **镜像时重建时间点**：ClassIsland 的 `ClassPlan.Classes[i]` 必须与时间表里**第 i 个上课点**对齐，
+  因此镜像接口会带上每条课目的 `startTime`/`endTime`，插件据此重建时间表；
+  少一个时间点整份课表就会错位，这一条是插件契约里最容易踩的坑。
+
+### 本机限制（重要）
+
+本机**没有安装 ClassIsland 本体**，因此插件的 C# 代码只做到"编译 + 打包 + 静态契约校验"：
+
+- `pnpm build:classisland-plugin` / `pnpm dist:classisland-plugin`：编译并打包成 `.cipx`（需要 .NET 8 SDK）；
+- `pnpm verify:classisland-plugin`：54 项静态校验（清单三件套一致性、注册完整性、C# DTO ↔ 服务端 zod/路由契约、提醒链路的 UI 线程/去重等硬约束）；
+- 端到端链路（设备令牌鉴权 / 上报 / 提醒下发与回执 / 镜像契约）由 `pnpm verify:classisland` 用后端真实验证（24 项）；
+- **提醒链路已在真机 ClassIsland 2.1.0.1 上实测通过**（老师发提醒 → 教室全屏弹出 → 播完回执），
+  留档截图见 [`docs/screenshots/classisland/`](docs/screenshots/classisland/)。
+- 提醒是**轮询取回**的（插件不持有长连接）：默认最多 10 秒延迟，设置页「提醒轮询间隔」可调到 5 秒。
+
 ## REST API 一览
 
 统一响应体：`{ "success": true, "data": {}, "message": "" }`（错误为 `success:false` + `code`）。
@@ -895,23 +985,32 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 | POST                        | `/imports/table/commit`                                  | 管理员            | 按字段映射与写入模式导入（成绩 / 学生名单），返回新增/更新/跳过/失败与错误行号   |
 | POST                        | `/imports/time-layout/preview`                           | 管理员/本班班主任 | 解析 ClassIsland 时间配置 JSON（只解析不落库）                                   |
 | GET / POST / DELETE         | `/imports/time-layout`                                   | 管理员/本班班主任 | 时间配置列表 / 导入（`replace` 覆盖、`merge` 合并）/ 删除                        |
+| GET / POST / PATCH / DELETE | `/integrations/devices[/:id]`                            | 管理员/教师       | ClassIsland 联动设备管理（令牌只存 sha256，令牌前缀用于人眼识别）                |
+| POST                        | `/integrations/devices/:id/token`                        | 管理员/教师       | 重置设备令牌（旧令牌立即失效，明文只返回一次）                                   |
+| POST                        | `/integrations/classisland/notify`                       | 管理员/教师       | 下发提醒到该班 ClassIsland 设备（广播 `classisland:notification`）               |
+| POST                        | `/integrations/classisland/report`                       | **设备令牌**      | 插件上报状态 + 课表 + 节次时间（`X-ClassIsland-Token`，非 JWT）                  |
+| GET                         | `/integrations/classisland/pending`                      | **设备令牌**      | 插件拉取尚未确认的提醒（离线期间老师发的通知，重连后补齐）                       |
+| POST                        | `/integrations/classisland/ack`                          | **设备令牌**      | 插件确认提醒已弹出（确认后不再补发）                                             |
+| GET                         | `/integrations/classisland/class-plan`                   | **设备令牌**      | 插件拉取本班课表（开启镜像时）用于写回 ClassIsland                               |
 | GET                         | `/health`                                                | 公开              | 健康检查（含已挂载模块列表）                                                     |
 
 ## WebSocket 事件
 
 连接方式：`io(url, { auth: { token } })`，握手阶段用 JWT 鉴权。
 
-| 事件                                  | 方向            | 载荷                                  |
-| ------------------------------------- | --------------- | ------------------------------------- |
-| `connected`                           | 服务端 → 客户端 | `{ userId, role, rooms }`             |
-| `notification:new`                    | 服务端 → 客户端 | `NotificationDto`                     |
-| `homework:new`                        | 服务端 → 客户端 | `HomeworkDto`                         |
-| `homework:updated`                    | 服务端 → 客户端 | `HomeworkDto & { deleted?: boolean }` |
-| `homework:status`                     | 服务端 → 客户端 | `HomeworkStatusDto & { classId }`     |
-| `grade:updated`                       | 服务端 → 客户端 | `GradeDto`                            |
-| `schedule:updated`                    | 服务端 → 客户端 | `{ classId, action, schedule? }`      |
-| `class:updated`                       | 服务端 → 客户端 | `{ classId, action }`                 |
-| `class:join` / `class:leave` / `ping` | 客户端 → 服务端 | 手动订阅班级（服务端二次校验权限）    |
+| 事件                                  | 方向            | 载荷                                         |
+| ------------------------------------- | --------------- | -------------------------------------------- |
+| `connected`                           | 服务端 → 客户端 | `{ userId, role, rooms }`                    |
+| `notification:new`                    | 服务端 → 客户端 | `NotificationDto`                            |
+| `homework:new`                        | 服务端 → 客户端 | `HomeworkDto`                                |
+| `homework:updated`                    | 服务端 → 客户端 | `HomeworkDto & { deleted?: boolean }`        |
+| `homework:status`                     | 服务端 → 客户端 | `HomeworkStatusDto & { classId }`            |
+| `grade:updated`                       | 服务端 → 客户端 | `GradeDto`                                   |
+| `schedule:updated`                    | 服务端 → 客户端 | `{ classId, action, schedule? }`             |
+| `class:updated`                       | 服务端 → 客户端 | `{ classId, action }`                        |
+| `classisland:state`                   | 服务端 → 客户端 | `ClassIslandStateEvent`（教室现在上什么课）  |
+| `classisland:notification`            | 服务端 → 客户端 | `ClassIslandNotificationEvent`（提醒已下发） |
+| `class:join` / `class:leave` / `ping` | 客户端 → 服务端 | 手动订阅班级（服务端二次校验权限）           |
 
 房间规则（`@classhelper/shared` 的 `SOCKET_ROOMS`）：
 `class:{classId}`、`user:{userId}`、`role:{role}`、`students`、`teachers`。
@@ -1052,6 +1151,10 @@ pnpm db:migrate && pnpm db:seed
 | **创建班级仅管理员 + 设置/更改班主任**           | ✅   | `verify:e2e`：教师建班 403；管理员建班可带 `teacherId`、`PATCH /classes/:id/head-teacher` 落库生效；`verify:web`：教师直接访问 `/teachers` 被挡回仪表盘                                               |
 | **授课科目统一（18 科固定目录）**                | ✅   | `verify:web`：新增课表的科目下拉出现「统一科目（选中后自动建课）」，选中 → 自动建课 → 写入课表成功（收尾删除该条课表）                                                                                |
 | **登录页无示例内容**                             | ✅   | `verify:web`（管理端）与 `verify:desktop`（客户端）都断言登录页正文/占位符不含 `演示 / 示例 / admin123 / teacher123 / G101`                                                                           |
+| **其他页面发通知也会联动 ClassIsland**           | ✅   | `verify:classisland`：「通知发布页发的通知也会推送到 ClassIsland」「叫人也会推送到 ClassIsland」；真机实测截图 [03-from-notify-page](docs/screenshots/classisland/03-from-notify-page.png)            |
+| **提醒弹在哪个端由客户端自行选择**               | ✅   | 客户端「设置 → 通知显示位置」三选一（`verify:desktop`：设置页真实点击 → 写回本地配置，在线 82/82）；服务端按班级设置决定是否推送（`verify:classisland`：client 时通知与联动页下发都被跳过）           |
+| **班级小助手能读取 ClassIsland 的课表**          | ✅   | `verify:classisland`：插件上报课表 → 本班课表新增/更新（重复上报幂等）、节次时间写入、设备状态快照可在 Web 端展示；`verify:web`：教师在「ClassIsland 联动」页真实签发设备令牌                         |
+| **用户可选择通知是否在 ClassIsland 上显示**      | ✅   | 插件设置页开关「接收班级小助手提醒」（本机总闸）+ Web 端「下发提醒」（标题/内容/时长/优先级/语音朗读/是否同步通知中心）；`verify:classisland`：提醒落库 → 待提醒 → 回执 → 确认后不补发                |
 | 能成功打包 Windows EXE                           | ✅   | `班级小助手-0.1.0-x64-setup.exe` / `-portable.exe` / `win-unpacked/*.exe`（见下表）                                                                                                                   |
 | 提供完整 README（启动、构建、打包、默认账号）    | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、MySQL 切换、打包与常见问题                                                                                                                    |
 
@@ -1218,6 +1321,19 @@ pnpm db:migrate && pnpm db:seed
 | `packages/desktop-client/src/renderer/views/LoginView.vue`            | 班级码 + 班级密码登录页（不再展示个人学生账号入口）                     |
 | `packages/web-admin/src/views/ClassesView.vue`（班级账号列与弹窗）    | 管理员设置班级码 / 重置班级密码                                         |
 | `packages/desktop-client/scripts/smoke.mjs`（班级账号准备）           | 冒烟前通过管理端接口准备可用班级凭据，兼容全新安装与升级安装            |
+
+阶段 12（ClassIsland 联动插件）新增文件：
+
+| 路径                                                                            | 说明                                                                                            |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `packages/server/src/modules/integrations/`                                     | 联动模块：设备令牌鉴权（sha256）/ 上报写库 / 提醒下发与回执 / 课表镜像（复用导入模块口径）      |
+| `packages/server/prisma/migrations/20260927120000_add_classisland_integration/` | `IntegrationDevice` + `ClassIslandPush` 迁移（跨库通用，只用基础类型）                          |
+| `packages/server/scripts/verify-classisland.mjs`                                | 联动链路端到端验收（24 项，需服务端已启动）                                                     |
+| `packages/classisland-plugin/`                                                  | ClassIsland 插件（.NET 8）：入口 / 联动主循环 / 提醒提供方 / 设置页 / 合同 DTO                  |
+| `packages/classisland-plugin/scripts/{build,verify}.mjs`                        | 插件编译打包（`.cipx` 归集到 `releases/`）与静态契约校验（54 项）                               |
+| `docs/screenshots/classisland/*.png`                                            | 真机联调留档：普通/紧急提醒在 ClassIsland 上的弹出效果                                          |
+| `packages/web-admin/src/views/IntegrationsView.vue`                             | Web 端「ClassIsland 联动」页：设备卡片与列表、令牌签发/重置、下发提醒表单                       |
+| `packages/shared/src/{types,constants,utils}.ts` 的联动契约                     | `IntegrationDeviceDto` / `ClassIslandReportRequest` / `weekParityFromDiv` ⇄ `weekDivFromParity` |
 
 ## 后续可选增强
 

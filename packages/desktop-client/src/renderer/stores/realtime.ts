@@ -12,6 +12,7 @@ import {
 } from '@classhelper/shared';
 import { socketUrlOf } from '../config.js';
 import { pushCallToIsland, pushHomeworkToIsland, pushNotificationToIsland } from '../island/bridge.js';
+import { useAppStore } from './app.js';
 
 type RealtimeEventName = keyof ServerToClientEvents;
 type EventHandler = (payload: unknown) => void;
@@ -22,6 +23,18 @@ type EventHandler = (payload: unknown) => void;
  * 还会把数据写回 IndexedDB，保证断网时看到的是最后同步到的内容。
  */
 export const useRealtimeStore = defineStore('realtime', () => {
+  const app = useAppStore();
+
+  /**
+   * 本机要不要弹这次提醒。
+   *
+   * 教室在设置页选了「只在 ClassIsland 上弹」时，客户端仍然把通知收进通知中心（列表里有记录、
+   * 未读红点照常），但**不再弹窗、也不上岛** —— 否则老师会看到两个地方同时炸出来。
+   */
+  function popupLocally(): boolean {
+    return app.shouldPopupLocally();
+  }
+
   const connected = ref(false);
   const connecting = ref(false);
   const lastEventName = ref<string | null>(null);
@@ -65,14 +78,16 @@ export const useRealtimeStore = defineStore('realtime', () => {
 
     instance.on(SOCKET_EVENTS.notificationNew, (payload: NotificationDto) => {
       mark(SOCKET_EVENTS.notificationNew);
-      ElMessage({
-        message: `【${PRIORITY_LABELS[payload.priority] ?? payload.priority}】${payload.title}`,
-        type: payload.priority === 'URGENT' ? 'error' : 'info',
-        duration: 5000,
-        showClose: true,
-      });
-      // 投递到桌面灵动岛：紧急通知立即展开；上课期间的非紧急通知会暂存，下课后自动弹出
-      pushNotificationToIsland(payload);
+      if (popupLocally()) {
+        ElMessage({
+          message: `【${PRIORITY_LABELS[payload.priority] ?? payload.priority}】${payload.title}`,
+          type: payload.priority === 'URGENT' ? 'error' : 'info',
+          duration: 5000,
+          showClose: true,
+        });
+        // 投递到桌面灵动岛：紧急通知立即展开；上课期间的非紧急通知会暂存，下课后自动弹出
+        pushNotificationToIsland(payload);
+      }
       dispatch(SOCKET_EVENTS.notificationNew, payload);
     });
 
@@ -86,14 +101,16 @@ export const useRealtimeStore = defineStore('realtime', () => {
 
     instance.on(SOCKET_EVENTS.callNew, (payload: NotificationDto) => {
       mark(SOCKET_EVENTS.callNew);
-      ElMessage({
-        message: payload.title,
-        type: 'warning',
-        duration: 8000,
-        showClose: true,
-      });
-      // 叫人：无论是否上课都立即展开（老师正在等这位同学）
-      pushCallToIsland(payload);
+      if (popupLocally()) {
+        ElMessage({
+          message: payload.title,
+          type: 'warning',
+          duration: 8000,
+          showClose: true,
+        });
+        // 叫人：无论是否上课都立即展开（老师正在等这位同学）
+        pushCallToIsland(payload);
+      }
       dispatch(SOCKET_EVENTS.callNew, payload);
     });
 

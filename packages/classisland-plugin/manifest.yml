@@ -1,0 +1,19 @@
+# 班级小助手 ClassIsland 联动插件 —— 清单文件
+#
+# 字段说明见 https://docs.classisland.tech/dev/plugins/create-project/
+# apiVersion 指向 ClassIsland 2.0.0.0：本插件只用到 2.0 就有的插件 / 提醒 / 课程服务 API。
+
+id: classhelper.classisland.bridge
+name: 班级小助手联动
+description: |-
+  把 ClassIsland 的课表与上课状态同步到班级小助手，并在 ClassIsland 上显示老师下发的提醒。
+  功能：
+  1. 上报当前课表与节次时间（班级小助手 Web 端与桌面客户端据此显示课程）；
+  2. 上报"正在上哪节课 / 下一节是什么 / 还有多久下课"的实时状态；
+  3. 接收老师在班级小助手上发布的提醒，在 ClassIsland 上全屏弹出（支持语音朗读）；
+  4. 可选：把班级小助手上排好的课表镜像回 ClassIsland。
+entranceAssembly: 'ClassHelper.ClassIslandPlugin.dll'
+url: https://github.com/LoveChengke/ClassHelper
+version: 0.1.0.0
+apiVersion: 2.0.0.0
+author: 班级小助手

@@ -2,7 +2,12 @@ import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
 import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
-import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
+import {
+  validate,
+  validatedBody,
+  validatedParams,
+  validatedQuery,
+} from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
   addStudentSchema,
@@ -14,10 +19,12 @@ import {
   listClassesQuerySchema,
   updateClassAccountSchema,
   updateClassSchema,
+  updateNotificationChannelSchema,
   type AddStudentInput,
   type CreateClassInput,
   type UpdateClassAccountInput,
   type UpdateClassInput,
+  type UpdateNotificationChannelInput,
 } from './classes.schemas.js';
 import * as classService from './classes.service.js';
 
@@ -103,6 +110,42 @@ router.patch(
     const { id } = validatedParams<{ id: string }>(req);
     const { teacherId } = req.body as { teacherId: string };
     sendOk(res, await classService.updateHeadTeacher(user, id, teacherId), '班主任已更新');
+  },
+);
+
+/**
+ * GET /api/classes/:id/notification-channel - 读取"通知显示到哪个端"
+ *
+ * 教室的班级客户端登录后会拉这个值，据此决定自己是弹窗/上岛还是静默；
+ * 教师/管理员也能读（Web 端展示用）。
+ */
+router.get('/:id/notification-channel', validate({ params: idParamSchema }), async (req, res) => {
+  const user = getAuthUser(req);
+  const { id } = validatedParams<{ id: string }>(req);
+  sendOk(res, await classService.getNotificationChannel(user, id), '获取通知显示位置成功');
+});
+
+/**
+ * PATCH /api/classes/:id/notification-channel - 设置"通知显示到哪个端"
+ *
+ * **由教室的班级客户端自己选**（班级账号可改），教师/管理员也可改；
+ * 普通学生账号被拒（见 service 内的断言）。
+ */
+router.patch(
+  '/:id/notification-channel',
+  validate({ params: idParamSchema, body: updateNotificationChannelSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { id } = validatedParams<{ id: string }>(req);
+    sendOk(
+      res,
+      await classService.updateNotificationChannel(
+        user,
+        id,
+        validatedBody<UpdateNotificationChannelInput>(req),
+      ),
+      '通知显示位置已更新',
+    );
   },
 );
 

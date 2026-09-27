@@ -65,6 +65,37 @@ export function weekParityOf(week: number): Exclude<WeekParity, 'ALL'> {
   return week % 2 === 0 ? 'EVEN' : 'ODD';
 }
 
+/**
+ * ClassIsland 的 `WeekCountDiv` / `WeekCountDivTotal` → 本系统的单双周。
+ *
+ * 语义（与 ClassIsland 源码一致）：`WeekCountDivTotal = n` 时，第 `WeekCountDiv` 周启用（1-based）；
+ * `WeekCountDiv <= 0` 或 `Total <= 1` 表示每周都上。
+ *
+ * 注意：本系统只用单双周（2 周循环），3 周及以上的循环**无法表达**，此时降级为「每周」
+ * 并由调用方向用户提示（导入模块记 warning）。这里集中为一处，避免导入与插件上报各写一套。
+ */
+export function weekParityFromDiv(weekCountDiv: number, weekCountDivTotal: number): WeekParity {
+  if (weekCountDiv <= 0 || weekCountDivTotal <= 1) return 'ALL';
+  const position = ((weekCountDiv - 1) % weekCountDivTotal) + 1;
+  if (weekCountDivTotal === 2) return position === 1 ? 'ODD' : 'EVEN';
+  return 'ALL';
+}
+
+/** `weekParityFromDiv` 的逆运算：本系统的单双周 → ClassIsland 的 Div/Total */
+export function weekDivFromParity(parity: WeekParity | null | undefined): {
+  weekCountDiv: number;
+  weekCountDivTotal: number;
+} {
+  if (parity === 'ODD') return { weekCountDiv: 1, weekCountDivTotal: 2 };
+  if (parity === 'EVEN') return { weekCountDiv: 2, weekCountDivTotal: 2 };
+  return { weekCountDiv: 0, weekCountDivTotal: 0 };
+}
+
+/** 多周循环（3 周及以上）无法用单双周表达：告知调用方是否被降级 */
+export function isWeekCycleDegraded(weekCountDiv: number, weekCountDivTotal: number): boolean {
+  return weekCountDivTotal > 2;
+}
+
 /** 判断某个课表条目在第 week 周是否上课（周次区间 + 单双周） */
 export function isScheduleActiveInWeek(
   schedule: Pick<ScheduleDto, 'weekStart' | 'weekEnd'> & { weekParity?: WeekParity | null },

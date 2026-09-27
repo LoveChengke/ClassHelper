@@ -3,6 +3,9 @@ import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
+  CLASSISLAND_NOTIFICATION_CHANNEL_HINTS,
+  CLASSISLAND_NOTIFICATION_CHANNEL_LABELS,
+  CLASSISLAND_NOTIFICATION_CHANNELS,
   DEFAULT_ISLAND_APPEARANCE,
   ISLAND_APPEARANCE_RANGES as RANGES,
   ISLAND_POSITION_LABELS,
@@ -10,11 +13,13 @@ import {
   ISLAND_STYLES,
   ISLAND_POSITIONS,
   formatDate,
+  type ClassIslandNotificationChannel,
   type IslandAppearance,
   type IslandPosition,
   type IslandStyle,
 } from '@classhelper/shared';
 import type { DesktopAppInfo } from '../../types/desktop.js';
+import { classApi } from '../api/index.js';
 import { pingHealth, setApiBaseUrl } from '../api/http.js';
 import { normalizeServerUrl } from '../config.js';
 import { useAppStore } from '../stores/app.js';
@@ -113,6 +118,51 @@ async function logout(): Promise<void> {
   await router.replace('/login');
 }
 
+/* ------------------------------------------------------------ 通知显示位置 */
+
+/**
+ * 通知显示位置：这台教室机器把提醒弹在哪个端。
+ *
+ * - both：ClassHelper 客户端（弹窗 + 灵动岛）与 ClassIsland 都弹（默认）
+ * - client：只弹 ClassHelper 客户端
+ * - classisland：只弹 ClassIsland（客户端只进通知中心，不弹窗、不上岛）
+ *
+ * 值会落本地配置（本机立刻生效）并写回班级记录（服务端据此决定要不要推 ClassIsland）。
+ */
+const channelSaving = ref(false);
+/**
+ * 本班有没有接入 ClassIsland 设备。
+ *
+ * 只用来禁用「只在 ClassIsland 上弹」——没有设备时选它等于把提醒静默丢掉；
+ * 注意**不能**顺手把「两端都弹」也禁掉：那样教室一旦选过"只在客户端"，没设备时就再也切不回来了。
+ */
+const classIslandConnected = ref(false);
+
+const channelOptions = computed(() =>
+  CLASSISLAND_NOTIFICATION_CHANNELS.map((value) => ({
+    value,
+    label: CLASSISLAND_NOTIFICATION_CHANNEL_LABELS[value],
+    disabled: value === 'classisland' && !classIslandConnected.value,
+  })),
+);
+
+async function loadClassChannel(): Promise<void> {
+  const classId = auth.classId;
+  if (!classId) return;
+  await appStore.loadNotificationChannel(classId);
+}
+
+async function applyChannel(value: ClassIslandNotificationChannel): Promise<void> {
+  channelSaving.value = true;
+  try {
+    const saved = await appStore.setNotificationChannel(auth.classId, value);
+    if (saved) ElMessage.success('提醒显示位置已更新');
+    else ElMessage.warning('已保存在本机，但同步到服务器失败（离线或权限不足），联网后请再点一次');
+  } finally {
+    channelSaving.value = false;
+  }
+}
+
 /* ------------------------------------------------------------ 灵动岛个性化 */
 
 const island = ref<IslandAppearance>({ ...DEFAULT_ISLAND_APPEARANCE });
@@ -184,6 +234,12 @@ onMounted(async () => {
   await loadAppInfo();
   await appStore.refreshCacheStats();
   await loadIslandAppearance();
+  await loadClassChannel();
+  // 本班有没有 ClassIsland 设备：没接就禁用"弹在 ClassIsland"这一项，避免选了却没效果
+  const classList = await classApi.list().catch(() => []);
+  classIslandConnected.value = classList.some(
+    (item) => item.id === auth.classId && item.classIslandConnected === true,
+  );
 });
 </script>
 
@@ -366,6 +422,30 @@ onMounted(async () => {
           />
         </el-card>
         <el-card shadow="never" class="mt-12">
+          <template #header><span>通知显示位置</span></template>
+          <p class="text-muted">
+            老师在班级小助手上发布通知 / 叫人时，提醒要弹在哪里由这台教室机器决定。选择会同步到班级，
+            服务端据此决定是否一并推送到教室的 ClassIsland。
+          </p>
+          <el-radio-group
+            :model-value="appStore.notificationChannel"
+            :disabled="channelSaving"
+            class="channel-group"
+            @change="(value: string | number | boolean | undefined) => applyChannel(value as ClassIslandNotificationChannel)"
+          >
+            <el-radio v-for="item in channelOptions" :key="item.value" :value="item.value" :disabled="item.disabled">
+              {{ item.label }}
+            </el-radio>
+          </el-radio-group>
+          <p class="text-muted channel-hint">
+            {{ CLASSISLAND_NOTIFICATION_CHANNEL_HINTS[appStore.notificationChannel] }}
+            <template v-if="!classIslandConnected">
+              <br />提示：本班还没有接入 ClassIsland 设备（在 Web 端「ClassIsland 联动」里接入后才能选"只在 ClassIsland 上弹"）。
+            </template>
+          </p>
+        </el-card>
+
+        <el-card shadow="never" class="mt-12">
           <template #header><span>账号信息</span></template>
           <el-descriptions :column="1" border size="small">
             <el-descriptions-item label="姓名">{{ auth.user?.name ?? '-' }}</el-descriptions-item>
@@ -425,6 +505,18 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.channel-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.channel-hint {
+  margin-top: 10px;
+}
+
 .ml-8 {
   margin-left: 8px;
 }

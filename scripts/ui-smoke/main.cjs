@@ -31,8 +31,8 @@ const RESULT_FILE = process.env.UI_SMOKE_RESULT ?? '';
 
 /**
  * 侧边栏菜单（教师账号 teacher1 可见的部分）。
- * 按新的角色权限模型：班级管理 / 学生管理 / 成绩录入 仅管理员可见，
- * 教师端不应出现这些入口（后端同时强校验），因此期望值只有 4 项。
+ * 按角色权限模型：班级管理 / 学生管理 / 教师管理 仅管理员可见，
+ * 教师端不应出现这些入口（后端同时强校验），因此这里的期望值就是教师可见的全部菜单。
  */
 const MENU_ITEMS = [
   { label: '仪表盘', path: '/dashboard' },
@@ -40,6 +40,7 @@ const MENU_ITEMS = [
   { label: '作业发布', path: '/homeworks' },
   { label: '通知发布', path: '/notifications' },
   { label: '成绩录入', path: '/grades' },
+  { label: 'ClassIsland 联动', path: '/integrations' },
 ];
 
 /** 教师端必须隐藏的入口（前端隐藏 + 后端 403，双重保障） */
@@ -892,6 +893,158 @@ async function main() {
     removedUnified?.ok
       ? `课表已删除；课程已删除=${removedUnified.courseRemoved === true}（班级=${removedUnified.className ?? '-'}）`
       : `原因=${removedUnified?.reason ?? '-'}`,
+  );
+
+  // 7.85 ClassIsland 联动页：班主任为本班签发设备令牌 → 页面下发提醒表单可用 → 收尾删除设备
+  //      （这条链路是"老师在 Web 端发提醒 → 教室里 ClassIsland 全屏弹出"的入口，必须真实点得动）
+  const integrationUi = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
+      (node.textContent ?? '').trim().startsWith('ClassIsland 联动'),
+    );
+    if (!menu) return { ok: false, reason: '教师端看不到「ClassIsland 联动」入口' };
+    menu.click();
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline && location.pathname !== '/integrations') await sleep(80);
+    if (location.pathname !== '/integrations') return { ok: false, reason: '点击后没有跳到 /integrations' };
+    await sleep(900);
+
+    const buttons = Array.from(document.querySelectorAll('button')).map((node) => (node.textContent ?? '').trim());
+    const title = (document.querySelector('.page-title')?.textContent ?? '').trim();
+
+    // 打开「下发提醒」弹窗：表单字段齐不齐
+    const notifyButton = Array.from(document.querySelectorAll('button')).find((node) =>
+      (node.textContent ?? '').trim() === '下发提醒',
+    );
+    if (!notifyButton) return { ok: false, title, reason: '页面没有「下发提醒」按钮' };
+    notifyButton.click();
+    await sleep(700);
+    const notifyDialog = Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
+      (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('下发提醒到 ClassIsland'),
+    );
+    if (!notifyDialog) return { ok: false, title, reason: '下发提醒弹窗未打开' };
+    const labels = Array.from(notifyDialog.querySelectorAll('.el-form-item__label')).map((node) =>
+      (node.textContent ?? '').trim(),
+    );
+    const submit = Array.from(notifyDialog.querySelectorAll('.el-dialog__footer button')).some(
+      (node) => (node.textContent ?? '').trim() === '立即下发',
+    );
+    const cancel = Array.from(document.querySelectorAll('.el-dialog__footer button')).find((node) =>
+      (node.textContent ?? '').trim() === '取消',
+    );
+    if (cancel) cancel.click();
+    await sleep(400);
+
+    // 打开「接入新设备」：生成令牌 → 弹窗必须给出 chci_ 明文
+    // 收尾要删掉本次新增的设备，因此先记下当前已有的 id，之后按"集合差"清理
+    const authHeaders = { authorization: 'Bearer ' + (localStorage.getItem('classhelper.token') ?? '') };
+    const before = (await (await fetch('/api/integrations/devices', { headers: authHeaders })).json()).data ?? [];
+    const beforeIds = new Set(before.map((item) => item.id));
+
+    const createButton = Array.from(document.querySelectorAll('button')).find((node) =>
+      (node.textContent ?? '').trim() === '接入新设备',
+    );
+    if (!createButton) return { ok: false, title, reason: '页面没有「接入新设备」按钮' };
+    createButton.click();
+    await sleep(600);
+    const createDialog = Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
+      (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('接入新设备'),
+    );
+    if (!createDialog) return { ok: false, title, reason: '接入新设备弹窗未打开' };
+    const classSelected = Boolean((createDialog.querySelector('.el-select')?.textContent ?? '').trim());
+
+    // 「设备名称」是 el-input，且同一弹窗里 el-select 也渲染 input，
+    // 所以必须按表单项标签定位，否则会写进班级选择框里（这正是第一次写这个用例时踩的坑）
+    const nameItem = Array.from(createDialog.querySelectorAll('.el-form-item')).find(
+      (node) => (node.querySelector('.el-form-item__label')?.textContent ?? '').trim() === '设备名称',
+    );
+    const nameInput = nameItem?.querySelector('input');
+    if (!nameInput) return { ok: false, title, reason: '「设备名称」输入框未找到' };
+    nameInput.value = 'UI 冒烟设备';
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(200);
+    const generate = Array.from(createDialog.querySelectorAll('.el-dialog__footer button')).find((node) =>
+      (node.textContent ?? '').trim() === '生成设备令牌',
+    );
+    if (!generate) return { ok: false, title, reason: '弹窗没有「生成设备令牌」按钮' };
+    generate.click();
+
+    const tokenDeadline = Date.now() + 8000;
+    let tokenText = '';
+    while (Date.now() < tokenDeadline) {
+      const box = document.querySelector('.el-dialog textarea');
+      tokenText = (box?.value ?? '').trim();
+      if (tokenText.startsWith('chci_')) break;
+      await sleep(150);
+    }
+    const hasCopy = Array.from(document.querySelectorAll('.el-dialog__footer button')).some((node) =>
+      (node.textContent ?? '').trim() === '复制令牌',
+    );
+    const closeToken = Array.from(document.querySelectorAll('.el-dialog__footer button')).find((node) =>
+      (node.textContent ?? '').trim() === '关闭',
+    );
+    if (closeToken) closeToken.click();
+    await sleep(400);
+
+    // 用接口再确认一次"确实新建了一台设备"（界面上的令牌弹窗也可能是假象）
+    const after = (await (await fetch('/api/integrations/devices', { headers: authHeaders })).json()).data ?? [];
+    const created = after.filter((item) => !beforeIds.has(item.id));
+
+    return {
+      ok: true,
+      title,
+      hasNotify: buttons.includes('下发提醒'),
+      hasCreate: buttons.includes('接入新设备'),
+      labels,
+      submit,
+      classSelected,
+      tokenPrefixOk: tokenText.startsWith('chci_'),
+      tokenLength: tokenText.length,
+      hasCopy,
+      path: location.pathname,
+      createdCount: created.length,
+      createdName: created[0]?.name ?? '',
+      createdIds: created.map((item) => item.id),
+    };
+  })()`);
+  record(
+    'ClassIsland 联动页（教师为本班签发设备令牌 + 下发提醒表单）',
+    Boolean(integrationUi?.ok) &&
+      integrationUi?.title === 'ClassIsland 联动' &&
+      integrationUi?.hasNotify === true &&
+      integrationUi?.hasCreate === true &&
+      integrationUi?.submit === true &&
+      integrationUi?.classSelected === true &&
+      integrationUi?.tokenPrefixOk === true &&
+      integrationUi?.tokenLength > 40 &&
+      integrationUi?.hasCopy === true &&
+      integrationUi?.createdCount === 1 &&
+      integrationUi?.createdName === 'UI 冒烟设备' &&
+      ['目标班级', '标题', '内容', '显示时长', '优先级', '语音朗读', '同步通知中心'].every((label) =>
+        (integrationUi?.labels ?? []).includes(label),
+      ),
+    `path=${integrationUi?.path ?? '-'} 标题=${integrationUi?.title ?? '-'} 表单字段=[${(integrationUi?.labels ?? []).join('/')}] ` +
+      `令牌前缀=${integrationUi?.tokenPrefixOk ? 'chci_' : '(异常)'}(${integrationUi?.tokenLength ?? 0} 字符) ` +
+      `新建设备=${integrationUi?.createdCount ?? 0}台(${integrationUi?.createdName ?? '-'})` +
+      `${integrationUi?.reason ? ` 原因=${integrationUi.reason}` : ''}`,
+  );
+
+  // 收尾：把本次新建的设备按 id 删掉（演示数据里不该留下"UI 冒烟设备"）
+  const integrationCleanup = await win.webContents.executeJavaScript(`(async () => {
+    const token = localStorage.getItem('classhelper.token') ?? '';
+    const headers = { authorization: 'Bearer ' + token };
+    const ids = ${JSON.stringify(integrationUi?.createdIds ?? [])};
+    for (const id of ids) {
+      await fetch('/api/integrations/devices/' + id, { method: 'DELETE', headers });
+    }
+    const list = (await (await fetch('/api/integrations/devices', { headers })).json()).data ?? [];
+    return { ok: true, removed: ids.length, left: list.filter((item) => ids.includes(item.id)).length };
+  })()`);
+  record(
+    'ClassIsland 联动用例收尾：冒烟设备已删除（不污染演示数据）',
+    Boolean(integrationCleanup?.ok) && integrationCleanup?.left === 0,
+    `删除=${integrationCleanup?.removed ?? 0} 残留=${integrationCleanup?.left ?? '-'}` +
+      (integrationCleanup?.reason ? ` 原因=${integrationCleanup.reason}` : ''),
   );
 
   // 7.9 管理员专属：教师录入（本轮新增「教师管理」页，仅管理员可见可用）

@@ -2,6 +2,7 @@ import {
   API_PATHS,
   type ClassDetailDto,
   type ClassDto,
+  type ClassIslandNotificationChannel,
   type DashboardSummary,
   type GradeDto,
   type HomeworkDto,
@@ -30,6 +31,22 @@ export const authApi = {
 export const classApi = {
   list: (): Promise<ClassDto[]> => api.get(API_PATHS.classes),
   detail: (id: string): Promise<ClassDetailDto> => api.get(`${API_PATHS.classes}/${id}`),
+};
+
+/**
+ * 通知显示位置（both / client / classisland）。
+ *
+ * 由**这台教室机器自己**决定"提醒弹在 ClassHelper 还是 ClassIsland"：
+ * 本地存一份用于本机的弹窗/上岛判断，同时写回班级记录，服务端据此决定要不要推 ClassIsland。
+ */
+export const classChannelApi = {
+  get: (classId: string): Promise<{ notificationChannel: ClassIslandNotificationChannel }> =>
+    api.get(`${API_PATHS.classes}/${classId}/notification-channel`),
+  set: (
+    classId: string,
+    notificationChannel: ClassIslandNotificationChannel,
+  ): Promise<{ notificationChannel: ClassIslandNotificationChannel }> =>
+    api.patch(`${API_PATHS.classes}/${classId}/notification-channel`, { notificationChannel }),
 };
 
 export const scheduleApi = {

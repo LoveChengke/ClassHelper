@@ -25,6 +25,14 @@ onMounted(async () => {
     bootText.value = '正在恢复登录状态...';
     const session = await auth.restore();
 
+    // 通知显示位置：先用本地配置兜底（断网也要按上次的选择决定本机弹不弹），
+    // 登录态就绪后再向服务器对齐一次（服务端才是单一事实来源）
+    const storedConfig = await window.desktop?.getConfig?.();
+    if (storedConfig?.notificationChannel) {
+      appStore.applyLocalNotificationChannel(storedConfig.notificationChannel);
+    }
+    void appStore.loadNotificationChannel(auth.classId);
+
     // 连通性探测与健康轮询放到后台，不阻塞进入界面（离线时也能立刻看到缓存数据）
     void appStore.init(session.serverUrl);
 

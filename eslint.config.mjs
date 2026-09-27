@@ -26,6 +26,8 @@ export default tseslint.config(
       '**/dist-electron/**',
       '**/release/**',
       '**/release-server/**',
+      // 交付产物归集目录（pnpm dist:* 的输出，见 AGENTS.md §4）：里面是构建后的压缩 JS，不该进 lint
+      '**/releases/**',
       '**/build/**',
       '**/coverage/**',
       '**/src/generated/**',

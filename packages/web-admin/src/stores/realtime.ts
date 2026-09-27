@@ -5,6 +5,8 @@ import { io, type Socket } from 'socket.io-client';
 import {
   PRIORITY_LABELS,
   SOCKET_EVENTS,
+  type ClassIslandNotificationEvent,
+  type ClassIslandStateEvent,
   type GradeDto,
   type HomeworkDto,
   type NotificationDto,
@@ -23,6 +25,8 @@ const EVENT_LABELS: Record<string, string> = {
   [SOCKET_EVENTS.gradeUpdated]: '成绩更新',
   [SOCKET_EVENTS.scheduleUpdated]: '课表变更',
   [SOCKET_EVENTS.homeworkStatus]: '作业状态',
+  [SOCKET_EVENTS.classislandState]: 'ClassIsland 状态',
+  [SOCKET_EVENTS.classislandNotification]: 'ClassIsland 提醒',
 };
 
 /**
@@ -114,6 +118,23 @@ export const useRealtimeStore = defineStore('realtime', () => {
         );
       }
       dispatch(SOCKET_EVENTS.scheduleUpdated, payload);
+    });
+
+    instance.on(SOCKET_EVENTS.classislandState, (payload: ClassIslandStateEvent) => {
+      markEvent(SOCKET_EVENTS.classislandState);
+      // 状态是"心跳"级事件（每次上报都会来），弹通知会刷屏，只静默分发给页面
+      dispatch(SOCKET_EVENTS.classislandState, payload);
+    });
+
+    instance.on(SOCKET_EVENTS.classislandNotification, (payload: ClassIslandNotificationEvent) => {
+      markEvent(SOCKET_EVENTS.classislandNotification);
+      if (payload.targetCount > 0) {
+        notify('success', '提醒已下发到 ClassIsland', payload.title);
+      } else {
+        // 没有已接入的设备时提醒只落库，老师需要知道"没送到教室"
+        notify('warning', '该班级还没有已接入的 ClassIsland 设备', payload.title);
+      }
+      dispatch(SOCKET_EVENTS.classislandNotification, payload);
     });
 
     instance.on(SOCKET_EVENTS.connected, (payload: { rooms: string[] }) => {

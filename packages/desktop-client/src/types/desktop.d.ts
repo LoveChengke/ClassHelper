@@ -2,7 +2,12 @@
  * 主进程与渲染进程之间的桥接契约（preload 通过 contextBridge 暴露）。
  * 渲染进程只依赖这些最小 API，不接触 Node.js。
  */
-import type { IslandAppearance, IslandNotification, IslandState } from '@classhelper/shared';
+import type {
+  ClassIslandNotificationChannel,
+  IslandAppearance,
+  IslandNotification,
+  IslandState,
+} from '@classhelper/shared';
 
 /** 作业页展示偏好（看板 / 列表，看板外观） */
 export interface HomeworkBoardSettings {
@@ -27,6 +32,13 @@ export interface DesktopStoredConfig {
   island: IslandAppearance;
   /** 作业页展示偏好（看板/列表、显示时间、看板字号） */
   homeworkBoard: HomeworkBoardSettings;
+  /**
+   * 通知显示位置（both / client / classisland）。
+   *
+   * 这台教室机器"提醒到底弹在哪个端"由它决定：值同时存本地（决定本机要不要弹窗/上岛）
+   * 与班级记录（服务端据此决定要不要推给 ClassIsland）。
+   */
+  notificationChannel: ClassIslandNotificationChannel;
 }
 
 export interface DesktopAppInfo {

@@ -1,7 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, safeStorage } from 'electron';
-import { DEFAULT_ISLAND_APPEARANCE, DEFAULT_SERVER_URL, type IslandAppearance } from '@classhelper/shared';
+import {
+  CLASSISLAND_NOTIFICATION_CHANNELS,
+  DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL,
+  DEFAULT_ISLAND_APPEARANCE,
+  DEFAULT_SERVER_URL,
+  type ClassIslandNotificationChannel,
+  type IslandAppearance,
+} from '@classhelper/shared';
 import type { DesktopStoredConfig, HomeworkBoardSettings } from '../types/desktop.js';
 
 /** 作业页展示偏好默认值（看板 + 不显示时间 + 15px） */
@@ -22,6 +29,8 @@ interface PersistedConfig {
   island?: Partial<IslandAppearance>;
   /** 作业页展示偏好（向后兼容：旧配置文件没有该字段时用默认值补齐） */
   homeworkBoard?: Partial<HomeworkBoardSettings>;
+  /** 通知显示位置（向后兼容：旧配置文件没有该字段时按默认 both 补齐） */
+  notificationChannel?: ClassIslandNotificationChannel;
 }
 
 const DEFAULT_CONFIG: PersistedConfig = {
@@ -31,7 +40,17 @@ const DEFAULT_CONFIG: PersistedConfig = {
   tokenEncrypted: false,
   island: { ...DEFAULT_ISLAND_APPEARANCE },
   homeworkBoard: { ...DEFAULT_HOMEWORK_BOARD },
+  notificationChannel: DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL,
 };
+
+/** 通知显示位置的白名单校验：非法值一律回落到默认值，避免坏配置把提醒"静默吞掉" */
+function normalizeNotificationChannel(
+  input?: ClassIslandNotificationChannel,
+): ClassIslandNotificationChannel {
+  return CLASSISLAND_NOTIFICATION_CHANNELS.includes(input as ClassIslandNotificationChannel)
+    ? (input as ClassIslandNotificationChannel)
+    : DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL;
+}
 
 /** 作业页偏好的合法化（模式白名单、字号夹紧） */
 function normalizeHomeworkBoard(input?: Partial<HomeworkBoardSettings>): HomeworkBoardSettings {
@@ -126,6 +145,7 @@ function readPersisted(): PersistedConfig {
       tokenEncrypted: parsed.tokenEncrypted === true,
       island: normalizeIslandAppearance(parsed.island),
       homeworkBoard: normalizeHomeworkBoard(parsed.homeworkBoard),
+      notificationChannel: normalizeNotificationChannel(parsed.notificationChannel),
     };
   } catch {
     return { ...DEFAULT_CONFIG };
@@ -147,6 +167,7 @@ export function getConfig(): DesktopStoredConfig {
     token: decryptToken(persisted),
     island: normalizeIslandAppearance(persisted.island),
     homeworkBoard: normalizeHomeworkBoard(persisted.homeworkBoard),
+    notificationChannel: normalizeNotificationChannel(persisted.notificationChannel),
   };
 }
 
@@ -168,6 +189,9 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
       ...persisted.homeworkBoard,
       ...patch.homeworkBoard,
     });
+  }
+  if (patch.notificationChannel !== undefined) {
+    persisted.notificationChannel = normalizeNotificationChannel(patch.notificationChannel);
   }
   if (patch.token !== undefined) {
     const encrypted = encryptToken(patch.token);

@@ -2537,6 +2537,69 @@ async function runSettingsPageAppearanceCheck(
 }
 
 /**
+ * 设置页「通知显示位置」自检（需求：提醒弹在 ClassHelper 还是 ClassIsland，由客户端自己选）。
+ *
+ * 走真实 UI：切到设置页 → 点单选项 → 断言「本地配置已写入」，再切回去。
+ * 服务端同步（写回班级记录）由 verify:classisland 覆盖，这里只管客户端这一半。
+ */
+async function runSettingsPageChannelCheck(
+  win: BrowserWindow,
+): Promise<{ ok: boolean; detail: string }> {
+  const result = (await win.webContents
+    .executeJavaScript(
+      `(async () => {
+         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+         const before = (await window.desktop.getConfig()).notificationChannel;
+         location.hash = '#/settings';
+
+         // 找到「通知显示位置」那张卡片里的单选组
+         let group = null;
+         for (let i = 0; i < 40 && !group; i += 1) {
+           await wait(100);
+           group = Array.from(document.querySelectorAll('.el-card')).find((card) =>
+             (card.querySelector('.el-card__header')?.textContent ?? '').includes('通知显示位置'),
+           );
+         }
+         if (!group) return { ok: false, detail: '设置页没有「通知显示位置」卡片' };
+         const radios = Array.from(group.querySelectorAll('.el-radio'));
+          // 注意：这段脚本本身是外层模板字符串，里面不能再出现反引号（会截断外层字符串）
+          if (radios.length < 3) return { ok: false, detail: '单选项只有 ' + radios.length + ' 个' };
+
+         // 点第二个（只在 ClassHelper 客户端弹），断言配置真的写下去了
+         radios[1].click();
+         await wait(600);
+         const afterClient = (await window.desktop.getConfig()).notificationChannel;
+         const clientChecked = radios[1].classList.contains('is-checked');
+
+         // 再点回第一个（两端都弹），避免影响后续用例
+         radios[0].click();
+         await wait(600);
+         const afterBoth = (await window.desktop.getConfig()).notificationChannel;
+
+         location.hash = '#/schedule';
+         return { ok: true, before, afterClient, afterBoth, clientChecked, labels: radios.map((n) => n.textContent.trim()) };
+       })()`,
+    )
+    .catch((error: unknown) => ({
+      ok: false as const,
+      detail: `执行失败：${error instanceof Error ? error.message : String(error)}`,
+    }))) as
+    | { ok: true; before: string; afterClient: string; afterBoth: string; clientChecked: boolean; labels: string[] }
+    | { ok: false; detail: string }
+    | null;
+
+  if (result?.ok) {
+    return {
+      ok: result.afterClient === 'client' && result.clientChecked && result.afterBoth === 'both',
+      detail:
+        `单选项=[${result.labels.join(' / ')}]，` +
+        `选择「只在 ClassHelper 客户端弹」后配置 ${result.before} → ${result.afterClient}（选中=${result.clientChecked}），` +
+        `切回后 ${result.afterBoth}`,
+    };
+  }
+  return { ok: false, detail: result?.detail ?? '未执行' };
+}
+/**
  * Electron 冒烟验证（ELECTRON_SMOKE_TEST=1 时触发，跑完自动退出）。
  * 覆盖：preload 桥接、渲染进程挂载、登录页 DOM、IndexedDB 缓存读写、离线回退，
  * 以及可选的联网集成（ELECTRON_SMOKE_ONLINE=1）。
@@ -2731,6 +2794,10 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     // 「Vue 响应式 Proxy 过不了 IPC 结构化克隆」这个失败模式。
     const settingsAppearance = await runSettingsPageAppearanceCheck(win);
     record('设置页真实 UI：拖拽滑块即时改变灵动岛外观', settingsAppearance.ok, settingsAppearance.detail);
+
+    // 通知显示位置（客户端自己选）：提醒弹在 ClassHelper 还是 ClassIsland
+    const settingsChannel = await runSettingsPageChannelCheck(win);
+    record('设置页真实 UI：切换「通知显示位置」写回本地配置', settingsChannel.ok, settingsChannel.detail);
 
     // 真实通知链路：教师发通知 → 客户端实时通道 → 灵动岛胶囊；
     // 随后在灵动岛点"标为已读"，验证通知中心同步为已读（修复"点了已读仍显示未读"）

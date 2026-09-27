@@ -1,0 +1,4 @@
+# .NET 构建产物（与仓库根的 .gitignore 分开：根 .gitignore 是 GBK 编码，apply_patch 读不了）
+bin/
+obj/
+cipx/

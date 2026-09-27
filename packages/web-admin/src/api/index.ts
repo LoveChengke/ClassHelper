@@ -11,6 +11,7 @@ import {
   type CreateCourseRequest,
   type CreateGradeRequest,
   type CreateHomeworkRequest,
+  type CreateIntegrationDeviceRequest,
   type CreateNotificationRequest,
   type CreateScheduleRequest,
   type DashboardSummary,
@@ -18,11 +19,15 @@ import {
   type GradeStats,
   type HomeworkDto,
   type HomeworkSubmissionsDto,
+  type IntegrationDeviceDto,
+  type IntegrationDeviceTokenDto,
   type LoginRequest,
   type LoginResponse,
   type NotificationDto,
   type ScheduleDto,
   type ScheduleWeekView,
+  type SendClassIslandNotificationRequest,
+  type SendClassIslandNotificationResult,
   type StudentDto,
   type TableImportPreview,
   type TableImportResult,
@@ -31,6 +36,7 @@ import {
   type TimeLayoutParsePreview,
   type UpdateClassAccountRequest,
   type UpdateClassRequest,
+  type UpdateIntegrationDeviceRequest,
   type UserDto,
 } from '@classhelper/shared';
 import { api } from './http';
@@ -291,4 +297,29 @@ export const importApi = {
     mode?: 'replace' | 'merge';
     payload: unknown;
   }): Promise<ClassPlanImportResultDto> => api.post(`${API_PATHS.imports}/class-plan`, payload),
+};
+
+/* ------------------------------------------------------------------ ClassIsland 联动 */
+
+/**
+ * 联动设备管理 + 提醒下发。
+ *
+ * 设备令牌（chci_...）只在**创建**与**重置**两个接口的返回值里出现一次，
+ * 其余接口永远只回 tokenHint（前缀提示），因此拿到 token 后要立刻提示老师复制保存。
+ */
+export const integrationApi = {
+  listDevices: (classId?: string): Promise<IntegrationDeviceDto[]> =>
+    api.get(`${API_PATHS.integrations}/devices`, classId ? { classId } : undefined),
+  createDevice: (payload: CreateIntegrationDeviceRequest): Promise<IntegrationDeviceTokenDto> =>
+    api.post(`${API_PATHS.integrations}/devices`, payload),
+  updateDevice: (id: string, payload: UpdateIntegrationDeviceRequest): Promise<IntegrationDeviceDto> =>
+    api.patch(`${API_PATHS.integrations}/devices/${id}`, payload),
+  /** 重置令牌：旧令牌立即失效，插件需要重新填写 */
+  resetToken: (id: string): Promise<IntegrationDeviceTokenDto> =>
+    api.post(`${API_PATHS.integrations}/devices/${id}/token`, {}),
+  removeDevice: (id: string): Promise<{ id: string }> =>
+    api.delete(`${API_PATHS.integrations}/devices/${id}`),
+  /** 把一条提醒下发到该班的 ClassIsland 设备（ClassIsland 上全屏弹出） */
+  notify: (payload: SendClassIslandNotificationRequest): Promise<SendClassIslandNotificationResult> =>
+    api.post(`${API_PATHS.integrations}/classisland/notify`, payload),
 };

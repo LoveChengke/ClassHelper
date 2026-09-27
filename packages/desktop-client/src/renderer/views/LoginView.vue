@@ -68,6 +68,8 @@ async function submit(): Promise<void> {
   try {
     await auth.login(form.serverUrl, form.code.trim(), form.password);
     await appStore.init(form.serverUrl);
+    // 登录后对齐"通知显示位置"：这台机器上次选的是弹 ClassHelper 还是弹 ClassIsland
+    await appStore.loadNotificationChannel(auth.classId);
     if (auth.token) realtime.connect(appStore.serverUrl, auth.token);
     ElMessage.success(`已进入 ${auth.displayName}`);
     await router.replace('/schedule');

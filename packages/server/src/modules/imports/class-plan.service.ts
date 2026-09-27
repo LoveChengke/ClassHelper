@@ -3,6 +3,7 @@ import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
 import { assertCanManageSchedule } from '../../lib/access.js';
+import { weekParityFromDiv } from '@classhelper/shared';
 import type { ClassPlanImportInput } from './imports.schemas.js';
 
 /**
@@ -96,14 +97,10 @@ function normalizeTime(value: unknown): string | null {
 
 /**
  * `WeekCountDiv` / `WeekCountDivTotal` → 我们课表的 weekParity。
- * 只支持 2 周循环（=单双周）；3 周及以上循环无法用单双周表达，记 warning 并按"每周"处理。
+ * 口径集中在 `@classhelper/shared` 的 `weekParityFromDiv`（插件上报走同一份实现），
+ * 这里只是本模块内的别名，保证"手动导入 JSON"与"插件实时上报"落到库里完全一致。
  */
-function resolveParity(div: number, total: number): 'ALL' | 'ODD' | 'EVEN' {
-  if (div <= 0 || total <= 1) return 'ALL';
-  const position = ((div - 1) % total) + 1;
-  if (total === 2) return position === 1 ? 'ODD' : 'EVEN';
-  return 'ALL';
-}
+const resolveParity = weekParityFromDiv;
 
 /** 解析 ClassIsland 档案 JSON（或只含 ClassPlans 的片段）里的课程表 */
 export function parseClassIslandClassPlan(input: unknown): ClassPlanParseResult {
