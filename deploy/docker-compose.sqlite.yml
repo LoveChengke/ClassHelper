@@ -1,0 +1,56 @@
+# 班级小助手 · Docker 单容器部署（SQLite + 数据卷）
+#
+# 适用：云服务器 / 与别的服务共用一台机器。相比 deploy/docker-compose.yml（MySQL 变体）
+#      少跑一个数据库容器，内存占用小很多；数据落在 Docker 卷 classhelper-data 里。
+#
+# 使用：
+#   1) cp deploy/.env.sqlite.example deploy/.env.sqlite 并填 JWT_SECRET / 管理员密码
+#      （生成密钥：node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"）
+#   2) docker compose -f deploy/docker-compose.sqlite.yml --env-file deploy/.env.sqlite up -d --build
+#   3) 访问：http://<服务器IP>:${SERVER_PORT}/
+#
+# 首次启动（AUTO_MIGRATE=true）会自动执行 prisma/migrations 里的建表语句并创建管理员账号，
+# 见 packages/server/src/lib/db-bootstrap.ts（"Docker 挂载空数据卷"就是它的目标场景之一）。
+#
+# 备份：docker run --rm -v classhelper-sqlite_classhelper-data:/data -v "$PWD":/backup alpine \
+#         tar czf /backup/classhelper-db.tar.gz -C /data .
+
+name: classhelper-sqlite
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: runtime
+    image: classhelper-server:${APP_VERSION:-0.1.0}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4000
+      DATABASE_PROVIDER: sqlite
+      # 必须写绝对路径：容器里 serverRoot 是 /app/server，相对路径会解析到别处
+      DATABASE_URL: file:/app/data/classhelper.db
+      # 首启动自动建表 + 建管理员；生产自检会拒绝 dev.db 与过短的 JWT_SECRET
+      AUTO_MIGRATE: 'true'
+      STARTUP_DB_CHECK: 'true'
+      JWT_SECRET: ${JWT_SECRET:?请在 deploy/.env.sqlite 中设置（≥32 位随机串）}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      TRUST_PROXY: '1'
+      RATE_LIMIT_ENABLED: 'true'
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TERM_START_DATE: ${TERM_START_DATE:-}
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-admin}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-admin123}
+      DEFAULT_STUDENT_PASSWORD: ${DEFAULT_STUDENT_PASSWORD:-123456}
+      DEFAULT_CLASS_PASSWORD: ${DEFAULT_CLASS_PASSWORD:-123456}
+      DEFAULT_TEACHER_PASSWORD: ${DEFAULT_TEACHER_PASSWORD:-123456}
+    ports:
+      - '${SERVER_PORT:-4000}:4000'
+    volumes:
+      - classhelper-data:/app/data
+
+volumes:
+  classhelper-data:

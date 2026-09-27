@@ -125,6 +125,28 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 - 反向代理上启用 HTTPS：见 `deploy/nginx.conf`，并在服务端环境变量中设置
   `TRUST_PROXY=1`、`CORS_ORIGIN=https://你的域名`。
 
+### 2.1 单容器变体（SQLite，推荐给内存小的机器 / 与别的服务共用一台机器）
+
+`deploy/docker-compose.sqlite.yml` 只跑**服务端一个容器**，不额外起 MySQL：数据落在 Docker 卷
+`classhelper-data` 的 `/app/data/classhelper.db`，首次启动由 `AUTO_MIGRATE=true` 自动建表并创建管理员
+（`packages/server/src/lib/db-bootstrap.ts` 的"空数据卷"分支）。
+
+```bash
+cp deploy/.env.sqlite.example deploy/.env.sqlite   # 填 JWT_SECRET、管理员密码、端口
+docker compose -f deploy/docker-compose.sqlite.yml --env-file deploy/.env.sqlite up -d --build
+```
+
+适用场景与注意点：
+
+- 机器内存紧张（比如 2G 小机器上还跑着别的服务）时，比 MySQL 变体少一个数据库进程；
+- 端口用 `SERVER_PORT` 指定，**别抢占 80/443**（那通常是同机反代占用的）；
+- 生产自检会拒绝 `dev.db` 与过短的 `JWT_SECRET`，因此 `DATABASE_URL` 必须是绝对路径且不含 `dev.db`；
+- 备份就是整个卷：`docker run --rm -v classhelper-sqlite_classhelper-data:/data -v "$PWD":/backup alpine tar czf /backup/classhelper-db.tar.gz -C /data .`
+
+> `deploy/Dockerfile` 的构建阶段会先跑 `pnpm --filter @classhelper/server run db:generate`：
+> 生成产物 `packages/server/src/generated/prisma` 是 gitignored 的，而 `--ignore-scripts` 跳过了
+> postinstall，少了这一步 `tsc` 会直接编译失败。
+
 ---
 
 ## 三、Linux 原生部署（形态 C，systemd + SQLite）

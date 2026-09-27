@@ -33,7 +33,12 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 # 再拷贝源码并构建（只构建服务端与 Web 管理端，桌面客户端不参与）
 COPY packages ./packages
 COPY scripts ./scripts
+
+# 必须先生成 Prisma Client：`pnpm install --ignore-scripts` 跳过了 postinstall，
+# 而生成产物 `packages/server/src/generated/prisma` 是 gitignored 的（clone 下来没有），
+# 少了这一步下面的 tsc 会报 "Cannot find module '../generated/prisma/client.js'"。
 RUN pnpm build:shared \
+ && pnpm --filter @classhelper/server run db:generate \
  && pnpm --filter @classhelper/server build \
  && pnpm --filter @classhelper/web-admin build
 
