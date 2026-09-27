@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, screen } from 'electron';
-import type { BrowserWindow, NativeImage } from 'electron';
+import { app, BrowserWindow, desktopCapturer, screen } from 'electron';
+import type { NativeImage } from 'electron';
 import type { IslandAppearance, IslandNotification } from '@classhelper/shared';
 import { getConfig, saveConfig } from './config.js';
 import { getDiagnostics } from './ipc.js';
@@ -59,6 +59,8 @@ interface IslandShotStats {
   opaque: number;
   transparent: number;
   uniqueColors: number;
+  /** 平均亮度（0~255） */
+  luminance: number;
   /** 偏红像素数（紧急形态的红色描边/角标/内部光晕） */
   reddish: number;
   /** 图像最外圈（2px）的偏红像素数：必须为 0，用于守住"卡片外不允许有光晕外溢" */
@@ -79,6 +81,8 @@ function analyzeBitmap(image: NativeImage): {
   uniqueColors: number;
   reddish: number;
   edgeReddish: number;
+  /** 整张图的平均亮度（0~255）：用来抓「卡片底色发白」这类问题 */
+  luminance: number;
   /** 岛矩形之外的偏红像素（窗口留白区，紧急光晕不外溢的断言依据） */
   outsideReddish?: number;
 } {
@@ -89,6 +93,7 @@ function analyzeBitmap(image: NativeImage): {
   let transparent = 0;
   let reddish = 0;
   let edgeReddish = 0;
+  let luminanceSum = 0;
   const colors = new Set<number>();
 
   for (let index = 0; index < total; index += 1) {
@@ -103,6 +108,7 @@ function analyzeBitmap(image: NativeImage): {
       continue;
     }
     opaque += 1;
+    luminanceSum += 0.2126 * red + 0.7152 * green + 0.0722 * blue;
     if (colors.size < 4096) colors.add((red << 16) | (green << 8) | blue);
 
     // 红色占优：紧急态的描边、角标、内部光晕
@@ -115,7 +121,14 @@ function analyzeBitmap(image: NativeImage): {
     }
   }
 
-  return { opaque, transparent, uniqueColors: colors.size, reddish, edgeReddish };
+  return {
+    opaque,
+    transparent,
+    uniqueColors: colors.size,
+    reddish,
+    edgeReddish,
+    luminance: opaque > 0 ? luminanceSum / opaque : 0,
+  };
 }
 
 /** 灵动岛状态截图留档 + 像素统计（便于人工复核外观与自动化断言） */
@@ -262,6 +275,247 @@ async function captureIsland(
   } catch (error) {
     console.warn('[SMOKE] 灵动岛截图失败', error);
     return null;
+  }
+}
+
+interface IslandBackdropStats {
+  name: string;
+  /** 环（窗口内、卡片外）亮度中位数：这一圈本该"透出桌面" */
+  ring: number;
+  /** 基准（窗口矩形之外、同一时刻的桌面）亮度中位数：用来对消壁纸本身的明暗 */
+  reference: number;
+  /** 卡片内部亮度中位数（防御性检查：卡片本身不能变白） */
+  card: number;
+  /** 卡片**近场**外圈里明显比紧邻桌面亮的像素数（材料/不透明窗口底色的直接证据） */
+  veilPixels: number;
+  filePath: string;
+}
+
+/**
+ * 卡片外圈自检的**纯色底板**。
+ *
+ * 直接把岛摆到用户的桌面上取样是不可靠的：壁纸、浏览器窗口、正在干活的其他程序都会变，
+ * 截出来的"环"到底是桌面还是面板根本说不清（真机实测就撞上过浏览器盖住岛的情况）。
+ * 所以测试期间在岛下面垫一块**已知颜色**的底板窗口，环的期望值就变成常量：
+ * 透明 ⇒ 环 = 底板色；被系统材质/不透明窗口底色糊过 ⇒ 环与底板色对不上（几秒内就能断言）。
+ */
+const ISLAND_BACKDROP_COLOR = '#101722';
+const ISLAND_BACKDROP_LUMINANCE = 0.2126 * 0x10 + 0.7152 * 0x17 + 0.0722 * 0x22;
+
+let islandBackdropWindow: BrowserWindow | null = null;
+
+/** 惰性创建纯色底板窗口（不抢焦点、不占任务栏，只在取样期间显示） */
+async function ensureIslandBackdropWindow(): Promise<BrowserWindow> {
+  if (islandBackdropWindow && !islandBackdropWindow.isDestroyed()) return islandBackdropWindow;
+  const win = new BrowserWindow({
+    show: false,
+    frame: false,
+    transparent: false,
+    backgroundColor: ISLAND_BACKDROP_COLOR,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    focusable: false,
+    alwaysOnTop: true,
+    type: 'toolbar',
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  const page = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;background:${ISLAND_BACKDROP_COLOR}"></body></html>`;
+  await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(page)}`);
+  win.setAlwaysOnTop(true, 'screen-saver');
+  islandBackdropWindow = win;
+  return win;
+}
+
+/** 取样结束后收起底板（不留在桌面上） */
+function hideIslandBackdropWindow(): void {
+  if (islandBackdropWindow && !islandBackdropWindow.isDestroyed()) islandBackdropWindow.hide();
+}
+
+function medianOf(values: number[]): number {
+  if (values.length === 0) return -1;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)] ?? -1;
+}
+
+/**
+ * 用**整屏截图**检查"卡片之外的那一圈"到底是什么颜色。
+ *
+ * 为什么必须拍整屏：`webContents.capturePage()` 只拿得到渲染进程自己的位面，
+ * 窗口自己的底色 / 系统背景材质（亚克力、mica）都画在它**后面**，根本拍不到 ——
+ * 「毛玻璃 / 主题色渐变出现白底」正是从这个盲区漏过去的（详见 `main/island.ts` 的说明）。
+ *
+ * 这里用 desktopCapturer 抓真实桌面合成结果，再按"岛矩形 / 窗口矩形"分三块取样：
+ *   - 卡片：岛体内部 → 必须仍是深色；
+ *   - 环：窗口内、卡片外 → 本该**完全透明**（露出桌面），出现浅色面板即回归；
+ *   - 基准：窗口矩形之外、同一时刻的桌面 → 用来对消壁纸自身的明暗差异。
+ */
+async function captureIslandBackdrop(name: string): Promise<IslandBackdropStats | null> {
+  const win = island.getWindow();
+  if (!win || win.isDestroyed() || !win.isVisible()) return null;
+  const geometry = await readIslandGeometryFrom(win);
+  if (!geometry) return null;
+  const rect = geometry.window;
+  const display = screen.getDisplayMatching(rect);
+  const scale = display.scaleFactor || 1;
+  const margin = 40;
+  // 垫底板 + 把岛抬回最上层（否则全屏浏览器之类的前台窗口会把岛盖住，量到的是别人的像素）
+  const backdropWin = await ensureIslandBackdropWindow();
+  backdropWin.setBounds({
+    x: rect.x - margin - 8,
+    y: rect.y - margin - 8,
+    width: rect.width + (margin + 8) * 2,
+    height: rect.height + (margin + 8) * 2,
+  });
+  backdropWin.showInactive();
+  backdropWin.moveTop();
+  win.moveTop();
+  await sleep(320);
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: {
+        width: Math.round(display.size.width * scale),
+        height: Math.round(display.size.height * scale),
+      },
+    });
+    const source = sources.find((item) => String(item.display_id) === String(display.id)) ?? sources[0];
+    if (!source) return null;
+    const shot = source.thumbnail;
+    const shotSize = shot.getSize();
+    // 缩略图可能被系统按上限缩小：一律用"缩略图尺寸 / 屏幕逻辑尺寸"换算，别假设等于 scaleFactor
+    const shotScale = shotSize.width / Math.max(1, display.size.width);
+    const left = Math.max(0, Math.round((rect.x - display.bounds.x - margin) * shotScale));
+    const top = Math.max(0, Math.round((rect.y - display.bounds.y - margin) * shotScale));
+    const width = Math.min(shotSize.width - left, Math.round((rect.width + margin * 2) * shotScale));
+    const height = Math.min(shotSize.height - top, Math.round((rect.height + margin * 2) * shotScale));
+    if (width <= 0 || height <= 0) return null;
+    const region = shot.crop({ x: left, y: top, width, height });
+    const bitmap = region.toBitmap();
+    const size = region.getSize();
+    // 屏幕逻辑坐标 → 裁剪图像素坐标
+    const originX = display.bounds.x + left / shotScale;
+    const originY = display.bounds.y + top / shotScale;
+    const toPx = (value: number, origin: number): number => Math.round((value - origin) * shotScale);
+    const winRect = {
+      left: toPx(rect.x, originX) + 2,
+      top: toPx(rect.y, originY) + 2,
+      right: toPx(rect.x + rect.width, originX) - 2,
+      bottom: toPx(rect.y + rect.height, originY) - 2,
+    };
+    const inset = Math.max(3, Math.round(3 * shotScale));
+    const islandRect = {
+      left: toPx(geometry.island.x, originX),
+      top: toPx(geometry.island.y, originY),
+      right: toPx(geometry.island.x + geometry.island.width, originX),
+      bottom: toPx(geometry.island.y + geometry.island.height, originY),
+    };
+    // 卡片内部取样：向内缩，避开描边与抗锯齿
+    const cardRect = {
+      left: islandRect.left + inset,
+      top: islandRect.top + inset,
+      right: islandRect.right - inset,
+      bottom: islandRect.bottom - inset,
+    };
+    // 环的"内边界"= 岛体矩形（外扩 1px）：岛自己的描边/抗锯齿不能算进"环"，
+    // 否则会把卡片本身那圈 1px 白描边误当成"白底面板"（真机踩过）。
+    const ringInner = {
+      left: islandRect.left - 1,
+      top: islandRect.top - 1,
+      right: islandRect.right + 1,
+      bottom: islandRect.bottom + 1,
+    };
+    const inRect = (
+      x: number,
+      y: number,
+      r: { left: number; top: number; right: number; bottom: number },
+    ): boolean => x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+
+    // 基准取样带：贴着窗口左右两侧、**与窗口同一批行**的桌面像素。
+    // 与"窗口内那一圈"贴得最近、行也一致，才能把壁纸自身的明暗/gradient 抵消掉。
+    const band = Math.max(4, Math.round(16 * shotScale));
+    const refBand = {
+      left: Math.max(0, winRect.left - band),
+      right: Math.min(size.width, winRect.right + band),
+      top: winRect.top,
+      bottom: winRect.bottom,
+    };
+    // 卡片外圈的"近场"：卡片四周 pad+4 px 内（材料/窗口底色最先暴露的地方）
+    const padNear = Math.max(
+      0,
+      Math.min(
+        islandRect.left - winRect.left,
+        islandRect.top - winRect.top,
+        winRect.right - islandRect.right,
+        winRect.bottom - islandRect.bottom,
+      ),
+    );
+    const haloRect = {
+      left: islandRect.left - padNear - 6,
+      top: islandRect.top - padNear - 6,
+      right: islandRect.right + padNear + 6,
+      bottom: islandRect.bottom + padNear + 6,
+    };
+
+    const ring: number[] = [];
+    const card: number[] = [];
+    const reference: number[] = [];
+    const fallbackReference: number[] = [];
+    const halo: number[] = [];
+    for (let y = 0; y < size.height; y += 1) {
+      for (let x = 0; x < size.width; x += 1) {
+        const offset = (y * size.width + x) * 4;
+        const blue = bitmap[offset] ?? 0;
+        const green = bitmap[offset + 1] ?? 0;
+        const red = bitmap[offset + 2] ?? 0;
+        const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+        if (inRect(x, y, cardRect)) card.push(luminance);
+        else if (!inRect(x, y, ringInner) && inRect(x, y, winRect)) {
+          ring.push(luminance);
+          if (inRect(x, y, haloRect)) halo.push(luminance);
+        } else {
+          fallbackReference.push(luminance);
+          if (y >= refBand.top && y < refBand.bottom && (x < winRect.left || x >= winRect.right)) {
+            reference.push(luminance);
+          }
+        }
+      }
+    }
+    // 贴边取样带样本太少（窗口贴屏幕边）时退回"窗口外全部像素"
+    const refSample = reference.length >= 300 ? reference : fallbackReference;
+    // 环上"白底"像素：比紧邻的桌面亮很多（材料面板 / 不透明窗口底色都会这样）
+    const refMedian = medianOf(refSample);
+    const veilPixels = halo.filter((value) => value > refMedian + 30).length;
+    const filePath = process.env.ISLAND_SHOTS_DIR
+      ? path.join(process.env.ISLAND_SHOTS_DIR, `${name}-backdrop.png`)
+      : '';
+    if (filePath) {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, region.toPNG());
+    }
+    const stats: IslandBackdropStats = {
+      name,
+      ring: Math.round(medianOf(ring)),
+      reference: Math.round(refMedian),
+      card: Math.round(medianOf(card)),
+      veilPixels,
+      filePath,
+    };
+    console.log(
+      `[SMOKE] 卡片外圈（整屏截图）：${name} 环=${stats.ring} 基准=${stats.reference} ` +
+        `卡片=${stats.card} 环上白底像素=${stats.veilPixels} 窗口=${rect.width}x${rect.height} ` +
+        `岛=${Math.round(geometry.island.width)}x${Math.round(geometry.island.height)} 图=${filePath}`,
+    );
+    return stats;
+  } catch (error) {
+    console.warn('[SMOKE] 卡片外圈截图失败', error);
+    return null;
+  } finally {
+    hideIslandBackdropWindow();
   }
 }
 
@@ -1995,9 +2249,7 @@ async function runIslandChecks(
   );
 
   // 10.7) 视觉风格：纯黑 / 毛玻璃（亚克力）/ 主题色渐变，切换立即生效
-  const probeStyle = async (
-    style: IslandAppearance['style'],
-  ): Promise<{ fill: string; stroke: string; material: string }> => {
+  const probeStyle = async (style: IslandAppearance['style']): Promise<{ fill: string; stroke: string }> => {
     island.setAppearance({ ...appearanceBefore, style });
     await sleep(260);
     const measured = await islandWindow?.webContents
@@ -2013,7 +2265,6 @@ async function runIslandChecks(
     return {
       fill: String(measured?.fill ?? '-'),
       stroke: String(measured?.stroke ?? '-'),
-      material: island.getBackgroundMaterial(),
     };
   };
 
@@ -2021,15 +2272,11 @@ async function runIslandChecks(
   const glassStyle = await probeStyle('glass');
   const tintedStyle = await probeStyle('tinted');
   record(
-    '视觉风格切换立刻生效（纯黑 / 毛玻璃亚克力 / 主题色）',
+    '视觉风格切换立刻生效（纯黑 / 毛玻璃半透明 / 主题色）',
     blackStyle.fill === 'rgb(0, 0, 0)' &&
-      blackStyle.material === 'none' &&
-      glassStyle.fill.startsWith('rgba(10, 10, 14') &&
-      glassStyle.material === 'acrylic' &&
+      glassStyle.fill.startsWith('rgba(32, 32, 36') &&
       tintedStyle.fill === 'rgb(11, 11, 15)',
-    `纯黑 fill=${blackStyle.fill} 材质=${blackStyle.material}；` +
-      `毛玻璃 fill=${glassStyle.fill} 材质=${glassStyle.material}；` +
-      `主题色 fill=${tintedStyle.fill} 材质=${tintedStyle.material}`,
+    `纯黑 fill=${blackStyle.fill}；毛玻璃 fill=${glassStyle.fill}；主题色 fill=${tintedStyle.fill}`,
   );
   // 10.7b) 固定大包围盒窗口的鼠标穿透（照搬 WinIsland set_cursor_hittest）：
   //        默认整块窗口穿透，指针进入岛体才接收鼠标 —— 否则会吞掉桌面点击。
@@ -2170,6 +2417,47 @@ async function runIslandChecks(
     `getComputedStyle(document.documentElement).getPropertyValue('--island-accent').trim()`,
   );
   record('个性设置：主题色生效（CSS 变量）', accentVar === '#ff7043', `CSS --island-accent=${accentVar}`);
+
+  // 11.2b) 三种视觉风格的**底色**：黑 / 毛玻璃 / 主题色渐变都必须是深色卡片
+  //        并且卡片**外面那一圈**必须完全透明（用户反馈：毛玻璃与主题色渐变会出现白底 ——
+  //        那圈留白曾被系统亚克力/不透明窗口底色垫成浅色面板，见 captureIslandBackdrop 说明）
+  const styleLuminance: string[] = [];
+  const styleRing: string[] = [];
+  let styleOk = true;
+  let ringOk = true;
+  for (const style of ['black', 'glass', 'tinted'] as const) {
+    island.setAppearance({ ...appearanceBefore, style, opacity: 1 });
+    island.pushNotification(makeNotification(`smoke-style-${style}`, 'NORMAL', '风格底色自检'), {
+      inClass: false,
+    });
+    await sleep(700);
+    const shot = await captureIsland(`island-style-${style}`, ISLAND_SIZES.expanded);
+    const luminance = shot?.luminance ?? -1;
+    // 深色卡片：均值亮度应明显偏低（>140 基本就是白底）
+    const ok = luminance >= 0 && luminance < 120;
+    if (!ok) styleOk = false;
+    styleLuminance.push(`${style}=${luminance >= 0 ? luminance.toFixed(0) : '-'}${ok ? '✓' : '✗'}`);
+    // 卡片外圈：必须仍是"透出桌面"的那层像素（环亮度≈窗口外的桌面亮度），不能出现面板
+    const backdrop = await captureIslandBackdrop(`island-style-${style}`);
+    // 基准必须真的落在纯色底板上（否则说明底板被遮挡/截图偏了 —— 先修测试，别放过）
+    const backdropVisible = backdrop ? Math.abs(backdrop.reference - ISLAND_BACKDROP_LUMINANCE) <= 8 : false;
+    const ringDelta = backdrop ? Math.abs(backdrop.ring - backdrop.reference) : -1;
+    // 环亮度必须与底板一致（系统材质/不透明窗口底色会把它整体抬亮或涂成白色）
+    const ringOneOk =
+      backdropVisible && ringDelta >= 0 && ringDelta <= 12 && (backdrop?.veilPixels ?? 1) <= 20;
+    if (!ringOneOk) ringOk = false;
+    styleRing.push(
+      `${style}=环${backdrop?.ring ?? '-'}/底板${backdrop?.reference ?? '-'}` +
+        `(差${ringDelta >= 0 ? ringDelta : '-'},卡片${backdrop?.card ?? '-'},` +
+        `近场白底${backdrop?.veilPixels ?? '-'})${ringOneOk ? '✓' : '✗'}` +
+        (backdropVisible ? '' : '（底板被遮挡）'),
+    );
+    island.handleAction({ action: 'dismiss' });
+    await sleep(200);
+  }
+  record('个性设置：三种风格都是深色底（无白底）', styleOk, `平均亮度 ${styleLuminance.join(' ')}`);
+  record('个性设置：卡片外圈透出桌面（三种风格都没有白底面板）', ringOk, styleRing.join(' '));
+  island.setAppearance(appearanceBefore);
 
   // 11.3 位置：四个停靠点的窗口坐标必须落在对应锚点
   const positionCases: {
@@ -2500,9 +2788,7 @@ async function runIslandRealtimeCheck(
  * 因此这里在真实设置页里合成一次拖拽（mousedown → mousemove → mouseup，与用户操作同一路径），
  * 并同时断言「滑块自身的数值」与「主进程里的外观」都变了 —— 只断言前者会漏掉这个 bug。
  */
-async function runSettingsPageAppearanceCheck(
-  win: BrowserWindow,
-): Promise<{ ok: boolean; detail: string }> {
+async function runSettingsPageAppearanceCheck(win: BrowserWindow): Promise<{ ok: boolean; detail: string }> {
   const result = (await win.webContents
     .executeJavaScript(
       `(async () => {
@@ -2553,9 +2839,7 @@ async function runSettingsPageAppearanceCheck(
       ok: false as const,
       detail: `执行失败：${error instanceof Error ? error.message : String(error)}`,
     }))) as
-    | { ok: true; baseline: number; dragged: number; label: string }
-    | { ok: false; detail: string }
-    | null;
+    { ok: true; baseline: number; dragged: number; label: string } | { ok: false; detail: string } | null;
 
   if (result?.ok) {
     return {
@@ -2569,14 +2853,176 @@ async function runSettingsPageAppearanceCheck(
 }
 
 /**
- * 设置页「通知显示位置」自检（需求：提醒弹在 ClassHelper 还是 ClassIsland，由客户端自己选）。
+ * 设置页「左右边距」自检（用户反馈：调左右边距**没有实时预览、也不生效**）。
  *
- * 走真实 UI：切到设置页 → 点单选项 → 断言「本地配置已写入」，再切回去。
- * 服务端同步（写回班级记录）由 verify:classisland 覆盖，这里只管客户端这一半。
+ * 为什么不能只调主进程：先前那条用例是直接 `island.setAppearance(...)`，绕过了
+ * 「设置页 → preload → IPC → 主进程」这条真实链路 —— 用户遇到的失败很可能就在这一段。
+ * 因此这里在真实设置页里对「左右边距」滑块合成一次拖拽，并且：
+ *   1) 断言主进程 appearance.marginX 真的变了（IPC + 写值通了）；
+ *   2) 断言岛的**真实几何**按新边距移动（窗口重排生效）。
+ *
+ * 岛的真实几何来自渲染进程上报（readGeometry），不是窗口 bounds —— 窗口是固定包围盒，
+ * 只有岛体坐标才反映锚点。
  */
-async function runSettingsPageChannelCheck(
+async function runSettingsPageMarginCheck(
   win: BrowserWindow,
+  readGeometry: () => Promise<{ island: Electron.Rectangle } | null>,
 ): Promise<{ ok: boolean; detail: string }> {
+  const appearanceBefore = island.getAppearance();
+
+  // 1) 默认（居中）停靠：左右边距**必须**被禁用并给出原因，否则用户会一直以为"调了不生效"
+  island.setAppearance({ ...appearanceBefore, position: 'top-center' });
+  await sleep(300);
+  const centerHint = (await win.webContents.executeJavaScript(
+    `(async () => {
+       const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+       // 必须"离开再回来"：设置页只在挂载时读一次外观，同 hash 再赋值不会重新挂载，
+       // 页面里会留着过期的位置（这正是"改了设置没反应"的一个真实来源）
+       location.hash = '#/schedule';
+       await wait(250);
+       location.hash = '#/settings';
+       let item = null;
+       for (let i = 0; i < 40 && !item; i += 1) {
+         await wait(100);
+         item = Array.from(document.querySelectorAll('.el-form-item')).find((node) =>
+           (node.querySelector('.el-form-item__label')?.textContent ?? '').startsWith('左右边距'),
+         );
+       }
+       if (!item) return { ok: false, detail: '找不到「左右边距」表单项' };
+       const slider = item.querySelector('.el-slider');
+       const runway = item.querySelector('.el-slider__runway');
+       const disabled =
+         slider?.classList.contains('is-disabled') === true ||
+         runway?.classList.contains('is-disabled') === true ||
+         slider?.getAttribute('aria-disabled') === 'true' ||
+         runway?.getAttribute('aria-disabled') === 'true';
+       const text = (item.textContent ?? '').replace(/\s+/g, ' ').trim();
+       return { ok: true, disabled, hasHint: text.includes('居中') && text.includes('不生效') };
+     })()`,
+  )) as { ok: boolean; disabled?: boolean; hasHint?: boolean; detail?: string } | null;
+
+  if (!centerHint?.ok || centerHint.disabled !== true || centerHint.hasHint !== true) {
+    island.setAppearance(appearanceBefore);
+    return {
+      ok: false,
+      detail:
+        '居中停靠时「左右边距」的禁用/说明缺失：' +
+        (centerHint?.ok
+          ? `disabled=${centerHint.disabled} hasHint=${centerHint.hasHint}`
+          : `${centerHint?.detail ?? '未执行'}`),
+    };
+  }
+
+  // 2) 改成左停靠后再验"拖滑块 → 岛真的移动"
+  island.setAppearance({ ...appearanceBefore, position: 'top-left', marginX: 8, marginY: 8 });
+  await sleep(500);
+  const before = (await readGeometry())?.island ?? null;
+
+  const drag = (await win.webContents
+    .executeJavaScript(
+      `(async () => {
+         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+         location.hash = '#/schedule';
+         await wait(200);
+         location.hash = '#/settings';
+         let runway = null;
+         for (let i = 0; i < 40 && !runway; i += 1) {
+           await wait(100);
+           const item = Array.from(document.querySelectorAll('.el-form-item')).find((node) =>
+             (node.querySelector('.el-form-item__label')?.textContent ?? '').startsWith('左右边距'),
+           );
+           runway = item?.querySelector('.el-slider__runway') ?? null;
+         }
+         if (!runway) return { ok: false, detail: '设置页里找不到「左右边距」滑块' };
+         const marginItem = runway.closest('.el-form-item');
+         const marginSlider = marginItem?.querySelector('.el-slider');
+         const sliderDisabled = () =>
+           marginSlider?.classList.contains('is-disabled') === true ||
+           runway.classList.contains('is-disabled') === true;
+         // 等滑块可用：页面必须已经读到「左停靠」的最新外观，否则拖了也不会生效
+         let waited = 0;
+         while (sliderDisabled() && waited < 4000) {
+           await wait(150);
+           waited += 150;
+         }
+         const positionText = (() => {
+           const posItem = Array.from(document.querySelectorAll('.el-form-item')).find((node) =>
+             (node.querySelector('.el-form-item__label')?.textContent ?? '').trim() === '显示位置',
+           );
+           return (posItem?.querySelector('.el-select')?.textContent ?? '').trim();
+         })();
+         if (sliderDisabled()) {
+           return {
+             ok: false,
+             detail:
+               '左停靠下「左右边距」仍被禁用（页面没刷新到最新位置：显示位置=「' + positionText + '」）',
+           };
+         }
+         const rect = runway.getBoundingClientRect();
+         if (rect.width === 0) return { ok: false, detail: '滑块宽度为 0' };
+         const centerDisabled = false;
+         const x = rect.left + rect.width * 0.75;
+         const y = rect.top + rect.height / 2;
+         const fire = (target, type, extra) =>
+           target.dispatchEvent(
+             new MouseEvent(
+               type,
+               Object.assign({ bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }, extra),
+             ),
+           );
+         fire(runway, 'mousedown', { buttons: 1 });
+         await wait(60);
+         fire(window, 'mousemove', { buttons: 1 });
+         await wait(60);
+         fire(window, 'mouseup', {});
+         await wait(600);
+         const label =
+           Array.from(document.querySelectorAll('.el-form-item__label'))
+             .map((node) => (node.textContent ?? '').trim())
+             .find((text) => text.startsWith('左右边距')) ?? '';
+         return { ok: true, label, centerDisabled };
+       })()`,
+    )
+    .catch((error: unknown) => ({ ok: false, detail: String(error) }))) as
+    | { ok: true; label: string; centerDisabled: boolean; positionText: string }
+    | { ok: false; detail: string }
+    | null;
+
+  await sleep(500);
+  const after = (await readGeometry())?.island ?? null;
+  const appearanceAfter = island.getAppearance();
+  island.setAppearance(appearanceBefore);
+  await sleep(250);
+
+  const expectedX = before ? before.x + (appearanceAfter.marginX - 8) : null;
+  const ipcOk = appearanceAfter.marginX > 8;
+  const movedOk = Boolean(before && after && expectedX !== null && Math.abs(after.x - expectedX) <= 2);
+  return {
+    ok: Boolean(drag?.ok) && ipcOk && movedOk && (drag?.ok ? drag.centerDisabled === false : false),
+    detail:
+      '居中停靠时禁用+说明=✓；改左停靠（页面显示「' +
+      (drag?.ok ? drag.positionText : '-') +
+      '」）后拖到 75%：标签=' +
+      (drag?.ok ? drag.label : '-') +
+      '，主进程 marginX ' +
+      appearanceBefore.marginX +
+      ' → ' +
+      appearanceAfter.marginX +
+      '（IPC=' +
+      ipcOk +
+      '），岛 x ' +
+      (before?.x ?? '-') +
+      ' → ' +
+      (after?.x ?? '-') +
+      '（期望 ' +
+      expectedX +
+      '，移动=' +
+      movedOk +
+      '）' +
+      (drag?.ok ? '' : '｜' + drag?.detail),
+  };
+}
+async function runSettingsPageChannelCheck(win: BrowserWindow): Promise<{ ok: boolean; detail: string }> {
   const result = (await win.webContents
     .executeJavaScript(
       `(async () => {
@@ -2616,7 +3062,14 @@ async function runSettingsPageChannelCheck(
       ok: false as const,
       detail: `执行失败：${error instanceof Error ? error.message : String(error)}`,
     }))) as
-    | { ok: true; before: string; afterClient: string; afterBoth: string; clientChecked: boolean; labels: string[] }
+    | {
+        ok: true;
+        before: string;
+        afterClient: string;
+        afterBoth: string;
+        clientChecked: boolean;
+        labels: string[];
+      }
     | { ok: false; detail: string }
     | null;
 
@@ -2661,6 +3114,9 @@ async function runTrayAndShutdownChecks(mainWin: BrowserWindow, record: Recorder
 
   destroyTray();
   island.destroy();
+  // 卡片外圈自检用的纯色底板（若已创建）也要一并释放，不留隐藏窗口
+  if (islandBackdropWindow && !islandBackdropWindow.isDestroyed()) islandBackdropWindow.destroy();
+  islandBackdropWindow = null;
   await sleep(200);
   record(
     '退出前资源清理（托盘/灵动岛已释放）',
@@ -2830,6 +3286,12 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     // 通知显示位置（客户端自己选）：提醒弹在 ClassHelper 还是 ClassIsland
     const settingsChannel = await runSettingsPageChannelCheck(win);
     record('设置页真实 UI：切换「通知显示位置」写回本地配置', settingsChannel.ok, settingsChannel.detail);
+
+    // 左右边距：必须走「设置页拖滑块」的真实链路（用户反馈：调了没实时预览、也不生效）
+    const settingsMargin = await runSettingsPageMarginCheck(win, () =>
+      island.getWindow() ? readIslandGeometryFrom(island.getWindow()!) : Promise.resolve(null),
+    );
+    record('设置页真实 UI：拖「左右边距」滑块立即生效', settingsMargin.ok, settingsMargin.detail);
 
     // 真实通知链路：教师发通知 → 客户端实时通道 → 灵动岛胶囊；
     // 随后在灵动岛点"标为已读"，验证通知中心同步为已读（修复"点了已读仍显示未读"）

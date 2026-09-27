@@ -462,24 +462,26 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// 优先用"当前正在生效"的课表对应的时间表；取不到再退回档案里的第一个。
-    /// 有多个时间表时选错会把节次时间报错，所以先按当前课表找。
+    /// 选一份"最有代表性"的时间表上报给班级小助手：**上课点最多的那一份**。
+    ///
+    /// 为什么不按"当前课表"选：镜像会给每个（星期 + 单双周）建一份时间表，
+    /// 于是"今天"那一份可能只有一两节课 —— 按当前课表选就会把只有一节的时间表报上去，
+    /// 服务端那边的节次时间表就退化了。取上课点最多的那份，得到的是完整作息。
+    /// 并列时优先"每周"型（单双周的两份内容一致，每周型更通用）。
     /// </summary>
     private static ClassIsland.Shared.Models.Profile.TimeLayout? ResolvePrimaryTimeLayout(
         ClassIsland.Shared.Models.Profile.Profile profile)
     {
         if (profile.TimeLayouts.Count == 0) return null;
 
-        var current = profile.SelectedClassPlanGroupId != Guid.Empty
-            ? CurrentClassPlan(profile)
-            : null;
-        if (current is not null)
-        {
-            var layout = ScheduleMapper.ResolveTimeLayout(current, profile);
-            if (layout is not null) return layout;
-        }
+        var best = profile.TimeLayouts
+            .Select(pair => (pair.Value, ClassPoints: pair.Value.Layouts.Count(item => item.TimeType == 0)))
+            .Where(item => item.ClassPoints > 0)
+            .OrderByDescending(item => item.ClassPoints)
+            .ToList();
+        if (best.Count > 0) return best[0].Value;
 
-        // 退而求其次：档案里被激活的时间表，最后才是任意一个
+        // 兜底：档案里被激活的时间表，最后才是任意一个
         return profile.TimeLayouts.Values.FirstOrDefault(item => item.IsActivated)
                ?? profile.TimeLayouts.Values.First();
     }

@@ -51,11 +51,6 @@ public static class ClassPlanWriter
         }
 
         var layout = source.TimeLayouts[0];
-        // 课间 / 分割线 / 行动点：按起始时间索引，供"每条课目后接上对应课间"使用
-        var breakPoints = layout.Layouts
-            .Where(item => item.TimeType != 0)
-            .GroupBy(item => item.StartTime)
-            .ToDictionary(group => group.Key, group => group.First());
 
         // 1) 补齐科目（同名的复用，避免每次镜像堆出新的 Subject）
         EnsureSubjects(profile, source);
@@ -86,7 +81,7 @@ public static class ClassPlanWriter
                 group.WeekCountDivTotal, groups.Count);
             var planId = FindPlanId(profile, planName);
             var (timeLayoutId, timeLayout) = BuildTimeLayout(
-                profile, planName, group.Entries, breakPoints);
+                profile, planName, group.Entries);
 
             var plan = profile.ClassPlans.TryGetValue(planId, out var existing)
                 ? existing
@@ -172,38 +167,45 @@ public static class ClassPlanWriter
     }
 
     /// <summary>
-    /// 按分组内的条目重建时间表：每条课目前后按需插入服务端的课间点。
-    /// 返回写入的时间表 GUID。
+    /// 按分组内的条目重建时间表：**每节课之间补一个课间**（最后一节之后不补）。
+    ///
+    /// 课间 = 「上一节下课」到「下一节上课」之间的那段空隙，直接由两条课目的时间算出来，
+    /// 不依赖服务端有没有给课间点 —— 这样无论班级小助手那边是否维护节次时间表，
+    /// ClassIsland 档案里的课表都会有一致的课间（需求：每节课的间隔都是课间，放学后除外）。
     /// </summary>
     private static (Guid Id, TimeLayout Layout) BuildTimeLayout(
         Profile profile,
         string planName,
-        IReadOnlyList<ClassPlanEntryMirrorDto> entries,
-        IReadOnlyDictionary<string, TimeLayoutItemMirrorDto> breakPoints)
+        IReadOnlyList<ClassPlanEntryMirrorDto> entries)
     {
         var layoutName = planName + TimeLayoutNameSuffix;
         var existing = profile.TimeLayouts.FirstOrDefault(pair => pair.Value.Name == layoutName);
         var id = existing.Key != Guid.Empty ? existing.Key : Guid.NewGuid();
 
         var layout = new TimeLayout { Name = layoutName, IsActivated = true };
-        foreach (var entry in entries)
+        for (var index = 0; index < entries.Count; index++)
         {
+            var entry = entries[index];
             layout.Layouts.Add(new TimeLayoutItem
             {
                 TimeType = 0, // 上课
                 StartTime = ParseTime(entry.StartTime),
                 EndTime = ParseTime(entry.EndTime),
             });
-            // 该课目结束后紧接着的课间（服务端时间表里有同起始时刻的课间点才插入）
-            if (breakPoints.TryGetValue(entry.EndTime, out var brk))
+
+            // 课间：下一节开始晚于本节结束才有空隙；最后一节之后（放学）不插
+            if (index + 1 >= entries.Count) continue;
+            var next = entries[index + 1];
+            var breakStart = ParseTime(entry.EndTime);
+            var breakEnd = ParseTime(next.StartTime);
+            if (breakEnd <= breakStart) continue;
+
+            layout.Layouts.Add(new TimeLayoutItem
             {
-                layout.Layouts.Add(new TimeLayoutItem
-                {
-                    TimeType = brk.TimeType,
-                    StartTime = ParseTime(brk.StartTime),
-                    EndTime = ParseTime(brk.EndTime),
-                });
-            }
+                TimeType = 1, // 课间
+                StartTime = breakStart,
+                EndTime = breakEnd,
+            });
         }
 
         profile.TimeLayouts[id] = layout;

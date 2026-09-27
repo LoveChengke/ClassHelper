@@ -242,6 +242,14 @@ async function resetPhrases(): Promise<void> {
 /* ------------------------------------------------------------ 灵动岛个性化 */
 
 const island = ref<IslandAppearance>({ ...DEFAULT_ISLAND_APPEARANCE });
+
+/**
+ * 左右边距是否有效：只在停靠左 / 右时生效。
+ *
+ * 岛是"居中停靠"时（默认就是顶部居中），水平方向的锚点就是屏幕中线 ——
+ * 这时调左右边距不会有任何变化。之前没把这点说清楚，用户会以为"调了不生效"。
+ */
+const marginXApplies = computed(() => !island.value.position.endsWith('center'));
 const savingIsland = ref(false);
 
 const positionOptions = ISLAND_POSITIONS.map((value) => ({
@@ -442,7 +450,7 @@ onMounted(async () => {
                   :value="item.value"
                 />
               </el-select>
-              <span class="text-muted ml-8">纯黑 / 毛玻璃（亚克力）/ 主题色渐变</span>
+              <span class="text-muted ml-8">纯黑 / 毛玻璃（半透明）/ 主题色渐变</span>
             </el-form-item>
             <el-form-item label="显示位置">
               <el-select
@@ -464,9 +472,13 @@ onMounted(async () => {
                 :min="RANGES.marginX.min"
                 :max="RANGES.marginX.max"
                 :step="2"
+                :disabled="!marginXApplies"
                 @input="(value: number) => applyIslandAppearance({ marginX: value })"
               />
-              <span class="text-muted ml-8">停靠左/右时距屏幕边缘的距离</span>
+              <span v-if="marginXApplies" class="text-muted ml-8">停靠左/右时距屏幕边缘的距离</span>
+              <span v-else class="text-muted ml-8">
+                当前是「居中」停靠，左右边距不生效 —— 把上面的「显示位置」改成左 / 右停靠即可看到效果
+              </span>
             </el-form-item>
             <el-form-item :label="`上下边距 ${island.marginY}px`">
               <el-slider
@@ -534,27 +546,39 @@ onMounted(async () => {
           <el-descriptions :column="1" border size="small" class="mb-12">
             <el-descriptions-item label="联动状态">{{ classIslandStatusText }}</el-descriptions-item>
             <el-descriptions-item label="插件 / ClassIsland">
-              {{ classIslandStatus?.pluginVersion ?? '—' }} / {{ classIslandStatus?.classIslandVersion ?? '—' }}
+              {{ classIslandStatus?.pluginVersion ?? '—' }} /
+              {{ classIslandStatus?.classIslandVersion ?? '—' }}
             </el-descriptions-item>
           </el-descriptions>
           <p class="text-muted">
-            <strong>通知模式</strong>：老师在班级小助手上发布通知 / 叫人时，提醒弹在灵动岛还是 ClassIsland，
+            <strong>通知模式</strong>
+            ：老师在班级小助手上发布通知 / 叫人时，提醒弹在灵动岛还是 ClassIsland，
             由这台教室机器决定。选择会同步到班级，服务端据此决定是否推送到教室的 ClassIsland。
           </p>
           <el-radio-group
             :model-value="appStore.notificationChannel"
             :disabled="channelSaving"
             class="channel-group"
-            @change="(value: string | number | boolean | undefined) => applyChannel(value as ClassIslandNotificationChannel)"
+            @change="
+              (value: string | number | boolean | undefined) =>
+                applyChannel(value as ClassIslandNotificationChannel)
+            "
           >
-            <el-radio v-for="item in channelOptions" :key="item.value" :value="item.value" :disabled="item.disabled">
+            <el-radio
+              v-for="item in channelOptions"
+              :key="item.value"
+              :value="item.value"
+              :disabled="item.disabled"
+            >
               {{ item.label }}
             </el-radio>
           </el-radio-group>
           <p class="text-muted channel-hint">
             {{ CLASSISLAND_NOTIFICATION_CHANNEL_HINTS[appStore.notificationChannel] }}
             <template v-if="!classIslandConnected">
-              <br />提示：本班还没有接入 ClassIsland 设备（在 Web 端「ClassIsland 联动」里接入后才能选"只在 ClassIsland 上弹"）。
+              <br />
+              提示：本班还没有接入 ClassIsland 设备（在 Web 端「ClassIsland 联动」里接入后才能选"只在
+              ClassIsland 上弹"）。
             </template>
           </p>
         </el-card>
@@ -562,8 +586,9 @@ onMounted(async () => {
         <el-card shadow="never" class="mt-12">
           <template #header><span>作业录入</span></template>
           <p class="text-muted">
-            在教室电脑上录作业时，点一下短语就会追加到标题 / 内容里（例如 P、大本、背诵）。
-            最多 {{ HOMEWORK_PHRASE_MAX_COUNT }} 条、每条 {{ HOMEWORK_PHRASE_MAX_LENGTH }} 字；全部删掉即不在录入页显示。
+            在教室电脑上录作业时，点一下短语就会追加到标题 / 内容里（例如 P、大本、背诵）。 最多
+            {{ HOMEWORK_PHRASE_MAX_COUNT }} 条、每条
+            {{ HOMEWORK_PHRASE_MAX_LENGTH }} 字；全部删掉即不在录入页显示。
           </p>
           <div class="phrase-row">
             <el-tag

@@ -21,8 +21,9 @@ import { squirclePath } from './squircle.js';
  * 对齐点（详见 docs/winisland-design-tokens.md）：
  * - 造型：**连续圆角（超椭圆 squircle）**而不是 border-radius（WinIsland `utils/shape.rs`）；
  *   展开卡半径取 `min(48 * 圆角系数, w/2, h/2)`，胶囊半径取 `h/2`（满圆角）；
- * - 底色：默认纯黑（WinIsland `default` 风格），可选亚克力毛玻璃（`glass` → 主进程
- *   `setBackgroundMaterial('acrylic')`，等价于 WinIsland 的 HostBackdropBrush）；
+ * - 底色：默认纯黑（WinIsland `default` 风格），可选半透明毛玻璃（`glass`；
+ *   **纯 CSS 实现**，取 WinIsland 拿不到 host backdrop 时的降级色 `rgba(32,32,36,.804)`——
+ *   Electron 的 `setBackgroundMaterial()` 不能用在逐像素透明窗口上，原因见 `main/island.ts`）；
  * - 描边：1px 白、alpha 30（纯黑）/ 40（玻璃、主题色），与 WinIsland `BORDER_*_ALPHA` 同值；
  * - 阴影：只在展开态，`0 2px 3px rgba(0,0,0,.11)`（WinIsland `draw_expanded_shadow`）；
  * - 排版：白字 + alpha 分级（.92/.72/.58），**所有文本 = 基础字号 × 排版系数**，
@@ -714,7 +715,8 @@ body {
 }
 
 .island-card[data-style='glass'] {
-  --wn-bg: rgba(10, 10, 14, 0.588);
+  /* WinIsland「glass 无 host backdrop」降级色：比纯黑透一点，但保证任何桌面下都不是白底 */
+  --wn-bg: rgba(32, 32, 36, 0.804);
   --wn-border: rgba(255, 255, 255, 0.157);
   --wn-surface: rgba(255, 255, 255, 0.14);
   --wn-surface-hover: rgba(255, 255, 255, 0.22);

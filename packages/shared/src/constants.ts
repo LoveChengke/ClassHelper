@@ -173,7 +173,7 @@ export const ISLAND_STYLES = ['black', 'glass', 'tinted'] as const;
 
 export const ISLAND_STYLE_LABELS: Record<(typeof ISLAND_STYLES)[number], string> = {
   black: '纯黑（灵动岛默认）',
-  glass: '毛玻璃（半透明模糊）',
+  glass: '毛玻璃（半透明）',
   tinted: '主题色渐变',
 };
 

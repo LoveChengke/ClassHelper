@@ -662,7 +662,12 @@ function parseStoredTimeLayout(raw: string): { startTime: string; endTime: strin
   }
 }
 
-/** 没有导入节次时间表时，用当天课表里出现过的起止时间合成一份（去重并按时间排序） */
+/**
+ * 没有导入节次时间表时，用课表里出现过的起止时间合成一份（去重、按时间排序）。
+ *
+ * **每节课之间补一个课间**（timeType=1：上一节下课 → 下一节上课），最后一节之后不补（放学）。
+ * 班级小助手这边的节次时间表与 ClassIsland 档案保持同一口径，镜像过去才不会缺课间。
+ */
 function synthesizeTimeLayout(
   schedules: { startTime: string; endTime: string }[],
 ): { startTime: string; endTime: string; timeType: number }[] {
@@ -670,9 +675,22 @@ function synthesizeTimeLayout(
   for (const item of schedules) {
     if (!seen.has(item.startTime)) seen.set(item.startTime, item.endTime);
   }
-  return [...seen.entries()]
+
+  const classPoints = [...seen.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([startTime, endTime]) => ({ startTime, endTime, timeType: 0 }));
+
+  const items: { startTime: string; endTime: string; timeType: number }[] = [];
+  for (let index = 0; index < classPoints.length; index += 1) {
+    const point = classPoints[index]!;
+    items.push(point);
+    const next = classPoints[index + 1];
+    if (!next) continue; // 最后一节之后是放学，不插课间
+    if (next.startTime > point.endTime) {
+      items.push({ startTime: point.endTime, endTime: next.startTime, timeType: 1 });
+    }
+  }
+  return items;
 }
 
 /* ------------------------------------------------------------------ 供仪表盘/统计使用 */

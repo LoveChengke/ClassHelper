@@ -255,17 +255,33 @@ pnpm dist:classisland-plugin
     服务端据此决定是否推 ClassIsland（`shouldPushToClassIsland`）。改动这条链路要同时动三处：
     客户端设置页与本地配置、`lib/mappers` 的 DTO、服务端推送判断。
 
-16. **提醒分两类，决定"上课时段弹不弹"**：`ClassIslandPush.kind` = `notification`（通知类，上课时段
+16. **灵动岛的左右边距只在「左/右停靠」时生效**：默认是「顶部居中」，水平锚点就是屏幕中线，
+    此时调 marginX 不会有任何变化（设置页会把滑块置灰并说明，别把这个提示删掉 ——
+    用户就是因此以为「调了不生效」）。上下边距与所有停靠位置都相关，不受影响。
+17. **镜像进 ClassIsland 的课表要带课间**：每两节之间补一段（上一节下课 → 下一节上课），
+    **最后一节之后不补**（放学）。实现见 `ClassPlanWriter.BuildTimeLayout`（自己按课目时间算），
+    服务端 `synthesizeTimeLayout` 同口径。
+18. **提醒分两类，决定"上课时段弹不弹"**：`ClassIslandPush.kind` = `notification`（通知类，上课时段
     客户端与插件都**暂存**、下课补弹）/`call`（叫人，算「主动通知」，立刻弹）；`urgent` 同样立刻弹。
     插件侧的实现在 `ClassHelperNotificationProvider`（`_deferred` + `FlushDeferred`，订阅课程事件），
     客户端的实现在 `renderer/island/bridge.ts`。改这条规则要两端一起改。
-17. **作业按「所属日期」归类，不要用 createdAt 当"哪一天"**：`Homework.assignDate` 是本地日期
+19. **作业按「所属日期」归类，不要用 createdAt 当"哪一天"**：`Homework.assignDate` 是本地日期
     （`YYYY-MM-DD`，不带时区），按天查看 / 日期高亮 / 客户端"今天"都看它。
     UTC 切片（`toISOString().slice(0,10)`）在晚上的录入会算到第二天 —— 统一用 `@classhelper/shared` 的
     `dayKeyLocal / isDayKey / shiftDayKey`。新增按天接口时同样用 `?date=YYYY-MM-DD` + zod 的 `isDayKey` 校验。
-18. **教室机器能录入作业**：`POST /homeworks` 的路由**故意不加 `requireRole`**，权限在
+20. **教室机器能录入作业**：`POST /homeworks` 的路由**故意不加 `requireRole`**，权限在
     `homeworks.service.createHomework` 里判（staff 或本班班级账号）。班级账号的 `sub` 是**班级 id**，
     写 `createdBy` 前要换成该班班主任，否则撞 `User` 外键。
+21. **灵动岛不要用窗口背景材质（`win.setBackgroundMaterial()`）**。它看起来像 WinIsland 的
+    `DWMWA_USE_HOSTBACKDROPBRUSH`，其实是**整窗系统材质**：刷在整个窗口矩形上（岛是"固定大包围盒窗口"，
+    卡片之外还有留白），且明暗跟随应用主题（本客户端是浅色 Fluent 主题 ⇒ 材质必然是浅色），
+    于是卡片周围会出现一圈浅色"白底面板"。更坑的是**调用过一次就再也回不去逐像素透明**
+    （含 `'none'`：Electron 会让窗口回落到默认不透明底色 `#FFF`），所以从 `glass` 切到
+    `black`/`tinted` 后会永久留一圈**纯白**。CSS `backdrop-filter` 也替代不了（透明窗口里采样不到桌面）。
+    `glass` 因此用 CSS 半透明深色卡（WinIsland 无 backdrop 时的降级色 `rgba(32,32,36,.804)`）。
+    回归用例：「个性设置：卡片外圈透出桌面（三种风格都没有白底面板）」—— 它**整屏截图**取样
+    （`webContents.capturePage()` 拍不到窗口之后的材质，是当初漏掉这个 bug 的原因），
+    并在岛底下垫一块已知颜色的底板窗口，好让"环 = 底板色"可以被精确断言。
 
 ## 6. 代码风格
 

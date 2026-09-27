@@ -546,6 +546,8 @@ VISUALIZER_TITLE_OFFSET    = 4.0    // 视觉条中心 y = 曲名基线 - 4
 2. **内阴影 / inset shadow**：代码中无任何实现
 3. **字距（letter-spacing）与行高倍数**：无；行距全靠显式 y 偏移
 4. **亚克力的模糊半径/透明度数值**：由 Windows `HostBackdropBrush` 系统决定，代码只给 `HOST_BACKDROP_INSET = 1.0`
+   → Electron 侧**没有**等价物：`setBackgroundMaterial('acrylic')` 是整窗系统材质（跟随应用主题、覆盖窗口矩形），
+   不能像 `DWMWA_USE_HOSTBACKDROPBRUSH` 那样只画在圆角形状里；本项目因此改用无 backdrop 的降级色（见 §8）
 5. **强调色用于岛内 UI**：岛内几乎没有强调色（只有资源占用的 CPU/RAM/警告/危险色）；
    统一强调色 `#0A84FF` 仅存在于**设置窗口**（`COLOR_ACCENT`）
 6. **岛自身的亮/暗主题**：岛屿永远是深底白字；明暗主题只在设置窗口
@@ -561,7 +563,10 @@ VISUALIZER_TITLE_OFFSET    = 4.0    // 视觉条中心 y = 曲名基线 - 4
   （`cubic-bezier` 或 JS 弹簧，参考 `stiffness 0.10 / damping 0.68`）；`overflow: hidden` 做裁切
 - compact：`120×27`（有歌词时宽度跟着文本走，上限 700；只有媒体无歌词时 155），`border-radius: 13.5px`（胶囊）
 - expanded：`360×200`，`border-radius: 48px`（想要 iOS 味请用 SVG 超椭圆路径）
-- 背景：`#000` 不透明；"glass" 用 `backdrop-filter` + `background: rgba(10,10,14,.588)`；
+- 背景：`#000` 不透明；"glass" **不要**照搬 WinIsland 的 host backdrop —— Electron 的
+  `setBackgroundMaterial()` 是"整窗系统材质"，覆盖范围是窗口矩形而不是卡片形状，且明暗跟随应用主题，
+  在浅色主题下会给卡片垫出一圈浅色面板（详见 `packages/desktop-client/src/main/island.ts`）；
+  我们改用 WinIsland 自己的**无 backdrop 降级色** `rgba(32,32,36,.804)` 画在卡片上；
   "dynamic" 用封面模糊层 + `rgba(20,20,24,.471)` 叠加
 - 描边：`1px solid rgba(255,255,255,.118)`（纯色样式，展开时淡出）/ `.157`（glass、dynamic）
 - 阴影：仅展开 `0 2px σ rgba(0,0,0,.11)`（σ ≈ 3px）
@@ -572,17 +577,17 @@ VISUALIZER_TITLE_OFFSET    = 4.0    // 视觉条中心 y = 曲名基线 - 4
 
 ## 附：班级小助手实际采纳了哪些（本次重写对照表）
 
-| WinIsland 做法                                           | 出处                                                                                                 | 我们的落地                                                                                                             | 验证                                           |
-| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| **窗口一次建大包围盒，形变发生在窗口内**                 | `window/app/layout.rs` `required_window_size()` + `PADDING=80`                                       | 窗口固定为「最大形态 + `ISLAND_SHADOW_PAD(10)`」，开合期间**一帧都不 setBounds**                                       | 逐帧窗口签名恒为 `476x282@482,-2`（只有 1 种） |
-| 尺寸/圆角由弹簧驱动                                      | `utils/physics.rs` + `app.rs` `IslandSprings`（w/h/r = `0.10/0.68`）                                 | `src/island/spring.ts` 同参数同更新式（dt 以帧计、`damping^dt`、换向保留 35% 动量 + 20% 距离上限），并加**零过冲钳制** | 岛中心/边缘波动 0.00px、无过冲                 |
-| 连续圆角（超椭圆）                                       | `utils/shape.rs` `continuous_rounded_rect_path` / `expanded_island_radius = min(48*scale, w/2, h/2)` | `src/island/squircle.ts` 超椭圆角路径；展开半径 `min(48×圆角/20, w/2, h/2)`                                            | 形状 bbox 与卡片框一致（±2px）                 |
-| 内容交叉淡入 `expanded=progress²`、`mini=1-1.5×progress` | `core/render.rs`（`MINI_FADE_RATE=1.5`）                                                             | 两层常驻、透明度按同一公式                                                                                             | 截图与 DOM 断言                                |
-| 描边 1px 白 alpha 30（纯色）/ 40（glass）                | `core/render.rs` `BORDER_*_ALPHA`                                                                    | `--wn-border` 取同值（`.118` / `.157`）                                                                                | 计算样式断言                                   |
-| 展开投影 `rgba(0,0,0,.11)`、y+2、σ=3                     | `draw_expanded_shadow`                                                                               | `drop-shadow(0 2px 3px rgba(0,0,0,.11))`                                                                               | 截图                                           |
-| 纯黑底 / 亚克力（HostBackdropBrush）                     | `background.rs` + `win32.rs` `DWMWA_USE_HOSTBACKDROPBRUSH`                                           | 纯黑底 / `win.setBackgroundMaterial('acrylic')`                                                                        | 计算样式 + `getBackgroundMaterial()`           |
-| `set_cursor_hittest` 命中控制                            | `frame.rs`（`set_cursor_hittest`）                                                                   | 默认 `setIgnoreMouseEvents(true,{forward:true})`，渲染层命中测试后切换                                                 | 岛内 true / 岛外 false                         |
-| 空闲细缝 `hidden_width = 5`                              | `core/config.rs`                                                                                     | 6px 宽竖条（窗口固定，不再受 Windows 最小窗口高度限制）                                                                | 空闲 `6x22` → 来消息 `268x44`                  |
-| 6 个停靠位 `DockPosition`                                | `core/config.rs`                                                                                     | 顶/底 × 左/中/右 6 锚点，岛（而非窗口）精确落在锚点                                                                    | 6 锚点坐标断言                                 |
-| `font_size` = 基础字号 × 各文本系数                      | `core/render/mini.rs`、`ui/expanded/music_view.rs`                                                   | 基础字号 11–20px × 系数表（标题 1.08/正文 0.95/次要 0.78/徽标与按钮 0.76/胶囊 0.92、0.74）                             | 13→19px 全部文本倍率 1.462                     |
-| 未采纳：音乐/歌词/小组件/音量浮窗                        | `ui/expanded/**`、`ui/widget/**`                                                                     | 业务不同（我们做通知/作业/叫人/紧急）                                                                                  | —                                              |
+| WinIsland 做法                                           | 出处                                                                                                 | 我们的落地                                                                                                                         | 验证                                            |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| **窗口一次建大包围盒，形变发生在窗口内**                 | `window/app/layout.rs` `required_window_size()` + `PADDING=80`                                       | 窗口固定为「最大形态 + `ISLAND_SHADOW_PAD(10)`」，开合期间**一帧都不 setBounds**                                                   | 逐帧窗口签名恒为 `476x282@482,-2`（只有 1 种）  |
+| 尺寸/圆角由弹簧驱动                                      | `utils/physics.rs` + `app.rs` `IslandSprings`（w/h/r = `0.10/0.68`）                                 | `src/island/spring.ts` 同参数同更新式（dt 以帧计、`damping^dt`、换向保留 35% 动量 + 20% 距离上限），并加**零过冲钳制**             | 岛中心/边缘波动 0.00px、无过冲                  |
+| 连续圆角（超椭圆）                                       | `utils/shape.rs` `continuous_rounded_rect_path` / `expanded_island_radius = min(48*scale, w/2, h/2)` | `src/island/squircle.ts` 超椭圆角路径；展开半径 `min(48×圆角/20, w/2, h/2)`                                                        | 形状 bbox 与卡片框一致（±2px）                  |
+| 内容交叉淡入 `expanded=progress²`、`mini=1-1.5×progress` | `core/render.rs`（`MINI_FADE_RATE=1.5`）                                                             | 两层常驻、透明度按同一公式                                                                                                         | 截图与 DOM 断言                                 |
+| 描边 1px 白 alpha 30（纯色）/ 40（glass）                | `core/render.rs` `BORDER_*_ALPHA`                                                                    | `--wn-border` 取同值（`.118` / `.157`）                                                                                            | 计算样式断言                                    |
+| 展开投影 `rgba(0,0,0,.11)`、y+2、σ=3                     | `draw_expanded_shadow`                                                                               | `drop-shadow(0 2px 3px rgba(0,0,0,.11))`                                                                                           | 截图                                            |
+| 纯黑底 / 亚克力（HostBackdropBrush）                     | `background.rs` + `win32.rs` `DWMWA_USE_HOSTBACKDROPBRUSH`                                           | 纯黑底 / **glass 用 CSS 半透明深色卡**（WinIsland 无 backdrop 降级色 `rgba(32,32,36,.804)`）；**不调用** `setBackgroundMaterial()` | 计算样式 + 「卡片外圈透出桌面」整屏截图像素断言 |
+| `set_cursor_hittest` 命中控制                            | `frame.rs`（`set_cursor_hittest`）                                                                   | 默认 `setIgnoreMouseEvents(true,{forward:true})`，渲染层命中测试后切换                                                             | 岛内 true / 岛外 false                          |
+| 空闲细缝 `hidden_width = 5`                              | `core/config.rs`                                                                                     | 6px 宽竖条（窗口固定，不再受 Windows 最小窗口高度限制）                                                                            | 空闲 `6x22` → 来消息 `268x44`                   |
+| 6 个停靠位 `DockPosition`                                | `core/config.rs`                                                                                     | 顶/底 × 左/中/右 6 锚点，岛（而非窗口）精确落在锚点                                                                                | 6 锚点坐标断言                                  |
+| `font_size` = 基础字号 × 各文本系数                      | `core/render/mini.rs`、`ui/expanded/music_view.rs`                                                   | 基础字号 11–20px × 系数表（标题 1.08/正文 0.95/次要 0.78/徽标与按钮 0.76/胶囊 0.92、0.74）                                         | 13→19px 全部文本倍率 1.462                      |
+| 未采纳：音乐/歌词/小组件/音量浮窗                        | `ui/expanded/**`、`ui/widget/**`                                                                     | 业务不同（我们做通知/作业/叫人/紧急）                                                                                              | —                                               |

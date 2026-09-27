@@ -123,8 +123,6 @@ class IslandController {
   private boundsFrame: number | null = null;
   /** 外观设置（设置页可调，主进程持久化） */
   private appearance: IslandAppearance = { ...DEFAULT_ISLAND_APPEARANCE };
-  /** 当前生效的窗口背景材质（'acrylic' | 'none'），用于避免重复设置与冒烟断言 */
-  private backgroundMaterial: string = 'none';
   /** 当前是否接收鼠标（固定大包围盒窗口默认穿透，由渲染进程按命中动态打开） */
   /** 是否允许"失焦自动收起"（冒烟可临时关闭，避免焦点抖动干扰断言） */
   private blurCollapseEnabled = true;
@@ -221,9 +219,8 @@ class IslandController {
 
     win.setAlwaysOnTop(this.appearance.alwaysOnTop, 'screen-saver');
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    // 启动时即应用已保存的风格（glass 需要窗口创建后立刻设置材质）
-    this.backgroundMaterial = 'none';
-    this.applyBackgroundMaterial();
+    // 注意：这里**不能**调用 `win.setBackgroundMaterial()`（亚克力/mica），
+    // 见 `applyBackgroundMaterial` 移除处的说明。
     // 默认整块窗口不接收鼠标（避免大面积透明窗口吞掉桌面点击），
     // 只有指针进入"岛"的可见区域时，渲染进程才通过 island:set-interactive 打开命中。
     win.setIgnoreMouseEvents(true, { forward: true });
@@ -980,6 +977,29 @@ class IslandController {
     this.boundsToken += 1;
   }
 
+  /*
+   * 为什么不使用窗口背景材质（Windows 亚克力 / mica）——踩过的坑，别再往回加：
+   *
+   * WinIsland 的 `glass` 用 `DWMWA_USE_HOSTBACKDROPBRUSH`（HostBackdropBrush）做真·桌面模糊，
+   * Electron 里看起来对应 `win.setBackgroundMaterial('acrylic')`，但两者**语义完全不同**：
+   *
+   * 1. `setBackgroundMaterial()` 把材质刷在**整个窗口矩形**上，而不是卡片形状上。
+   *    灵动岛是"固定大包围盒窗口"（卡片之外还有形变/阴影留白），于是卡片周围会露出一圈
+   *    材质面板 —— 用户看到的就是"白底"（浅色主题下亚克力是浅灰白色，实测 (238,247,252)）。
+   * 2. 材质的明暗跟随**应用主题**：本客户端是浅色 Fluent 主题，亚克力必然是浅色，
+   *    无法像 WinIsland 那样自带深色 tint（`Color::from_argb(150, 10, 10, 14)`）。
+   * 3. 更糟的是：只要调用过一次（**包括 `'none'`**），窗口就再也不是逐像素透明的了 ——
+   *    Electron 会让它回落到默认不透明底色（`backgroundColor` 默认 `#FFF`），
+   *    于是从 `glass` 切到 `black` / `tinted` 之后，卡片周围会永久留一圈**纯白**。
+   *    这正好对应"毛玻璃和主题色渐变会出现白底"的现象。
+   * 4. CSS `backdrop-filter: blur()` 也不能替代：透明窗口里 Chromium 采样不到窗口之后的桌面，
+   *    真机实测与不加模糊的像素完全一致（卡片区域离散度都是 12.7）。
+   *
+   * 结论：`glass` 风格改为**纯 CSS 半透明深色卡片**（取 WinIsland 拿不到 host backdrop 时的
+   * 官方降级色 `rgba(32,32,36,0.804)`，见 `docs/winisland-design-tokens.md`），
+   * 桌面透过率由卡片自身 alpha 决定，窗口始终保持 `transparent: true` 的逐像素透明。
+   * 回归用例：「个性设置：卡片外圈透出桌面（三种风格都没有白底面板）」。
+   */
   /**
    * 应用外观设置（设置页实时生效）：尺寸联动、透明度、置顶、动画开关与位置。
    * 窗口只在尺寸/位置变化时**重排一次**（`applyWindowLayout`），开合过程不碰窗口。
@@ -990,7 +1010,6 @@ class IslandController {
 
     if (this.win && !this.win.isDestroyed()) {
       this.win.setAlwaysOnTop(this.appearance.alwaysOnTop, 'screen-saver');
-      this.applyBackgroundMaterial();
       if (this.win.isVisible()) {
         // 显示中：立即应用透明度（隐藏时由 fadeIn 负责）
         this.win.setOpacity(this.appearance.opacity);
@@ -1007,30 +1026,6 @@ class IslandController {
         `字号=${this.appearance.fontSize} 动画=${this.appearance.animations} 速度=${this.appearance.speed} ` +
         `空闲细缝=${this.appearance.idleSliver}`,
     );
-  }
-
-  /**
-   * 应用窗口背景材质（对应 WinIsland 的 `DWMWA_USE_HOSTBACKDROPBRUSH` / HostBackdropBrush）：
-   * - `glass` 风格：Windows 11 的 acrylic 亚克力（真正的桌面模糊）
-   * - 其他风格：`none`（纯色由渲染进程绘制，避免多余的模糊开销）
-   * 平台不支持时静默降级为半透明纯色。
-   */
-  private applyBackgroundMaterial(): void {
-    if (!this.win || this.win.isDestroyed()) return;
-    const material = this.appearance.style === 'glass' ? 'acrylic' : 'none';
-    if (this.backgroundMaterial === material) return;
-    try {
-      this.win.setBackgroundMaterial(material);
-      this.backgroundMaterial = material;
-    } catch (error) {
-      logger.warn(`设置窗口背景材质失败（降级为纯色）：${(error as Error).message}`);
-      this.backgroundMaterial = 'none';
-    }
-  }
-
-  /** 当前窗口背景材质（供冒烟验证与设置页展示） */
-  getBackgroundMaterial(): string {
-    return this.backgroundMaterial;
   }
 
   /**
