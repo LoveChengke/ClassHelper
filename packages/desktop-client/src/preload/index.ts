@@ -12,6 +12,10 @@ import type { IslandNotification } from '@classhelper/shared';
 /**
  * 预加载脚本：在开启了 contextIsolation + sandbox 的前提下，
  * 只向渲染进程暴露一组最小的、显式声明的能力（不暴露 ipcRenderer 本体）。
+ *
+ * 注意：contextBridge 在参数跨越"主世界 → 隔离世界"时就做结构化克隆，
+ * 因此**桥接层无法替调用方兜底**：传 Vue 响应式对象（Proxy）会在进入这里的函数体
+ * 之前就抛 `An object could not be cloned.`。调用方必须传纯数据，见 desktop.d.ts。
  */
 const bridge: DesktopBridge = {
   smokeTest: process.env.ELECTRON_SMOKE_TEST === '1',

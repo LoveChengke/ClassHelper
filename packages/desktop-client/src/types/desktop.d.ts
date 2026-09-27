@@ -61,19 +61,33 @@ export interface DesktopBridge {
   /** 是否处于冒烟验证模式（由 ELECTRON_SMOKE_TEST=1 触发），同步可读 */
   smokeTest: boolean;
   getConfig(): Promise<DesktopStoredConfig>;
+  /**
+   * 局部更新配置。
+   *
+   * **必须传纯数据（普通对象 / 基本类型）**：传 Vue 的 `ref.value` / `reactive()` 对象
+   * 会在 contextBridge 跨隔离世界时被结构化克隆拒绝，抛
+   * `Error: An object could not be cloned.`，而且调用点看起来"只是没生效"。
+   * 页面里请写成 `saveConfig({ island: { ...island.value } })` 这种展开后的字面量。
+   */
   saveConfig(patch: Partial<DesktopStoredConfig>): Promise<DesktopStoredConfig>;
   clearConfig(): Promise<DesktopStoredConfig>;
   getAppInfo(): Promise<DesktopAppInfo>;
   openExternal(url: string): Promise<boolean>;
 
   /* 灵动岛 */
-  /** 把一条通知投递到灵动岛 */
+  /** 把一条通知投递到灵动岛（payload 必须是纯数据，说明见 saveConfig） */
   islandPush(payload: { notification: IslandNotification; context?: IslandPushContext }): void;
   /** 同步上课状态：进入上课隐藏，下课后自动弹出暂存通知 */
   islandSetClassState(payload: IslandClassStatePayload): void;
   /** 读取灵动岛当前状态（设置页/冒烟验证用） */
   islandGetState(): Promise<IslandState>;
-  /** 应用灵动岛外观设置（实时生效） */
+  /**
+   * 应用灵动岛外观设置（实时生效）。
+   *
+   * 同 saveConfig：**必须是纯数据**。设置页曾把 `island`（`ref`）的响应式 Proxy 直接传进来，
+   * 结果 contextBridge 抛 `An object could not be cloned.`，主进程收不到任何东西 ——
+   * 现象就是"拖了滑块、数字在变，灵动岛毫无反应，保存也不生效"。
+   */
   islandSetAppearance(appearance: Partial<IslandAppearance>): void;
   /** 读取当前生效的外观设置 */
   islandGetAppearance(): Promise<IslandAppearance>;

@@ -137,17 +137,21 @@ async function loadIslandAppearance(): Promise<void> {
 /**
  * 改动即生效：属性变化时先应用（实时预览），点"保存"再落盘。
  * 高度/宽度只影响窗口与卡片尺寸变量，内容用 flex + 溢出滚动承载，不会溢出或错乱。
+ *
+ * 注意：必须传**展开后的纯对象**。`island` 是 `ref`，它的 `.value` 在 Vue 里是响应式
+ * Proxy，Proxy 过不了 IPC 的结构化克隆（`An object could not be cloned.`）——
+ * 那正是"拖了滑块、数字在变、灵动岛却没反应"的原因。
  */
 function applyIslandAppearance(patch: Partial<IslandAppearance> = {}): void {
   island.value = { ...island.value, ...patch };
-  window.desktop?.islandSetAppearance(island.value);
+  window.desktop?.islandSetAppearance({ ...island.value });
 }
 
 async function saveIslandAppearance(): Promise<void> {
   if (!window.desktop?.saveConfig) return;
   savingIsland.value = true;
   try {
-    await window.desktop.saveConfig({ island: island.value });
+    await window.desktop.saveConfig({ island: { ...island.value } });
     ElMessage.success('个性化设置已保存');
   } finally {
     savingIsland.value = false;

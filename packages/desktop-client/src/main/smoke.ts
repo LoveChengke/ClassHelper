@@ -2455,6 +2455,87 @@ async function runIslandRealtimeCheck(
 
   return { delivered, deliveryDetail, markRead, markReadDetail };
 }
+
+/**
+ * 设置页「真实 UI 链路」自检（用户反馈：**灵动岛设置无法生效并且无法实时预览**）。
+ *
+ * 为什么必须单独来一条：上面的用例都是直接调 `window.desktop.islandSetAppearance(...)`，
+ * 绕过了设置页的控件，于是漏掉了真正的失败模式 —— 设置页把 Vue 的响应式 Proxy（`ref.value`）
+ * 直接交给 `ipcRenderer`，结构化克隆会失败并抛出 `An object could not be cloned.`。
+ * 这种失败是"半静默"的：滑块数字照常变化、界面不报错，只有主进程里的外观一动不动，
+ * 用户看到的就是"拖了滑块没反应、预览也没变化"。
+ *
+ * 因此这里在真实设置页里合成一次拖拽（mousedown → mousemove → mouseup，与用户操作同一路径），
+ * 并同时断言「滑块自身的数值」与「主进程里的外观」都变了 —— 只断言前者会漏掉这个 bug。
+ */
+async function runSettingsPageAppearanceCheck(
+  win: BrowserWindow,
+): Promise<{ ok: boolean; detail: string }> {
+  const result = (await win.webContents
+    .executeJavaScript(
+      `(async () => {
+         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+         const before = await window.desktop.islandGetAppearance();
+         // 先固定基准高度：避免"当前高度恰好等于拖拽落点"导致假通过或假失败
+         window.desktop.islandSetAppearance({ ...before, height: 44 });
+         await wait(300);
+
+         location.hash = '#/settings';
+         let runway = null;
+         for (let i = 0; i < 40 && !runway; i += 1) {
+           await wait(100);
+           runway = document.querySelector('.el-slider__runway');
+         }
+         if (!runway) return { ok: false, detail: '设置页未渲染出滑块（未登录或页面未挂载）' };
+         const rect = runway.getBoundingClientRect();
+         if (!rect.width) return { ok: false, detail: '滑块宽度为 0，无法拖拽' };
+
+         const x = rect.left + rect.width * 0.9;
+         const y = rect.top + rect.height / 2;
+         const fire = (target, type, extra) =>
+           target.dispatchEvent(
+             new MouseEvent(
+               type,
+               Object.assign({ bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }, extra),
+             ),
+           );
+         fire(runway, 'mousedown', { buttons: 1 });
+         await wait(60);
+         fire(window, 'mousemove', { buttons: 1 });
+         await wait(60);
+         fire(window, 'mouseup', {});
+         await wait(600);
+
+         const dragged = await window.desktop.islandGetAppearance();
+         const label =
+           Array.from(document.querySelectorAll('.el-form-item__label'))
+             .map((node) => (node.textContent ?? '').trim())
+             .find((text) => text.startsWith('高度')) ?? '';
+         // 复原外观与路由，不影响后续用例
+         window.desktop.islandSetAppearance({ ...before });
+         location.hash = '#/schedule';
+         return { ok: true, baseline: 44, dragged: dragged.height, label };
+       })()`,
+    )
+    .catch((error: unknown) => ({
+      ok: false as const,
+      detail: `执行失败：${error instanceof Error ? error.message : String(error)}`,
+    }))) as
+    | { ok: true; baseline: number; dragged: number; label: string }
+    | { ok: false; detail: string }
+    | null;
+
+  if (result?.ok) {
+    return {
+      ok: result.dragged !== result.baseline && result.label === `高度 ${result.dragged}px`,
+      detail:
+        `拖动高度滑块到 90%：页面标签="${result.label}"，` +
+        `主进程外观高度 ${result.baseline} → ${result.dragged}`,
+    };
+  }
+  return { ok: false, detail: result?.detail ?? '未执行' };
+}
+
 /**
  * Electron 冒烟验证（ELECTRON_SMOKE_TEST=1 时触发，跑完自动退出）。
  * 覆盖：preload 桥接、渲染进程挂载、登录页 DOM、IndexedDB 缓存读写、离线回退，
@@ -2644,6 +2725,12 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
       Boolean(online?.ok),
       String(online?.detail ?? ''),
     );
+
+    // 设置页真实 UI 链路（用户反馈："灵动岛设置无法生效并且无法实时预览"）：
+    // 必须真的去拖设置页里的滑块 —— 直接调 window.desktop.* 会绕过
+    // 「Vue 响应式 Proxy 过不了 IPC 结构化克隆」这个失败模式。
+    const settingsAppearance = await runSettingsPageAppearanceCheck(win);
+    record('设置页真实 UI：拖拽滑块即时改变灵动岛外观', settingsAppearance.ok, settingsAppearance.detail);
 
     // 真实通知链路：教师发通知 → 客户端实时通道 → 灵动岛胶囊；
     // 随后在灵动岛点"标为已读"，验证通知中心同步为已读（修复"点了已读仍显示未读"）
