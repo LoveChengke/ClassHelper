@@ -169,6 +169,10 @@ function launchSmoke(extraEnv) {
         ELECTRON_SMOKE_PROFILE: profileDir,
         ELECTRON_SMOKE_CLASS_CODE: classCredentials?.code ?? '',
         ELECTRON_SMOKE_CLASS_PASSWORD: classCredentials?.password ?? '',
+        // 教师凭据只从这里传入：主进程的冒烟代码从环境变量读，
+        // 因此安装包（app.asar）里不会留下教师口令字面量（本脚本不进安装包）
+        ELECTRON_SMOKE_USER: process.env.ELECTRON_SMOKE_USER ?? 'teacher1',
+        ELECTRON_SMOKE_PASSWORD: process.env.ELECTRON_SMOKE_PASSWORD ?? 'teacher123',
         ...extraEnv,
       }),
     });

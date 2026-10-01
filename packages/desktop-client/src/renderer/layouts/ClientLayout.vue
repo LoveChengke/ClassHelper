@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { SOCKET_EVENTS, type NotificationDto } from '@classhelper/shared';
+import { startIslandBridge, stopIslandBridge } from '../island/bridge.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useNotificationStore } from '../stores/notifications.js';
@@ -70,10 +71,14 @@ async function handleLogout(): Promise<void> {
   void router.push({ name: 'login' });
 }
 
-/** 通知实时推送：更新列表 + 红点 + 缓存 */
+/**
+ * 通知实时推送：更新通知中心列表与红点。
+ *
+ * 这里**不再**额外弹一条"收到新通知"的 toast —— `stores/realtime.ts` 收到
+ * notification:new 时已经弹过带优先级与标题的那条，两条堆在屏幕上纯属噪音。
+ */
 function onNotification(payload: unknown): void {
   void notifications.pushRealtime(payload as NotificationDto);
-  ElMessage({ message: '收到新通知，点击「通知」查看', type: 'info', duration: 3000 });
 }
 
 /** 服务器从不可达恢复为可达：自动同步一次（联网后自动同步） */
@@ -87,11 +92,15 @@ onMounted(async () => {
   await notifications.refreshUnreadCount();
   realtime.on(SOCKET_EVENTS.notificationNew, onNotification);
   appStore.onServerRecovered(onRecovered);
+  // 灵动岛桥接跟着"已登录布局"的生命周期走：这样退出登录会随布局卸载而停止，
+  // 重新登录（或换班登录）时又会重新启动，不会拿旧课表算上课状态。
+  if (auth.token) startIslandBridge();
 });
 
 onUnmounted(() => {
   realtime.off(SOCKET_EVENTS.notificationNew, onNotification);
   appStore.offServerRecovered(onRecovered);
+  stopIslandBridge();
 });
 </script>
 

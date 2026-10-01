@@ -19,6 +19,17 @@ import type { IslandNotification } from '@classhelper/shared';
  */
 const bridge: DesktopBridge = {
   smokeTest: process.env.ELECTRON_SMOKE_TEST === '1',
+  // 冒烟凭据：只在冒烟模式下透传，供渲染进程的冒烟钩子构造测试数据用。
+  // **不走代码字面量**——本文件与渲染产物都会进 app.asar，写死账号等于随安装包把教师口令发出去。
+  smokeCredentials:
+    process.env.ELECTRON_SMOKE_TEST === '1'
+      ? {
+          username: process.env.ELECTRON_SMOKE_USER ?? '',
+          password: process.env.ELECTRON_SMOKE_PASSWORD ?? '',
+          classCode: process.env.ELECTRON_SMOKE_CLASS_CODE ?? '',
+          classPassword: process.env.ELECTRON_SMOKE_CLASS_PASSWORD ?? '',
+        }
+      : undefined,
   getConfig: (): Promise<DesktopStoredConfig> => ipcRenderer.invoke(IPC_CHANNELS.getConfig),
   saveConfig: (patch: Partial<DesktopStoredConfig>): Promise<DesktopStoredConfig> =>
     ipcRenderer.invoke(IPC_CHANNELS.saveConfig, patch),
@@ -40,6 +51,10 @@ const bridge: DesktopBridge = {
   /** 灵动岛点了"标为已读"：主进程转交渲染进程同步通知中心 */
   onIslandMarkRead: (handler: (id: string) => void): void => {
     ipcRenderer.on('island:mark-read', (_event, id: string) => handler(id));
+  },
+  /** 灵动岛点了"标为已读"（多条通知的整批）：一次同步这一批 */
+  onIslandMarkAllRead: (handler: (ids: string[]) => void): void => {
+    ipcRenderer.on('island:mark-all-read', (_event, ids: string[]) => handler(ids ?? []));
   },
 };
 

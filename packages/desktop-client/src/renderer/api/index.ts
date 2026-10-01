@@ -21,13 +21,22 @@ import { api } from './http.js';
 
 /** 客户端只需用到学生视角的这批接口（与后端同一套 REST 契约） */
 export const authApi = {
-  /** 个人账号登录（教师/管理员/个人学生；客户端界面已不再展示，保留以兼容旧流程与排障） */
+  /** 账号登录（教师/管理员用；客户端界面走班级登录，学生个人账号已清理不能登录） */
   login: (payload: LoginRequest): Promise<LoginResponse> => api.post(API_PATHS.auth.login, payload),
   /** 班级账号登录（学生端主入口）：班级码 + 班级密码 */
   classLogin: (payload: { code: string; password: string }): Promise<LoginResponse> =>
     api.post('/auth/class-login', payload),
   logout: (): Promise<{ loggedOut: boolean }> => api.post(API_PATHS.auth.logout, {}),
   me: (): Promise<StudentDto> => api.get(API_PATHS.auth.me),
+  /**
+   * 修改密码（设置页「账号信息」里的入口）。
+   * 服务端同一个接口按会话类型分流：班级账号改的是**班级密码**，教师/管理员改的是本人登录密码 ——
+   * 因此这台机器无论以哪种身份登录，改密入口都走这一条。
+   */
+  changePassword: (payload: {
+    currentPassword: string;
+    newPassword: string;
+  }): Promise<{ changed: boolean }> => api.patch(API_PATHS.auth.changePassword, payload),
 };
 
 export const classApi = {
@@ -110,8 +119,10 @@ export const notificationApi = {
   list: (params?: { classId?: string; unreadOnly?: boolean }): Promise<NotificationDto[]> =>
     api.get(API_PATHS.notifications, params),
   unreadCount: (): Promise<{ count: number }> => api.get(`${API_PATHS.notifications}/unread-count`),
+  // id 来自服务端或灵动岛（作业卡是本地合成的 `homework-…`），一律 encodeURIComponent：
+  // 否则含 `/` 或 `..` 的 id 会改变实际请求的路径
   markRead: (id: string): Promise<{ notificationId: string; readAt: string }> =>
-    api.post(`${API_PATHS.notifications}/${id}/read`, {}),
+    api.post(`${API_PATHS.notifications}/${encodeURIComponent(id)}/read`, {}),
   markAllRead: (): Promise<{ marked: number }> => api.post(`${API_PATHS.notifications}/read-all`, {}),
 };
 

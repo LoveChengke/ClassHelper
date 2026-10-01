@@ -80,6 +80,20 @@ export interface IslandClassStatePayload {
 export interface DesktopBridge {
   /** 是否处于冒烟验证模式（由 ELECTRON_SMOKE_TEST=1 触发），同步可读 */
   smokeTest: boolean;
+  /**
+   * 冒烟凭据（仅冒烟模式下发，否则 `undefined`）。
+   *
+   * 为什么要从环境变量绕一圈：这些凭据被渲染进程的冒烟钩子用来"造测试数据"，
+   * 而渲染产物（`dist/renderer/assets/*.js`）会进 `app.asar` 发给每台学生机 —— asar 可直接解包，
+   * 把账号口令写在代码里等于随安装包一起发出去。凭据只由
+   * `scripts/smoke.mjs` / `scripts/verify-packaged.mjs` 通过环境变量提供（这两个脚本不进安装包）。
+   */
+  smokeCredentials?: {
+    username: string;
+    password: string;
+    classCode: string;
+    classPassword: string;
+  };
   getConfig(): Promise<DesktopStoredConfig>;
   /**
    * 局部更新配置。
@@ -113,6 +127,8 @@ export interface DesktopBridge {
   islandGetAppearance(): Promise<IslandAppearance>;
   /** 订阅"灵动岛点了标为已读"事件，用于同步通知中心 */
   onIslandMarkRead(handler: (id: string) => void): void;
+  /** 订阅"灵动岛点了标为已读（多条通知的整批）"，一次把这一批都标记已读 */
+  onIslandMarkAllRead(handler: (ids: string[]) => void): void;
 }
 
 /** 灵动岛窗口自身的桥接（只暴露订阅状态与发送操作） */
@@ -121,7 +137,18 @@ export interface IslandRendererBridge {
   /** 订阅外观设置（CSS 变量实时生效） */
   onAppearance(handler: (appearance: IslandAppearance) => void): void;
   getAppearance(): Promise<IslandAppearance>;
-  sendAction(action: 'expand' | 'collapse' | 'dismiss' | 'mark-read' | 'open-app', id?: string): void;
+  sendAction(
+    action:
+      | 'expand'
+      | 'expand-list'
+      | 'collapse'
+      | 'dismiss'
+      | 'dismiss-all'
+      | 'mark-read'
+      | 'mark-all-read'
+      | 'open-app',
+    id?: string,
+  ): void;
   getState(): Promise<IslandState>;
   /**
    * 命中提示：指针在岛体上时应让固定大窗口接收鼠标（比主进程 60ms 轮询更快）。
@@ -131,6 +158,11 @@ export interface IslandRendererBridge {
   setInteractive(interactive: boolean): void;
   /** 上报岛体矩形（窗口内 CSS px）：主进程据此按光标位置兜底校正命中 */
   setHitRect(rect: { x: number; y: number; width: number; height: number } | null): void;
+  /**
+   * 上报"本机是触摸屏"（`navigator.maxTouchPoints > 0`）：主进程据此让窗口贴合岛体并始终接收
+   * 输入，否则触摸屏上手指永远点不到岛（触摸不产生 mousemove、也不移动系统光标）。
+   */
+  setTouchMode(enabled: boolean): void;
   /** 心跳：主进程据此发现"渲染进程卡死的幽灵窗口"（岛还在屏幕上但点不动）并重建窗口 */
   alive(): void;
 }
@@ -175,6 +207,8 @@ declare global {
       scheduleTimelineSelfTest(): Promise<{ ok: boolean; detail: string }>;
       /** 作业看板全屏自适应自检（切看板 → 打开全屏 → 量尺寸） */
       homeworkBoardSelfTest(): Promise<{ ok: boolean; detail: string }>;
+      /** 本机录入的作业不上灵动岛自检（内容指纹 + id 双重判定） */
+      islandHomeworkSuppressionCheck(): Promise<{ ok: boolean; detail: string }>;
       sessionCleanup(): Promise<{ ok: boolean; detail: string }>;
     };
   }

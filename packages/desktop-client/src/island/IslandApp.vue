@@ -5,9 +5,12 @@ import {
   ISLAND_SHADOW_PAD,
   ISLAND_SIZE_DELTA,
   ISLAND_SLIVER_WIDTH,
+  PRIORITY_RANK,
+  islandListLayout,
   type IslandAppearance,
   PRIORITY_LABELS,
   formatDate,
+  type IslandListLayout,
   type IslandNotification,
   type IslandNotificationKind,
   type IslandState,
@@ -39,9 +42,19 @@ const state = ref<IslandState>({
   inClass: false,
   currentPeriodEnd: null,
   reason: null,
+  listExpanded: false,
+  maxCardHeight: 1024,
   updatedAt: 0,
 });
 
+/**
+ * 渲染状态直接来自主进程（**与仓库版一致，不再有"收回"快照层**）。
+ *
+ * 早先这里有一层 `closing`/`closingSnapshot`：点"知道了 / 标为已读"后把卡片按"胶囊摘要"收回再淡出。
+ * 那套是自研的形变状态机，实测在触摸屏（窗口贴合岛体、形变时要动窗口）上会露出旧帧/重影，
+ * 用户明确要求"动画就用仓库里那套"—— 于是整段删掉：收起一律走主进程的 `hide()`（窗口淡出），
+ * 展开/收缩仍是弹簧形变（仓库机制，见 targetSize/progress）。
+ */
 const bridge = window.island;
 
 const notification = computed<IslandNotification | null>(() => state.value.active);
@@ -51,6 +64,48 @@ const kind = computed<IslandNotificationKind>(() => notification.value?.kind ?? 
 const isCall = computed(() => kind.value === 'call');
 const isHomework = computed(() => kind.value === 'homework');
 const queueCount = computed(() => state.value.queued.length);
+
+/**
+ * 这一批**未处理**的消息（正在展示的 + 队列里的），按「重要程度 → 时间」排序。
+ * 与主进程 `pendingNotifications()` 同一口径（同一份 `PRIORITY_RANK`）。
+ */
+const pendingNotifications = computed<IslandNotification[]>(() => {
+  const list: IslandNotification[] = [];
+  if (state.value.active) list.push(state.value.active);
+  for (const item of state.value.queued) {
+    if (!list.some((existing) => existing.id === item.id)) list.push(item);
+  }
+  return list.sort((a, b) => {
+    const rank = (PRIORITY_RANK[b.priority] ?? 0) - (PRIORITY_RANK[a.priority] ?? 0);
+    if (rank !== 0) return rank;
+    return String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''));
+  });
+});
+
+const pendingCount = computed(() => pendingNotifications.value.length);
+
+/**
+ * 多条消息时的**列表布局**：显示几条、要不要"展开更多"、卡片多高。
+ * 与主进程用同一个 `islandListLayout`（同一份度量）—— 主进程据此把窗口长高，两边必须算出一个数。
+ */
+const listLayout = computed<IslandListLayout | null>(() => {
+  if (mode.value !== 'expanded' || pendingCount.value < 2) return null;
+  return islandListLayout({
+    count: pendingCount.value,
+    fontSize: appearance.value.fontSize,
+    maxHeight: state.value.maxCardHeight,
+    expanded: state.value.listExpanded,
+  });
+});
+
+const isListMode = computed(() => listLayout.value !== null);
+/** 列表里实际渲染出来的通知 */
+const listItems = computed<IslandNotification[]>(() =>
+  listLayout.value ? pendingNotifications.value.slice(0, listLayout.value.rows) : [],
+);
+/** 没能展示出来的条数（点"展开更多"能看到一部分，剩下的只能去应用里看） */
+const hiddenCount = computed(() => Math.max(0, pendingCount.value - listItems.value.length));
+const listHint = computed<IslandListLayout['hint']>(() => listLayout.value?.hint ?? null);
 
 /** 胶囊标题：按消息类型区分（新消息 / 新作业 / 叫人） */
 const pillTitle = computed(() => {
@@ -72,22 +127,11 @@ const TYPE_LABELS: Record<IslandNotificationKind, string> = {
 /** 汇总展示顺序：叫人 > 作业 > 通知（与用户示例一致） */
 const TYPE_ORDER: IslandNotificationKind[] = ['call', 'homework', 'notification'];
 
-const pendingNotifications = computed<IslandNotification[]>(() => {
-  const list: IslandNotification[] = [];
-  if (state.value.active) list.push(state.value.active);
-  for (const item of state.value.queued) {
-    if (!list.some((existing) => existing.id === item.id)) list.push(item);
-  }
-  return list;
-});
-
 /** 这批未处理消息覆盖了哪些类型（按"叫人/作业/通知"顺序） */
 const pendingTypes = computed<string[]>(() => {
   const kinds = new Set(pendingNotifications.value.map((item) => item.kind ?? 'notification'));
   return TYPE_ORDER.filter((item) => kinds.has(item)).map((item) => TYPE_LABELS[item]);
 });
-
-const pendingCount = computed(() => pendingNotifications.value.length);
 
 /** 多条消息时把类型摊开：`新消息：叫人/作业/通知（共 3 条）` */
 const pillSummaryTitle = computed(() => {
@@ -122,6 +166,45 @@ const subtitle = computed(() => {
 /** 叫人消息下方的附加说明（例如"请到办公室找我"） */
 const callHint = computed(() => notification.value?.subtitle ?? '');
 
+/**
+ * 是否显示「标为已读」。
+ *
+ * 作业卡片的 id 是本地合成的 `homework-<作业id>`（见 renderer/island/bridge.ts），
+ * 库里并没有这条通知，点它会让通知中心去调 `POST /notifications/homework-xxx/read` 并弹「通知不存在」。
+ * 因此作业卡不提供该按钮（它本来也不是"通知"，用「知道了」收起即可）。
+ * 列表形态下只要**至少有一条真通知**就提供（作业行会被主进程按 kind 过滤掉）。
+ */
+const canMarkRead = computed(() => {
+  if (isListMode.value) {
+    return pendingNotifications.value.some((item) => item.kind !== 'homework');
+  }
+  return notification.value?.kind !== 'homework';
+});
+
+/** 列表里单行的类型（徽标/图标配色） */
+function rowKind(item: IslandNotification): IslandNotificationKind {
+  return item.kind ?? 'notification';
+}
+
+function rowBadgeText(item: IslandNotification): string {
+  const itemKind = rowKind(item);
+  if (itemKind === 'call') return '叫人';
+  if (itemKind === 'homework') return '新作业';
+  return PRIORITY_LABELS[item.priority] ?? item.priority;
+}
+
+function rowBadgeClass(item: IslandNotification): string {
+  const itemKind = rowKind(item);
+  if (itemKind === 'call') return 'badge-call';
+  if (itemKind === 'homework') return 'badge-homework';
+  return `badge-${item.priority.toLowerCase()}`;
+}
+
+function rowSubText(item: IslandNotification): string {
+  const teacher = item.teacherName ? `${item.teacherName} · ` : '';
+  return `${teacher}${formatDate(item.createdAt, true)}`;
+}
+
 /** 下课补发时提示"其实上课期间就到了" */
 const showAfterClassHint = computed(() => state.value.reason === 'after-class' && !state.value.inClass);
 
@@ -150,10 +233,20 @@ function onCardClick(event: MouseEvent): void {
 }
 
 function dismiss(): void {
-  bridge?.sendAction('dismiss');
+  // 多条消息时"知道了"是**整批**处理：卡片上就一排按钮，点它就是把这批都放下去
+  bridge?.sendAction(isListMode.value ? 'dismiss-all' : 'dismiss');
+}
+
+/** "展开更多"：把列表铺到屏幕放得下的程度（主进程负责把窗口长高） */
+function expandList(): void {
+  bridge?.sendAction('expand-list');
 }
 
 function markRead(): void {
+  if (isListMode.value) {
+    bridge?.sendAction('mark-all-read');
+    return;
+  }
   if (notification.value) bridge?.sendAction('mark-read', notification.value.id);
 }
 
@@ -184,6 +277,9 @@ function targetSize(): { width: number; height: number } {
     return { width: ISLAND_SLIVER_WIDTH, height: Math.max(12, Math.min(28, height - 22)) };
   }
   if (mode.value !== 'expanded') return { width, height };
+  // 多条消息的列表：高度由共享的列表布局算出（与主进程算的窗口包围盒同一个数）
+  const layout = listLayout.value;
+  if (layout) return { width: width + EXTRA.expanded.width, height: layout.height };
   const extra = isCall.value ? EXTRA.call : isUrgent.value ? EXTRA.urgent : EXTRA.expanded;
   return { width: width + extra.width, height: height + extra.height };
 }
@@ -324,6 +420,12 @@ const expandedAlpha = computed(() => progress.value * progress.value);
  * 岛在**固定窗口**内的定位（照搬 WinIsland：窗口不动，岛在画布内居中/贴边形变）。
  * 水平：居中锚点用 `left: 50% + translateX(-50%)`；左/右锚点贴边（留阴影余量）。
  */
+/** 水平锚点（供 CSS 决定胶囊内容贴哪条边：左贴左、右贴右、居中则居中对齐） */
+const anchorName = computed<'left' | 'center' | 'right'>(() => {
+  const position = appearance.value.position;
+  return position.endsWith('left') ? 'left' : position.endsWith('right') ? 'right' : 'center';
+});
+
 const islandStyle = computed(() => {
   const position = appearance.value.position;
   const style: Record<string, string> = {
@@ -484,6 +586,18 @@ function applyAppearance(next: IslandAppearance | null | undefined): void {
 
 onMounted(async () => {
   window.addEventListener('mousemove', (event) => updateInteractive(event.clientX, event.clientY));
+  /**
+   * 触摸屏上报：主进程据此把窗口改为**贴合岛体**并始终接收输入。
+   *
+   * 为什么必须报：触摸屏上"点不开"是机制性的 —— 打开命中的两条链路（本进程的 mousemove 转发、
+   * 主进程读系统光标）都以"鼠标指针移动"为前提，而手指触摸既不产生 mousemove、也不移动系统光标，
+   * 窗口会永远停在 `setIgnoreMouseEvents(true)` 的穿透态，手指点下去只落到桌面。
+   * Chromium 在带触摸数字化仪的机器上会把 `maxTouchPoints` 置为非 0，用它当判据。
+   */
+  const reportTouchMode = (): void => bridge?.setTouchMode?.(true);
+  if ((navigator.maxTouchPoints ?? 0) > 0) reportTouchMode();
+  // 兜底：个别设备 maxTouchPoints 判定不到（或接的是外接触摸屏），真收到触摸事件时再补报一次
+  window.addEventListener('touchstart', reportTouchMode, { passive: true, once: true });
   // 心跳：主进程据此判断本渲染进程是否还活着。一旦卡死/崩溃，主进程会隐藏这扇"幽灵窗口"
   // 并重建（否则 Windows 会把最后一帧留在屏幕上：岛看着还在，怎么点都没反应）。
   bridge?.alive?.();
@@ -516,6 +630,7 @@ onMounted(async () => {
     <div
       class="island-card"
       :class="islandClass"
+      :data-anchor="anchorName"
       :data-style="appearance.style"
       :style="islandStyle"
       @click="mode === 'expanded' ? onCardClick($event) : expand()"
@@ -540,6 +655,12 @@ onMounted(async () => {
 
         <!-- 胶囊层（WinIsland compact）：进度 > 2/3 时完全退净 -->
         <span class="layer pill-layer" :style="{ opacity: pillAlpha }">
+          <!--
+            胶囊内容固定成"胶囊自己的几何"（宽 = 外观宽度、贴合停靠边/中线）：
+            卡片在开合时会变宽变窄，若让内容跟着卡片宽度走，文字会先按宽卡片铺开、
+            再随卡片变窄被省略号收回（用户反馈的"新消息那行字往右跳一下再缩回"）。
+          -->
+          <span class="pill-inner">
           <span class="pill-icon" :class="{ urgent: isUrgent, call: isCall, homework: isHomework }">
             <svg v-if="isHomework" viewBox="0 0 24 24" aria-hidden="true">
               <path
@@ -571,23 +692,31 @@ onMounted(async () => {
           <span v-if="pendingCount > 1 && pendingTypes.length > 1" class="pill-types" aria-hidden="true">
             <span v-for="item in pendingTypes" :key="item" class="pill-type">{{ item }}</span>
           </span>
-          <span class="pill-chevron" aria-hidden="true">
-            <svg viewBox="0 0 24 24">
-              <path
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.6"
-                stroke-linecap="round"
-                d="m9 6 6 6-6 6"
-              />
-            </svg>
+            <span class="pill-chevron" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.6"
+                  stroke-linecap="round"
+                  d="m9 6 6 6-6 6"
+                />
+              </svg>
+            </span>
           </span>
         </span>
 
         <!-- 展开层（WinIsland expanded）：进度²淡入 -->
-        <span class="layer expanded-layer" :style="{ opacity: expandedAlpha }">
+        <span
+          class="layer expanded-layer"
+          :class="{ 'list-mode': isListMode }"
+          :style="{ opacity: expandedAlpha }"
+        >
           <header class="head">
-            <span class="head-icon" :class="{ urgent: isUrgent, call: isCall, homework: isHomework }">
+            <span
+              class="head-icon"
+              :class="{ urgent: isUrgent, call: isCall, homework: isHomework, list: isListMode }"
+            >
               <svg v-if="isHomework" viewBox="0 0 24 24" aria-hidden="true">
                 <path
                   fill="currentColor"
@@ -608,11 +737,19 @@ onMounted(async () => {
               </svg>
             </span>
             <div class="head-meta">
-              <span class="badge" :class="badgeClass">{{ badgeText }}</span>
-              <span v-if="isCall" class="live-dot call">老师正在等你</span>
-              <span v-else-if="isUrgent" class="live-dot">需立即查看</span>
-              <span v-else-if="showAfterClassHint" class="live-dot muted">下课后补发</span>
-              <span class="head-sub">{{ subtitle }}</span>
+              <span class="badge" :class="isListMode ? 'badge-normal' : badgeClass">
+                {{ isListMode ? `共 ${pendingCount} 条` : badgeText }}
+              </span>
+              <template v-if="isListMode">
+                <span v-if="pendingTypes.length > 1" class="head-sub">{{ pendingTypes.join(' / ') }}</span>
+                <span v-else class="head-sub">按重要程度排列</span>
+              </template>
+              <template v-else>
+                <span v-if="isCall" class="live-dot call">老师正在等你</span>
+                <span v-else-if="isUrgent" class="live-dot">需立即查看</span>
+                <span v-else-if="showAfterClassHint" class="live-dot muted">下课后补发</span>
+                <span class="head-sub">{{ subtitle }}</span>
+              </template>
             </div>
             <button type="button" class="icon-btn" title="收起" @click.stop="collapse">
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -627,21 +764,75 @@ onMounted(async () => {
             </button>
           </header>
 
-          <h3 class="title">{{ notification?.title ?? '' }}</h3>
-          <div class="body">
-            <p class="content-text">{{ notification?.content ?? '' }}</p>
-            <p v-if="callHint" class="call-hint">{{ callHint }}</p>
-            <p v-else-if="notification?.subtitle" class="call-hint">{{ notification?.subtitle }}</p>
-          </div>
+          <!-- 多条消息：竖向排列，按重要程度排序，默认只显示前三条 -->
+          <template v-if="isListMode">
+            <h3 class="title">{{ pendingCount }} 条待处理通知</h3>
+            <div class="body list-body">
+              <button
+                v-for="item in listItems"
+                :key="item.id"
+                type="button"
+                class="list-row"
+                :title="`打开应用查看：${item.title}`"
+                @click.stop="openApp"
+              >
+                <span class="row-icon" :class="rowKind(item)">
+                  <svg v-if="rowKind(item) === 'homework'" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M6 3h9a3 3 0 0 1 3 3v13.5a.5.5 0 0 1-.75.43L15 18.5l-2.25 1.43a.5.5 0 0 1-.53 0L10 18.5l-2.25 1.43a.5.5 0 0 1-.53 0L5 18.5V5a2 2 0 0 1 1-2Zm2 4v1.6h7V7H8Zm0 3.4V12h7v-1.6H8Z"
+                    />
+                  </svg>
+                  <svg v-else-if="rowKind(item) === 'call'" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M4 10v4a1 1 0 0 0 1 1h2l4 3.5a1 1 0 0 0 1.65-.76V5.26A1 1 0 0 0 11 4.5L7 8H5a1 1 0 0 0-1 1Zm12.5-2.9a1 1 0 0 1 1.4.1 8 8 0 0 1 0 9.6 1 1 0 1 1-1.5-1.3 6 6 0 0 0 0-7 1 1 0 0 1 .1-1.4Z"
+                    />
+                  </svg>
+                  <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M12 2a6 6 0 0 0-6 6v3.1L4.6 14a1 1 0 0 0 .9 1.5h13a1 1 0 0 0 .9-1.5L18 11.1V8a6 6 0 0 0-6-6Zm0 20a3 3 0 0 0 3-2.6H9A3 3 0 0 0 12 22Z"
+                    />
+                  </svg>
+                </span>
+                <span class="row-text">
+                  <span class="row-title">{{ item.title }}</span>
+                  <span class="row-sub">{{ rowSubText(item) }}</span>
+                </span>
+                <span class="row-badge" :class="rowBadgeClass(item)">{{ rowBadgeText(item) }}</span>
+              </button>
+              <!-- 还有没显示出来的：能展开就"展开更多"，屏幕到任务栏了就只能去应用里看 -->
+              <div v-if="listHint" class="list-hint">
+                <button v-if="listHint === 'more'" type="button" class="more-btn" @click.stop="expandList">
+                  展开更多（还有 {{ hiddenCount }} 条）
+                </button>
+                <span v-else class="more-app">更多请前往应用内操作</span>
+              </div>
+            </div>
+          </template>
 
+          <template v-else>
+            <h3 class="title">{{ notification?.title ?? '' }}</h3>
+            <div class="body">
+              <p class="content-text">{{ notification?.content ?? '' }}</p>
+              <p v-if="callHint" class="call-hint">{{ callHint }}</p>
+              <p v-else-if="notification?.subtitle" class="call-hint">{{ notification?.subtitle }}</p>
+            </div>
+          </template>
+
+          <!-- 一排按钮（多条消息时也是这一排）：展开态的操作都收在这里 -->
           <footer class="foot">
-            <span v-if="queueCount > 0" class="more">还有 {{ queueCount }} 条通知</span>
+            <span v-if="isListMode" class="more">共 {{ pendingCount }} 条待处理</span>
+            <span v-else-if="queueCount > 0" class="more">还有 {{ queueCount }} 条通知</span>
             <span v-else class="more muted">来自班级小助手</span>
             <span class="actions">
               <button type="button" class="ghost-btn" @click.stop="openApp">打开应用</button>
-              <button type="button" class="ghost-btn" @click.stop="markRead">标为已读</button>
+              <button v-if="canMarkRead" type="button" class="ghost-btn" @click.stop="markRead">
+                标为已读
+              </button>
               <button type="button" class="solid-btn" @click.stop="dismiss">
-                {{ isCall ? '收到' : '知道了' }}
+                {{ isCall && !isListMode ? '收到' : '知道了' }}
               </button>
             </span>
           </footer>
@@ -743,6 +934,16 @@ body {
   fill: var(--wn-bg);
   stroke: var(--wn-border);
   stroke-width: 1;
+  /*
+    投影**始终声明**，形态切换只改参数 —— 不要写成"只在 .expanded 上挂 filter"。
+    给元素加 / 去 CSS filter 会让 Chromium 新建或销毁它的渲染表面（effect node），
+    而首帧的合成可能发生在新表面栅格化完成之前，那一帧会被当作空内容画出去；
+    卡片的底色恰恰就画在这个被过滤的元素上（fill 在本元素），于是**开/合的那一瞬间
+    底座会闪掉一帧、只剩未过滤的文字层**（用户反馈的"开合时一瞬间的闪动"）。
+    胶囊态用 0 0 0：硬轮廓投影正好压在路径底下，肉眼等同无投影，与 WinIsland
+    "只有展开态有投影"的观感一致。
+  */
+  filter: drop-shadow(0 var(--card-shadow-y, 0px) var(--card-shadow-blur, 0px) rgba(0, 0, 0, 0.11));
 }
 
 /* 内容层裁切到同一形状内；内部两层（胶囊层 / 展开层）交叉淡入 */
@@ -767,9 +968,11 @@ body {
   pointer-events: auto;
 }
 
-/* 展开态投影（WinIsland: rgba(0,0,0,.11)、y+2、σ=3 → CSS 0 2px 3px） */
+/* 展开态投影（WinIsland: rgba(0,0,0,.11)、y+2、σ=3 → CSS 0 2px 3px）。
+   只改参数、不动 filter 声明本身，理由见上面的 .shape path。 */
 .island-card.expanded .shape path {
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.11));
+  --card-shadow-y: 2px;
+  --card-shadow-blur: 3px;
 }
 
 /* 状态色：只做"内层微染 + 描边"，不外溢（保持桌面干净，也不会有光晕硬边） */
@@ -809,8 +1012,38 @@ body {
 .pill-layer {
   flex-direction: row;
   align-items: center;
+  /* 水平对齐交给 .pill-inner（它固定为胶囊几何，且按停靠方式贴边/居中） */
+  justify-content: flex-start;
+}
+
+/**
+ * 胶囊内容盒：**固定为胶囊自己的宽高与内边距**，不随卡片形变重排。
+ *
+ * 为什么必须固定：卡片在开合时 268 ⇄ 424 变宽变窄，而中心停靠下卡片的左右边都会动。
+ * 内容若跟着卡片宽度走，就会出现"文字先按宽卡片铺开、再随卡片收窄被省略号收回"
+ * （用户反馈的"新消息那行字往右跳一下再缩回"），底部也会被收缩的形状裁掉一块。
+ * 固定成胶囊几何后：文字在整段动画里位置与省略号都不变，只是随卡片一起淡出/淡入。
+ *
+ * 贴哪条边与卡片停靠方式一致（左停靠贴左、右停靠贴右、居中则居中对齐）——
+ * 这样卡片变宽时内容也不会横移，静止态外观与之前完全一致。
+ */
+.pill-inner {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  flex: 0 0 auto;
   gap: calc(var(--island-font, 13px) * 0.62);
+  width: var(--island-w, 268px);
+  height: 100%;
   padding: 0 calc(var(--island-font, 13px) * 0.78);
+}
+
+.island-card[data-anchor='center'] .pill-layer {
+  justify-content: center;
+}
+
+.island-card[data-anchor='right'] .pill-layer {
+  justify-content: flex-end;
 }
 
 .pill-icon {
@@ -910,6 +1143,166 @@ body {
   padding: calc(var(--island-font, 13px) * 1.4) calc(var(--island-font, 13px) * 1.6);
   gap: calc(var(--island-font, 13px) * 0.7);
   justify-content: center;
+}
+
+/*
+ * 多条通知的列表形态。
+ *
+ * 这里的每个尺寸都必须与 @classhelper/shared 的 `ISLAND_LIST_METRICS` 一一对应：
+ * 主进程按那份度量算出**窗口包围盒**（列表比普通展开卡高，窗口不够高会把底部按钮裁掉），
+ * 渲染进程按同一份度量排布。改这里就必须改那里，否则会出现"最后一行被切掉"。
+ * 选择器一律写成 `.expanded-layer.list-mode ...`（比基类的单类选择器更具体），
+ * 免得被后面定义的 `.title` / `.body` 覆盖掉尺寸——那样高度就对不上算出来的值了。
+ */
+.expanded-layer.list-mode {
+  /* 高度已经算准，改 flex-start：居中排版一旦有像素级误差会把上下两端同时切掉 */
+  justify-content: flex-start;
+}
+
+.expanded-layer.list-mode .head {
+  height: calc(var(--island-font, 13px) * 1.7);
+}
+
+.expanded-layer.list-mode .title {
+  flex: 0 0 auto;
+  display: block;
+  height: calc(var(--island-font, 13px) * 1.4);
+  line-height: 1.4;
+  -webkit-line-clamp: unset;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.expanded-layer.list-mode .body {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: calc(var(--island-font, 13px) * 0.4);
+  justify-content: flex-start;
+  overflow: hidden;
+}
+
+.head-icon.list {
+  background: color-mix(in srgb, var(--island-accent) 20%, transparent);
+  color: var(--island-accent);
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--island-font, 13px) * 0.55);
+  flex: 0 0 auto;
+  width: 100%;
+  height: calc(var(--island-font, 13px) * 2.7);
+  padding: 0 calc(var(--island-font, 13px) * 0.6);
+  border: none;
+  border-radius: calc(var(--island-font, 13px) * 0.5);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--wn-text-1);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.list-row:hover {
+  background: var(--wn-surface);
+}
+
+.row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: calc(var(--island-font, 13px) * 1.3);
+  height: calc(var(--island-font, 13px) * 1.3);
+  border-radius: calc(var(--island-font, 13px) * 0.36);
+  background: var(--wn-surface);
+  color: var(--wn-text-2);
+}
+
+.row-icon svg {
+  width: calc(var(--island-font, 13px) * 0.86);
+  height: calc(var(--island-font, 13px) * 0.86);
+}
+
+.row-icon.call {
+  color: #ff9f0a;
+}
+
+.row-icon.homework {
+  color: var(--island-accent);
+}
+
+.row-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.row-title {
+  font-size: calc(var(--island-font, 13px) * 0.9);
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-sub {
+  font-size: calc(var(--island-font, 13px) * 0.68);
+  line-height: 1.1;
+  color: var(--wn-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: calc(var(--island-font, 13px) * 1.25);
+  padding: 0 calc(var(--island-font, 13px) * 0.5);
+  border-radius: 999px;
+  font-size: calc(var(--island-font, 13px) * 0.68);
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.78);
+}
+
+/* 列表底部的提示行：能展开时是按钮，屏幕到任务栏了就是一句"去应用里看" */
+.list-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  height: calc(var(--island-font, 13px) * 2.1);
+}
+
+.more-btn {
+  border: none;
+  background: var(--wn-surface);
+  color: var(--wn-text-1);
+  height: 100%;
+  width: 100%;
+  border-radius: calc(var(--island-font, 13px) * 0.5);
+  font-size: calc(var(--island-font, 13px) * 0.76);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.more-btn:hover {
+  background: var(--wn-surface-hover);
+}
+
+.more-app {
+  font-size: calc(var(--island-font, 13px) * 0.76);
+  color: var(--wn-text-3);
+  white-space: nowrap;
 }
 
 .head {

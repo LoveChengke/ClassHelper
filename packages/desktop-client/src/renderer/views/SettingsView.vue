@@ -624,12 +624,18 @@ onMounted(async () => {
               {{ auth.user?.username ?? '-' }}
             </el-descriptions-item>
             <el-descriptions-item label="登录方式">
-              {{ auth.isClassSession ? '班级账号（本机代表全班）' : '个人学生账号' }}
+              {{ auth.isClassSession ? '班级账号（本机代表全班）' : '班级账号' }}
             </el-descriptions-item>
             <el-descriptions-item label="班级">{{ auth.user?.className ?? '未分班' }}</el-descriptions-item>
             <el-descriptions-item label="年级">{{ auth.user?.grade ?? '-' }}</el-descriptions-item>
           </el-descriptions>
-          <el-button class="mt-16" type="danger" plain @click="logout">退出登录</el-button>
+          <div class="toolbar mt-16">
+            <el-button type="danger" plain @click="logout">退出登录</el-button>
+          </div>
+          <div class="text-muted mt-12">
+            班级密码由管理员在 Web 管理端「班级管理 → 修改班级账号」中设置；本机退出后用班级码 +
+            班级密码重新登录。
+          </div>
         </el-card>
       </el-col>
 

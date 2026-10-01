@@ -3,7 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Electron 渲染进程安全策略：只允许加载本地资源与后端 HTTP/WS 连接 -->
+    <!--
+      内容安全策略（Electron 渲染进程）。
+
+      为什么必须有：渲染进程通过 preload 桥能拿到 `getConfig()` 返回的**明文登录令牌**
+      （代表该班全班身份），因此一旦出现一次注入（未来某个 v-html、某个依赖被投毒），
+      脚本就能把令牌发到外网。CSP 是唯一能拦住"加载并执行远程脚本"的那一层。
+
+      各指令口径：
+      - default-src/script-src 'self'：只允许执行本应用自己的脚本（挡住远程脚本注入）；
+      - style-src 需要 'unsafe-inline'：Vue SFC 与 Element Plus 运行时会注入行内样式；
+      - connect-src 放开 http/https/ws/wss：服务器地址由用户在设置页填写（可能是内网 IP、域名、
+        HTTPS 反代），无法预先枚举，且连接本身不是"执行代码"的入口；
+      - object-src/frame-src/form-action 一律关掉：本应用不需要插件、内嵌页面与表单提交。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https: ws: wss:; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'self'"
+    />
     <title>班级小助手</title>
   </head>
   <body>

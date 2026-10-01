@@ -7,6 +7,31 @@ export interface SmokeCheckResult {
 }
 
 /**
+ * 冒烟用的教师凭据：**由 preload 从环境变量注入，不写死在代码里**。
+ *
+ * 本文件会进渲染进程产物（`dist/renderer/assets/*.js`）→ `app.asar` → 每台学生机，
+ * 而 asar 可以直接解包。因此任何口令字面量都不能留在这里；
+ * 凭据由 `scripts/smoke.mjs` / `scripts/verify-packaged.mjs` 通过环境变量提供
+ * （见 `main/smoke.ts` 顶部关于 app.asar 的完整说明）。
+ */
+let smokeTeacherCredentials: { username: string; password: string } = { username: '', password: '' };
+
+/** 由 main.ts 在注册冒烟钩子时注入（来源：ELECTRON_SMOKE_USER / ELECTRON_SMOKE_PASSWORD） */
+export function setSmokeTeacherCredentials(next: { username: string; password: string }): void {
+  smokeTeacherCredentials = {
+    username: next?.username ?? '',
+    password: next?.password ?? '',
+  };
+}
+
+/** 教师登录请求体；未注入凭据时返回 null（调用方据此跳过并说明原因） */
+function teacherLoginBody(): { username: string; password: string } | null {
+  return smokeTeacherCredentials.username && smokeTeacherCredentials.password
+    ? { username: smokeTeacherCredentials.username, password: smokeTeacherCredentials.password }
+    : null;
+}
+
+/**
  * 冒烟自检 1：IndexedDB 写入 / 读回 / 统计 / 删除。
  * 由主进程通过 webContents.executeJavaScript 调用。
  */
@@ -144,10 +169,18 @@ async function seedSmokeContent(
   const stamp = `自检 ${new Date().toLocaleTimeString('zh-CN')}`;
 
   try {
+    // 凭据由环境变量注入（理由见文件顶部）：没给就明确跳过，而不是拿种子账号兜底
+    const loginBody = teacherLoginBody();
+    if (!loginBody) {
+      return {
+        ok: false,
+        detail: '未提供冒烟教师凭据（ELECTRON_SMOKE_USER / ELECTRON_SMOKE_PASSWORD），无法自建测试数据',
+      };
+    }
     const login = await fetch(`${serverUrl}/api/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'teacher1', password: 'teacher123' }),
+      body: JSON.stringify(loginBody),
     }).then((response) => response.json());
     const token: string | undefined = login?.data?.token;
     if (!token) return { ok: false, detail: `教师登录失败：${JSON.stringify(login).slice(0, 120)}` };
@@ -239,10 +272,18 @@ export async function onlineScenario(credentials?: {
   const detail: string[] = [];
 
   try {
-    // 学生端已改为「班级账号」登录：凭据由 scripts/smoke.mjs 通过管理端接口准备并传入
-    const code = credentials?.code ?? 'G101';
-    const password = credentials?.password ?? '123456';
-    if (!credentials?.code) detail.push('未收到班级凭据，回退到种子班级码 G101');
+    // 学生端已改为「班级账号」登录：凭据由 scripts/smoke.mjs 通过管理端接口准备并传入。
+    // 这里**不再回退到种子班级码**（G101/123456 也是真实可用的登录凭据，不能写进安装包）：
+    // 没有凭据就明确跳过，由 scripts/smoke.mjs 打印"未能准备班级账号"。
+    const code = credentials?.code ?? '';
+    const password = credentials?.password ?? '';
+    if (!code) {
+      return {
+        ok: false,
+        detail:
+          '未收到班级凭据（ELECTRON_SMOKE_CLASS_CODE / ELECTRON_SMOKE_CLASS_PASSWORD），已跳过联网集成自检',
+      };
+    }
 
     await auth.login(serverUrl, code, password);
     detail.push(`login=${auth.user?.name ?? '-'}`);
@@ -363,10 +404,17 @@ export async function islandRealtimeScenario(): Promise<{
 
   const title = `灵动岛真机链路自检 ${Date.now()}`;
   try {
+    const loginBody = teacherLoginBody();
+    if (!loginBody) {
+      return {
+        ok: false,
+        detail: '未提供冒烟教师凭据（ELECTRON_SMOKE_USER / ELECTRON_SMOKE_PASSWORD），无法投递通知',
+      };
+    }
     const login = await fetch(`${serverUrl}/api/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'teacher1', password: 'teacher123' }),
+      body: JSON.stringify(loginBody),
     }).then((response) => response.json());
     const teacherToken: string | undefined = login?.data?.token;
     if (!teacherToken) return { ok: false, detail: `教师登录失败：${JSON.stringify(login).slice(0, 120)}` };
@@ -378,6 +426,8 @@ export async function islandRealtimeScenario(): Promise<{
         classId,
         title,
         content: '自动化验证：这条通知用于确认「服务端广播 → 客户端实时通道 → 灵动岛」整条链路可用。',
+        // 普通优先级：冒烟客户端登录的是**临时班级**（无课表 → 判定不在上课），
+        // 普通通知也会立刻弹出胶囊，链路断言与真实上课时段无关。
         priority: 'NORMAL',
       }),
     }).then((response) => response.json());
@@ -465,10 +515,17 @@ export async function scheduleTimelineSelfTest(): Promise<SmokeCheckResult> {
   let teacherToken = '';
 
   try {
+    const loginBody = teacherLoginBody();
+    if (!loginBody) {
+      return {
+        ok: false,
+        detail: '未提供冒烟教师凭据（ELECTRON_SMOKE_USER / ELECTRON_SMOKE_PASSWORD），无法构造课表',
+      };
+    }
     const login = await fetch(`${serverUrl}/api/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'teacher1', password: 'teacher123' }),
+      body: JSON.stringify(loginBody),
     }).then((response) => response.json());
     teacherToken = login?.data?.token ?? '';
     if (!teacherToken) return { ok: false, detail: '教师登录失败' };
@@ -613,7 +670,9 @@ export async function homeworkBoardSelfTest(): Promise<SmokeCheckResult> {
 
     // 今天可能恰好没有作业：切到「最近一个有作业的日期」保证看板一定有卡片（断言才有意义）。
     // 按天查看支持 ?date=YYYY-MM-DD 深链，切天不需要去操作日期选择器。
-    if (!document.querySelector('.board-host')) {
+    // 注意判据是「看板里没有卡片」而不是「没有 board-host 容器」——空看板照样渲染容器，
+    // 拿容器当判据会导致切日期的兜底永远不触发（今天的日期没作业时看板必然为空）。
+    if (!document.querySelector('.board-card')) {
       const [{ homeworkApi }, { useAuthStore }] = await Promise.all([
         import('../api/index.js'),
         import('../stores/auth.js'),
@@ -704,6 +763,61 @@ export async function homeworkBoardSelfTest(): Promise<SmokeCheckResult> {
   }
 }
 
+/**
+ * 冒烟自检（不需要后端）：**本机录入的作业不再上灵动岛**（用户要求）。
+ *
+ * 场景：教室机器上录完作业，服务端照样广播 `homework:new`，但"自己通知自己"没有意义。
+ * 判定按**内容指纹 + id**（发起请求前就登记，避免"广播晚于响应"漏判），因此这里两条都要验：
+ * 1) 登记过的这条：投递后灵动岛状态不变；
+ * 2) 没登记过的同形作业（别班/别的标题）：照常上岛。
+ */
+export async function islandHomeworkSuppressionCheck(): Promise<SmokeCheckResult> {
+  const [{ markHomeworkCreatedLocally, isLocalHomework, pushHomeworkToIsland }, { useAuthStore }] =
+    await Promise.all([import('../island/bridge.js'), import('../stores/auth.js')]);
+  try {
+    const classId = useAuthStore().classId ?? 'smoke-class';
+    const assignDate = '2030-01-01';
+    const draft = {
+      id: 'smoke-homework-suppressed',
+      classId,
+      title: '本机录入的作业',
+      content: '这条不应该弹上岛',
+      assignDate,
+    };
+    markHomeworkCreatedLocally(draft);
+    const recognized = isLocalHomework(draft);
+    // 同 id、同内容 → 必须认出来；换个标题 → 不算本机录入
+    const recognizedByFingerprint = isLocalHomework({ ...draft, id: '' });
+    const foreign = isLocalHomework({ ...draft, id: 'other', title: '别的作业' });
+
+    const before = await window.desktop?.islandGetState?.();
+    pushHomeworkToIsland({
+      ...draft,
+      courseId: null,
+      attachmentUrl: null,
+      createdBy: '',
+      createdAt: new Date().toISOString(),
+    } as never);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const after = await window.desktop?.islandGetState?.();
+    const untouched =
+      (before?.active?.id ?? null) === (after?.active?.id ?? null) &&
+      (before?.queued.length ?? 0) === (after?.queued.length ?? 0);
+
+    return {
+      ok: recognized && recognizedByFingerprint && !foreign && untouched,
+      detail:
+        `按 id 认出=${recognized} 按内容指纹认出=${recognizedByFingerprint} 别的作业误判=${foreign} ` +
+        `投递后灵动岛未变=${untouched}`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: `本机作业不上岛自检异常：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
 /** 冒烟收尾：删除自检临时数据 → 断开实时通道 → 退出登录，保证下次冒烟从登录页开始 */
 export async function sessionCleanup(): Promise<SmokeCheckResult> {
   const [{ useAuthStore }, { useRealtimeStore }] = await Promise.all([
@@ -730,6 +844,7 @@ export function registerSmokeHooks(): void {
     islandRealtimeScenario,
     islandRealtimeCleanup,
     islandReadState,
+    islandHomeworkSuppressionCheck,
     scheduleTimelineSelfTest,
     homeworkBoardSelfTest,
     sessionCleanup,

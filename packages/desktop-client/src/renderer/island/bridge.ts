@@ -92,6 +92,11 @@ export function pushNotificationToIsland(notification: NotificationDto): void {
 
 /** 新作业上岛（homework:new）：胶囊提示"新作业"，点击展开看作业要求 */
 export function pushHomeworkToIsland(homework: HomeworkDto): void {
+  // 本机刚录入的作业不再上岛：教室机器上录作业的人就是眼前这台设备的主人，
+  // 再弹一张"新作业"卡片纯属自己通知自己（用户反馈）。
+  if (isLocalHomework(homework)) {
+    return;
+  }
   window.desktop?.islandPush({
     notification: {
       id: `homework-${homework.id}`,
@@ -105,6 +110,62 @@ export function pushHomeworkToIsland(homework: HomeworkDto): void {
     },
     context: getIslandClassContext(),
   });
+}
+
+/* ------------------------------------------------------------ 本机录入的作业 */
+
+/**
+ * 本机刚录入的作业指纹。
+ *
+ * 为什么按指纹而不只按 id：`homework:new` 是服务端**先广播、后回响应**的，
+ * 录入接口返回的 id 很可能比实时事件到得还晚 —— 只记 id 会漏掉"事件先到"的那一半，
+ * 于是本机录的作业照样弹上岛。因此在发请求**之前**就按内容记一份指纹，
+ * 回来后补记 id（覆盖事件晚到的情况）。指纹带 TTL，避免长期占用内存。
+ */
+const localHomeworkKeys = new Set<string>();
+let localHomeworkKeysAt = 0;
+const LOCAL_HOMEWORK_TTL_MS = 60_000;
+
+/** 作业内容指纹：同一班、同一天、同标题同正文 = 就是本机刚录的那条 */
+function homeworkFingerprint(homework: {
+  classId?: string | null;
+  title?: string | null;
+  content?: string | null;
+  assignDate?: string | null;
+}): string {
+  return [
+    homework.classId ?? '',
+    homework.assignDate ?? '',
+    (homework.title ?? '').trim(),
+    (homework.content ?? '').trim(),
+  ].join('|');
+}
+
+/** 录入前/后登记"这条作业是本机录的"（id 可后补） */
+export function markHomeworkCreatedLocally(homework: {
+  id?: string | null;
+  classId?: string | null;
+  title?: string | null;
+  content?: string | null;
+  assignDate?: string | null;
+}): void {
+  const now = Date.now();
+  if (now - localHomeworkKeysAt > LOCAL_HOMEWORK_TTL_MS) localHomeworkKeys.clear();
+  localHomeworkKeysAt = now;
+  localHomeworkKeys.add(homeworkFingerprint(homework));
+  if (homework.id) localHomeworkKeys.add(homework.id);
+}
+
+/** 这条作业是不是本机刚录的（供投递前判定与冒烟验证） */
+export function isLocalHomework(homework: {
+  id?: string | null;
+  classId?: string | null;
+  title?: string | null;
+  content?: string | null;
+  assignDate?: string | null;
+}): boolean {
+  if (homework.id && localHomeworkKeys.has(homework.id)) return true;
+  return localHomeworkKeys.has(homeworkFingerprint(homework));
 }
 
 /**
@@ -148,15 +209,40 @@ export function subscribeIslandMarkRead(): void {
   });
 }
 
+/**
+ * 灵动岛点了"标为已读"（多条通知的整批）→ 把这一批都在通知中心里标记已读。
+ * 与单条版本同一套兜底：离线时先在本地记为已读。
+ */
+export function subscribeIslandMarkAllRead(): void {
+  window.desktop?.onIslandMarkAllRead?.((ids) => {
+    void (async () => {
+      const store = useNotificationStore();
+      await Promise.all(
+        (ids ?? []).map(async (id) => {
+          try {
+            await store.markRead(id);
+          } catch {
+            const target = store.items.find((item) => item.id === id);
+            if (target) target.read = true;
+          }
+        }),
+      );
+    })();
+  });
+}
+
+/** 具名的课表变更处理器：匿名函数在停止时无法 off 掉，会随"登出→登录"越挂越多 */
+function onScheduleUpdated(): void {
+  void refreshIslandSchedules().catch(() => undefined);
+}
+
 export function startIslandBridge(): void {
   if (tickTimer) return;
 
   void refreshIslandSchedules().catch(() => undefined);
 
   // 课表变更（教师改课）立即复算，避免"下课后不弹出"或"上课没隐藏"
-  useRealtimeStore().on(SOCKET_EVENTS.scheduleUpdated, () => {
-    void refreshIslandSchedules().catch(() => undefined);
-  });
+  useRealtimeStore().on(SOCKET_EVENTS.scheduleUpdated, onScheduleUpdated);
 
   tickTimer = setInterval(() => recomputeClassState(), TICK_INTERVAL_MS);
   refreshTimer = setInterval(() => {
@@ -164,9 +250,31 @@ export function startIslandBridge(): void {
   }, REFRESH_INTERVAL_MS);
 }
 
+/**
+ * 停止桥接：退出登录 / 切换账号时必须调用。
+ *
+ * 只清定时器是不够的：
+ * - 订阅要 off，否则每次"登出 → 登录"都会多挂一份监听；
+ * - 本地课表缓存要清空，否则登出后仍会按**上一个班**的课表继续给主进程下发"上课/下课"
+ *   （灵动岛按陈旧课表隐藏或弹出），换班登录时第一轮刷新回来之前用的也是旧课表。
+ */
 export function stopIslandBridge(): void {
   if (tickTimer) clearInterval(tickTimer);
   if (refreshTimer) clearInterval(refreshTimer);
   tickTimer = null;
   refreshTimer = null;
+
+  useRealtimeStore().off(SOCKET_EVENTS.scheduleUpdated, onScheduleUpdated);
+  schedules = [];
+  currentPeriod = null;
+  inClass = false;
+
+  // 把"不在上课"同步给主进程：否则主进程还记着上一个会话的"上课中"，
+  // 重新登录后若第一轮课表刷新失败（离线且无缓存），灵动岛会继续按上课态把通知压着不弹，
+  // 直到下一次刷新成功为止。这里主动对齐一次，代价是登出瞬间可能补弹一条此前被暂存的通知。
+  window.desktop?.islandSetClassState({
+    inClass: false,
+    currentPeriodEnd: null,
+    week: useAppStore().currentWeek,
+  });
 }

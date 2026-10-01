@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { startIslandBridge, stopIslandBridge, subscribeIslandMarkRead } from './island/bridge.js';
+import {
+  startIslandBridge,
+  stopIslandBridge,
+  subscribeIslandMarkAllRead,
+  subscribeIslandMarkRead,
+} from './island/bridge.js';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useRealtimeStore } from './stores/realtime.js';
@@ -41,8 +46,9 @@ onMounted(async () => {
     // 灵动岛：开始按课表计算上课状态（上课隐藏、下课自动弹出）
     if (auth.token) startIslandBridge();
 
-    // 灵动岛"标为已读" → 同步通知中心（未读红点）
+    // 灵动岛"标为已读" → 同步通知中心（未读红点）；多条通知时是整批已读
     subscribeIslandMarkRead();
+    subscribeIslandMarkAllRead();
 
     if (auth.isAuthenticated) await router.replace('/schedule');
     else await router.replace('/login');

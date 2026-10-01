@@ -7,7 +7,7 @@ import 'element-plus/dist/index.css';
 
 import App from './App.vue';
 import router from './router/index.js';
-import { registerSmokeHooks } from './cache/self-test.js';
+import { registerSmokeHooks, setSmokeTeacherCredentials } from './cache/self-test.js';
 import './styles/index.css';
 
 const app = createApp(App);
@@ -20,8 +20,13 @@ app.use(createPinia());
 app.use(router);
 app.use(ElementPlus, { locale: zhCn });
 
-// 冒烟验证模式：把缓存自检钩子暴露给主进程调用（正常运行时不存在）
+// 冒烟验证模式：把缓存自检钩子暴露给主进程调用（正常运行时不存在）。
+// 教师凭据由 preload 从环境变量透传（**不写在代码里**：渲染产物会进 app.asar 发给学生机）。
 if (window.desktop?.smokeTest) {
+  setSmokeTeacherCredentials({
+    username: window.desktop.smokeCredentials?.username ?? '',
+    password: window.desktop.smokeCredentials?.password ?? '',
+  });
   registerSmokeHooks();
 }
 

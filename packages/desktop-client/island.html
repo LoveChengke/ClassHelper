@@ -3,6 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 与主窗口同一套 CSP（理由见 index.html）：灵动岛同样是持有 preload 桥的渲染进程 -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https: ws: wss:; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'self'"
+    />
     <title>班级小助手 · 灵动岛</title>
     <style>
       /* 透明背景：窗口本身无边框透明，由页面绘制圆角卡片 */

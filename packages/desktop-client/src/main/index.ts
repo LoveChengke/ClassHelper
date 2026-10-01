@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { BrowserWindow, app, shell } from 'electron';
 import { registerIpcHandlers } from './ipc.js';
 import { island, registerIslandIpc } from './island.js';
@@ -22,6 +23,30 @@ let mainWindow: BrowserWindow | null = null;
 
 /** 是否正在退出：用于区分「关闭窗口 = 隐藏到托盘」与「真正退出」 */
 let isQuitting = false;
+
+/** 生产环境下主窗口加载的本页地址（用于导航白名单的精确比对） */
+const prodRendererUrl = pathToFileURL(path.join(currentDir, '../renderer/index.html')).href;
+
+/**
+ * 是否允许窗口导航到这个地址。
+ *
+ * 为什么不能用 `url.startsWith(...)`：
+ * - 开发态 `url.startsWith(devServerUrl)` 没有主机边界，`http://localhost:5174.evil.com` 也会被放行；
+ * - 生产态 `url.startsWith('file://')` 等于放行**任意本地页面**。
+ * 而 preload 是挂在窗口上的（不是挂在 URL 上）：一旦窗口被导航到别处，那个页面照样持有
+ * `window.desktop`（含 `getConfig` 返回的明文 token）。因此这里按"精确同源 / 精确同一文件"比对。
+ */
+function isAllowedNavigation(url: string): boolean {
+  try {
+    const target = new URL(url);
+    if (devServerUrl) return target.origin === new URL(devServerUrl).origin;
+    target.hash = '';
+    target.search = '';
+    return target.href === prodRendererUrl;
+  } catch {
+    return false;
+  }
+}
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -49,11 +74,10 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (event, url) => {
-    const allowed = devServerUrl ? url.startsWith(devServerUrl) : url.startsWith('file://');
-    if (!allowed) {
-      event.preventDefault();
-      if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
-    }
+    if (isAllowedNavigation(url)) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    logger.warn(`主窗口拒绝了页面导航：${url}`);
   });
 
   win.on('closed', () => {
@@ -105,6 +129,11 @@ if (!gotLock) {
       island.setMarkReadHandler((id) => {
         if (!mainWindow || mainWindow.isDestroyed()) return;
         mainWindow.webContents.send('island:mark-read', id);
+      });
+      // 多条通知时的"标为已读"是**整批**操作：一次把列表里的通知都标上
+      island.setMarkAllReadHandler((ids) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        mainWindow.webContents.send('island:mark-all-read', ids);
       });
     } catch (error) {
       logger.error('灵动岛初始化失败（不影响主功能）', error);

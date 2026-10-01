@@ -3,6 +3,7 @@ import path from 'node:path';
 import { app, BrowserWindow, desktopCapturer, screen } from 'electron';
 import type { NativeImage } from 'electron';
 import type { IslandAppearance, IslandNotification } from '@classhelper/shared';
+import { ISLAND_SHADOW_PAD, islandListLayout } from '@classhelper/shared';
 import { getConfig, saveConfig } from './config.js';
 import { getDiagnostics } from './ipc.js';
 import {
@@ -25,6 +26,41 @@ type Recorder = (name: string, ok: boolean, detail?: string) => void;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 排空灵动岛（正在展示的 + 队列里的全关掉）。
+ *
+ * 为什么值得单独一个函数：**多条待处理通知会走"竖排列表"形态**，比单条详情卡高得多，
+ * 于是"单条通知的详情卡 / 紧急卡 / 叫人卡"这类用例必须在干净的空闲态下推送才有意义
+ * （否则量到的尺寸是列表的高度，断言会莫名其妙地红）。
+ */
+async function drainIsland(): Promise<void> {
+  for (let index = 0; index < 20; index += 1) {
+    const current = island.getState();
+    if (!current.active && current.queued.length === 0) return;
+    island.handleAction({ action: 'dismiss' });
+    await sleep(120);
+  }
+}
+
+/** 当前"未处理"的通知条数（与主进程/渲染进程同一口径：正在展示的 + 队列，按 id 去重） */
+function pendingCountOf(state: ReturnType<typeof island.getState>): number {
+  const ids = new Set<string>();
+  if (state.active) ids.add(state.active.id);
+  for (const item of state.queued) ids.add(item.id);
+  return ids.size;
+}
+
+/** 岛当前形态应有的高度（多条通知时是列表布局算出来的高度，与渲染进程同一个算法） */
+function expectedListHeight(state: ReturnType<typeof island.getState>): number {
+  const layout = islandListLayout({
+    count: pendingCountOf(state),
+    fontSize: island.getAppearance().fontSize,
+    maxHeight: state.maxCardHeight,
+    expanded: state.listExpanded,
+  });
+  return layout.height;
 }
 
 /** 灵动岛每种形态的截图像素统计（用于"截图像素级留档"断言） */
@@ -67,6 +103,14 @@ interface IslandShotStats {
   edgeReddish: number;
   /** 岛矩形之外的偏红像素（窗口留白区，紧急光晕不外溢的断言依据） */
   outsideReddish?: number;
+  /**
+   * `.shape path` 的计算 filter（投影）。
+   *
+   * 断言它是**常驻**的：形态切换只能改参数，不能把 filter 加/去掉 —— 增删 CSS filter 会让
+   * Chromium 重建元素的渲染表面，首帧栅格化未完成时卡片底座会空掉一帧（用户反馈的
+   * "开合时一瞬间的闪动"）。见 IslandApp.vue 里 `.shape path` 的注释。
+   */
+  shapeFilter?: string;
   filePath: string;
   /** 四角圆角几何检查：四个角的边界步进必须一致（抓“角缺一块 / 角画反”） */
   corners?: { steps: number[]; expectedInset: number; spread: number; limit: number };
@@ -204,6 +248,15 @@ async function captureIsland(
       )
       .catch(() => 0);
     const corners = cardRadius > 0 ? analyzeCorners(cropped, cardRadius, scaleRatio) : undefined;
+    // 投影（filter）是否常驻：形态切换只允许改参数，不允许增删 filter 声明
+    const shapeFilter = await win.webContents
+      .executeJavaScript(
+        `(() => {
+           const path = document.querySelector('.island-card .shape path');
+           return path ? getComputedStyle(path).filter : '';
+         })()`,
+      )
+      .catch(() => '');
     const stats: IslandShotStats = {
       name,
       expected,
@@ -213,6 +266,7 @@ async function captureIsland(
       ...analyzeBitmap(cropped),
       corners,
       outsideReddish,
+      shapeFilter,
     };
     islandShots.push(stats);
     const layout = await win.webContents
@@ -301,6 +355,44 @@ interface IslandBackdropStats {
  */
 const ISLAND_BACKDROP_COLOR = '#101722';
 const ISLAND_BACKDROP_LUMINANCE = 0.2126 * 0x10 + 0.7152 * 0x17 + 0.0722 * 0x22;
+/** 底板色的 RGB 分量（残影判据用：与它比对，明显偏离才算"岛像素"） */
+const ISLAND_BACKDROP_COLOR_RGB = { r: 0x10, g: 0x17, b: 0x22 };
+
+/**
+ * 冒烟用的教师凭据：**从环境变量读，不写进代码**。
+ *
+ * 为什么必须这样：本文件会被 esbuild 打进 `dist/main/index.js` → `app.asar`，随安装包发到每台学生机，
+ * 而 asar 是可以直接解包的（实测 `grep teacher123 dist/main/index.js` 命中）。
+ * 把种子教师账号明文写在里面，等于把教师账号随安装包一起发出去。
+ *
+ * 注意：把静态 import 改成 `await import('./smoke.js')` **不能**解决这个问题 ——
+ * esbuild 在 `format: 'cjs'` + `bundle: true` 时不做代码分割，动态 import 同样被内联进同一个文件
+ * （已用最小用例实测：模块内的字面量仍然出现在产物里）。真正的边界是 `app.asar` 里有什么，
+ * 因此凭据必须从外部传入；未传入时相关断言标记为"跳过"，而不是静默失败。
+ *
+ * 传入方式见 `scripts/smoke.mjs` 与 `scripts/verify-packaged.mjs`（它们会带上种子默认值，
+ * 那些脚本不进安装包）。
+ */
+const smokeCredentialUser = process.env.ELECTRON_SMOKE_USER ?? '';
+const smokeCredentialPassword = process.env.ELECTRON_SMOKE_PASSWORD ?? '';
+
+/** 需要在"登录页不得出现示例内容"里排查的凭据片段（有凭据时才非空） */
+const smokeCredentialTokens = [smokeCredentialUser, smokeCredentialPassword].filter(Boolean);
+
+/** 用教师账号换一个 token（未提供凭据时返回空串） */
+async function smokeTeacherToken(base: string): Promise<string> {
+  if (!smokeCredentialUser || !smokeCredentialPassword) return '';
+  try {
+    const login = (await fetch(`${base}/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: smokeCredentialUser, password: smokeCredentialPassword }),
+    }).then((response) => response.json())) as { data?: { token?: string } };
+    return login?.data?.token ?? '';
+  } catch {
+    return '';
+  }
+}
 
 let islandBackdropWindow: BrowserWindow | null = null;
 
@@ -340,6 +432,190 @@ function medianOf(values: number[]): number {
   if (values.length === 0) return -1;
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.floor(sorted.length / 2)] ?? -1;
+}
+
+/**
+ * 收回动画逐帧取证（诊断用，只在 `ELECTRON_SMOKE_ISLAND_DIAG=1` 时跑；不进交付产物）。
+ *
+ * 为什么必须整屏抓：`webContents.capturePage()` 只拿渲染进程自己的位面，**窗口之外的残影拍不到**，
+ * 而"收回一瞬间闪一下"的用户反馈正是这一类。这里用 `desktopCapturer` 走系统合成路径连拍，
+ * 每帧同时记录：卡片矩形 / 窗口矩形 / `isClosing` / 两层 alpha（用来判定"双份内容重叠"）,
+ * 以及**"卡片之外变成岛色"的像素数**（用来判定"窗口外残影"），帧图落盘供人工核对。
+ */
+async function diagnoseClosingFlash(label: string, withTouch: boolean): Promise<string> {
+  const dir = path.join(process.cwd(), '..', '..', '.cache', 'island-closing-frames');
+  fs.mkdirSync(dir, { recursive: true });
+  const lines: string[] = [];
+  const win = island.getWindow();
+  if (!win || win.isDestroyed()) return 'no-window';
+
+  island.setTouchMode(withTouch);
+  // 复刻用户的实际外观：marginY=52、tinted（主题色渐变）——用户配置里就是这个
+  island.setAppearance({ marginY: 52, style: 'tinted', speed: 1, animations: true });
+  await sleep(400);
+
+  // 垫一块**已知颜色的底板**在岛底下（用户桌面是浅色壁纸，底板用浅灰模拟），
+  // 这样"岛矩形之外本该透出底板"的地方一旦出现别的颜色，就是残影 —— 判定不依赖壁纸内容。
+  const backdrop = await ensureIslandBackdropWindow();
+  const box = island.getWindowBounds();
+  const pad = 60;
+  backdrop.setBounds({
+    x: box.x - pad,
+    y: box.y - pad,
+    width: box.width + pad * 2,
+    height: box.height + pad * 2,
+  });
+  backdrop.showInactive();
+  backdrop.moveTop();
+  win.moveTop();
+  await sleep(300);
+
+  // 造一张和用户照片同形的紧急卡
+  island.pushNotification(
+    { ...makeNotification(`diag-close-${label}`, 'URGENT', '紧急通知'), teacherName: '系统管理员' },
+    { inClass: false },
+  );
+  await sleep(800);
+  island.handleAction({ action: 'expand' });
+  await sleep(900);
+
+  const display = screen.getPrimaryDisplay();
+  const scale = display.scaleFactor || 1;
+  const shotSize = {
+    width: Math.round(display.size.width * scale),
+    height: Math.round(display.size.height * scale),
+  };
+  const grab = async (): Promise<Electron.NativeImage | null> => {
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: shotSize });
+    const source = sources.find((item) => String(item.display_id) === String(display.id)) ?? sources[0];
+    return source ? source.thumbnail : null;
+  };
+  const geometryNow = (): Promise<IslandGeometry | null> => readIslandGeometryFrom(win);
+  const layerAlphas = async (): Promise<{ pill: number; expanded: number }> =>
+    (await win.webContents
+      .executeJavaScript(
+        `(() => {
+           const read = (selector) => {
+             const node = document.querySelector(selector);
+             return node ? Number(getComputedStyle(node).opacity) : -1;
+           };
+           return { pill: read('.pill-layer'), expanded: read('.expanded-layer') };
+         })()`,
+      )
+      .catch(() => ({ pill: -1, expanded: -1 }))) ?? { pill: -1, expanded: -1 };
+
+  /** 底板色（浅灰）与"岛色"的判据：明显偏离底板即视为岛像素 */
+  const backdropRgb = ISLAND_BACKDROP_COLOR_RGB;
+  const isIslandPixel = (bitmap: Buffer, index: number): boolean => {
+    const b = bitmap[index];
+    const g = bitmap[index + 1];
+    const r = bitmap[index + 2];
+    return Math.abs(r - backdropRgb.r) + Math.abs(g - backdropRgb.g) + Math.abs(b - backdropRgb.b) > 90;
+  };
+  /**
+   * 统计：**窗口矩形之内、卡片矩形之外**出现"岛像素"的数量（= 残影/没被正确擦掉的内容）。
+   * 这一带本该 100% 是底板色。
+   */
+  const countRingResidue = (
+    bitmap: Buffer,
+    shotScale: number,
+    card: { x: number; y: number; width: number; height: number },
+    winRect: { x: number; y: number; width: number; height: number },
+  ): { ring: number; outsideWindow: number } => {
+    const px = (v: number): number => Math.round(v * shotScale);
+    const from = { x: px(winRect.x), y: px(winRect.y) };
+    const to = { x: px(winRect.x + winRect.width), y: px(winRect.y + winRect.height) };
+    const cardBox = { x: px(card.x), y: px(card.y), w: px(card.width), h: px(card.height) };
+    let ring = 0;
+    let outsideWindow = 0;
+    for (let y = Math.max(0, from.y - px(30)); y < Math.min(shotSize.height, to.y + px(30)); y += 2) {
+      for (let x = Math.max(0, from.x - px(30)); x < Math.min(shotSize.width, to.x + px(30)); x += 2) {
+        const index = (y * shotSize.width + x) * 4;
+        if (index + 3 >= bitmap.length) continue;
+        if (!isIslandPixel(bitmap, index)) continue;
+        const inCard =
+          x >= cardBox.x && x <= cardBox.x + cardBox.w && y >= cardBox.y && y <= cardBox.y + cardBox.h;
+        if (inCard) continue;
+        if (x >= from.x && x <= to.x && y >= from.y && y <= to.y) ring += 1;
+        else outsideWindow += 1;
+      }
+    }
+    return { ring, outsideWindow };
+  };
+
+  // 模拟"手点"：真实光标停在按钮上（窗口处于可命中），再用 sendInputEvent 发真实鼠标按下/抬起
+  island.setTestInputPassthrough(false);
+  const buttonPoint = await win.webContents.executeJavaScript(
+    `(() => {
+       const button = document.querySelector('.island-card.expanded .solid-btn');
+       if (!button) return null;
+       const r = button.getBoundingClientRect();
+       return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+     })()`,
+  );
+  if (buttonPoint) {
+    const bounds = win.getBounds();
+    island.setHitTestCursor({ x: Math.round(bounds.x + buttonPoint.x), y: Math.round(bounds.y + buttonPoint.y) });
+    await sleep(160);
+    win.webContents.sendInputEvent({ type: 'mouseDown', x: buttonPoint.x, y: buttonPoint.y, button: 'left', clickCount: 1 });
+    await sleep(40);
+    win.webContents.sendInputEvent({ type: 'mouseUp', x: buttonPoint.x, y: buttonPoint.y, button: 'left', clickCount: 1 });
+  }
+  const deadline = Date.now() + 1600;
+  let index = 0;
+  let maxRing = 0;
+  let maxOutside = 0;
+  let overlapFrames = 0;
+  while (Date.now() < deadline) {
+    const image = await grab();
+    const geometry = await geometryNow();
+    const alphas = await layerAlphas();
+    if (image && geometry) {
+      const bitmap = image.toBitmap();
+      const shotScale = image.getSize().width / Math.max(1, display.size.width);
+      const stat = countRingResidue(bitmap, shotScale, geometry.island, geometry.window);
+      maxRing = Math.max(maxRing, stat.ring);
+      maxOutside = Math.max(maxOutside, stat.outsideWindow);
+      if (alphas.pill > 0.15 && alphas.expanded > 0.15) overlapFrames += 1;
+      // 落盘：底板 + 岛所在区域（用户照片同款视角）
+      const crop = image.crop({
+        x: Math.max(0, Math.round((geometry.window.x - pad) * shotScale)),
+        y: Math.max(0, Math.round((geometry.window.y - pad) * shotScale)),
+        width: Math.min(
+          image.getSize().width,
+          Math.round((geometry.window.width + pad * 2) * shotScale),
+        ),
+        height: Math.min(
+          image.getSize().height,
+          Math.round((geometry.window.height + pad * 2) * shotScale),
+        ),
+      });
+      fs.writeFileSync(path.join(dir, `${label}-${String(index).padStart(2, '0')}.png`), crop.toPNG());
+      lines.push(
+        `[${label}] #${index} t=${Date.now() - (deadline - 1600)}ms 卡片=${Math.round(
+          geometry.island.width,
+        )}x${Math.round(geometry.island.height)} 窗口=${geometry.window.width}x${geometry.window.height}@${
+          geometry.window.x
+        },${geometry.window.y} pill=${alphas.pill.toFixed(2)} expanded=${alphas.expanded.toFixed(
+          2,
+        )} 环内残影=${stat.ring} 窗口外残影=${stat.outsideWindow}`,
+      );
+    }
+    index += 1;
+    await sleep(20);
+  }
+  lines.push(
+    `[${label}] 汇总：帧数=${index} 双份内容重叠帧=${overlapFrames} 环内残影峰值=${maxRing} 窗口外残影峰值=${maxOutside}`,
+  );
+
+  island.setHitTestCursor(null);
+  island.setTestInputPassthrough(true);
+  island.setTouchMode(false);
+  await sleep(200);
+  island.handleAction({ action: 'dismiss' });
+  await sleep(300);
+  fs.writeFileSync(path.join(dir, `${label}.txt`), lines.join(String.fromCharCode(10)));
+  return lines.join(String.fromCharCode(10));
 }
 
 /**
@@ -721,28 +997,32 @@ async function dumpIslandDom(_label: string): Promise<string> {
  * 冒烟用：用教师账号发一条普通通知，返回通知 id（失败返回空串）。
  * 用于"未读红点位置"这类需要真实未读数据的断言。
  */
-async function createSmokeNotification(): Promise<string> {
+async function createSmokeNotification(title = '红点位置校验'): Promise<string> {
   const base = process.env.ELECTRON_SMOKE_API ?? 'http://127.0.0.1:4000/api';
   try {
-    const login = (await fetch(`${base}/auth/login`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'teacher1', password: 'teacher123' }),
-    }).then((response) => response.json())) as { data?: { token?: string } };
-    const token = login?.data?.token;
+    // 凭据来自环境变量（见 smokeCredentialUser 的说明）：没给就跳过，绝不把账号写进安装包
+    const token = await smokeTeacherToken(base);
     if (!token) return '';
-    const classes = (await fetch(`${base}/classes`, {
-      headers: { authorization: `Bearer ${token}` },
-    }).then((response) => response.json())) as { data?: Array<{ id?: string }> };
-    const classId = classes?.data?.[0]?.id ?? '';
+    // 探针必须打到"冒烟客户端所在的班"，否则收不到；优先用 harness 传来的**临时班级** id
+    // （见 scripts/lib/smoke-class.mjs：临时班级是为了不把测试通知弹到用户自己的客户端上）
+    let classId = process.env.ELECTRON_SMOKE_CLASS_ID ?? '';
+    if (!classId) {
+      const classes = (await fetch(`${base}/classes`, {
+        headers: { authorization: `Bearer ${token}` },
+      }).then((response) => response.json())) as { data?: Array<{ id?: string }> };
+      classId = classes?.data?.[0]?.id ?? '';
+    }
     if (!classId) return '';
     const created = (await fetch(`${base}/notifications`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify({
         classId,
-        title: '红点位置校验',
-        content: '自动化验证用通知（断言未读红点位置后会删除）。',
+        title,
+        content: '自动化验证用通知（断言后即删除）。',
+        // 普通优先级即可：冒烟客户端登录的是**临时班级**（没有课表 → 判定"不在上课"），
+        // 普通通知照样立刻以胶囊弹出。这样即便探针被别的客户端收到，也只是短暂一条胶囊，
+        // 不会弹成大卡（之前用 URGENT 是为了绕开"用户班级正在上课"的场景，现已不需要）。
         priority: 'NORMAL',
       }),
     }).then((response) => response.json())) as { data?: { id?: string } };
@@ -756,12 +1036,7 @@ async function createSmokeNotification(): Promise<string> {
 async function deleteSmokeNotification(id: string): Promise<void> {
   const base = process.env.ELECTRON_SMOKE_API ?? 'http://127.0.0.1:4000/api';
   try {
-    const login = (await fetch(`${base}/auth/login`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'teacher1', password: 'teacher123' }),
-    }).then((response) => response.json())) as { data?: { token?: string } };
-    const token = login?.data?.token;
+    const token = await smokeTeacherToken(base);
     if (!token) return;
     await fetch(`${base}/notifications/${id}`, {
       method: 'DELETE',
@@ -825,10 +1100,47 @@ async function runIslandChecks(
   record('灵动岛窗口已创建（置顶/透明/不占任务栏）', island.isReady(), `ready=${island.isReady()}`);
   if (!island.isReady()) return;
 
+  // 诊断模式（ELECTRON_SMOKE_ISLAND_DIAG=1）：收回动画逐帧整屏取证，帧图与逐帧数据落盘
+  // `.cache/island-closing-frames/`。只用于排查"收回一瞬间闪一下"，不参与常规验收。
+  if (process.env.ELECTRON_SMOKE_ISLAND_DIAG === '1') {
+    const touchLog = await diagnoseClosingFlash('touch', true);
+    const mouseLog = await diagnoseClosingFlash('mouse', false);
+    results.push({
+      name: '灵动岛收回诊断（逐帧整屏取证）',
+      ok: true,
+      detail: '见 .cache/island-closing-frames/',
+    });
+    console.log(`[DIAG-CLOSE touch]` + String.fromCharCode(10) + touchLog);
+    console.log(`[DIAG-CLOSE mouse]` + String.fromCharCode(10) + mouseLog);
+  }
+
   const islandWindow = island.getWindow();
   // 默认关掉"失焦自动收起"：冒烟是自动化环境，系统/其它窗口抢焦点会随时触发 blur，
   // 把展开态收回会让断言随机失败。专门验证该行为的用例（4.5）会临时打开它。
   island.setBlurCollapseEnabled(false);
+  /**
+   * 真实点击穿透：自动化要跑几分钟，而用户很可能正在同一块屏幕上（他客户端那个岛和冒烟这个
+   * 窗口都在屏幕顶部居中、互相叠着）—— 他点到的是**冒烟这个窗口**，于是冒烟会收到人发出的
+   * expand / collapse / mark-read，把「点胶囊展开」「点空白处收起」这类用例整片弄红（实测踩过）。
+   * 断言"真实光标命中"的那两条（4.5.1 假失焦）会临时关掉它。
+   */
+  island.setTestInputPassthrough(true);
+  /**
+   * 把验证实例的岛做成**一眼可辨**：洋红主题色（真实客户端默认是蓝色系）。
+   *
+   * 为什么：自动化验证会真在屏幕上放一个灵动岛窗口，位置与用户自己的客户端默认一致
+   * （他常是 top-center + 较大 marginY，验证实例是 top-center + marginY=8）—— 两个岛一高一低叠在一起，
+   * 用户会以为"屏幕上出现了第二个灵动岛"，点它又"反应不对"（它归验证脚本控制，会自己展开/收起）。
+   * 只改**颜色**（不动停靠位置）：命中/几何断言全部按默认位置写过，挪位置会把它们弄红（实测踩过）。
+   */
+  island.setAppearance({ accent: '#e91e8c', style: 'tinted' });
+  /**
+   * 强制关掉触摸模式：本节的命中/穿透/窗口几何断言全部是按"鼠标模式"写的（用
+   * `setHitTestCursor` 注入光标位置代替挪动真实鼠标）。若跑在带触摸屏的机器上，
+   * 渲染进程会上报触摸模式 → 窗口改成"贴合岛体且不穿透"，这些注入光标的断言必然失败。
+   * 触摸模式本身由本条用例末尾的专门断言覆盖。
+   */
+  island.setTouchMode(false);
 
   // 1) 上课期间：普通通知必须完全不显示（窗口隐藏）并进入队列
   island.setClassState({ inClass: true, currentPeriodEnd: '08:45', week: 1 });
@@ -937,6 +1249,10 @@ async function runIslandChecks(
     `mode=${afterClassState.mode} active=${afterClassState.active?.id ?? '-'} reason=${afterClassState.reason ?? '-'}`,
   );
   await captureIsland('island-2-after-class', ISLAND_SIZES.expanded);
+  // 下面几条要量"紧急 / 叫人"这类**单条**卡片的尺寸与动画，先排空队列：
+  // 有多条待处理时岛会走竖排列表形态（高度的算法完全不同，见 4.13 的列表用例）。
+  await drainIsland();
+  await sleep(400);
 
   // 3) 上课期间紧急通知：立即展开，无需点击；并采样窗口尺寸证明有"展开动画"
   island.setClassState({ inClass: true, currentPeriodEnd: '08:45', week: 1 });
@@ -1021,7 +1337,15 @@ async function runIslandChecks(
   await sleep(800);
   island.hide();
   await sleep(400);
-  const hiddenBeforePush = !(islandWindow?.isVisible() ?? true);
+  // 排空这一节留下的队列：下面断言的是"单条通知的胶囊 / 详情卡"（多条会走列表形态），
+  // 顺带等"收回动画"播完（窗口真正隐藏，hiddenBeforePush 才有意义）——
+  // 收回动画是"渲染进程收敛上报 → 主进程淡出"，rAF 节流时比固定时长更久，轮询等它真的隐藏。
+  await drainIsland();
+  let hiddenBeforePush = !(islandWindow?.isVisible() ?? true);
+  for (let attempt = 0; attempt < 25 && !hiddenBeforePush; attempt += 1) {
+    await sleep(120);
+    hiddenBeforePush = !(islandWindow?.isVisible() ?? true);
+  }
   island.pushNotification(makeNotification('smoke-normal-free', 'NORMAL', '课间收到的普通通知'), {
     inClass: false,
   });
@@ -1218,6 +1542,8 @@ async function runIslandChecks(
   await sleep(400);
   island.handleAction({ action: 'expand' });
   await sleep(300);
+  // 这一条要断言"真实光标命中"，临时恢复真实输入
+  island.setTestInputPassthrough(false);
   island.setHitTestCursor(islandCardScreenPoint(0.5, 0.5)); // 指针停在岛上（用户刚点的位置）
   await sleep(160);
   islandWindow?.emit('blur'); // 模拟展开后到达的那次假失焦
@@ -1232,6 +1558,7 @@ async function runIslandChecks(
     `mode=${afterPhantomBlur.mode} active=${afterPhantomBlur.active?.id ?? '-'} 命中=${phantomStillInteractive}`,
   );
   island.setHitTestCursor(null);
+  island.setTestInputPassthrough(true);
   // 清掉这一条通知（队列为空 → 岛自行隐藏），避免影响后续用例的"空闲态"断言
   island.handleAction({ action: 'dismiss' });
   await sleep(400);
@@ -1327,7 +1654,9 @@ async function runIslandChecks(
   await sleep(300);
 
   // 4.7) "紧急叫人"：URGENT + kind=call → 上课时段也立即展开
-  island.handleAction({ action: 'dismiss' });
+  // 先排空（上一条"类型汇总"用例留下的通知还在队列里，否则这里量到的是列表高度）
+  await drainIsland();
+  await sleep(400);
   island.setClassState({ inClass: true, currentPeriodEnd: '08:45', week: 1 });
   await sleep(400);
   island.pushNotification(
@@ -1461,19 +1790,365 @@ async function runIslandChecks(
   island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1 });
   await sleep(400);
 
+  /** 读展开卡里的"列表形态"关键信息（行数/提示行/卡片高度），供 4.8 的多条通知用例断言 */
+  const readListCard = async (): Promise<{
+    isList: boolean;
+    rows: number;
+    titles: string[];
+    more: boolean;
+    app: string;
+    cardHeight: number;
+  } | null> =>
+    (await islandWindow?.webContents
+      .executeJavaScript(
+        `(() => {
+           const card = document.querySelector('.island-card.expanded');
+           if (!card) return null;
+           const rows = Array.from(card.querySelectorAll('.list-row'));
+           return {
+             isList: Boolean(card.querySelector('.expanded-layer.list-mode')),
+             rows: rows.length,
+             titles: rows.map((node) => node.querySelector('.row-title')?.textContent?.trim() ?? ''),
+             more: Boolean(card.querySelector('.more-btn')),
+             app: card.querySelector('.more-app')?.textContent?.trim() ?? '',
+             cardHeight: Math.round(card.getBoundingClientRect().height),
+           };
+         })()`,
+      )
+      .catch(() => null)) ?? null;
+
+  /*
+    4.8) 多条通知：展开后**竖向排列**（用户要求）
+    - 默认按重要程度排列（紧急 > 重要 > 普通 > 低，同级按时间新的在前）；
+    - 默认只显示前三条，下面一行「展开更多（还有 N 条）」；
+    - 点"展开更多"把放得下的都铺出来；屏幕到任务栏放不下时改为「更多请前往应用内操作」；
+    - 按钮只有一排：点「知道了」整批关闭；点「标为已读」整批已读。
+  */
+  await drainIsland();
+  await sleep(400);
+  island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1 });
+  await sleep(300);
+  // 优先级故意乱序推送：排列顺序只能来自"按重要程度"，不是推送顺序
+  const listIds = [
+    'smoke-list-normal',
+    'smoke-list-low',
+    'smoke-list-urgent',
+    'smoke-list-homework',
+    'smoke-list-high',
+  ];
+  island.pushNotification(makeNotification(listIds[0]!, 'NORMAL', '列表-普通通知'), { inClass: false });
+  await sleep(120);
+  island.pushNotification(makeNotification(listIds[1]!, 'LOW', '列表-低优先级通知'), { inClass: false });
+  await sleep(120);
+  island.pushNotification(makeNotification(listIds[2]!, 'URGENT', '列表-紧急通知'), { inClass: false });
+  await sleep(120);
+  island.pushNotification(
+    { ...makeNotification(listIds[3]!, 'NORMAL', '列表-新作业'), kind: 'homework' },
+    { inClass: false },
+  );
+  await sleep(120);
+  island.pushNotification(makeNotification(listIds[4]!, 'HIGH', '列表-重要通知'), { inClass: false });
+  await sleep(700);
+  const listPillDom = await islandWindow?.webContents.executeJavaScript(
+    `document.querySelector('.island-card.pill .pill-title')?.textContent?.trim() ?? ''`,
+  );
+  island.handleAction({ action: 'expand' });
+  await sleep(900);
+  const listState = island.getState();
+  const listDom = (await islandWindow?.webContents.executeJavaScript(
+    `(() => {
+       const card = document.querySelector('.island-card.expanded');
+       const rows = Array.from(card?.querySelectorAll('.list-row') ?? []);
+       return {
+         isList: Boolean(card?.querySelector('.expanded-layer.list-mode')),
+         rows: rows.length,
+         titles: rows.map((node) => node.querySelector('.row-title')?.textContent?.trim() ?? ''),
+         more: card?.querySelector('.more-btn')?.textContent?.replace(/\\s+/g, ' ').trim() ?? '',
+         app: card?.querySelector('.more-app')?.textContent?.trim() ?? '',
+         cardHeight: Math.round(card?.getBoundingClientRect().height ?? 0),
+       };
+     })()`,
+  )) as {
+    isList: boolean;
+    rows: number;
+    titles: string[];
+    more: string;
+    app: string;
+    cardHeight: number;
+  } | null;
+  const expectedHeight = expectedListHeight(listState);
+  record(
+    '多条通知竖向排列：按重要程度排序、只显示前三条 + 「展开更多」',
+    listState.mode === 'expanded' &&
+      (listPillDom ?? '').includes('共 5 条') &&
+      listDom?.isList === true &&
+      listDom.rows === 3 &&
+      (listDom.titles[0] ?? '').includes('紧急') &&
+      (listDom.titles[1] ?? '').includes('重要') &&
+      (listDom.more ?? '').includes('展开更多') &&
+      (listDom.more ?? '').includes('还有 2 条') &&
+      Math.abs(listDom.cardHeight - expectedHeight) <= 2,
+    `胶囊汇总="${listPillDom ?? '-'}" 列表=${listDom?.rows ?? '-'} 条 顺序=[${(listDom?.titles ?? []).join(' / ')}] ` +
+      `提示="${listDom?.more ?? listDom?.app ?? '-'}" 卡片高=${listDom?.cardHeight ?? '-'}（算法=${expectedHeight.toFixed(1)}）`,
+  );
+  await captureIsland('island-9-list', {
+    width: ISLAND_SIZES.expanded.width,
+    height: expectedHeight,
+  });
+
+  // 4.8b) 点"展开更多"：5 条全部铺出来，提示行随之消失
+  const moreClicked = await islandWindow?.webContents.executeJavaScript(
+    `(() => {
+       const button = document.querySelector('.island-card.expanded .more-btn');
+       if (!button) return false;
+       button.click();
+       return true;
+     })()`,
+  );
+  await sleep(900);
+  const expandedListState = island.getState();
+  const expandedListDom = (await islandWindow?.webContents.executeJavaScript(
+    `(() => {
+       const card = document.querySelector('.island-card.expanded');
+       return {
+         rows: card?.querySelectorAll('.list-row').length ?? 0,
+         more: Boolean(card?.querySelector('.more-btn')),
+         app: Boolean(card?.querySelector('.more-app')),
+         cardHeight: Math.round(card?.getBoundingClientRect().height ?? 0),
+       };
+     })()`,
+  )) as { rows: number; more: boolean; app: boolean; cardHeight: number } | null;
+  record(
+    '点「展开更多」铺出全部通知（提示行消失、卡片按算法长高）',
+    moreClicked === true &&
+      expandedListState.listExpanded === true &&
+      expandedListDom?.rows === 5 &&
+      expandedListDom.more === false &&
+      expandedListDom.app === false &&
+      Math.abs((expandedListDom?.cardHeight ?? 0) - expectedListHeight(expandedListState)) <= 2,
+    `点击=${moreClicked} 行数=${expandedListDom?.rows ?? '-'} 提示=${expandedListDom?.more ? '展开更多' : expandedListDom?.app ? '前往应用内' : '无'} ` +
+      `卡片高=${expandedListDom?.cardHeight ?? '-'}（算法=${expectedListHeight(expandedListState).toFixed(1)}）`,
+  );
+
+  // 4.8c) 通知多到屏幕放不下：卡片不许硬撑到屏幕外（会盖住任务栏），
+  //       点"展开更多"后剩余部分改成「更多请前往应用内操作」，并停在可用高度以内。
+  for (let index = 0; index < 25; index += 1) {
+    island.pushNotification(
+      makeNotification(`smoke-list-many-${index}`, 'NORMAL', `列表-批量通知 ${index + 1}`),
+      { inClass: false },
+    );
+  }
+  await sleep(700);
+  island.handleAction({ action: 'expand' });
+  await sleep(900);
+  const manyState = island.getState();
+  const manyBefore = await readListCard();
+  const manyMoreClicked = await islandWindow?.webContents.executeJavaScript(
+    `(() => {
+       const button = document.querySelector('.island-card.expanded .more-btn');
+       if (!button) return false;
+       button.click();
+       return true;
+     })()`,
+  );
+  await sleep(1200);
+  const manyAfter = await readListCard();
+  const maxRowsLayout = islandListLayout({
+    count: pendingCountOf(manyState),
+    fontSize: island.getAppearance().fontSize,
+    maxHeight: manyState.maxCardHeight,
+    expanded: true,
+  });
+  record(
+    '通知多到屏幕放不下：点「展开更多」铺到可用高度为止，其余提示「更多请前往应用内操作」',
+    manyMoreClicked === true &&
+      (manyAfter?.app ?? '').includes('更多请前往应用内操作') &&
+      manyAfter?.more === false &&
+      manyAfter?.rows === maxRowsLayout.rows &&
+      (manyAfter?.rows ?? 0) > (manyBefore?.rows ?? 0) &&
+      (manyAfter?.cardHeight ?? 0) <= manyState.maxCardHeight + 1,
+    `共 ${pendingCountOf(manyState)} 条：展开前 ${manyBefore?.rows ?? '-'} 行（卡片 ${manyBefore?.cardHeight ?? '-'}）→ ` +
+      `展开后 ${manyAfter?.rows ?? '-'} 行（算法 ${maxRowsLayout.rows}，卡片 ${manyAfter?.cardHeight ?? '-'} ≤ 可用高 ${manyState.maxCardHeight}）` +
+      `，提示="${manyAfter?.app ?? '-'}"`,
+  );
+
+  // 4.8d) 一排按钮：点「知道了」整批关闭，并且**有收回动画**（窗口在动画期间保持可见，随后淡出隐藏）
+  /**
+   * 收回动画期间逐帧采样"卡片有没有被窗口裁掉"。
+   * 用户反馈的症状："上半剩一个圆角，下半直接截断" = 窗口比卡片矮、底部被窗口平切
+   * （触摸模式下窗口贴合岛体，若在卡片还很大时就按胶囊尺寸收窗口就会这样）。
+   */
+  /** 逐帧采样"卡片是否被窗口裁掉"（可复用到触摸模式的收回用例） */
+  const probeClosingClipInto = async (sink: { shots: number; maxOverflow: number }): Promise<void> => {
+    const bounds = islandWindow?.getBounds();
+    const rect = await islandWindow?.webContents
+      .executeJavaScript(
+        `(() => {
+           const card = document.querySelector('.island-card');
+           if (!card) return null;
+           const r = card.getBoundingClientRect();
+           return { top: r.top, bottom: r.bottom };
+         })()`,
+      )
+      .catch(() => null);
+    if (!bounds || !rect) return;
+    sink.shots += 1;
+    sink.maxOverflow = Math.max(sink.maxOverflow, Math.max(0, -rect.top, rect.bottom - bounds.height));
+  };
+  const closingClip = { shots: 0, maxOverflow: 0 };
+  const probeClosingClip = (): Promise<void> => probeClosingClipInto(closingClip);
+  const batchDismissClicked = await islandWindow?.webContents.executeJavaScript(
+    `(() => {
+       const button = document.querySelector('.island-card.expanded .solid-btn');
+       if (!button) return false;
+       button.click();
+       return true;
+     })()`,
+  );
+  await sleep(120);
+  const duringClose = { state: island.getState() };
+  for (let attempt = 0; attempt < 26; attempt += 1) {
+    await probeClosingClip();
+    await sleep(40);
+  }
+  const afterClose = {
+    visible: islandWindow?.isVisible() ?? false,
+    state: island.getState(),
+  };
+  record(
+    '多条通知点「知道了」：整批关闭（状态同步清空，窗口淡出隐藏）',
+    batchDismissClicked === true &&
+      duringClose.state.active === null &&
+      duringClose.state.queued.length === 0 &&
+      afterClose.state.mode === 'hidden' &&
+      !afterClose.visible,
+    `点击=${batchDismissClicked} 点击后 120ms 剩余=${pendingCountOf(duringClose.state)} ` +
+      `结束后=mode:${afterClose.state.mode}/可见:${afterClose.visible}`,
+  );
+  /*
+    4.8d.2) 触摸模式下"收起"（展开卡 → 胶囊）时的**逐帧残影检查**。
+
+    触摸模式下窗口是"贴合岛体"的：收起时卡片缩小、窗口跟着收小，中心停靠下窗口的左右边都要移动，
+    "让出去"的区域理论上会露出桌面 —— 若那里留着上一帧（DWM 还没重画），用户就会看到"闪一下/旧内容重影"。
+    这里在岛底下垫一块**已知颜色的底板**，逐帧统计"窗口矩形内、卡片矩形外"出现非底板色的像素数：
+    该带本该 100% 是底板色，出现岛像素即残影（用户反馈的"一缩回就出问题"正是这一类）。
+  */
+  island.setTouchMode(true);
+  await sleep(300);
+  island.pushNotification(
+    { ...makeNotification('smoke-touch-collapse', 'URGENT', '触摸模式收起残影校验'), teacherName: '张老师' },
+    { inClass: false },
+  );
+  await sleep(800);
+  island.handleAction({ action: 'expand' });
+  await sleep(900);
+  const collapseBackdropWin = await ensureIslandBackdropWindow();
+  const collapseWinBox = island.getWindowBounds();
+  const collapsePad = 60;
+  collapseBackdropWin.setBounds({
+    x: collapseWinBox.x - collapsePad,
+    y: collapseWinBox.y - collapsePad,
+    width: collapseWinBox.width + collapsePad * 2,
+    height: collapseWinBox.height + collapsePad * 2,
+  });
+  collapseBackdropWin.showInactive();
+  collapseBackdropWin.moveTop();
+  islandWindow?.moveTop();
+  await sleep(320);
+
+  const displayForCollapse = screen.getPrimaryDisplay();
+  const shotScaleGuess = displayForCollapse.scaleFactor || 1;
+  const collapseShotSize = {
+    width: Math.round(displayForCollapse.size.width * shotScaleGuess),
+    height: Math.round(displayForCollapse.size.height * shotScaleGuess),
+  };
+  const grabScreen = async (): Promise<Electron.NativeImage | null> => {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: collapseShotSize,
+    });
+    const source =
+      sources.find((item) => String(item.display_id) === String(displayForCollapse.id)) ?? sources[0];
+    return source ? source.thumbnail : null;
+  };
+  /** 窗口矩形内、卡片矩形外的"非底板色"像素数（= 残影） */
+  const ringResidue = (
+    bitmap: Buffer,
+    shotScale: number,
+    card: { x: number; y: number; width: number; height: number },
+    winRect: { x: number; y: number; width: number; height: number },
+  ): number => {
+    const px = (v: number): number => Math.round(v * shotScale);
+    const fromX = px(winRect.x);
+    const fromY = px(winRect.y);
+    const toX = px(winRect.x + winRect.width);
+    const toY = px(winRect.y + winRect.height);
+    const cardBox = { x: px(card.x), y: px(card.y), w: px(card.width), h: px(card.height) };
+    let count = 0;
+    for (let y = Math.max(0, fromY); y < Math.min(collapseShotSize.height, toY); y += 2) {
+      for (let x = Math.max(0, fromX); x < Math.min(collapseShotSize.width, toX); x += 2) {
+        if (x >= cardBox.x && x <= cardBox.x + cardBox.w && y >= cardBox.y && y <= cardBox.y + cardBox.h) continue;
+        const index = (y * collapseShotSize.width + x) * 4;
+        if (index + 3 >= bitmap.length) continue;
+        const b = bitmap[index];
+        const g = bitmap[index + 1];
+        const r = bitmap[index + 2];
+        // 与**底板自身颜色**比对：明显偏离才算"岛像素"（底板是深色，不能按"深色=岛"判）
+        const bg = ISLAND_BACKDROP_COLOR_RGB;
+        if (Math.abs(r - bg.r) + Math.abs(g - bg.g) + Math.abs(b - bg.b) > 90) count += 1;
+      }
+    }
+    return count;
+  };
+  const collapseResidue = { shots: 0, max: 0 };
+  await islandWindow?.webContents.executeJavaScript(
+    `(() => {
+       const button = document.querySelector('.island-card.expanded .icon-btn');
+       if (button) button.click();
+       return Boolean(button);
+     })()`,
+  );
+  for (let attempt = 0; attempt < 22; attempt += 1) {
+    const image = await grabScreen();
+    const geometry = await readIslandGeometryFrom(islandWindow!);
+    if (image && geometry) {
+      collapseResidue.shots += 1;
+      const bitmap = image.toBitmap();
+      const shotScale = image.getSize().width / Math.max(1, displayForCollapse.size.width);
+      collapseResidue.max = Math.max(
+        collapseResidue.max,
+        ringResidue(bitmap, shotScale, geometry.island, geometry.window),
+      );
+    }
+    await sleep(30);
+  }
+  record(
+    '触摸模式收起：窗口带内不出现残影（垫底板逐帧检查，窗口让出的区域不留上一帧）',
+    collapseResidue.shots >= 4 && collapseResidue.max <= 400,
+    `${collapseResidue.shots} 帧采样，窗口带内岛像素峰值=${collapseResidue.max}（该带本该全是底板色）`,
+  );
+  island.setTouchMode(false);
+  await sleep(200);
+  island.handleAction({ action: 'dismiss' });
+  await sleep(400);
+
+  // 形态变化全程卡片不许被窗口裁切（用户反馈："上半剩圆角、下半被平切"）
+  record(
+    '整批关闭过程中卡片不被窗口裁切（上半圆角、下半也是圆角）',
+    closingClip.shots >= 5 && closingClip.maxOverflow <= 1,
+    `${closingClip.shots} 帧采样，最大越界=${closingClip.maxOverflow.toFixed(1)}px（要求 ≤ 1px，即卡片完整落在窗口内）`,
+  );
+
+  await drainIsland();
+  await sleep(400);
+  island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1 });
+  await sleep(300);
+
   // 4.9) 收起态回归（用户反馈"收起后部分情况无法再次打开"）：
   //      a) 胶囊不再因超时消失（有未处理通知时常驻）；
   //      b) 收起后胶囊仍然可命中（窗口保持可交互）→ 点击可再次展开；
   //      c) 空闲细缝态同样是"可见即可点"（细缝 6x22 也能命中）。
-  // 注：此处不使用后面的 drainIsland（它在本函数更靠下的位置定义），就地排空队列。
-  const drainForCollapseCheck = async (): Promise<void> => {
-    for (let index = 0; index < 20; index += 1) {
-      const current = island.getState();
-      if (!current.active && current.queued.length === 0) return;
-      island.handleAction({ action: 'dismiss' });
-      await sleep(120);
-    }
-  };
+  const drainForCollapseCheck = drainIsland;
   /** 合成"指针移到卡片上"：命中测试由渲染进程按指针位置决定（真实场景由系统转发 mousemove） */
   const hoverCard = async (): Promise<boolean> =>
     Boolean(
@@ -1646,7 +2321,13 @@ async function runIslandChecks(
   );
   // 主进程的命中兜底轮询：岛体矩形必须随形态更新（指针交给系统，这里只断言"依据"是对的）
   await island.handleAction({ action: 'collapse' });
-  await sleep(500);
+  // 岛体矩形由渲染进程在形变过程中上报；置顶透明小窗的 rAF 在自动化会话里会被限流，
+  // 形变可能要等渲染进程的兜底 snap（1.2s）才收敛，所以这里轮询等它变小，而不是死等 500ms。
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const rect = island.getHitRect();
+    if (rect && Math.abs(rect.width - ISLAND_SIZES.pill.width) <= 2) break;
+    await sleep(120);
+  }
   const hitRectCollapsed = island.getHitRect();
   record(
     '命中兜底：岛体矩形随形态更新（供主进程按光标校正）',
@@ -1821,6 +2502,26 @@ async function runIslandChecks(
     '紧急光晕不外溢（岛之外的窗口留白区无红色像素）',
     urgentShot !== undefined && outsideReddish === 0 && urgentReddish > 200,
     `紧急态岛内偏红=${urgentReddish} 岛外留白偏红=${outsideReddish}（要求 0）`,
+  );
+
+  /*
+    7a) 投影（filter）必须常驻：**任一所拍形态**都不允许缺 filter，切换形态只能改参数。
+
+    增删 CSS filter 会让 Chromium 重建元素的渲染表面（effect node），首帧合成可能早于
+    新表面栅格化完成 —— 那一帧被当作空内容画出去。卡片的底色正画在这个被过滤的元素上，
+    于是**开/合的一瞬间底座会闪掉一帧**（用户反馈的"开合时一瞬间的闪动"）。
+    这里刻意只断言"每一张截图都有投影"，不去要求"胶囊与展开的参数必须不同"：
+    后者会把"岛因别的原因卡在展开态"这类无关故障也算到这条用例头上，信号就脏了。
+  */
+  const shotsWithFilter = shotDetails.filter((shot) => (shot.shapeFilter ?? '').length > 0);
+  const missingShadow = shotsWithFilter.filter((shot) => !(shot.shapeFilter ?? '').includes('drop-shadow'));
+  const pillFilter = pillShot?.shapeFilter ?? '';
+  const expandedFilter = expandedShot?.shapeFilter ?? '';
+  record(
+    '灵动岛任意形态的投影都常驻（不增删 filter，避免开合闪一帧）',
+    shotsWithFilter.length >= 3 && missingShadow.length === 0,
+    `${shotsWithFilter.length} 张有 filter，缺投影=${missingShadow.map((shot) => shot.name).join(',') || '无'}；` +
+      `胶囊=${pillFilter || '(未拍到)'} 展开=${expandedFilter || '(未拍到)'}`,
   );
 
   // 7b) 圆角几何：从四角沿对角线向内找边界，四个角的步进必须一致（旧实现四角共用同一个
@@ -2041,10 +2742,14 @@ async function runIslandChecks(
   const motionSamples: {
     winW: number;
     winH: number;
+    winX: number;
     cardCx: number;
     cardTop: number;
     cardW: number;
     cardH: number;
+    pillLeft: number;
+    pillRight: number;
+    pillTextLeft: number;
   }[] = [];
 
   const sampleCardRect = async (): Promise<void> => {
@@ -2055,7 +2760,19 @@ async function runIslandChecks(
            const card = document.querySelector('.island-card');
            if (!card) return null;
            const r = card.getBoundingClientRect();
-           return { left: r.left, top: r.top, width: r.width, height: r.height };
+           const pill = card.querySelector('.pill-title');
+           const pr = pill ? pill.getBoundingClientRect() : null;
+           const text = card.querySelector('.pill-text');
+           const tr = text ? text.getBoundingClientRect() : null;
+           return {
+             left: r.left,
+             top: r.top,
+             width: r.width,
+             height: r.height,
+             pillLeft: pr ? pr.left : -1,
+             pillRight: pr ? pr.right : -1,
+             pillTextLeft: tr ? tr.left : -1,
+           };
          })()`,
       )
       .catch(() => null);
@@ -2063,10 +2780,14 @@ async function runIslandChecks(
     motionSamples.push({
       winW: bounds.width,
       winH: bounds.height,
+      winX: bounds.x,
       cardCx: bounds.x + rect.left + rect.width / 2,
       cardTop: bounds.y + rect.top,
       cardW: rect.width,
       cardH: rect.height,
+      pillLeft: rect.pillLeft < 0 ? -1 : bounds.x + rect.pillLeft,
+      pillRight: rect.pillRight < 0 ? -1 : bounds.x + rect.pillRight,
+      pillTextLeft: rect.pillTextLeft < 0 ? -1 : bounds.x + rect.pillTextLeft,
     });
   };
 
@@ -2154,17 +2875,42 @@ async function runIslandChecks(
       `最小岛宽=${minCardW.toFixed(1)}（目标 ${pillCard.width}） 单调收缩=${collapseMonotonic}`,
   );
 
+  /*
+    11.7) 开合时**胶囊内容不允许横移/重排**（用户反馈："展开和收回的时候，新消息那行字往右跳一下再缩回"）。
+
+    卡片在开合时会 268 ⇄ 424 变宽变窄，而中心停靠下卡片的左右边都在动：
+    若胶囊内容跟着卡片宽度走，文字就会"先按宽卡片铺开、再随卡片收窄被省略号收回"。
+    因此这里逐帧采样 `.pill-title` 的左右边缘：整段形变里它的位置必须基本不动
+    （`.pill-inner` 固定为胶囊几何），否则就是又退化回"跟着卡片重排"了。
+  */
+  const pillSpan = (list: typeof motionSamples): { left: number; right: number; count: number } => {
+    const rows = list.filter((item) => item.pillTextLeft >= 0 && item.pillRight >= 0);
+    if (rows.length === 0) return { left: 0, right: 0, count: 0 };
+    const lefts = rows.map((item) => item.pillTextLeft);
+    const rights = rows.map((item) => item.pillRight);
+    return {
+      left: Math.max(...lefts) - Math.min(...lefts),
+      right: Math.max(...rights) - Math.min(...rights),
+      count: rows.length,
+    };
+  };
+  const expandPill = pillSpan(expandSamples);
+  const collapsePill = pillSpan(collapseSamples);
+  record(
+    '灵动岛开合时胶囊内容不横移（文字不"先铺开再缩回"，固定为胶囊几何）',
+    expandPill.count >= 3 &&
+      collapsePill.count >= 3 &&
+      expandPill.right <= 2 &&
+      collapsePill.right <= 2 &&
+      expandPill.left <= 2 &&
+      collapsePill.left <= 2,
+    `展开：文本左边缘波动=${expandPill.left.toFixed(1)}px 右边缘波动=${expandPill.right.toFixed(1)}px（${expandPill.count} 帧）；` +
+      `收回：左=${collapsePill.left.toFixed(1)}px 右=${collapsePill.right.toFixed(1)}px（${collapsePill.count} 帧）——都要求 ≤ 2px`,
+  );
+
   // 收尾：保持"胶囊可见"状态——后续个性化用例（透明度 / 位置）需要窗口可见才会立即生效
   await sleep(250);
-  /** 排空灵动岛队列：连续收起直到没有活动通知与排队通知（否则"空闲态"断言会被下一条顶掉） */
-  const drainIsland = async (): Promise<void> => {
-    for (let index = 0; index < 20; index += 1) {
-      const current = island.getState();
-      if (!current.active && current.queued.length === 0) return;
-      island.handleAction({ action: 'dismiss' });
-      await sleep(120);
-    }
-  };
+  // 排空队列用模块级的 drainIsland()（同一条实现，见文件顶部）
 
   /** 灵动岛状态摘要（失败时用于定位是"没排空队列"还是"几何没生效"） */
   const islandStateSummary = (): string => {
@@ -2344,6 +3090,57 @@ async function runIslandChecks(
   island.setAppearance({ ...appearanceBefore, style: 'black' });
   await sleep(200);
 
+  // 10.7c) 触摸屏（希沃白板）：手指点不开灵动岛的根因是"窗口在触摸点处不可命中" ——
+  //        打开命中的两条链路（渲染进程 mousemove 转发、主进程读系统光标）都要求鼠标指针移动，
+  //        触摸两者都不产生，窗口会永远停在穿透态。修法是触摸模式下让窗口**贴合岛体**且不穿透
+  //        （Electron 没有 SetWindowRgn，只能靠贴合包围盒把"多出来的透明区"压到投影留白大小）。
+  //
+  //        断言取"窗口 = 卡片实测尺寸 + 2×阴影留白"这个**与形态无关**的不变量：
+  //        别写死 `ISLAND_SIZES.pill + pad` —— 岛此刻是胶囊还是卡片取决于前面用例留下的状态，
+  //        写死形态会在别的用例微调外观/队列后误报（第一次就是这么写的，打包版冒烟里报了红）。
+  const boxBeforeTouch = island.getWindowBounds();
+  island.setTouchMode(true);
+  const pad = ISLAND_SHADOW_PAD;
+  let touchBox = island.getWindowBounds();
+  let touchCard = { width: 0, height: 0 };
+  const touchSnug = (): boolean =>
+    Math.abs(touchBox.width - (touchCard.width + pad * 2)) <= 2 &&
+    Math.abs(touchBox.height - (touchCard.height + pad * 2)) <= 2;
+  for (let index = 0; index < 25 && !touchSnug(); index += 1) {
+    const geo = islandWindow ? await readIslandGeometryFrom(islandWindow) : null;
+    touchBox = island.getWindowBounds();
+    if (geo?.island) touchCard = { width: geo.island.width, height: geo.island.height };
+    if (touchSnug()) break;
+    await sleep(120);
+  }
+  // 这条要断言触摸模式下"始终接收输入"，短时关掉测试输入穿透（否则恒为穿透）
+  island.setTestInputPassthrough(false);
+  const touchInteractive = island.getInteractive();
+  const touchFlag = island.getTouchMode();
+  const touchStateMode = island.getState().mode;
+  island.setTouchMode(false);
+  const boxRestored = (): boolean => {
+    const box = island.getWindowBounds();
+    return box.width === boxBeforeTouch.width && box.height === boxBeforeTouch.height;
+  };
+  let restoredBox = island.getWindowBounds();
+  for (let index = 0; index < 20 && !boxRestored(); index += 1) {
+    await sleep(100);
+    restoredBox = island.getWindowBounds();
+  }
+  record(
+    '触摸屏：窗口贴合岛体并始终接收输入（手指能点到岛）',
+    touchSnug() && touchInteractive === true && boxRestored(),
+    `触摸模式窗口=${touchBox.width}x${touchBox.height}` +
+      `（岛体实测=${Math.round(touchCard.width)}x${Math.round(touchCard.height)} + 2×${pad} 留白，形态=${touchStateMode}）` +
+      ` 触摸模式标记=${touchFlag} 接收输入=${touchInteractive}（要求 true）；` +
+      `退出触摸模式后=${restoredBox.width}x${restoredBox.height}` +
+      `（期望恢复 ${boxBeforeTouch.width}x${boxBeforeTouch.height}）`,
+  );
+  await sleep(200);
+  // 触摸用例跑完，恢复"真实输入穿透"（后续用例仍靠它免于并行人工操作）
+  island.setTestInputPassthrough(true);
+
   // 10.8) 空闲细缝（参考 WinIsland hidden_width）：开启后空闲留一条细缝，来消息再展开
   const sliver = getSliverSize();
   /**
@@ -2386,11 +3183,17 @@ async function runIslandChecks(
 
   island.setAppearance({ ...appearanceBefore, idleSliver: false });
   island.handleAction({ action: 'dismiss' });
-  await sleep(450);
+  // 注意：dismiss 走「收回动画（~360ms）→ 淡出 → 隐藏」，机器忙时耗时更长，
+  // 固定 sleep 会间歇性踩到动画没播完（isVisible 仍为 true）——轮询等它真正隐藏。
+  let sliverHidden = !(islandWindow?.isVisible() ?? true);
+  for (let attempt = 0; attempt < 25 && !sliverHidden; attempt += 1) {
+    await sleep(120);
+    sliverHidden = !(islandWindow?.isVisible() ?? true);
+  }
   record(
     '关闭空闲细缝后空闲再次完全隐藏（保持原行为）',
-    islandWindow?.isVisible() === false,
-    `isVisible=${islandWindow?.isVisible() ?? '-'}`,
+    sliverHidden,
+    `isVisible=${islandWindow?.isVisible() ?? '-'}（轮询后${sliverHidden ? '已' : '未'}隐藏）`,
   );
   island.pushNotification(makeNotification('smoke-after-sliver', 'NORMAL', '细缝关闭后恢复'), {
     inClass: false,
@@ -2685,6 +3488,23 @@ async function runIslandChecks(
   // 收尾：隐藏灵动岛，避免影响后续用例
   island.handleAction({ action: 'dismiss' });
   await sleep(300);
+
+  // 本机录入的作业不上岛（用户要求）：走渲染进程 bridge 的真实判定
+  const localHomework = await mainWin?.webContents
+    .executeJavaScript(
+      `(async () => {
+         if (!window.__classhelperSmoke__?.islandHomeworkSuppressionCheck) return { ok: false, detail: '缺少自检钩子' };
+         return await window.__classhelperSmoke__.islandHomeworkSuppressionCheck();
+       })()`,
+    )
+    .catch(() => null);
+  record(
+    '本机录入的作业不再上灵动岛（内容指纹 + id 双重判定）',
+    Boolean(localHomework?.ok),
+    String(localHomework?.detail ?? '未执行'),
+  );
+
+  island.setTestInputPassthrough(false);
   results.push({ name: '灵动岛用例收尾', ok: true, detail: '已隐藏' });
 }
 
@@ -2713,16 +3533,24 @@ async function runIslandRealtimeCheck(
     };
   }
 
-  // 等通知经实时通道到达并弹出胶囊
+  // 等通知经实时通道到达并上岛（紧急通知直接展开、普通通知在课间是胶囊，两者都算"到了"）
   const deadline = Date.now() + 10_000;
   let state = island.getState();
   while (Date.now() < deadline) {
     state = island.getState();
-    if (state.mode === 'pill' && state.active?.id === scenario.notificationId) break;
+    if (
+      (state.mode === 'pill' || state.mode === 'expanded') &&
+      state.active?.id === scenario.notificationId
+    ) {
+      break;
+    }
     await sleep(120);
   }
   const visible = island.getWindow()?.isVisible() ?? false;
-  const delivered = state.mode === 'pill' && state.active?.id === scenario.notificationId && visible;
+  const delivered =
+    (state.mode === 'pill' || state.mode === 'expanded') &&
+    state.active?.id === scenario.notificationId &&
+    visible;
   const deliveryDetail =
     `通知=${scenario.notificationId} 客户端判定上课中=${scenario.inClass} ` +
     `灵动岛 mode=${state.mode} 可见=${visible}`;
@@ -2777,6 +3605,85 @@ async function runIslandRealtimeCheck(
 }
 
 /**
+ * 多条通知「标为已读」的整批自检（用户要求：多条时那一排按钮里的"标为已读"**默认把这一批全标上**）。
+ *
+ * 走真实链路：教师发两条通知 → Socket.IO → 客户端实时通道 → 灵动岛排成列表 →
+ * 在岛里点"标为已读" → **两条**都要在通知中心变成已读、岛同时整批关闭。
+ * 这条同时守住了新加的 `island:mark-all-read` 通道（preload 白名单 → 渲染进程 → 通知中心）。
+ */
+async function runIslandBatchReadCheck(win: BrowserWindow): Promise<{ ok: boolean; detail: string }> {
+  const first = await createSmokeNotification('灵动岛整批已读自检 A');
+  const second = await createSmokeNotification('灵动岛整批已读自检 B');
+  if (!first || !second) {
+    return { ok: false, detail: '未创建出自检通知（后端不可用或缺少冒烟教师凭据）' };
+  }
+  const onIsland = (id: string, state: ReturnType<typeof island.getState>): boolean =>
+    state.active?.id === id || state.queued.some((item) => item.id === id);
+  try {
+    // 等两条都到达灵动岛
+    const deadline = Date.now() + 15_000;
+    let state = island.getState();
+    while (Date.now() < deadline) {
+      state = island.getState();
+      if (onIsland(first, state) && onIsland(second, state)) break;
+      await sleep(150);
+    }
+    const bothArrived = onIsland(first, state) && onIsland(second, state);
+    if (!bothArrived) {
+      return {
+        ok: false,
+        detail: `通知没都到达灵动岛：A=${onIsland(first, state)} B=${onIsland(second, state)}（当前 ${pendingCountOf(state)} 条）`,
+      };
+    }
+    island.handleAction({ action: 'expand' });
+    await sleep(900);
+    const islandWin = island.getWindow();
+    const listed = await islandWin?.webContents.executeJavaScript(
+      `document.querySelectorAll('.island-card.expanded .list-row').length`,
+    );
+    const clicked = await islandWin?.webContents.executeJavaScript(
+      `(() => {
+         const button = Array.from(document.querySelectorAll('.island-card.expanded .ghost-btn')).find((node) =>
+           (node.textContent ?? '').includes('标为已读'),
+         );
+         if (!button) return false;
+         button.click();
+         return true;
+       })()`,
+    );
+    await sleep(1500);
+    const readState = async (id: string): Promise<{ read?: boolean } | null> =>
+      win.webContents.executeJavaScript(
+        `(async () => window.__classhelperSmoke__.islandReadState(${JSON.stringify(id)}))()`,
+      );
+    const afterFirst = await readState(first);
+    const afterSecond = await readState(second);
+    const cleared = island.getState();
+    const ok =
+      clicked === true &&
+      Number(listed) >= 2 &&
+      afterFirst?.read === true &&
+      afterSecond?.read === true &&
+      cleared.active === null &&
+      cleared.queued.length === 0;
+    return {
+      ok,
+      detail:
+        `列表行=${listed} 点击=${clicked} A 已读=${afterFirst?.read} B 已读=${afterSecond?.read} ` +
+        `岛剩余=${pendingCountOf(cleared)}`,
+    };
+  } catch (error) {
+    return { ok: false, detail: `执行失败：${error instanceof Error ? error.message : String(error)}` };
+  } finally {
+    // 清理：删掉自检造的两条通知，别污染演示数据
+    await deleteSmokeNotification(first);
+    await deleteSmokeNotification(second);
+    island.handleAction({ action: 'dismiss' });
+    await sleep(300);
+  }
+}
+
+/**
  * 设置页「真实 UI 链路」自检（用户反馈：**灵动岛设置无法生效并且无法实时预览**）。
  *
  * 为什么必须单独来一条：上面的用例都是直接调 `window.desktop.islandSetAppearance(...)`，
@@ -2788,6 +3695,57 @@ async function runIslandRealtimeCheck(
  * 因此这里在真实设置页里合成一次拖拽（mousedown → mousemove → mouseup，与用户操作同一路径），
  * 并同时断言「滑块自身的数值」与「主进程里的外观」都变了 —— 只断言前者会漏掉这个 bug。
  */
+/**
+ * 设置页**不得**提供改密入口（2026-10-01 用户要求移除）。
+ *
+ * 历史：客户端曾因"完全没有改密入口"被反馈，补过一个对话框（改的是班级密码）；
+ * 后来产品定版为学生个人账号整体清理、班级密码只由管理员在 Web 端「班级管理 → 修改班级账号」
+ * 维护，客户端的入口也随之移除。这里做成**负断言**守住"不再退化回来"，
+ * 并顺带确认「退出登录」按钮还在（设置页没有被顺手改坏）。
+ */
+async function runSettingsPagePasswordEntryCheck(
+  win: BrowserWindow,
+): Promise<{ ok: boolean; detail: string }> {
+  const result = (await win.webContents
+    .executeJavaScript(
+      `(async () => {
+         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+         location.hash = '#/schedule';
+         await wait(250);
+         location.hash = '#/settings';
+         let card = null;
+         for (let i = 0; i < 40 && !card; i += 1) {
+           await wait(100);
+           card =
+             Array.from(document.querySelectorAll('.el-card')).find((node) =>
+               (node.textContent ?? '').includes('账号信息'),
+             ) ?? null;
+         }
+         if (!card) return { ok: false, detail: '设置页里找不到「账号信息」卡片' };
+         const buttons = Array.from(card.querySelectorAll('button')).map(
+           (node) => (node.textContent ?? '').trim(),
+         );
+         location.hash = '#/schedule';
+         return { ok: true, buttons };
+       })()`,
+    )
+    .catch((error: unknown) => ({
+      ok: false as const,
+      detail: `执行失败：${error instanceof Error ? error.message : String(error)}`,
+    }))) as { ok: true; buttons: string[] } | { ok: false; detail: string } | null;
+
+  if (result?.ok) {
+    const hasPassword = result.buttons.some((text) => text.includes('修改密码') || text.includes('密码'));
+    return {
+      ok: !hasPassword && result.buttons.some((text) => text === '退出登录'),
+      detail:
+        `账号信息卡片按钮=[${result.buttons.join(', ')}] ` +
+        `改密入口存在=${hasPassword}（要求 false）退出登录存在=${result.buttons.includes('退出登录')}`,
+    };
+  }
+  return { ok: false, detail: result?.detail ?? '未执行' };
+}
+
 async function runSettingsPageAppearanceCheck(win: BrowserWindow): Promise<{ ok: boolean; detail: string }> {
   const result = (await win.webContents
     .executeJavaScript(
@@ -3193,20 +4151,26 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     `text=${dom?.text ?? ''}`,
   );
 
-  // 需求："删掉登录页所有示例内容" —— 占位符/提示里不允许出现示例班级码或示例账号
+  // 需求："删掉登录页所有示例内容" —— 占位符/提示里不允许出现示例班级码或示例账号。
+  // 判据不写死具体示例码：用"演示/示例"字样 + 旧版占位符的**形状**（例如 G101）+ 环境变量传入的凭据，
+  // 这样断言更严（任何"例如 XXX123"都会被抓到），安装包里也不留示例账号字面量。
   const loginExampleLeak = await win.webContents.executeJavaScript(
     `(() => {
        const text = (document.body.innerText || '') + ' ' + Array.from(document.querySelectorAll('input'))
          .map((node) => node.getAttribute('placeholder') || '')
          .join(' ');
-       const tokens = ['例如 G101', 'G101', '例如G101', 'admin123', 'teacher123', '演示', '示例'];
-       return { leaked: tokens.filter((item) => text.includes(item)) };
+       const tokens = ['演示', '示例'].concat(${JSON.stringify(smokeCredentialTokens)});
+       const leaked = tokens.filter((item) => text.includes(item));
+       // 旧版登录页的占位符样式："例如 G101" / "例如G101"
+       if (/例如\\s*[A-Z]{1,3}\\d{2,4}/.test(text)) leaked.push('例如 <班级码>');
+       return { leaked };
      })()`,
   );
   record(
     '登录页不含示例内容（无示例班级码/演示账号）',
     (loginExampleLeak?.leaked ?? ['?']).length === 0,
-    `越界文案=[${(loginExampleLeak?.leaked ?? []).join(',')}]`,
+    `越界文案=[${(loginExampleLeak?.leaked ?? []).join(',')}]` +
+      (smokeCredentialTokens.length === 0 ? '（未提供冒烟凭据，仅按"演示/示例"与占位符形状判定）' : ''),
   );
 
   // preload 桥接
@@ -3287,6 +4251,10 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const settingsChannel = await runSettingsPageChannelCheck(win);
     record('设置页真实 UI：切换「通知显示位置」写回本地配置', settingsChannel.ok, settingsChannel.detail);
 
+    // 改密入口（2026-10-01 用户要求移除：班级密码只由管理员在 Web 端维护）——负断言防退化
+    const settingsPassword = await runSettingsPagePasswordEntryCheck(win);
+    record('设置页真实 UI：不再提供「修改密码」入口', settingsPassword.ok, settingsPassword.detail);
+
     // 左右边距：必须走「设置页拖滑块」的真实链路（用户反馈：调了没实时预览、也不生效）
     const settingsMargin = await runSettingsPageMarginCheck(win, () =>
       island.getWindow() ? readIslandGeometryFrom(island.getWindow()!) : Promise.resolve(null),
@@ -3298,6 +4266,11 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const realtime = await runIslandRealtimeCheck(win);
     record('真实通知链路（Socket.IO → 灵动岛胶囊）', realtime.delivered, realtime.deliveryDetail);
     record('灵动岛"标为已读"同步通知中心', realtime.markRead, realtime.markReadDetail);
+
+    // 多条通知的整批已读（用户要求：那一排按钮里的"标为已读"默认把这一批全标上）。
+    // 必须放在登录之后：这两条通知要真的经 Socket.IO 到达客户端并排成列表。
+    const batchRead = await runIslandBatchReadCheck(win);
+    record('多条通知点「标为已读」：整批已读并关闭', batchRead.ok, batchRead.detail);
 
     // ClassIsland 风格「今天」时间轴：造课 → 断言高亮/倒计时/大时钟 → 清理
     const timeline = await win.webContents.executeJavaScript(

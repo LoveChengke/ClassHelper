@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { BrowserWindow, ipcMain, screen } from 'electron';
 import {
   DEFAULT_ISLAND_APPEARANCE,
@@ -7,13 +8,36 @@ import {
   ISLAND_SIZE_DELTA,
   ISLAND_SLIVER_WIDTH,
   ISLAND_STYLES,
+  PRIORITY_RANK,
+  islandListLayout,
   type IslandAppearance,
+  type IslandListLayout,
   type IslandMode,
   type IslandNotification,
   type IslandState,
 } from '@classhelper/shared';
 import { logger } from './logger.js';
 import { getConfig } from './config.js';
+
+/** 生产环境的灵动岛页面地址（导航白名单的精确比对用） */
+const prodIslandUrl = pathToFileURL(path.join(__dirname, '../renderer/island.html')).href;
+
+/**
+ * 是否允许灵动岛窗口导航到这个地址。
+ * 与主窗口同一套理由：preload 挂在窗口上而不是 URL 上，被导航走就等于把 `window.desktop`
+ * 交给了一个陌生页面；而灵动岛还是置顶窗口，陌生页面会停在屏幕最上层。
+ */
+function isAllowedIslandNavigation(url: string, devUrl: string | null): boolean {
+  try {
+    const target = new URL(url);
+    if (devUrl) return target.origin === new URL(devUrl).origin;
+    target.hash = '';
+    target.search = '';
+    return target.href === prodIslandUrl;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * 灵动岛（Dynamic Island）主进程控制器。
@@ -102,7 +126,18 @@ export interface IslandClassStatePayload {
   week?: number;
 }
 
-type IslandActionName = 'expand' | 'collapse' | 'dismiss' | 'mark-read' | 'open-app';
+type IslandActionName =
+  | 'expand'
+  | 'collapse'
+  /** 多条通知时点"展开更多"：把列表铺到屏幕放得下的程度 */
+  | 'expand-list'
+  | 'dismiss'
+  /** 多条通知时点"知道了"：整批关闭，但不改通知中心的已读状态 */
+  | 'dismiss-all'
+  | 'mark-read'
+  /** 多条通知时点"标为已读"：整批已读并关闭 */
+  | 'mark-all-read'
+  | 'open-app';
 
 interface IslandActionPayload {
   action: IslandActionName;
@@ -127,12 +162,35 @@ class IslandController {
   /** 是否允许"失焦自动收起"（冒烟可临时关闭，避免焦点抖动干扰断言） */
   private blurCollapseEnabled = true;
   private interactive = false;
+  /**
+   * 触摸模式：触摸屏机器上由渲染进程按 `navigator.maxTouchPoints` 上报（见 `setTouchMode`）。
+   *
+   * 为什么触摸屏必须单独一套：触摸屏上"点不动"是**机制性**的，不是偶发 —— 打开命中的两条链路
+   * （渲染进程的 mousemove 转发、主进程读系统光标位置）都以"鼠标指针移动"为前提，而手指触摸
+   * 既不产生 mousemove、也不移动系统光标。于是窗口永远停在 `setIgnoreMouseEvents(true)` 的
+   * 穿透态，手指点下去只落到桌面（用户反馈：希沃白板上触摸灵动岛无法展开）。
+   *
+   * 修法只有一条：**窗口在触摸点处必须可命中**。Electron 没有 SetWindowRgn 那种"窗口区域"能力，
+   * 所以改成在触摸模式下让窗口**贴合岛体**（岛体 + 阴影留白）并始终接收输入 —— 贴身后多出来的
+   * 只有投影所需的 10px 留白，不再吞掉桌面点击。
+   */
+  private touchMode = false;
   /** 渲染进程上报的岛体矩形（窗口内 CSS px）：主进程据此做光标命中兜底轮询 */
   private hitRect: { x: number; y: number; width: number; height: number } | null = null;
   /** 光标命中兜底轮询定时器（见 syncHitFromCursor 注释） */
   private hitTimer: ReturnType<typeof setInterval> | null = null;
   /** 诊断/冒烟用：覆盖光标位置（屏幕坐标），null 表示使用真实光标 */
   private cursorOverride: { x: number; y: number } | null = null;
+  /**
+   * 冒烟/诊断用：让窗口**不接收真实鼠标**（真实点击穿透到桌面）。
+   *
+   * 为什么需要：自动化验证时长分钟计，而岛上那套命中逻辑是按"真实光标位置"开的 ——
+   * 若此时用户正在用同一块屏幕（他自己的客户端和冒烟窗口都在屏幕顶部居中、互相叠着），
+   * 他点到的是**冒烟这个窗口**，冒烟就会收到人的点击（实测：冒烟从未发出的 collapse / mark-read
+   * 混进了断言，把「点胶囊展开」「点空白处收起」等用例整片弄红）。
+   * 打开后所有命中请求一律按"穿透"处理；合成 DOM 点击（executeJavaScript）不受影响。
+   */
+  private testInputPassthrough = false;
   /** 上次按矩形立即校正命中的时刻（限流用） */
   private lastHitSyncAt = 0;
   /** 设置页"预览效果"的示例通知 id（预览期间失焦不收起） */
@@ -147,7 +205,10 @@ class IslandController {
   private recovering = false;
   /** 最近的窗口重建时刻（限流用） */
   private recoverAt: number[] = [];
-
+  /** 上一次计算锚点所依据的显示器 id：用于发现"光标换屏 / 显示器插拔"并重排窗口 */
+  private anchorDisplayId: number | null = null;
+  /** 展开卡可用高度上限（CSS px）：由工作区/停靠位置算出，随状态下发给渲染进程 */
+  private maxCardHeight = 1024;
   private state: IslandState = {
     mode: 'hidden',
     active: null,
@@ -155,6 +216,8 @@ class IslandController {
     inClass: false,
     currentPeriodEnd: null,
     reason: null,
+    listExpanded: false,
+    maxCardHeight: 1024,
     updatedAt: Date.now(),
   };
 
@@ -164,12 +227,19 @@ class IslandController {
   /** 灵动岛点"标为已读"时交给外部（主窗口渲染进程）同步通知中心 */
   private markReadHandler: ((id: string) => void) | null = null;
 
+  /** 灵动岛一次"标为已读"要标记的多条通知（多条列表时的整批已读） */
+  private markAllReadHandler: ((ids: string[]) => void) | null = null;
+
   setOpenAppHandler(handler: () => void): void {
     this.openAppHandler = handler;
   }
 
   setMarkReadHandler(handler: (id: string) => void): void {
     this.markReadHandler = handler;
+  }
+
+  setMarkAllReadHandler(handler: (ids: string[]) => void): void {
+    this.markAllReadHandler = handler;
   }
 
   async init(rendererUrl: string | null): Promise<void> {
@@ -181,6 +251,7 @@ class IslandController {
       this.appearance = { ...DEFAULT_ISLAND_APPEARANCE };
     }
     recomputeSizes(this.appearance);
+    this.refreshViewport();
     if (this.win && !this.win.isDestroyed()) return;
 
     const win = new BrowserWindow({
@@ -219,6 +290,13 @@ class IslandController {
 
     win.setAlwaysOnTop(this.appearance.alwaysOnTop, 'screen-saver');
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    // 拒绝一切导航与新开窗口（理由见 isAllowedIslandNavigation）
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    win.webContents.on('will-navigate', (event, url) => {
+      if (isAllowedIslandNavigation(url, this.rendererUrl)) return;
+      event.preventDefault();
+      logger.warn(`灵动岛拒绝了页面导航：${url}`);
+    });
     // 注意：这里**不能**调用 `win.setBackgroundMaterial()`（亚克力/mica），
     // 见 `applyBackgroundMaterial` 移除处的说明。
     // 默认整块窗口不接收鼠标（避免大面积透明窗口吞掉桌面点击），
@@ -254,7 +332,10 @@ class IslandController {
         );
         return;
       }
-      if (sinceActivated < BLUR_GRACE_MS) {
+      // 触摸屏上没有"指针"可依据（isCursorOnIsland 恒为 false），只能用更宽的宽限期覆盖
+      // 上面实测到的 70~520ms 抖动区间，否则手指点开后约 0.5s 会莫名缩回胶囊。
+      const grace = this.touchMode ? BLUR_GRACE_TOUCH_MS : BLUR_GRACE_MS;
+      if (sinceActivated < grace) {
         logger.info(`灵动岛：忽略激活后 ${sinceActivated}ms 内的失焦（宽限期内不收起）`);
         return;
       }
@@ -360,13 +441,10 @@ class IslandController {
   ): IslandNotification {
     if (!existing || existing.id !== incoming.id) return incoming;
     const kind = existing.kind === 'call' || incoming.kind === 'call' ? 'call' : incoming.kind;
-    const rank: Record<IslandNotification['priority'], number> = {
-      LOW: 0,
-      NORMAL: 1,
-      HIGH: 2,
-      URGENT: 3,
-    };
-    const priority = rank[incoming.priority] >= rank[existing.priority] ? incoming.priority : existing.priority;
+    const priority =
+      (PRIORITY_RANK[incoming.priority] ?? 0) >= (PRIORITY_RANK[existing.priority] ?? 0)
+        ? incoming.priority
+        : existing.priority;
     return { ...incoming, kind, priority };
   }
 
@@ -377,6 +455,61 @@ class IslandController {
   }
 
   /**
+   * 当前**未处理**的消息（正在展示的 + 队列里的），按「重要程度 → 时间」倒序。
+   *
+   * 排序口径与共享常量 `PRIORITY_RANK` 一致：紧急 > 重要 > 普通 > 低，同级按时间新的在前。
+   * 用户在展开卡里看到的就是这个顺序（"默认按重要程度排列"）。
+   */
+  private pendingNotifications(): IslandNotification[] {
+    const merged: IslandNotification[] = [];
+    if (this.state.active) merged.push(this.state.active);
+    for (const item of this.state.queued) {
+      if (!merged.some((existing) => existing.id === item.id)) merged.push(item);
+    }
+    return merged.sort((a, b) => {
+      const rank = (PRIORITY_RANK[b.priority] ?? 0) - (PRIORITY_RANK[a.priority] ?? 0);
+      if (rank !== 0) return rank;
+      return String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''));
+    });
+  }
+
+  /**
+   * 多条通知时的列表布局（几条、要不要"展开更多"、卡片多高）。
+   * 只有展开态且待处理 ≥ 2 条时才有列表形态，单条通知仍然是原来那张详情卡。
+   */
+  private listLayout(): IslandListLayout | null {
+    if (this.state.mode !== 'expanded') return null;
+    const count = this.pendingNotifications().length;
+    if (count < 2) return null;
+    return islandListLayout({
+      count,
+      fontSize: this.appearance.fontSize,
+      maxHeight: this.maxCardHeight,
+      expanded: this.state.listExpanded,
+    });
+  }
+
+  /**
+   * 展开卡在当前屏幕 / 停靠位置下的可用高度上限：
+   * 从"岛被锚定的那条边"量到屏幕工作区的另一端（也就是任务栏上方）。
+   *
+   * 用锚点 `vValue` 而不是窗口矩形来算：锚点与窗口尺寸无关，因此**列表长高后再算还是同一个数**
+   * （用窗口矩形会自引用：窗口高度取决于列表高度，列表高度又取决于可用高度）。
+   */
+  private refreshViewport(): void {
+    const area = this.targetDisplay().workArea;
+    const anchor = this.resolveAnchor();
+    const marginY = Math.round(this.appearance.marginY ?? ISLAND_MARGIN);
+    const available =
+      anchor.vMode === 'bottom'
+        ? anchor.vValue - (area.y + marginY)
+        : area.y + area.height - marginY - anchor.vValue;
+    // 下限兜底：屏幕再小也不能用 0 去算布局（否则连一行都排不出来）
+    this.maxCardHeight = Math.max(MIN_CARD_HEIGHT, Math.floor(available));
+    this.state.maxCardHeight = this.maxCardHeight;
+  }
+
+  /**
    * 收到一条消息。
    * - 紧急（含紧急叫人）：立刻展开（无视上课时段）
    * - 预览（设置页"预览效果"）：直接展开，且不因失焦收起
@@ -384,6 +517,7 @@ class IslandController {
    * - 其它：显示"新消息/新作业/叫人"胶囊，等待点击展开
    */
   pushNotification(raw: IslandNotification, context: IslandPushContext = {}): void {
+    this.state.listExpanded = false;
     // 同一 id 的第二条链路（通知/叫人双播）：合并而不是覆盖，保住"叫人/紧急"语义
     const notification = this.mergeNotification(this.findKnownNotification(raw.id), raw);
     const inClass = context.inClass ?? this.state.inClass;
@@ -398,7 +532,7 @@ class IslandController {
       this.state.queued = this.state.queued.filter((item) => item.id !== notification.id);
       this.state.active = notification;
       this.state.updatedAt = Date.now();
-      this.setState({ mode: 'expanded' });
+      this.setState({ mode: 'expanded', listExpanded: false });
       this.previewTimer = setTimeout(() => {
         this.previewTimer = null;
         this.endPreview(notification.id);
@@ -561,7 +695,8 @@ class IslandController {
           // 记下这条 id，syncWindow 的上课守卫对它是放行的（否则展开后会被立刻隐藏，
           // 表现为"点不开新作业"——用户反馈的联合通知场景）。
           this.explicitShowId = this.state.inClass ? active.id : null;
-          this.setState({ mode: 'expanded' });
+          // 每次重新点开都从"只显示前三条"开始（上文的 setState 只在离开 expanded 时复位）
+          this.setState({ mode: 'expanded', listExpanded: false });
           this.scheduleCollapse(
             this.isImmediate(active)
               ? active.kind === 'call'
@@ -570,6 +705,18 @@ class IslandController {
               : TIMEOUTS.expanded,
           );
         }
+        break;
+      }
+      case 'expand-list': {
+        // 多条通知时点"展开更多"：把列表铺到屏幕放得下的程度（窗口跟着长高，见 setState）
+        if (this.state.mode === 'hidden' || this.state.listExpanded) break;
+        const layout = this.listLayout();
+        if (!layout) break;
+        logger.info(
+          `灵动岛：展开更多（共 ${this.pendingNotifications().length} 条，显示 ${layout.rows} 条，提示=${layout.hint ?? '无'}）`,
+        );
+        this.setState({ mode: 'expanded', listExpanded: true });
+        this.scheduleCollapse(TIMEOUTS.expanded);
         break;
       }
       case 'collapse':
@@ -589,6 +736,11 @@ class IslandController {
       case 'dismiss':
         this.dismissActive();
         break;
+      case 'dismiss-all':
+        // 多条通知时点"知道了"：整批关闭（通知中心仍是未读，学生回应用里再看）
+        logger.info(`灵动岛：整批知道了（${this.pendingNotifications().length} 条）`);
+        this.clearPendingForClose();
+        break;
       case 'mark-read': {
         const id = payload.id;
         const queue = this.state.queued.filter((item) => item.id !== id);
@@ -602,6 +754,18 @@ class IslandController {
           logger.info(`灵动岛标记已读：${id}`);
           this.markReadHandler?.(id);
         }
+        break;
+      }
+      case 'mark-all-read': {
+        // 多条通知时点"标为已读"：**默认把这一批全部标记已读**再关闭。
+        // 作业卡的 id 是本地合成的（`homework-<id>`，库里没有这条通知），交给通知中心只会报"通知不存在"，
+        // 因此这里先按 kind 过滤掉，单条模式的 canMarkRead 守卫同理。
+        const ids = this.pendingNotifications()
+          .filter((item) => item.kind !== 'homework')
+          .map((item) => item.id);
+        logger.info(`灵动岛：整批标为已读（${ids.length} 条）`);
+        if (ids.length > 0) this.markAllReadHandler?.(ids);
+        this.clearPendingForClose();
         break;
       }
       case 'open-app':
@@ -675,6 +839,19 @@ class IslandController {
     }
     this.hide();
   }
+
+  /**
+   * 整批清空并关闭（"知道了 / 标为已读"的多条场景）。
+   * 状态同步落地（渲染进程随之收起卡片，窗口由 `hide()` 淡出）。
+   */
+  private clearPendingForClose(): void {
+    this.clearTimers();
+    this.state.active = null;
+    this.state.queued = [];
+    this.state.listExpanded = false;
+    this.hide();
+  }
+
 
   private activate(notification: IslandNotification, reason: IslandState['reason'], mode: IslandMode): void {
     this.clearTimers();
@@ -756,9 +933,7 @@ class IslandController {
    */
   private resolveAnchor(): IslandAnchor {
     // 多显示器教室电脑：打开"跟随鼠标屏幕"后，岛出现在鼠标所在的那块屏（讲台切换投影时不用改设置）
-    const display = this.appearance.followCursorDisplay
-      ? screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-      : screen.getPrimaryDisplay();
+    const display = this.targetDisplay();
     const area = display.workArea;
     const marginX = Math.round(this.appearance.marginX ?? ISLAND_MARGIN);
     const marginY = Math.round(this.appearance.marginY ?? ISLAND_MARGIN);
@@ -782,9 +957,38 @@ class IslandController {
     return { hMode, hValue, vMode, vValue };
   }
 
+  /** 当前应该把岛放在哪块屏上：跟随鼠标时用光标所在屏，否则用主屏 */
+  private targetDisplay(): Electron.Display {
+    return this.appearance.followCursorDisplay
+      ? screen.getDisplayNearestPoint(this.cursorOverride ?? screen.getCursorScreenPoint())
+      : screen.getPrimaryDisplay();
+  }
+
+  /**
+   * 锚点所在屏幕变化时重排窗口（"跟随鼠标屏幕"、主屏切换、显示器插拔都会走到这里）。
+   *
+   * 原先锚点只在 `setAppearance()` 里算一次，于是"跟随鼠标屏幕"实际上**只在改设置的那一瞬间**
+   * 生效：讲台从投影切回来之后，岛还留在原来那块屏上，直到用户再动一次外观设置。
+   * 这里挂在已有的 60ms 命中轮询上（不新增定时器），并且只在目标屏幕真的变了、且窗口可见时才动窗口。
+   */
+  private syncAnchorDisplay(): void {
+    if (!this.win || this.win.isDestroyed()) return;
+    const displayId = this.targetDisplay().id;
+    if (this.anchorDisplayId === displayId) return;
+    this.anchorDisplayId = displayId;
+    // 换屏了：可用高度（工作区）也跟着换，列表"能放几行"要重算
+    this.refreshViewport();
+    if (!this.win.isVisible()) return;
+    this.relayout();
+  }
+
   /** 状态变更：先通知渲染进程，再驱动窗口尺寸/透明度动画 */
   private setState(patch: Partial<IslandState>, options: { skipWindow?: boolean } = {}): void {
     this.state = { ...this.state, ...patch, updatedAt: Date.now() };
+    // 离开展开态就把"展开更多"复位：下次再点开时默认回到"只显示前三条"
+    if (this.state.mode !== 'expanded') this.state.listExpanded = false;
+    // 列表形态比普通展开卡高：窗口要**先**长高，卡片才开始形变，否则底部会被窗口裁掉
+    if (!options.skipWindow) this.relayout();
     this.emit();
     if (!options.skipWindow) this.syncWindow();
   }
@@ -825,6 +1029,11 @@ class IslandController {
 
     // 展开态才允许获得焦点，这样点击屏幕其他位置会 blur → 自动收起
     this.applyFocusable();
+    // 窗口不可见时先把包围盒对齐到当前形态：列表形态留下的"高窗口"在这里收回去。
+    // 必须挑"不可见"的时刻做 —— 可见时改大小会把正在形变的卡片裁掉一截。
+    if (!this.win.isVisible()) this.applyWindowLayout();
+    // 触摸模式：形态变了，窗口要立刻跟着变大（缩小交给岛体矩形上报后判定，避免裁掉形变中的卡片）
+    this.syncTouchLayout();
 
     if (this.state.mode === 'hidden') {
       // 空闲"细缝"（参考 WinIsland）：打开后空闲不再完全隐藏，而是留一条很窄的圆角柱；
@@ -858,8 +1067,68 @@ class IslandController {
   }
 
   /**
+   * 窗口包围盒：
+   * - 普通（鼠标）模式：固定取"最大形态 + 2×阴影留白"，**开合过程中一帧都不动**（照搬 WinIsland）；
+   *   唯一的例外是**多条通知的列表**：它比任何普通形态都高，窗口必须当场长高，否则卡片底部
+   *   （那排按钮）会被窗口裁掉。窗口是在卡片开始形变**之前**改的，用户看不到这一步。
+   * - 触摸模式：贴合当前形态（岛体 + 2×阴影留白），否则大包围盒的透明区会吞掉桌面的触摸。
+   */
+  private windowBox(): { width: number; height: number } {
+    const size = this.formSize();
+    if (!this.touchMode) {
+      return {
+        width: Math.round(Math.max(BBOX_SIZE.width, size.width + ISLAND_SHADOW_PAD * 2)),
+        height: Math.round(Math.max(BBOX_SIZE.height, size.height + ISLAND_SHADOW_PAD * 2)),
+      };
+    }
+    return {
+      width: Math.round(size.width + ISLAND_SHADOW_PAD * 2),
+      height: Math.round(size.height + ISLAND_SHADOW_PAD * 2),
+    };
+  }
+
+  /**
+   * 触摸模式下重排窗口（贴合岛体）：
+   * **变大立刻生效**（否则形变中的卡片会被窗口裁掉一半）；**变小要等岛真的收小**——
+   * 判据是渲染进程上报的真实岛体矩形已经装得下，见 `cardFitsFormSize`。
+   */
+  private syncTouchLayout(): void {
+    if (!this.touchMode || !this.win || this.win.isDestroyed()) return;
+    const target = this.windowBox();
+    const current = this.win.getBounds();
+    const shrinking = target.width < current.width || target.height < current.height;
+    /**
+     * **窗口可见期间只增不减**（触摸模式）。
+     *
+     * 为什么：触摸模式下窗口是"贴合岛体"的（手指要能点到岛），所以形态变化时窗口本该跟着变
+     * —— 但**收小会让出一块区域**，Windows/DWM 在那一瞬间可能还留着上一帧的内容，
+     * 用户看到的就是"一缩回/一展开就闪一下、像旧画面残留在那里"（反复反馈、逐帧抓过的那一类）。
+     * 变大属于"只增不减"，不会让出任何区域；所以：
+     * - 需要**变大**就立刻变大（否则形变中的卡片会被窗口裁掉）；
+     * - 需要**变小**一律等窗口隐藏之后再收（`syncWindow` 里"不可见时对齐包围盒"，
+     *   不可见时改尺寸不会有残影），这也顺带修掉"隐藏态改停靠/边距不生效"那条。
+     */
+    if (shrinking && this.win.isVisible()) return;
+    this.applyWindowLayout();
+  }
+
+  /** 渲染进程上报的岛体是否已经收进"当前形态"的尺寸里（触摸模式下判断能否缩小窗口） */
+  private cardFitsFormSize(): boolean {
+    const rect = this.hitRect;
+    if (!rect) return false;
+    const size = this.formSize();
+    return rect.width <= size.width + 1 && rect.height <= size.height + 1;
+  }
+
+  /** 外观 / 锚点变化后的窗口重排：普通模式按固定包围盒重排，触摸模式走贴合逻辑 */
+  private relayout(): void {
+    if (this.touchMode) this.syncTouchLayout();
+    else this.applyWindowLayout();
+  }
+
+  /**
    * 按当前外观把窗口放到锚点上（**只在尺寸/位置设置变化时调用**，开合时不调用）。
-   * 窗口尺寸 = 最大形态 + 2×阴影留白，因此任何形态的岛都能完整容纳。
+   * 尺寸见 `windowBox`：普通模式恒为"最大形态 + 阴影留白"，触摸模式贴合当前形态。
    */
   private applyWindowLayout(): void {
     if (!this.win || this.win.isDestroyed()) return;
@@ -876,10 +1145,11 @@ class IslandController {
     this.win.setBounds(next);
   }
 
-  /** 固定包围盒窗口的矩形：以锚点定位，尺寸恒为"最大形态 + 阴影留白" */
+  /** 窗口矩形：以锚点定位（尺寸由 `windowBox` 决定，触摸模式随形态变化） */
   private windowBounds(): Bounds {
-    const width = Math.round(BBOX_SIZE.width);
-    const height = Math.round(BBOX_SIZE.height);
+    const box = this.windowBox();
+    const width = box.width;
+    const height = box.height;
     const anchor = this.resolveAnchor();
 
     // 窗口比岛大 ISLAND_SHADOW_PAD（给投影留白），因此窗口要再偏移一个 pad，
@@ -1005,8 +1275,16 @@ class IslandController {
    * 窗口只在尺寸/位置变化时**重排一次**（`applyWindowLayout`），开合过程不碰窗口。
    */
   setAppearance(patch: Partial<IslandAppearance>): void {
-    this.appearance = normalizeAppearance({ ...this.appearance, ...patch });
+    // 先丢掉显式 undefined 的键：设置页/冒烟脚本传的都是**部分补丁**，
+    // 一个残缺字段不该把对应外观重置成默认值（NaN 的兜底在 normalizeAppearance 里）
+    const clean: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(patch ?? {})) {
+      if (value !== undefined) clean[key] = value;
+    }
+    this.appearance = normalizeAppearance({ ...this.appearance, ...clean } as IslandAppearance);
     recomputeSizes(this.appearance);
+    // 字号/边距会影响"列表能放几行"，可用高度也随停靠位置变化 —— 重算一次并随状态下发
+    this.refreshViewport();
 
     if (this.win && !this.win.isDestroyed()) {
       this.win.setAlwaysOnTop(this.appearance.alwaysOnTop, 'screen-saver');
@@ -1017,7 +1295,7 @@ class IslandController {
     }
     this.emitAppearance();
     // 包围盒/锚点可能变化：窗口重排一次（**不是逐帧**，开合过程中绝不会再碰窗口）
-    this.applyWindowLayout();
+    this.relayout();
     // 外观变化后按新尺寸重新同步（隐藏态不显示，不做额外动作）
     if (this.state.mode !== 'hidden') this.syncWindow();
     logger.info(
@@ -1039,10 +1317,17 @@ class IslandController {
    * "点开了再收起，就再也点不开了"。
    */
   setInteractive(interactive: boolean, source = '未知'): void {
-    if (this.interactive === interactive) return;
-    this.interactive = interactive;
+    // 触摸模式：窗口已贴合岛体，必须**始终**接收输入。触摸不会产生光标移动，按光标判定命中的
+    // 那套逻辑在触摸屏上永远不会打开，一旦让它把命中关掉，手指就再也点不到（"点不动"）。
+    // 测试输入穿透：真实鼠标一律不接收（理由见 testInputPassthrough 字段）；
+    // 但**注入光标**（冒烟用 setHitTestCursor 模拟指针在岛上/岛外）照常生效，
+    // 否则「光标轮询校正命中」「岛外穿透」这类断言全会被自己的开关弄红。
+    const passthrough = this.testInputPassthrough && this.cursorOverride === null;
+    const next = passthrough ? false : this.touchMode ? true : interactive;
+    if (this.interactive === next) return;
+    this.interactive = next;
     logger.info(
-      `灵动岛：鼠标命中=${interactive}（来自${source}）mode=${this.state.mode} ` +
+      `灵动岛：鼠标命中=${next}（请求=${interactive}，来自${source}）mode=${this.state.mode} ` +
         `窗口可见=${this.win?.isVisible() ?? false} 岛体矩形=${
           this.hitRect ? `${Math.round(this.hitRect.width)}x${Math.round(this.hitRect.height)}` : '无'
         }`,
@@ -1050,7 +1335,9 @@ class IslandController {
     if (!this.win || this.win.isDestroyed()) return;
     // forward: true 让窗口在"忽略鼠标"时仍把 mousemove 转发给渲染进程，
     // 这样渲染进程才能发现指针进入岛体并重新打开命中。
-    this.win.setIgnoreMouseEvents(!interactive, { forward: true });
+    // 注意传的是 next 而不是入参：触摸模式下入参可能是 false（按光标判定），
+    // 直接用它会把窗口又打回穿透态 —— 那正是"手指点不开"的根因。
+    this.win.setIgnoreMouseEvents(!next, { forward: true });
   }
 
   /** 渲染进程上报的岛体矩形（窗口内 CSS px，坐标系与窗口 DIP 一致） */
@@ -1062,11 +1349,50 @@ class IslandController {
       this.lastHitSyncAt = now;
       this.syncHitFromCursor();
     }
+    // 触摸模式：窗口要一直贴合岛体，而"收小"必须等岛真的收小之后再做（否则形变中的卡片被窗口裁掉）。
+    // 渲染进程每 ≥50ms 就会上报一次真实几何，正好拿来当这个判据。
+    this.syncTouchLayout();
   }
 
   /** 当前岛体矩形（供冒烟验证） */
   getHitRect(): { x: number; y: number; width: number; height: number } | null {
     return this.hitRect ? { ...this.hitRect } : null;
+  }
+
+  /**
+   * 设置触摸模式（触摸屏机器由渲染进程上报，冒烟也可显式开关）。
+   *
+   * 开启后：窗口贴合岛体（见 `windowBox`）且不再穿透（见 `setInteractive`）——
+   * 这是让"手指按在岛上"能被 Windows 命中到本窗口的唯一办法（详见 `touchMode` 字段的注释）。
+   * 关闭后回到"固定大包围盒 + 按光标命中"的原行为，因此非触摸屏机器的表现完全不变。
+   */
+  setTouchMode(enabled: boolean): void {
+    if (this.touchMode === enabled) return;
+    this.touchMode = enabled;
+    logger.info(
+      `灵动岛：触摸模式=${enabled}（窗口${enabled ? '贴合岛体并始终接收输入' : '回到固定包围盒穿透'}）`,
+    );
+    // 直接重排到目标包围盒：开启时贴合岛体，关闭时回到"最大形态 + 阴影留白"的固定大包围盒
+    this.applyWindowLayout();
+    if (enabled) this.setInteractive(true, '触摸模式');
+    else this.syncHitFromCursor();
+  }
+
+  /** 是否处于触摸模式（供冒烟验证） */
+  getTouchMode(): boolean {
+    return this.touchMode;
+  }
+
+  /**
+   * 开关"测试输入穿透"（冒烟用，见 `testInputPassthrough`）：
+   * 打开后真实鼠标点击穿透到桌面，不会污染自动化断言；关闭后立刻按真实光标位置恢复命中。
+   */
+  setTestInputPassthrough(enabled: boolean): void {
+    if (this.testInputPassthrough === enabled) return;
+    this.testInputPassthrough = enabled;
+    logger.info(`灵动岛：测试输入穿透=${enabled}（供自动化验证不被并行人工操作打扰）`);
+    if (enabled) this.setInteractive(false, '测试输入穿透');
+    else this.syncHitFromCursor();
   }
 
   /**
@@ -1099,23 +1425,39 @@ class IslandController {
     return this.hitRect ?? this.expectedHitRect();
   }
 
-  /** 按当前形态/停靠位置算出岛体目标矩形（窗口内 CSS px），仅作兜底 */
-  private expectedHitRect(): { x: number; y: number; width: number; height: number } {
-    let size = SIZES.pill;
+  /** 当前形态下**岛本身**的尺寸（不是窗口尺寸；响应进程的 `.island-card` 宽高） */
+  private formSize(): { width: number; height: number } {
+    // 多条通知的列表形态：高度由统一布局算法算出（渲染进程算的是同一个数）
+    const layout = this.listLayout();
+    if (layout) return { width: SIZES.expanded.width, height: layout.height };
     if (this.state.mode === 'expanded') {
-      size =
-        this.state.active?.kind === 'call'
-          ? CALL_SIZE
-          : this.state.active?.priority === 'URGENT'
-            ? URGENT_SIZE
-            : SIZES.expanded;
-    } else if (this.state.mode === 'hidden' && this.appearance.idleSliver) {
-      size = SLIVER_SIZE;
+      return this.state.active?.kind === 'call'
+        ? CALL_SIZE
+        : this.state.active?.priority === 'URGENT'
+          ? URGENT_SIZE
+          : SIZES.expanded;
     }
+    if (this.state.mode === 'hidden' && this.appearance.idleSliver) return SLIVER_SIZE;
+    return SIZES.pill;
+  }
+
+  /**
+   * 按当前形态/停靠位置算出岛体目标矩形（窗口内 CSS px），仅作兜底。
+   *
+   * 定位规则必须与渲染进程的 CSS 完全一致（`islandStyle`）：左/右停靠贴边留 pad，
+   * 居中则水平居中；上/下停靠同理。这里用**窗口实际尺寸**而不是 BBOX_SIZE 计算 ——
+   * 触摸模式下窗口会贴合岛体，用固定的 BBOX_SIZE 会算出错误偏移。
+   */
+  private expectedHitRect(): { x: number; y: number; width: number; height: number } {
+    const size = this.formSize();
     const pad = ISLAND_SHADOW_PAD;
     const position = this.appearance.position;
-    const width = Math.round(BBOX_SIZE.width);
-    const height = Math.round(BBOX_SIZE.height);
+    const bounds =
+      this.win && !this.win.isDestroyed()
+        ? this.win.getBounds()
+        : { width: Math.round(BBOX_SIZE.width), height: Math.round(BBOX_SIZE.height) };
+    const width = bounds.width;
+    const height = bounds.height;
     const x = position.endsWith('left')
       ? pad
       : position.endsWith('right')
@@ -1171,6 +1513,9 @@ class IslandController {
     // 60ms：渲染进程的 mousemove 转发在 Windows 上并不可靠，这里是命中的**权威来源**，
     // 间隔必须足够小，否则"指针移上胶囊后立刻点击"会因窗口还没接收鼠标而点空（用户反馈过）。
     this.hitTimer = setInterval(() => {
+      // 先按目标屏幕校正窗口位置（换屏/插拔显示器），再算命中与心跳：
+      // 顺序不能反，否则命中判定会用上一块屏的窗口坐标
+      this.syncAnchorDisplay();
       this.syncHitFromCursor();
       this.checkRendererAlive();
     }, 60);
@@ -1325,24 +1670,36 @@ export function getSliverSize(): { width: number; height: number } {
 
 /** 夹紧外观取值（越界值直接收敛，避免用户配置破坏布局） */
 export function normalizeAppearance(input: IslandAppearance): IslandAppearance {
-  const clamp = (value: number, min: number, max: number): number =>
-    Math.min(max, Math.max(min, Math.round(value * 100) / 100));
+  /**
+   * 夹紧数值：**非法值回落到该字段的默认值**，而不是变成 NaN。
+   *
+   * 注意 `Math.max(min, NaN)` 仍是 NaN、`Math.min(max, NaN)` 也是 NaN —— 也就是说"只夹紧"
+   * 并不能防住 NaN。而 `setAppearance()` 的入参来自 IPC（`island:set-appearance` 只判了 `if (patch)`），
+   * 渲染进程传一个显式 `undefined` 字段就会得到 NaN，随后 `setOpacity(NaN)` / `setBounds({x:NaN})`
+   * 抛异常；它在非 async 的 ipcMain 监听里抛出，主进程没有兜底，会直接崩掉
+   * （连带托盘、灵动岛、实时连接一起消失）。因此这里补上 fallback。
+   */
+  const clamp = (value: number, min: number, max: number, fallback: number): number => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(value * 100) / 100));
+  };
+  const fallbackOf = DEFAULT_ISLAND_APPEARANCE;
   return {
-    height: clamp(input.height, 36, 72),
-    width: clamp(input.width, 220, 420),
-    radius: clamp(input.radius, 8, 32),
-    opacity: clamp(input.opacity, 0.4, 1),
+    height: clamp(input.height, 36, 72, fallbackOf.height),
+    width: clamp(input.width, 220, 420, fallbackOf.width),
+    radius: clamp(input.radius, 8, 32, fallbackOf.radius),
+    opacity: clamp(input.opacity, 0.4, 1, fallbackOf.opacity),
     accent: /^#[0-9a-fA-F]{6}$/.test(input.accent) ? input.accent : DEFAULT_ISLAND_APPEARANCE.accent,
-    fontSize: clamp(input.fontSize, 11, 20),
+    fontSize: clamp(input.fontSize, 11, 20, fallbackOf.fontSize),
     animations: input.animations !== false,
-    speed: clamp(input.speed, 0.5, 2),
+    speed: clamp(input.speed, 0.5, 2, fallbackOf.speed),
     position: ISLAND_POSITIONS.includes(input.position) ? input.position : 'top-center',
     alwaysOnTop: input.alwaysOnTop !== false,
     style: ISLAND_STYLES.includes(input.style) ? input.style : 'black',
     idleSliver: input.idleSliver === true,
     // 边距：0 表示贴着屏幕边缘，上限给到 200/160 是为了"多显示器 + 任务栏在侧面"这类布局
-    marginX: clamp(input.marginX ?? DEFAULT_ISLAND_APPEARANCE.marginX, 0, 200),
-    marginY: clamp(input.marginY ?? DEFAULT_ISLAND_APPEARANCE.marginY, 0, 160),
+    marginX: clamp(input.marginX ?? DEFAULT_ISLAND_APPEARANCE.marginX, 0, 200, fallbackOf.marginX),
+    marginY: clamp(input.marginY ?? DEFAULT_ISLAND_APPEARANCE.marginY, 0, 160, fallbackOf.marginY),
     followCursorDisplay: input.followCursorDisplay === true,
   };
 }
@@ -1370,8 +1727,25 @@ const ISLAND_MARGIN = 8;
  */
 const BLUR_GRACE_MS = 500;
 
+/**
+ * 触摸屏上的失焦宽限期（触摸模式专用，见 `touchMode`）。
+ *
+ * 触摸没有光标，`isCursorOnIsland()` 这条"指针还在岛上就判定为激活抖动"的兜底恒为 false，
+ * 只剩宽限期这一层防线。而实测的假失焦出现在 focus 之后 70~520ms，正好跨过 500ms 的边界，
+ * 不放开的话手指点开后会偶发地立刻缩回胶囊。取 1200ms 给它 2 倍余量；
+ * 真正的"点屏幕别处收起"仍会在 1.2s 后生效。
+ */
+const BLUR_GRACE_TOUCH_MS = 1200;
+
 /** 设置页"预览效果"的示例岛停留时长（到点自动收尾，避免一直挂在桌面上） */
 const PREVIEW_DURATION_MS = 30_000;
+
+/**
+ * 展开卡可用高度的下限（CSS px）：屏幕再矮也要留出这么多，
+ * 否则"列表能放几行"会算出负数。真正的工作区空间由 `refreshViewport` 算，这里只是防呆。
+ */
+const MIN_CARD_HEIGHT = 120;
+
 
 /**
  * 渲染进程心跳（渲染进程每 5s 上报一次）：超过这个时间没上报就认为它已经卡死/不响应。
@@ -1445,6 +1819,12 @@ export function registerIslandIpc(): void {
       island.setHitRect(rect ?? null);
     },
   );
+
+  // 触摸屏上报（渲染进程按 navigator.maxTouchPoints 判定）→ 窗口改为贴合岛体并始终接收输入。
+  // 触摸屏上按光标判定命中的那套永远打不开命中，手指点不到岛（详见 IslandController.touchMode）。
+  ipcMain.on('island:set-touch-mode', (_event, enabled: boolean) => {
+    island.setTouchMode(enabled === true);
+  });
 
   ipcMain.on('island:action', (_event, payload: IslandActionPayload) => {
     if (!payload?.action) return;

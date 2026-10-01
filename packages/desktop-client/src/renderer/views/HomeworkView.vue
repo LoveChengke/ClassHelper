@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import {
@@ -15,6 +15,7 @@ import {
 } from '@classhelper/shared';
 import { courseApi, homeworkApi } from '../api/index.js';
 import { fetchWithCache } from '../cache/index.js';
+import { markHomeworkCreatedLocally } from '../island/bridge.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useRealtimeStore } from '../stores/realtime.js';
@@ -79,6 +80,17 @@ async function selectDate(value: string | null): Promise<void> {
   await router.replace({ path: '/homeworks', query: { date: value } });
   await loadHomework();
 }
+
+// 深链 ?date= 不止在首次挂载生效：已在作业页时（看板/列表之间切换、冒烟直接推 query），
+// 路由 query 变了也要跟着切换日期 —— 组件被复用，没有这条监听就停在原日期。
+watch(
+  () => route.query.date,
+  (value) => {
+    if (typeof value !== 'string' || !isDayKey(value) || value === selectedDate.value) return;
+    selectedDate.value = value;
+    void loadHomework();
+  },
+);
 
 /** 前后一天（教室电脑上不用打开日历也能翻） */
 async function shiftDate(delta: number): Promise<void> {
@@ -412,13 +424,19 @@ async function submitCreate(): Promise<void> {
 
   createSaving.value = true;
   try {
-    await homeworkApi.create({
+    // 先按内容登记"This 是本机录的"：服务端是**先广播 homework:new、后回响应**的，
+    // 等响应拿到 id 再登记就晚了 —— 实时事件可能已经到了，岛已经弹出来了。
+    const draft = { classId, title, content, assignDate: selectedDate.value };
+    markHomeworkCreatedLocally(draft);
+    const created = await homeworkApi.create({
       classId,
       courseId: createForm.value.courseId || null,
       title,
       content,
       assignDate: selectedDate.value,
     });
+    // 回执里带上 id 再记一次（覆盖"广播晚于响应"的另一半）
+    if (created?.id) markHomeworkCreatedLocally({ ...draft, id: created.id });
     ElMessage.success(`已录入到 ${selectedDate.value}`);
     createVisible.value = false;
     await loadHomework();

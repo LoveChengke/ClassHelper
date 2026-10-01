@@ -7,7 +7,18 @@ import type { IslandAppearance, IslandState } from '@classhelper/shared';
  */
 export interface IslandBridge {
   onState(handler: (state: IslandState) => void): void;
-  sendAction(action: 'expand' | 'collapse' | 'dismiss' | 'mark-read' | 'open-app', id?: string): void;
+  sendAction(
+    action:
+      | 'expand'
+      | 'expand-list'
+      | 'collapse'
+      | 'dismiss'
+      | 'dismiss-all'
+      | 'mark-read'
+      | 'mark-all-read'
+      | 'open-app',
+    id?: string,
+  ): void;
   getState(): Promise<IslandState>;
   /** 订阅个性化外观（设置页改动后实时生效） */
   onAppearance(handler: (appearance: IslandAppearance) => void): void;
@@ -16,6 +27,12 @@ export interface IslandBridge {
   setInteractive(interactive: boolean): void;
   /** 上报岛体矩形（窗口内 CSS px）：主进程据此按光标位置兜底校正命中 */
   setHitRect(rect: { x: number; y: number; width: number; height: number } | null): void;
+  /**
+   * 上报"本机是触摸屏"：主进程据此把窗口改为贴合岛体并始终接收输入。
+   * 触摸屏上按光标判定命中的那套永远打不开（触摸不产生 mousemove、也不动系统光标），
+   * 不上报的话手指点不到岛（希沃白板等触摸设备）。
+   */
+  setTouchMode(enabled: boolean): void;
   /** 心跳：主进程据此发现"渲染进程卡死的幽灵窗口"（岛还在屏幕上但点不动）并重建窗口 */
   alive(): void;
 }
@@ -37,6 +54,9 @@ const bridge: IslandBridge = {
   },
   setHitRect: (rect) => {
     ipcRenderer.send('island:set-hit-rect', rect);
+  },
+  setTouchMode: (enabled) => {
+    ipcRenderer.send('island:set-touch-mode', enabled);
   },
   alive: () => {
     ipcRenderer.send('island:alive');

@@ -12,6 +12,7 @@ import {
   type ClassIslandNotificationChannel,
   type IslandAppearance,
 } from '@classhelper/shared';
+import { logger } from './logger.js';
 import type { DesktopStoredConfig, HomeworkBoardSettings } from '../types/desktop.js';
 
 /** 作业页展示偏好默认值（看板 + 不显示时间 + 15px） */
@@ -142,8 +143,15 @@ function encryptToken(token: string | null): { token: string | null; tokenEncryp
       return { token: safeStorage.encryptString(token).toString('base64'), tokenEncrypted: true };
     }
   } catch {
-    // 某些环境下 DPAPI 不可用，降级为明文存储（仅本地开发场景）
+    // 见下方降级分支
   }
+  // 降级为明文存储（DPAPI 不可用，一般只在本地开发环境出现）。
+  // 必须留下日志：明文 token 代表该班的全班身份，任何能读用户目录的进程/备份/同步盘都能拿到，
+  // 静默降级会让"为什么换个环境就得重新登录/凭据是怎么泄露的"无从查起。
+  logger.warn(
+    `系统加密存储不可用，登录令牌将以**明文**写入配置（${configFilePath()}）；` +
+      '如需加密请确认 Windows 凭据保护（DPAPI）可用',
+  );
   return { token, tokenEncrypted: false };
 }
 
@@ -164,7 +172,7 @@ function readPersisted(): PersistedConfig {
     return {
       serverUrl:
         typeof parsed.serverUrl === 'string' && parsed.serverUrl
-          ? parsed.serverUrl
+          ? (normalizeServerUrl(parsed.serverUrl) ?? DEFAULT_CONFIG.serverUrl)
           : DEFAULT_CONFIG.serverUrl,
       username: typeof parsed.username === 'string' ? parsed.username : '',
       token: typeof parsed.token === 'string' ? parsed.token : null,
@@ -183,6 +191,25 @@ function writePersisted(config: PersistedConfig): void {
   const target = configFilePath();
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, JSON.stringify(config, null, 2), 'utf8');
+}
+
+/**
+ * 服务器地址只接受 http/https 绝对地址。
+ *
+ * 渲染进程的输入框走 `normalizeServerUrl` 校验过，但 IPC（`saveConfig`）与手工改过的
+ * config.json 都会绕过它，而该值随后会作为 axios baseURL 与 Socket.IO 地址使用 ——
+ * 因此必须在**主进程这一侧也收口**，非法值一律丢弃（保留原值）。
+ */
+function normalizeServerUrl(input: string): string | null {
+  const trimmed = input.trim().replace(/\/+$/, '');
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return trimmed;
+  } catch {
+    return null;
+  }
 }
 
 /** 读取配置（token 已解密），供渲染进程使用 */
@@ -204,7 +231,9 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
   const persisted = readPersisted();
 
   if (typeof patch.serverUrl === 'string' && patch.serverUrl.trim()) {
-    persisted.serverUrl = patch.serverUrl.trim().replace(/\/+$/, '');
+    const normalized = normalizeServerUrl(patch.serverUrl);
+    if (normalized) persisted.serverUrl = normalized;
+    else logger.warn(`忽略非法的服务器地址（只接受 http/https）：${patch.serverUrl}`);
   }
   if (typeof patch.username === 'string') {
     persisted.username = patch.username;

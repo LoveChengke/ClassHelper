@@ -7,9 +7,10 @@
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "build": "npm run build:main && npm run build:renderer",
+    "build": "npm run build:main && npm run build:renderer && npm run check:secrets",
     "build:main": "node scripts/build-main.mjs",
     "build:renderer": "vite build",
+    "check:secrets": "node scripts/check-bundle-secrets.mjs",
     "start": "electron .",
     "smoke": "node scripts/smoke.mjs",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
