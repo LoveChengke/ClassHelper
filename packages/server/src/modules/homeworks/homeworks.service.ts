@@ -268,12 +268,16 @@ export async function updateHomeworkStatus(
     return dto;
   }
 
+  // 教师 / 管理员分支：必须落到**该班学生**身上。旧实现允许不传 userId 并默默写到
+  // 操作者自己的账号上（教师时 user.sub 就是教师 id），那条记录既不在学生名单里，
+  // 又会被教师视角的 completedCount 计入，导致"完成人数 > 班级人数"。
   const targetUserId = input.userId ?? user.sub;
-  if (input.userId) {
-    const target = await prisma.user.findUnique({ where: { id: targetUserId }, select: { classId: true } });
-    if (!target || target.classId !== homework.classId) {
-      throw ApiError.badRequest('目标学生不属于该作业所在班级');
-    }
+  const target = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { role: true, classId: true },
+  });
+  if (!target || target.role !== 'STUDENT' || target.classId !== homework.classId) {
+    throw ApiError.badRequest('请指定该作业所在班级的学生（userId），未指定时只能操作自己的账号');
   }
 
   const status = await prisma.homeworkStatus.upsert({

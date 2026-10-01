@@ -1,10 +1,10 @@
-import bcrypt from 'bcryptjs';
 import * as XLSX from 'xlsx';
 import { prisma } from '../../lib/db.js';
 import { env } from '../../config/env.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
+import { hashPassword } from '../../lib/password.js';
 import { assertCanManageGrades, assertCanManageRoster } from '../../lib/access.js';
 import type { TableCommitInput, TableFileInput } from './imports.schemas.js';
 
@@ -46,9 +46,9 @@ export const IMPORT_FIELDS: Record<
     { key: 'courseName', label: '课程', required: false, synonyms: ['课程', '科目', 'course', 'courseName'] },
   ],
   students: [
+    // 学生只有名单没有账号（不能登录、无密码），模板不再有"初始密码"列
     { key: 'username', label: '用户名', required: true, synonyms: ['用户名', 'username', '学号', '账号'] },
     { key: 'name', label: '姓名', required: true, synonyms: ['姓名', 'name', '学生', '学生姓名'] },
-    { key: 'password', label: '初始密码', required: false, synonyms: ['密码', 'password', '初始密码'] },
   ],
   teachers: [
     { key: 'username', label: '用户名', required: true, synonyms: ['用户名', 'username', '工号', '账号'] },
@@ -371,7 +371,6 @@ export async function commitStudents(user: TokenPayload, input: TableCommitInput
     const rowNumber = index + 2;
     const username = cellValue(row, parsed.columns, input.mapping, 'username');
     const name = cellValue(row, parsed.columns, input.mapping, 'name');
-    const password = cellValue(row, parsed.columns, input.mapping, 'password');
 
     if (!username || !name) {
       errors.push({ row: rowNumber, message: '用户名与姓名都必须填写' });
@@ -395,14 +394,14 @@ export async function commitStudents(user: TokenPayload, input: TableCommitInput
       await prisma.user.update({ where: { id: existing.id }, data: { name, classId: classId } });
       updated += 1;
     } else {
-      const initialPassword = password || env.defaultStudentPassword;
       await prisma.user.create({
         data: {
           username,
           name,
           role: 'STUDENT',
           classId: classId,
-          passwordHash: await bcrypt.hash(initialPassword, 10),
+          // 学生不设密码（空串占位，登录 403 判定在密码校验之前），见"学生只有名单没有账号"
+          passwordHash: '',
         },
       });
       inserted += 1;
@@ -478,7 +477,7 @@ export async function commitTeachers(user: TokenPayload, input: TableCommitInput
           username,
           name,
           role: parseTeacherRole(roleCell) ?? 'TEACHER',
-          passwordHash: await bcrypt.hash(initialPassword, 10),
+          passwordHash: await hashPassword(initialPassword),
         },
       });
       inserted += 1;

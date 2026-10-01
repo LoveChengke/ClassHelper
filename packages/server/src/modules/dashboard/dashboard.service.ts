@@ -1,5 +1,6 @@
 import type { DashboardSummary, HomeworkDto, NotificationDto } from '@classhelper/shared';
 import {
+  assertClassAccess,
   classScopeIdFilter,
   classScopeWhere,
   isStudent,
@@ -20,12 +21,14 @@ const creatorSelect = { select: { id: true, name: true, username: true } } as co
  * 教师/管理员看到的是"自己管理的班级"的汇总；学生看到自己班级的汇总。
  */
 /**
- * 本班教学周数（班主任可调，默认 20）。
+ * 本班教学周数（默认 20）。
  * - 学生 / 班级会话：固定为自己所在班级；
- * - 教师 / 管理员：优先用显式 classId（越权查不到时回退默认值）；
+ * - 教师 / 管理员：优先用显式 classId，**并且必须通过班级访问校验**（与其他接口同口径，
+ *   否则任意登录用户都能拿 classId 探测别班的教学周数）；
  * - 都不传：全局默认（MAX_TERM_WEEK 兜底）。
  */
 export async function resolveTermWeeks(user: TokenPayload, classId?: string): Promise<number> {
+  if (classId) await assertClassAccess(user, classId);
   const targetClassId = classId ?? (isStudent(user) ? requireStudentClassId(user) : undefined);
   if (!targetClassId) return MAX_TERM_WEEK;
   const record = await prisma.class.findUnique({

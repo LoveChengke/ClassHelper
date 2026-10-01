@@ -40,6 +40,24 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
     return;
   }
 
+  /**
+   * 请求体超限（body-parser 抛的 `entity.too.large`）。
+   *
+   * 必须单独处理：它带 `status: 413` 但不是 ApiError，落进下面的兜底分支会变成
+   * 「500 服务器内部错误：request entity too large」——既是错的状态码，也把英文原文抛给用户，
+   * 而用户真正需要知道的是"文件太大了、请拆分"（表格导入的 8MB 上限见 table-import.service）。
+   */
+  if ((error as { type?: string }).type === 'entity.too.large') {
+    logger.warn(`请求体超过上限：${req.method} ${req.originalUrl}`);
+    sendError(
+      res,
+      413,
+      '上传内容过大：请把文件拆分后分批导入（表格文件上限 8MB）',
+      'IMPORT_TOO_LARGE',
+    );
+    return;
+  }
+
   // Prisma 已知错误码（P2002 唯一约束 / P2025 记录不存在 / P2003 外键约束）
   const prismaCode = (error as { code?: string }).code;
   if (prismaCode === 'P2002') {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { useRoute } from 'vue-router';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
   CALL_QUICK_PHRASES,
@@ -21,6 +22,7 @@ import { useRealtimeStore } from '@/stores/realtime';
 import UrgentClassWarning from '@/components/UrgentClassWarning.vue';
 
 const realtime = useRealtimeStore();
+const route = useRoute();
 
 const loading = ref(false);
 const classes = ref<ClassDto[]>([]);
@@ -290,8 +292,10 @@ async function doPublish(classIds: string[], confirmDuringClass: boolean): Promi
   reportPublishResult(successCount, reported);
 
   if (successCount > 0) {
-    // 有班级发布成功：关掉弹窗并刷新列表（仍需二次确认时保留弹窗内的数据）
-    formVisible.value = !pendingConfirm;
+    // 有班级发布成功：关掉弹窗并刷新列表；只有"还有班级等着二次确认"时才保留弹窗内的数据。
+    // 注意这里是 pendingConfirm 而不是 !pendingConfirm —— 写成取反会让弹窗在**发布成功后仍然开着**，
+    // 老师以为没发出去再点一次「立即发布」，同一批班级就重复收到通知（还会重复广播与推 ClassIsland）。
+    formVisible.value = pendingConfirm;
     await loadNotifications();
   }
 }
@@ -343,10 +347,29 @@ function onNotificationEvent(): void {
   void loadNotifications();
 }
 
+/**
+ * 从仪表盘点「最新通知」跳过来时带的 `?highlight=<通知 id>`：
+ * 高亮那一行并滚动过去。之前这个参数没有任何人消费，
+ * 用户点完只是跳到通知列表，看不出去的是哪一条。
+ */
+const highlightedId = computed(() => {
+  const value = route.query.highlight;
+  return typeof value === 'string' ? value : '';
+});
+
+function rowClassName({ row }: { row: NotificationDto }): string {
+  return row.id === highlightedId.value ? 'row-highlight' : '';
+}
+
 onMounted(async () => {
   await loadClasses();
   await loadNotifications();
   realtime.on(SOCKET_EVENTS.notificationNew, onNotificationEvent);
+  // 列表渲染完再滚动，否则表格行还没生成
+  if (highlightedId.value) {
+    await nextTick();
+    document.querySelector('.row-highlight')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
 });
 
 onUnmounted(() => {
@@ -399,7 +422,12 @@ onUnmounted(() => {
     </div>
 
     <el-card shadow="never" class="table-card">
-      <el-table v-loading="loading" :data="notifications" empty-text="暂无通知">
+      <el-table
+        v-loading="loading"
+        :data="notifications"
+        empty-text="暂无通知"
+        :row-class-name="rowClassName"
+      >
         <el-table-column label="优先级" width="90">
           <template #default="{ row }">
             <el-tag
@@ -560,3 +588,10 @@ onUnmounted(() => {
     />
   </div>
 </template>
+
+<style scoped>
+/* 从仪表盘点「最新通知」跳转过来的定位高亮（?highlight=<通知 id>） */
+:deep(.row-highlight) td {
+  background: var(--el-color-primary-light-9) !important;
+}
+</style>

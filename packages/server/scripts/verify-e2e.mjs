@@ -676,12 +676,13 @@ async function main() {
       `共 ${studentListAfter.payload?.data?.length ?? 0} 人`,
     );
 
-    const resetResult = await api(`/students/${addedStudentId}/reset-password`, {
+    // 学生没有密码相关接口（个人学生账号已清理，重置密码入口已下线）：这里改为断言接口确实不存在
+    const resetGone = await api(`/students/${addedStudentId}/reset-password`, {
       method: 'POST',
       token: adminToken,
       body: {},
     });
-    record('重置学生密码', resetResult.status === 200, `status=${resetResult.status}`);
+    record('学生重置密码接口已下线（404）', resetGone.status === 404, `status=${resetGone.status}`);
 
     const renamed = await api(`/students/${addedStudentId}`, {
       method: 'PATCH',
@@ -1597,11 +1598,8 @@ async function main() {
 
   // 8.4 学生名单导入（仅管理员）+ 数据清理
   const importedUsername = `imp${Date.now().toString(36).slice(-6)}`;
-  const studentsCsv = [
-    '用户名,姓名,初始密码',
-    `${importedUsername},导入测试生,imp123456`,
-    'bad user,非法用户名,imp123456',
-  ].join(NL);
+  // 学生导入模板已无"初始密码"列（学生没有账号属性）
+  const studentsCsv = ['用户名,姓名', `${importedUsername},导入测试生`, 'bad user,非法用户名'].join(NL);
   const studentsCommit = await api('/imports/table/commit', {
     method: 'POST',
     token: adminToken,
@@ -1610,7 +1608,7 @@ async function main() {
       classId,
       fileName: 'students.csv',
       contentBase64: Buffer.from(`\ufeff${studentsCsv}${NL}`, 'utf8').toString('base64'),
-      mapping: { username: '用户名', name: '姓名', password: '初始密码' },
+      mapping: { username: '用户名', name: '姓名' },
       mode: 'append',
     },
   });
@@ -1740,7 +1738,7 @@ async function main() {
       classId,
       fileName: 'students.csv',
       contentBase64: Buffer.from(`\ufeff${studentsCsv}${NL}`, 'utf8').toString('base64'),
-      mapping: { username: '用户名', name: '姓名', password: '初始密码' },
+      mapping: { username: '用户名', name: '姓名' },
       mode: 'append',
     },
   });
@@ -2226,6 +2224,68 @@ async function main() {
     '删除教师（有班级职责拒绝 409 / 无职责可删除）',
     deleteHeadTeacher.status === 409 && deleteSmokeTeacher.status === 200,
     `班主任账号=${deleteHeadTeacher.status}（${deleteHeadTeacher.payload?.message ?? ''}） 冒烟账号=${deleteSmokeTeacher.status}`,
+  );
+
+  // 级联删除护栏：`Homework.createdBy` / `Notification.createdBy` 都是 ON DELETE CASCADE，
+  // 因此"已不在任何班级、名下无课程，但发布过内容"的账号也必须被拒 ——
+  // 否则"班主任转给别人 → 解除协作 → 删除账号"会静默清掉他在各班发过的作业与通知。
+  const cascadeTeacherUsername = `smoke_cas_${Date.now().toString().slice(-8)}`;
+  const cascadeTeacher = await api('/teachers', {
+    method: 'POST',
+    token: adminToken,
+    body: { username: cascadeTeacherUsername, name: '冒烟级联教师', password: 'cascade123456' },
+  });
+  const cascadeTeacherId = cascadeTeacher.payload?.data?.id;
+  const cascadeTeacherLogin = await api('/auth/login', {
+    method: 'POST',
+    body: { username: cascadeTeacherUsername, password: 'cascade123456' },
+  });
+  const cascadeTeacherToken = cascadeTeacherLogin.payload?.data?.token;
+
+  // 1) 先让他成为该班科任（这样才有发布权限），发一条通知
+  await api(`/classes/${classId}/teachers`, {
+    method: 'POST',
+    token: adminToken,
+    body: { teacherId: cascadeTeacherId },
+  });
+  const cascadeNotification = await api('/notifications', {
+    method: 'POST',
+    token: cascadeTeacherToken,
+    body: { classId, title: '级联删除回归', content: '用于验证删除教师不会连带删除已发布内容' },
+  });
+  const cascadeNotificationId = cascadeNotification.payload?.data?.id;
+  // 2) 解除班级分配：此时他"不在任何班级、名下无课程"，但发布过内容
+  await api(`/classes/${classId}/teachers/${cascadeTeacherId}`, {
+    method: 'DELETE',
+    token: adminToken,
+  });
+  // 3) 删除账号应当被拒（409），且那条通知必须还在
+  const cascadeDelete = await api(`/teachers/${cascadeTeacherId}`, {
+    method: 'DELETE',
+    token: adminToken,
+  });
+  const afterCascadeList = await api(`/notifications?classId=${classId}`, { token: adminToken });
+  const notificationAlive = (afterCascadeList.payload?.data ?? []).some(
+    (item) => item.id === cascadeNotificationId,
+  );
+  record(
+    '删除教师护栏覆盖"发布过作业/通知"的账号（不再级联删除内容）',
+    cascadeDelete.status === 409 && notificationAlive,
+    `删除=${cascadeDelete.status}（${cascadeDelete.payload?.message ?? ''}） 通知仍在=${notificationAlive}`,
+  );
+
+  // 清理：内容删掉后账号即可删除
+  if (cascadeNotificationId) {
+    await api(`/notifications/${cascadeNotificationId}`, { method: 'DELETE', token: adminToken });
+  }
+  const cascadeDeleteAfter = await api(`/teachers/${cascadeTeacherId}`, {
+    method: 'DELETE',
+    token: adminToken,
+  });
+  record(
+    '清理：内容删除后该教师账号可删除',
+    cascadeDeleteAfter.status === 200,
+    `status=${cascadeDeleteAfter.status}`,
   );
 
   // 创建班级仅管理员 + 设置/更改班主任

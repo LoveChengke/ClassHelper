@@ -31,5 +31,24 @@ export const booleanFlagSchema = z
 /** 关键字查询 */
 export const keywordSchema = z.string().trim().max(64).optional();
 
+/**
+ * 附件链接。
+ *
+ * 只允许 http(s) 绝对地址或站内相对路径：这一层是为**渲染端**兜底 ——
+ * 该字段最终会绑到前端的 `<a href>` / `el-link :href` 上，
+ * 若放行 `javascript:` / `data:text/html` 就会变成一条存储型 XSS 的注入点。
+ * 空串与 null 都表示"没有附件"。
+ */
+export const attachmentUrlSchema = z
+  .string()
+  .trim()
+  .max(500)
+  .refine(
+    (value) =>
+      value === '' || value.startsWith('/') || /^https?:\/\//i.test(value),
+    { message: '附件链接需为 http(s):// 地址或站内相对路径' },
+  )
+  .nullish();
+
 /** 周次：1..30 */
 export const weekNumberSchema = z.coerce.number().int().min(1).max(30);

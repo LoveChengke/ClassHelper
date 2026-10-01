@@ -127,7 +127,15 @@ async function resolveCourseId(): Promise<string | null> {
   return created.id;
 }
 
+/**
+ * 列表/周视图请求的序号：快速的"切班级/切周次"会让多个请求同时在途，
+ * 先发出的慢响应若后返回就会覆盖掉新数据（表现为"显示 A 班的课表、按钮却按 B 班权限"）。
+ * 因此每次请求领一个号，回来时不是最新一次就直接丢弃。
+ */
+let schedulesRequestId = 0;
+
 async function loadSchedules(): Promise<void> {
+  const requestId = ++schedulesRequestId;
   if (!query.classId) {
     grid.value = null;
     rawSchedules.value = [];
@@ -139,10 +147,11 @@ async function loadSchedules(): Promise<void> {
       scheduleApi.grid({ classId: query.classId, week: query.week }),
       scheduleApi.list({ classId: query.classId, week: query.week }),
     ]);
+    if (requestId !== schedulesRequestId) return;
     grid.value = weekGrid;
     rawSchedules.value = list;
   } finally {
-    loading.value = false;
+    if (requestId === schedulesRequestId) loading.value = false;
   }
 }
 

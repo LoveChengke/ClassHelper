@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { ApiError, sendOk } from '../../lib/http.js';
+import { idParamSchema } from '../../lib/schemas.js';
 import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
-import { validate, validatedBody, validatedQuery } from '../../middleware/validate.js';
+import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
   IMPORT_KINDS,
@@ -140,9 +141,10 @@ router.post('/time-layout', validate({ body: timeLayoutImportSchema }), async (r
 });
 
 /** DELETE /api/imports/time-layout/:id - 删除某份时间配置 */
-router.delete('/time-layout/:id', async (req, res) => {
-  await deleteTimeLayout(getAuthUser(req), req.params.id ?? '');
-  sendOk(res, { id: req.params.id }, '时间配置已删除');
+router.delete('/time-layout/:id', validate({ params: idParamSchema }), async (req, res) => {
+  const { id } = validatedParams<{ id: string }>(req);
+  await deleteTimeLayout(getAuthUser(req), id);
+  sendOk(res, { id }, '时间配置已删除');
 });
 
 /**

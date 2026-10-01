@@ -304,7 +304,13 @@ async function submitNotify(): Promise<void> {
       priority: notifyForm.priority,
     });
 
-    if (result.targetCount === 0) {
+    // 先看服务端给的"为什么没送"：教室选了「只在 ClassHelper 客户端显示」时也是
+    // targetCount=0，但原因与"没有接入设备"完全不同，提示错了会把老师引去查设备。
+    if (result.skipped === 'channel-client') {
+      ElMessage.warning(
+        '提醒已保存到通知中心，但该班教室已设置为「只在 ClassHelper 客户端显示」，本次未推送到 ClassIsland',
+      );
+    } else if (result.targetCount === 0) {
       ElMessage.warning('提醒已保存，但该班级还没有已接入的 ClassIsland 设备');
     } else {
       ElMessage.success(`已下发到 ${result.delivered}/${result.targetCount} 台 ClassIsland 设备`);

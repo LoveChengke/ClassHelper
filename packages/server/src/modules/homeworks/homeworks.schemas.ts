@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { isDayKey } from '@classhelper/shared';
-import { booleanFlagSchema } from '../../lib/schemas.js';
+import { attachmentUrlSchema, booleanFlagSchema } from '../../lib/schemas.js';
 
 /** YYYY-MM-DD，且必须是真实存在的日期 */
 const dayKeySchema = z
@@ -32,7 +32,7 @@ export const createHomeworkSchema = z.object({
   courseId: z.string().min(1).nullish(),
   title: z.string().trim().min(1, '请输入作业标题').max(120),
   content: z.string().min(1, '请输入作业内容').max(5000),
-  attachmentUrl: z.string().trim().max(500).nullish(),
+  attachmentUrl: attachmentUrlSchema,
   /** 作业所属日期（YYYY-MM-DD）：客户端/Web 录入时选，不传按服务器当天 */
   assignDate: dayKeySchema.nullish(),
 });
@@ -43,7 +43,7 @@ export const updateHomeworkSchema = z.object({
   assignDate: dayKeySchema.optional(),
   title: z.string().trim().min(1).max(120).optional(),
   content: z.string().min(1).max(5000).optional(),
-  attachmentUrl: z.string().trim().max(500).nullish(),
+  attachmentUrl: attachmentUrlSchema,
 });
 
 export const updateHomeworkStatusSchema = z.object({

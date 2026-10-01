@@ -86,10 +86,10 @@ async function main(): Promise<void> {
   const random = createRandom(20260901);
 
   // 同一角色共用密码，只需各哈希一次
-  const [adminHash, teacherHash, studentHash, classPasswordHash] = await Promise.all([
+  // 学生没有密码：个人学生账号已清理（2026-10-01），学生端统一用班级码 + 班级密码登录
+  const [adminHash, teacherHash, classPasswordHash] = await Promise.all([
     hashPassword('admin123'),
     hashPassword('teacher123'),
-    hashPassword('student123'),
     // 班级账号默认密码（学生端「班级登录」）
     hashPassword('123456'),
   ]);
@@ -142,7 +142,8 @@ async function main(): Promise<void> {
         name: STUDENT_NAMES[index] ?? `学生${index + 1}`,
         role: 'STUDENT',
         classId: targetClass.id,
-        passwordHash: studentHash,
+        // 空串占位：User.passwordHash 必填，但学生登录的 403 判定在密码校验之前，永远用不到
+        passwordHash: '',
       },
     });
     students.push(student);
@@ -376,10 +377,8 @@ async function main(): Promise<void> {
   console.log(`管理员    admin       / admin123      (${admin.name})`);
   console.log(`教师      teacher1    / teacher123    (${teacher1.name} · 高一(1)班、高二(3)班)`);
   console.log(`教师      teacher2    / teacher123    (${teacher2.name} · 高一(2)班、高二(3)班协作)`);
-  console.log('学生      student01   / student123    (高一(1)班)');
-  console.log('学生      student06   / student123    (高一(2)班)');
-  console.log('学生      student11   / student123    (高二(3)班)');
-  console.log('学生      student15   / student123    (高二(3)班)');
+  console.log('学生端（班级账号）：G101 / G102 / G203，密码 123456');
+  console.log('（学生只有名单、没有个人账号，成绩/未交/叫人按名单记录）');
   console.log('==========================================\n');
 }
 

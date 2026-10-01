@@ -105,31 +105,50 @@ function close(): void {
   visible.value = false;
 }
 
-/** 模板下载：带上 JWT 直接取二进制，避免暴露匿名下载入口 */
+/**
+ * 模板下载。
+ *
+ * 两种格式在服务端的返回形态**不同**，必须分开处理：
+ * - xlsx：直接 `res.send(Buffer)` 返回二进制，因此这里用 fetch 取流；
+ * - csv：走统一 JSON 响应体（`{ data: { content } }`），必须解析出 content 再自己生成文件。
+ *   之前两种格式共用同一段 `response.blob()`，于是"下载 CSV 模板"得到的是一个
+ *   名为 template-grades.csv、内容却是一整行 JSON 的文件，老师照它填完再导入必然失败。
+ */
 async function downloadTemplate(format: 'csv' | 'xlsx'): Promise<void> {
   try {
+    if (format === 'csv') {
+      const result = await importApi.template(props.kind, 'csv');
+      saveBlob(new Blob([result.content], { type: 'text/csv;charset=utf-8' }), result.fileName);
+      ElMessage.success('模板已开始下载');
+      return;
+    }
+
     const token = localStorage.getItem(STORAGE_KEYS.token) ?? '';
     const response = await fetch(
-      `${API_BASE_URL}${API_PATHS.imports}/template?kind=${props.kind}&format=${format}`,
+      `${API_BASE_URL}${API_PATHS.imports}/template?kind=${props.kind}&format=xlsx`,
       { headers: token ? { Authorization: `Bearer ${token}` } : {} },
     );
     if (!response.ok) {
       ElMessage.error(`模板下载失败（${response.status}）`);
       return;
     }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `template-${props.kind}.${format}`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
+    saveBlob(await response.blob(), `template-${props.kind}.xlsx`);
     ElMessage.success('模板已开始下载');
   } catch (error) {
     ElMessage.error(`模板下载失败：${(error as Error).message}`);
   }
+}
+
+/** 触发浏览器保存一个 Blob */
+function saveBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function pickFile(): void {
@@ -180,6 +199,10 @@ async function onFileChange(event: Event): Promise<void> {
   } catch {
     preview.value = null;
     contentBase64.value = '';
+    // 必须把 input 的值也清掉：否则修好表格后重选**同一个文件名**时 @change 不会触发
+    // （input 的 value 没变），界面会停在失败状态、"重新选择文件"按钮点了没反应。
+    if (fileInputRef.value) fileInputRef.value.value = '';
+    fileName.value = '';
   } finally {
     loading.value = false;
   }

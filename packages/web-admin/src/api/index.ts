@@ -189,22 +189,17 @@ export const gradeApi = {
 
 /* ------------------------------------------------------------------ 学生 */
 
+// 学生是"名单"不是"账号"：没有密码相关接口（登录统一走班级码 + 班级密码）
 export const studentApi = {
   list: (params?: { classId?: string; keyword?: string }): Promise<StudentDto[]> =>
     api.get(API_PATHS.students, params),
-  create: (payload: {
-    username: string;
-    name: string;
-    password?: string;
-    classId?: string | null;
-  }): Promise<StudentDto> => api.post(API_PATHS.students, payload),
+  create: (payload: { username: string; name: string; classId?: string | null }): Promise<StudentDto> =>
+    api.post(API_PATHS.students, payload),
   update: (
     id: string,
     payload: { username?: string; name?: string; classId?: string | null },
   ): Promise<StudentDto> => api.patch(`${API_PATHS.students}/${id}`, payload),
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.students}/${id}`),
-  resetPassword: (id: string, newPassword?: string): Promise<unknown> =>
-    api.post(`${API_PATHS.students}/${id}/reset-password`, newPassword ? { newPassword } : {}),
 };
 
 /* ------------------------------------------------------------------ 仪表盘 */

@@ -66,7 +66,7 @@ export interface LoginRequest {
 
 /**
  * 登录会话主体。
- * - 普通账号（教师/管理员/个人学生）：就是用户本身；
+ * - 普通账号（教师/管理员）：就是用户本身；学生个人账号已清理，学生只有名单记录；
  * - 班级账号（班级设备）：`classSession = true`，此时 `id` 与 `classId` 都是班级 id，
  *   `name` 是班级名，个人数据由服务端按"全班"范围读写。
  */
@@ -129,12 +129,16 @@ export interface CreateClassRequest {
   grade: string;
   /** 可选：自定义班级码，留空自动生成 */
   code?: string;
+  /** 本学期教学周数（1~30，仅管理员可调）；不传由服务端用默认值 20 */
+  termWeeks?: number;
+  /** 仅管理员可指定班主任；不传时由创建者本人担任 */
+  teacherId?: string;
 }
 
 export interface UpdateClassRequest {
   name?: string;
   grade?: string;
-  /** 本学期教学周数（1~40，班主任可调） */
+  /** 本学期教学周数（1~30，仅管理员可调） */
   termWeeks?: number;
 }
 
@@ -591,6 +595,16 @@ export interface IslandState {
   currentPeriodEnd: string | null;
   /** 本轮展示原因：新消息 / 下课后补发 / 紧急插播 / 叫人 */
   reason: 'new' | 'after-class' | 'urgent' | 'call' | null;
+  /**
+   * 多条通知时是否已点过"展开更多"（展开后显示全部放得下的通知）。
+   * 由主进程持有：卡片高度与窗口包围盒都由它决定，渲染进程只负责照此渲染。
+   */
+  listExpanded: boolean;
+  /**
+   * 展开卡在当前屏幕与停靠位置下的**可用高度上限**（CSS px，已经扣到任务栏/工作区下沿）。
+   * 渲染进程用它决定"列表能显示几条"，主进程用它给窗口包围盒封顶 —— 两边算的是同一个数。
+   */
+  maxCardHeight: number;
   updatedAt: number;
 }
 

@@ -33,6 +33,18 @@ const dayMarks = ref<Map<string, number>>(new Map());
 const detailVisible = ref(false);
 const current = ref<HomeworkDto | null>(null);
 
+/**
+ * 详情里的附件链接。
+ *
+ * 服务端已限制为 http(s) / 站内相对路径，这里在渲染端再兜一层：
+ * 该值最终会进 `<a href>`，一旦放行 `javascript:` 就是一条存储型 XSS（老师写、管理员点）。
+ */
+const attachmentHref = computed(() => {
+  const value = current.value?.attachmentUrl;
+  if (!value) return '';
+  return value.startsWith('/') || /^https?:\/\//i.test(value) ? value : '';
+});
+
 const classStudents = ref<Array<{ id: string; name: string }>>([]);
 const completedMap = computed(() => {
   const total = classStudents.value.length;
@@ -48,34 +60,57 @@ const submissionsSaving = ref(false);
 const submissionStudents = ref<HomeworkSubmissionsDto['students']>([]);
 /** 勾选 = 未交（保存后其余学生一律标记为已交） */
 const notSubmittedIds = ref<string[]>([]);
+/**
+ * 当前这名单属于**哪一份作业**。
+ *
+ * 上面两个 ref 是页面级共享状态，而详情抽屉可以连续打开不同作业（loadSubmissions 是
+ * 并发发出的），因此必须记住数据归属并给请求编号：否则慢响应会把 A 的名单显示成 B 的，
+ * 老师点"保存"就把 A 的未交名单整份写到 B 上（服务端会对全班逐个 upsert，且没有二次确认）。
+ */
+const submissionsHomeworkId = ref('');
+let submissionsRequestId = 0;
 
 const notSubmittedNames = computed(() =>
   submissionStudents.value.filter((item) => notSubmittedIds.value.includes(item.userId)),
 );
 
 /** 打开详情时顺带读一次未交名单（教师/管理员都有权限） */
-async function loadSubmissions(homeworkId: string): Promise<void> {
+async function loadSubmissions(homeworkId: string): Promise<boolean> {
+  const requestId = ++submissionsRequestId;
   submissionsLoading.value = true;
   try {
     const result = await homeworkApi.submissions(homeworkId);
+    // 迟到的响应：用户已经切到别的作业了，直接丢弃
+    if (requestId !== submissionsRequestId) return false;
     submissionStudents.value = result.students;
     notSubmittedIds.value = result.notSubmitted.map((item) => item.userId);
+    submissionsHomeworkId.value = homeworkId;
+    return true;
   } catch {
+    if (requestId !== submissionsRequestId) return false;
     submissionStudents.value = [];
     notSubmittedIds.value = [];
+    submissionsHomeworkId.value = homeworkId;
+    return false;
   } finally {
-    submissionsLoading.value = false;
+    if (requestId === submissionsRequestId) submissionsLoading.value = false;
   }
 }
 
 async function openSubmissions(): Promise<void> {
   if (!current.value) return;
-  if (submissionStudents.value.length === 0) await loadSubmissions(current.value.id);
+  // 每次都以"当前这份作业"为准重新拉一次：不能因为共享状态里还有数据就跳过 ——
+  // 那些数据可能属于上一次打开的作业，保存时会写到错误的作业上。
+  await loadSubmissions(current.value.id);
   submissionsVisible.value = true;
 }
 
 async function saveSubmissions(): Promise<void> {
   if (!current.value) return;
+  if (submissionsHomeworkId.value !== current.value.id) {
+    ElMessage.warning('未交名单尚未加载完成，请稍候再保存');
+    return;
+  }
   submissionsSaving.value = true;
   try {
     const result = await homeworkApi.saveSubmissions(current.value.id, notSubmittedIds.value);
@@ -320,6 +355,8 @@ function onHomeworkEvent(): void {
 
 onMounted(async () => {
   await loadClasses();
+  // 首屏也要拉一次"哪些天有作业"，否则日期选择器上没有任何高亮，直到手动切一次班级才出现
+  await loadDayMarks();
   await loadHomeworks();
   realtime.on(SOCKET_EVENTS.homeworkNew, onHomeworkEvent);
   realtime.on(SOCKET_EVENTS.homeworkUpdated, onHomeworkEvent);
@@ -509,8 +546,8 @@ onUnmounted(() => {
           <p class="content-block">{{ current.content }}</p>
         </div>
 
-        <div v-if="current.attachmentUrl" class="mt-12">
-          <el-link type="primary" :href="current.attachmentUrl" target="_blank">查看附件</el-link>
+        <div v-if="attachmentHref" class="mt-12">
+          <el-link type="primary" :href="attachmentHref" target="_blank">查看附件</el-link>
         </div>
 
         <el-alert

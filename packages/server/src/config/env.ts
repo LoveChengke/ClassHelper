@@ -27,7 +27,6 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('7d'),
   CORS_ORIGIN: z.string().default('*'),
   BCRYPT_ROUNDS: z.coerce.number().int().min(4).max(15).default(10),
-  DEFAULT_STUDENT_PASSWORD: z.string().min(6).default('123456'),
   /** 新建班级时的默认班级密码（学生端班级账号登录用），管理员可随时重置 */
   DEFAULT_CLASS_PASSWORD: z.string().min(6).default('123456'),
   /** 新建/重置教师账号时的默认密码（管理员录入教师用） */
@@ -109,6 +108,22 @@ if (isProduction) {
         '请修改 packages/server/.env 后重试。',
     );
   }
+
+  /**
+   * CORS 默认值告警（**不拦截启动**）。
+   *
+   * `CORS_ORIGIN=*` 与 `credentials: true` 同时开启时，cors 中间件会反射请求方 Origin 并带上
+   * `Access-Control-Allow-Credentials: true`。本项目的鉴权走 `Authorization` 头（不是 cookie），
+   * 第三方页面拿不到用户的 token，因此实际风险有限；但"允许任意站点带凭据访问"是没有必要的暴露面，
+   * 生产部署应填成实际域名。这里只告警：真要卡死会挡住"教室机 file:// 页面直连后端"这类合法部署
+   * （那类请求的 Origin 是 `file://`，无法提前枚举），代价不值得。
+   */
+  if (raw.CORS_ORIGIN.trim() === '*') {
+    console.warn(
+      '⚠ CORS_ORIGIN=* 且已开启 credentials：生产环境建议改成具体来源（逗号分隔），' +
+        '例如 CORS_ORIGIN=https://your-domain.example（教室机 file:// 客户端不受影响）。',
+    );
+  }
 }
 
 /** trust proxy 支持 false / 数字跳数 / loopback 等字符串形式 */
@@ -142,7 +157,6 @@ export const env = {
           .filter(Boolean),
   bcryptRounds: raw.BCRYPT_ROUNDS,
   /** 新增学生时未指定密码时的初始密码 */
-  defaultStudentPassword: raw.DEFAULT_STUDENT_PASSWORD,
   /** 新建班级时的默认班级密码（班级账号登录） */
   defaultClassPassword: raw.DEFAULT_CLASS_PASSWORD,
   /** 新建/重置教师账号时的初始密码 */

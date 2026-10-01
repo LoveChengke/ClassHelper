@@ -63,8 +63,12 @@ async function loadClasses(): Promise<void> {
   }
 }
 
+/** 请求序号：快速切班级时先发的慢响应不能覆盖新数据（否则出现"显示 A 班成绩、按钮按 B 班权限"） */
+let gradesRequestId = 0;
+
 async function loadGrades(): Promise<void> {
   if (!filter.classId) return;
+  const requestId = ++gradesRequestId;
   loading.value = true;
   try {
     const params: { classId?: string; courseId?: string; examName?: string } = { classId: filter.classId };
@@ -72,11 +76,12 @@ async function loadGrades(): Promise<void> {
     if (filter.examName) params.examName = filter.examName;
 
     const [list, statistic] = await Promise.all([gradeApi.list(params), gradeApi.stats(params)]);
+    if (requestId !== gradesRequestId) return;
     grades.value = list;
     stats.value = statistic;
     renderCharts();
   } finally {
-    loading.value = false;
+    if (requestId === gradesRequestId) loading.value = false;
   }
 }
 

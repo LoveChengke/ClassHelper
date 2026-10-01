@@ -74,6 +74,9 @@ function launch(extraEnv) {
         ELECTRON_SMOKE_ONLINE: online,
         ELECTRON_SMOKE_CLASS_CODE: classCode,
         ELECTRON_SMOKE_CLASS_PASSWORD: classPassword,
+        // 教师凭据：打包版的主进程从环境变量读（安装包里不留口令字面量）
+        ELECTRON_SMOKE_USER: process.env.ELECTRON_SMOKE_USER ?? 'teacher1',
+        ELECTRON_SMOKE_PASSWORD: process.env.ELECTRON_SMOKE_PASSWORD ?? 'teacher123',
         ...extraEnv,
       }),
     });

@@ -145,8 +145,15 @@ export function createApp(): Express {
   app.use(securityHeaders());
   app.use(compression());
   app.use(cors({ origin: env.corsOrigins, credentials: true }));
-  app.use(express.json({ limit: '2mb' }));
-  app.use(express.urlencoded({ extended: true }));
+  /**
+   * 请求体上限：表格导入是把文件以 **base64** 放进 JSON 的，base64 约为原文件的 4/3，
+   * 再算上 JSON 包装，8MB 的表格文件约需 11MB 请求体。
+   * 这里必须留够余量，否则「导入模板写的 8MB 上限」永远到不了（文件到 1.5MB 就被 body-parser 拦掉），
+   * 而且用户看到的是一句 500「服务器内部错误：request entity too large」——
+   * 与 `table-import.service.ts` 的 MAX_IMPORT_BYTES(8MB) 校验完全对不上。
+   */
+  app.use(express.json({ limit: '12mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(requestLogger());
 
   // 探针（不参与限流）
@@ -173,7 +180,10 @@ export function createApp(): Express {
 
   // 限流：先挂通用限流，再挂更严格的登录限流（后挂者决定响应头里的策略，便于观察暴力破解防护）
   app.use(API_PREFIX, apiRateLimiter());
-  app.use(`${API_PREFIX}/auth/login`, loginRateLimiter());
+  // 登录限流必须覆盖**两个**登录入口：`/auth/login`（教师/管理员）与 `/auth/class-login`（学生端
+  // 班级账号）。后者的密码默认就是 123456，漏掉它等于形同虚设 —— 这里用数组形式挂载，
+  // 两个路径共享同一个计数器（同一 IP 对两种登录的失败次数合并计算）。
+  app.use([`${API_PREFIX}/auth/login`, `${API_PREFIX}/auth/class-login`], loginRateLimiter());
 
   // 模块化装配：注册表里的每个模块挂载到 /api<basePath>
   for (const module of apiModules) {

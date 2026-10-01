@@ -6,7 +6,7 @@ import type { UserRole } from './types.js';
  * - `ADMIN`   系统管理员：班级增删改、人员分配、全部数据
  * - `HEAD`    班主任（`Class.teacherId`）：本班课表 + 本班成绩（含导入）+ 作业/通知/叫人
  * - `SUBJECT` 科任老师（`ClassTeacher`）：仅作业/通知/叫人
- * - `STUDENT` 学生（个人账号或班级账号）：只读
+ * - `STUDENT` 学生（班级账号；个人学生账号已清理）：只读
  * - `NONE`    与该班级无关
  */
 export type ClassRole = 'ADMIN' | 'HEAD' | 'SUBJECT' | 'STUDENT' | 'NONE';

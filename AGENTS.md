@@ -1,17 +1,18 @@
 # AGENTS.md — 班级小助手（Class Helper）
 
 本文件写给在本仓库里干活的 AI 编码代理。先读这里，再动代码。
+文中「本机环境」「已知坑」两节按**实测**写成；若与本机现状不符，以本机实测为准并顺手改掉这里。
 
 ---
 
 ## 1. 这是什么
 
-班级信息管理系统，**pnpm monorepo**，一份代码产出三个交付物：
+班级信息管理系统，**pnpm monorepo**，一份代码产出多个交付物：
 
 | 交付物               | 位置                          | 形态                                                                           |
 | -------------------- | ----------------------------- | ------------------------------------------------------------------------------ |
-| 后端服务             | `packages/server`             | Express + Prisma + Socket.IO，`/api` 前缀                                      |
-| Web 管理端           | `packages/web-admin`          | Vue 3 + Vite + Element Plus（教师/管理员用）                                   |
+| 后端服务             | `packages/server`             | Express 5 + Prisma 7 + Socket.IO，`/api` 前缀                                  |
+| Web 管理端           | `packages/web-admin`          | Vue 3 + Vite + Element Plus（教师/管理员用，PWA 可安装）                       |
 | 桌面客户端           | `packages/desktop-client`     | Electron + Vue 3（学生用，含「灵动岛」浮窗）                                   |
 | 共享契约             | `packages/shared`             | 三端共用的类型 / 常量 / 权限 / 工具函数                                        |
 | ClassIsland 联动插件 | `packages/classisland-plugin` | .NET 8 / C#（装在教室的 ClassIsland 上：上报课表与上课状态、弹出老师发的提醒） |
@@ -44,82 +45,103 @@ ClassIsland（教室机器）──► 班级小助手联动插件 ──► /ap
 package.json                 根脚本（dev / build / db:* / verify:* / dist:* / icons）
 pnpm-workspace.yaml          workspace + allowBuilds（pnpm 11 依赖构建白名单，勿随手删条目）
 tsconfig.base.json           共享 TS 基础配置（ESM + NodeNext + strict）
-eslint.config.mjs            ESLint 扁平配置（TS + Vue）
-packages/shared/src/         types / constants / permissions / utils
+eslint.config.mjs            ESLint 扁平配置（TS + Vue）；ignores 含 releases/ / release-server/ / src/generated/
+.prettierrc.json             单引号 / printWidth 110 / trailingComma all / LF / 2 空格
+build/icon.{ico,png}         应用图标（由 pnpm icons 生成）
+scripts/
+  use-database.mjs           SQLite ⇄ MySQL 切换（**改写 schema.prisma 里的 provider**，没有第二份 schema）
+  generate-icons.mjs         Electron 渲染 SVG → PNG/ICO
+  icons/render.cjs           图标渲染（CommonJS）
+  dist-server.mjs            服务端 + Web 管理端打包（产物落在 release-server/）
+  nsis/server-installer.nsi  服务端 NSIS 安装脚本
+  verify-packaged.mjs        对**打包后/已安装**的客户端 EXE 复跑冒烟
+  ui-smoke/{run,main.cjs,live-probe.mjs}  Web 管理端真实点击回归（Electron 驱动）
+  lib/{electron-env,node-runtime}.mjs     启动 Electron / 定位真实 node.exe
+deploy/                      Dockerfile / docker-compose{,.sqlite}.yml / nginx.conf / install-linux.sh
+                             classhelper.service / package.runtime.json / .env{,.sqlite}.example
+docs/                        production.md（生产部署）/ mysql.md（MySQL 切换）/ winisland-design-tokens.md
+                             screenshots/{island,client,web-mobile,classisland}/
+packages/shared/src/         types.ts / constants.ts / permissions.ts / utils.ts / index.ts
 packages/server/
-  prisma/schema.prisma       数据模型（sqlite；另有 schema.mysql.prisma）
-  prisma/migrations/         迁移历史（已生成并应用）
+  prisma/schema.prisma       数据模型（14 个 model，无 enum、无 @db.*；连接串在 prisma.config.ts）
+  prisma/migrations/         10 个迁移（init / time_layout / class_account / schedule_week_parity /
+                             class_term_weeks / classisland_integration / class_notification_channel /
+                             homework_assign_date / push_kind / schedule_source）
   prisma/seed.ts             种子数据（会清空业务表后重建演示数据）
   prisma.config.ts           Prisma 7 配置：schema / migrations / seed / 连接串
+  scripts/verify-e2e.mjs     后端端到端验收（条数由脚本统计，实测 173 项）
+  scripts/verify-classisland.mjs        联动链路验收（实测 42 项）
+  scripts/apply-column-migrations.cjs  旧库补列（手工覆盖 dist 部署时用）
   src/app.ts                 Express 装配（探针 → 限流 → 模块挂载 → 静态托管 → 兜底）
   src/index.ts               启动入口（自检 + HTTP + Socket.IO + 优雅退出）
   src/config/env.ts          zod 环境变量校验 + 生产自检
-  src/lib/                   db / jwt / access(RBAC) / http / mappers / term / web-static
-  src/middleware/            auth / validate / error / security
+  src/lib/                   access(RBAC) class-account db db-bootstrap http jwt logger mappers
+                             password schemas session term web-static
+  src/middleware/            auth validate error security
   src/realtime/              socket.ts（房间）+ bus.ts（事件总线）
-  src/modules/               功能模块 + registry.ts（模块注册表）
-  scripts/verify-e2e.mjs     后端端到端验收（163 项）
-packages/web-admin/src/      api / stores / router / layouts / views / styles / components
-packages/classisland-plugin/ .NET 8 插件（独立于 pnpm workspace，不参与 pnpm install）
-  manifest.yml               插件清单：id / apiVersion / entranceAssembly / version
-  src/Plugin.cs              入口：读 Settings.json → 注册提醒提供方 / 设置页 / BridgeService
-  src/Services/              BridgeService（上报·接收·镜像）/ ScheduleMapper / ClassPlanWriter
-                             ClassHelperNotificationProvider（把提醒显示到 ClassIsland 上）
-  src/Views/                 BridgeSettingsPage.axaml(.cs)：Avalonia 设置页
-  src/Interop/               ClassHelperClient.cs：HTTP 客户端 + 与服务端逐个字段对齐的 DTO
-  scripts/                   build.mjs（编译 / 打包 .cipx）/ verify.mjs（静态契约校验）
+  src/modules/               13 个功能模块 + registry.ts + module.types.ts
+packages/web-admin/src/      api stores router layouts views(11) components(4) composables styles config.ts
 packages/desktop-client/
-  src/main/                  主进程：窗口 / 单实例 / IPC 配置 / 托盘 / 灵动岛 / smoke
-  src/preload/               contextBridge 白名单桥（**不暴露 ipcRenderer 本体**）
-  src/island/                灵动岛独立透明置顶窗口的渲染进程
-  src/renderer/              学生端渲染进程：api / stores / cache(IndexedDB) / views
+  src/main/                  主进程：index / config（含作业短语与看板偏好）/ ipc / island / tray / logger / smoke
+  src/preload/               contextBridge 白名单桥（index.ts + island.ts，**不暴露 ipcRenderer 本体**）
+  src/island/                灵动岛渲染进程：IslandApp.vue / spring.ts / squircle.ts / main.ts
+  src/renderer/              学生端渲染进程：api / cache(IndexedDB) / stores / views / island / router
   src/types/desktop.d.ts     主进程 ↔ 渲染进程契约
   scripts/                   build-main / dev / smoke / dist-win
-scripts/                     use-database.mjs / generate-icons.mjs / dist-server.mjs / ui-smoke/
-deploy/                      Dockerfile / docker-compose.yml / nginx.conf / install-linux.sh
-docs/                        production.md（生产部署）/ mysql.md / winisland-design-tokens.md
-README.md                    完整产品与交付说明（改动交付形态时同步更新）
+packages/classisland-plugin/ .NET 8 插件（独立于 pnpm workspace，不参与 pnpm install）
+  manifest.yml               清单：id=classhelper.classisland.bridge / apiVersion=2.0.0.0 / version=0.1.0.0
+  ClassHelper.ClassIslandPlugin.csproj（TargetFramework=net8.0）
+  src/Plugin.cs              入口：读配置 → 注册提醒提供方 / 设置页 / BridgeService
+  src/Models/PluginSettings.cs
+  src/Services/              BridgeService（上报·接收·镜像）/ ScheduleMapper / ClassPlanWriter
+                             ClassHelperNotificationProvider（把提醒显示到 ClassIsland 上）
+  src/Views/BridgeSettingsPage.axaml(.cs)：Avalonia 设置页
+  src/Interop/ClassHelperClient.cs：HTTP 客户端 + 与服务端逐个字段对齐的 DTO
+  scripts/                   build.mjs（编译 / 打包 .cipx）/ verify.mjs（静态契约校验，实测 68 项）
 ```
 
 ---
 
-## 3. 本机环境（已配置好，可直接开工）
+## 3. 本机环境（2026-09-30 实测）
 
-| 项               | 状态                                                                                                                                                                                                                                |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Node             | v22.15.0（要求 ≥ 20.19，Prisma 7 硬性要求）                                                                                                                                                                                         |
-| pnpm             | 11.19.0（`packageManager` 锁定 11.8.0）                                                                                                                                                                                             |
-| npm registry     | `https://registry.npmmirror.com/`（全局 pnpm 配置；仓库内无 `.npmrc`）                                                                                                                                                              |
-| 依赖             | `pnpm install` 已完成（707 包）                                                                                                                                                                                                     |
-| 后端 `.env`      | 已由 `.env.example` 生成 `packages/server/.env`（**gitignored**），`JWT_SECRET` 为本机随机值                                                                                                                                        |
-| Prisma Client    | 已生成到 `packages/server/src/generated/prisma`（gitignored）                                                                                                                                                                       |
-| 数据库           | SQLite `packages/server/prisma/dev.db`，5 个迁移已应用、种子已写入                                                                                                                                                                  |
-| Electron 二进制  | 已下载（`node_modules/.pnpm/electron@44.3.0/node_modules/electron/dist/electron.exe`）                                                                                                                                              |
-| .NET SDK         | 8.0.303（构建 ClassIsland 插件用；插件与 pnpm workspace 无关，不参与 `pnpm install`）                                                                                                                                               |
-| ClassIsland 本体 | `F:\classisland\ClassIsland.Desktop.exe`（2.1.0.1，与本插件目标版本一致）；**数据根目录是 `F:\data`**（配置 `F:\data\Config`、档案 `F:\data\Profiles`、日志 `F:\data\Logs`、插件 `F:\data\Plugins\<id>`），因此插件可以真跑起来验证 |
+| 项               | 状态                                                                                                                                                                       |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Node             | **v24.19.0**（`D:\nodejs\node.exe`；要求 ≥ 20.19，Prisma 7 硬性要求）                                                                                                      |
+| pnpm             | 11.8.0（`packageManager` 锁定 11.8.0），宿主就是上面这个 node                                                                                                              |
+| npm registry     | `https://registry.npmjs.org/`（仓库内无 `.npmrc`，取全局配置）                                                                                                             |
+| 依赖             | 已装（707 包，`pnpm install` 实测 2m45s）                                                                                                                                  |
+| 后端 `.env`      | 已由 `.env.example` 生成（**gitignored**），`JWT_SECRET` 为本机随机值，`TERM_START_DATE=2026-09-07`                                                                        |
+| Prisma Client    | 已生成到 `packages/server/src/generated/prisma`（gitignored）                                                                                                              |
+| 数据库           | SQLite `packages/server/prisma/dev.db`：10 个迁移已应用、种子已写入（用户 18 / 班级 3 / 课程 54 / 课表 93 / 作业 15 / 通知 12 / 成绩 90）                                  |
+| `shared/dist`    | 已构建（`pnpm build:shared`）—— **它是三端与 seed 的前置产物，缺了会 `ERR_MODULE_NOT_FOUND`**                                                                              |
+| Electron 二进制  | 已手动装好（`node_modules/.pnpm/electron@44.3.0/node_modules/electron/dist/electron.exe`，246 MB）                                                                         |
+| .NET SDK         | ✅ **8.0.425**（`C:\Program Files\dotnet\sdk`，`dotnet --list-sdks` 有输出）⇒ 插件可编译/打包；**别再照旧文档说"没装"**（`dotnet` 在 PATH 里，`--list-sdks` 才是权威判据） |
+| ClassIsland      | **2.1.0.1，装在 `D:\Classisland`**（启动器 `D:\Classisland\ClassIsland.exe`，实际进程 `D:\Classisland\app-2.1.0.1-0\ClassIsland.Desktop.exe`）                             |
+| ClassIsland 数据 | 数据根 **`D:\Classisland\data`**：`Config/`、`Profiles/`、`Plugins/`（当前为空，尚未装本插件）、`Logs/`、`Cache/`、`Settings.json`                                         |
+| 桌面会话         | 有（`ClassIsland.Desktop.exe` 跑在 session 1）；**Electron GUI 在 AI 会话里也能跑**（需先修完整性标签，见 §7 第 7 条）                                                     |
 
-### 从零重建环境
+> **旧文档里的 `F:\classisland` / `F:\data` 已失效**：本机只有 `C:` 与 `D:`，`F:` 盘不存在。
+> 另有一份旧副本在 `C:\Users\胡\Desktop\classisland`（数据在它自己的 `data/` 下，2026-09-18 用过），当前以 `D:\Classisland` 为准。
+
+### 从零重建环境（本机实测可行的顺序）
 
 ```bash
-pnpm install
+pnpm install                     # 需要下载 Electron 时加 NODE_OPTIONS=--use-system-ca
 
 # 后端环境变量（.env 不入库，必须自己生成）
-cp packages/server/.env.example packages/server/.env   # 然后至少改 JWT_SECRET
+cp packages/server/.env.example packages/server/.env   # 至少改 JWT_SECRET；TERM_START_DATE 建议 2026-09-07
 
-pnpm db:generate
-pnpm db:deploy        # 应用迁移（见 §7 第 6 条：不要用 db:migrate）
-pnpm db:seed          # 写演示数据
+pnpm db:generate                                       # 生成 Prisma Client
+pnpm --filter @classhelper/server db:deploy            # 应用迁移（根 scripts 里没有 db:deploy，见 §7）
+pnpm build:shared                                      # 必须先构建 shared，否则 seed / 服务端启动会失败
+pnpm db:seed                                           # 写演示数据
 
-pnpm build:shared     # 三端都依赖 shared 的 dist，先构建它
-```
+# Electron 二进制不会随 pnpm install 下载，需要手动补：
+#   工作目录 node_modules/.pnpm/electron@44.3.0/node_modules/electron
+ELECTRON_MIRROR=https://cdn.npmmirror.com/binaries/electron/ node install.js
 
-Electron 二进制**不会**随 `pnpm install` 自动下载（本机 postinstall 被跳过），需要手动补：
-
-```powershell
-$env:ELECTRON_MIRROR="https://cdn.npmmirror.com/binaries/electron/"
-$env:ELECTRON_CACHE="F:\ClassHelper\.cache\electron"
-$env:NODE_OPTIONS="--use-system-ca"
-node install.js   # 工作目录：node_modules/.pnpm/electron@44.3.0/node_modules/electron
+# ClassIsland 插件（.NET 8 SDK 已装：8.0.425）
+pnpm build:classisland-plugin
 ```
 
 ### 演示账号（`pnpm db:seed` 产出）
@@ -127,40 +149,46 @@ node install.js   # 工作目录：node_modules/.pnpm/electron@44.3.0/node_modul
 | 角色           | 用户名                          | 密码         |
 | -------------- | ------------------------------- | ------------ |
 | 管理员         | `admin`                         | `admin123`   |
-| 班主任         | `teacher1` / `teacher2`         | `teacher123` |
-| 学生个人号     | `student01` … `student15`       | `student123` |
-| 学生端班级账号 | 班级码 `G101` / `G102` / `G103` | `123456`     |
+| 教师           | `teacher1` / `teacher2`         | `teacher123` |
+| 学生端班级账号 | 班级码 `G101` / `G102` / `G203` | `123456`     |
+
+> 密码是**种子脚本里硬编码**的（`admin123` / `teacher123` / 班级 `123456`）；
+> `.env` 的 `DEFAULT_CLASS_PASSWORD` 只影响**新建**班级时的初始班级密码。
+> **学生没有个人账号**（2026-10-01 清理）：`student01…15` 只是名单记录（成绩/未交/叫人/已读按名单），
+> `User.passwordHash` 为空串、不能登录，也没有任何密码接口；学生端统一用班级码 + 班级密码。
+> 班级码 `G203` 是「高二(3)班」，不是 `G103`。
 
 ---
 
 ## 4. 常用命令
 
-| 命令                                                      | 说明                                                                              |
-| --------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `pnpm dev`                                                | 并行启动 shared(tsc watch) + 后端(4000) + Web 端(5173)                            |
-| `pnpm dev:server` / `pnpm dev:web`                        | 只启动后端 / 只启动 Web 端                                                        |
-| `pnpm dev:desktop`                                        | 客户端开发模式（Vite 5174 + Electron，热更新）                                    |
-| `pnpm build`                                              | 构建 shared + 后端 + Web 端 + 客户端                                              |
-| `pnpm build:shared`                                       | 只构建 shared（改完 `packages/shared` 必须跑）                                    |
-| `pnpm build:desktop`                                      | 只构建客户端（esbuild 主进程/preload + Vite 渲染进程）                            |
-| `pnpm build:classisland-plugin`                           | 构建 ClassIsland 联动插件（.NET 8；缓存/临时目录自动指到 `.cache/`）              |
-| `pnpm dist:classisland-plugin`                            | 打包插件为 `.cipx` 并归集到 `releases/classisland-plugin/`                        |
-| `pnpm typecheck`                                          | 全仓库类型检查（含 `vue-tsc`）                                                    |
-| `pnpm lint` / `pnpm lint:fix`                             | ESLint                                                                            |
-| `pnpm format` / `pnpm format:check`                       | Prettier                                                                          |
-| `pnpm db:generate`                                        | 生成 Prisma Client                                                                |
-| `pnpm db:deploy`                                          | 应用已有迁移（**本机推荐**）                                                      |
-| `pnpm db:seed` / `pnpm db:reset`                          | 写种子 / 重置并重播种子                                                           |
-| `pnpm db:studio`                                          | Prisma Studio                                                                     |
-| `pnpm db:switch:mysql` / `db:switch:sqlite`               | 切换数据库 provider（配合 `docs/mysql.md`）                                       |
-| `pnpm verify:e2e`                                         | 后端端到端验收 163 项（**需后端已启动**）                                         |
-| `pnpm verify:web`                                         | Web 管理端真实点击回归 27 项（需后端已启动且 Web 产物已构建）                     |
-| `pnpm verify:desktop`                                     | 客户端冒烟 77+ 项（Electron，无人工点击）                                         |
-| `pnpm verify:packaged`                                    | 对**打包后/已安装**的客户端 EXE 跑同一套冒烟                                      |
-| `pnpm verify:classisland`                                 | ClassIsland 联动链路（设备令牌 / 上报 / 提醒下发与回执 / 镜像契约，需后端已启动） |
-| `pnpm verify:classisland-plugin`                          | 插件静态契约校验（清单一致性 / 注册完整性 / C# DTO ↔ 服务端 zod 与路由）          |
-| `pnpm dist:server` / `dist:win` / `dist:dir` / `dist:all` | 打包服务端安装程序 / 客户端安装包 / 免安装目录 / 两者                             |
-| `pnpm icons`                                              | 生成应用图标（Electron 渲染 SVG → PNG/ICO）                                       |
+| 命令                                                      | 说明                                                                                                  |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                                                | 并行启动 shared(tsc watch) + 后端(4000) + Web 端(5173)                                                |
+| `pnpm dev:server` / `pnpm dev:web`                        | 只启动后端 / 只启动 Web 端                                                                            |
+| `pnpm dev:desktop`                                        | 客户端开发模式（Vite 5174 + Electron，热更新）                                                        |
+| `pnpm build`                                              | 构建 shared + 后端 + Web 端 + 客户端                                                                  |
+| `pnpm build:shared`                                       | 只构建 shared（改完 `packages/shared` 必须跑）                                                        |
+| `pnpm build:desktop`                                      | 只构建客户端（esbuild 主进程/preload + Vite 渲染进程）                                                |
+| `pnpm build:classisland-plugin`                           | 构建 ClassIsland 联动插件（.NET 8；缓存/临时目录自动指到 `.cache/`）                                  |
+| `pnpm dist:classisland-plugin`                            | 打包插件为 `.cipx` 并归集到 `releases/classisland-plugin/`                                            |
+| `pnpm typecheck`                                          | 全仓库类型检查（含 `vue-tsc`）                                                                        |
+| `pnpm lint` / `pnpm lint:fix`                             | ESLint                                                                                                |
+| `pnpm format` / `pnpm format:check`                       | Prettier（`format:check` 在 master 基线上本就失败，见 §7 第 21 条）                                   |
+| `pnpm db:generate`                                        | 生成 Prisma Client                                                                                    |
+| `pnpm db:migrate`                                         | `prisma migrate dev`（本机不可靠，别用；见 §7）                                                       |
+| `pnpm --filter @classhelper/server db:deploy`             | 应用已有迁移（**本机推荐**；根 scripts 里没有 `db:deploy`）                                           |
+| `pnpm db:seed` / `pnpm db:reset`                          | 写种子 / 重置并重播种子                                                                               |
+| `pnpm db:studio`                                          | Prisma Studio                                                                                         |
+| `pnpm db:switch:mysql` / `db:switch:sqlite`               | 改写 `schema.prisma` 的 provider（配合 `docs/mysql.md`）                                              |
+| `pnpm verify:e2e`                                         | 后端端到端验收（**需后端已启动**；2026-09-30 实测 173 项全过）                                        |
+| `pnpm verify:web`                                         | Web 管理端真实点击回归（Electron 驱动，需后端已启动且 Web 产物已构建）                                |
+| `pnpm verify:desktop`                                     | 客户端冒烟（Electron，无人工点击）                                                                    |
+| `pnpm verify:packaged`                                    | 对**打包后/已安装**的客户端 EXE 跑同一套冒烟（`--exe` 指定路径）                                      |
+| `pnpm verify:classisland`                                 | ClassIsland 联动链路（设备令牌 / 上报 / 提醒下发与回执 / 镜像契约 / 幽灵行清理；实测 42 项）          |
+| `pnpm verify:classisland-plugin`                          | 插件静态契约校验（清单一致性 / 注册完整性 / C# DTO ↔ 服务端 zod 与路由 / 已修复坑的护栏；实测 68 项） |
+| `pnpm dist:server` / `dist:win` / `dist:dir` / `dist:all` | 打包服务端安装程序 / 客户端安装包 / 免安装目录 / 全部                                                 |
+| `pnpm icons`                                              | 生成应用图标（Electron 渲染 SVG → PNG/ICO）                                                           |
 
 ### 端口
 
@@ -170,29 +198,22 @@ node install.js   # 工作目录：node_modules/.pnpm/electron@44.3.0/node_modul
 | 5173 | Web 管理端开发服务器（`/api`、`/socket.io` 代理到 4000）  |
 | 5174 | 桌面客户端渲染进程开发服务器                              |
 
-### 交付产物归集（本机约定：`releases/`）
+### 交付产物归集
 
-打包产物统一归集到仓库根的 `releases/`（已被忽略，不入库）：
+打包脚本各自输出到固定目录，**归集到仓库根 `releases/` 是本仓库的人工约定**（该目录 gitignore + eslint ignore）：
 
 ```
-releases/
-  client/  win-unpacked/                        免安装目录（verify:packaged 直接指它）
-           班级小助手-<版本>-x64-setup.exe        学生端 NSIS 安装包
-           班级小助手-<版本>-x64-portable.exe     学生端单文件版
-  server/  classhelper-server/                  免安装目录（内置 node.exe，双击 start.cmd 即用）
-           班级小助手服务端-<版本>-x64-setup.exe  服务端安装程序（含 Web 管理端）
-  classisland-plugin/
-           ClassHelper.ClassIslandPlugin.cipx    ClassIsland 插件包（从文件安装）
-           ClassHelper.ClassIslandPlugin/        免安装目录（直接丢进 ClassIsland 的 Plugins）
+release-server/                      pnpm dist:server 的输出（免安装目录 + NSIS 安装程序）
+packages/desktop-client/release/     pnpm dist:win / dist:dir 的输出（win-unpacked + setup.exe + portable.exe）
+releases/                            本仓库约定的归集处（把上面的产物拷进 client/ server/ classisland-plugin/）
 ```
 
 ```bash
-# 客户端：electron-builder 支持直接指定输出目录（dist-win.mjs 会把额外参数透传给它）
-pnpm build:desktop
+# 客户端：electron-builder 支持指定输出目录（dist-win.mjs 会把额外参数透传）
 node packages/desktop-client/scripts/dist-win.mjs -c.directories.output=<绝对路径>\releases\client
 
-# 服务端：脚本输出路径写死在 release-server/，打完需要自己移进 releases/server/
-pnpm dist:server          # 首次会跑 46s 左右的 npm install；重试可加 --reuse-deps 跳过
+# 服务端：输出路径写死在 release-server/，打完自行移进 releases/server/
+pnpm dist:server          # 首次会跑一次 npm install；重试可加 --reuse-deps 跳过
 
 # ClassIsland 插件：构建脚本自己归集到 releases/classisland-plugin/
 pnpm dist:classisland-plugin
@@ -203,29 +224,36 @@ pnpm dist:classisland-plugin
 ## 5. 架构硬约定（改代码前必须知道）
 
 1. **模块注册表是唯一入口。** 服务端每个功能是 `src/modules/<name>/`（`*.module.ts` 路由、
-   `*.schemas.ts` zod 校验、`*.service.ts` 业务）。新增/下线功能**只改
-   `src/modules/registry.ts`**（加一行 / 改 `enabled: false`），不要动 `app.ts`。
+   `*.schemas.ts` zod 校验、`*.service.ts` 业务）。当前 13 个：`auth / classes / courses / schedules /
+homeworks / notifications / calls / imports / integrations / grades / students / teachers / dashboard`。
+   新增/下线功能**只改 `src/modules/registry.ts`**（加一行 / 改 `enabled: false`），不要动 `app.ts`。
 2. **统一响应与校验。** 用 `src/lib/http.ts` 的 `sendOk / sendCreated / …` 返回，用
    `middleware/validate.ts` 挂 zod schema；错误交给 `middleware/error.ts`，不要各写一套。
 3. **鉴权 = JWT + RBAC + 班级内角色。** 路由级用 `requireRole('ADMIN', 'TEACHER')`；班级维度用
    `@classhelper/shared` 的 `resolveClassRole` → `ADMIN / HEAD（班主任）/ SUBJECT（科任）/ STUDENT / NONE`，
-   权限判 `canManageSchedule` / `canPublishContent` / `canManageRoster` 等，**不要在页面里另写一套规则**。
+   权限判 `canManageSchedule` / `canPublishContent` / `canManageRoster` / `canManageGrades` 等
+   （人类可读矩阵是 `PERMISSION_MATRIX`，README 直接引用它），**不要在页面里另写一套规则**。
 4. **学生端主体是「班级账号」。** 班级码 + 班级密码登录后，`classId` 即身份；该设备的「已读 / 完成」
    代全班操作，个人学生登录已停用。API 里对此有专门分支，别按个人账号语义改。
-5. **实时推送只走房间。** 服务端 `src/realtime/`（`socket.ts` 房间 `class:{classId}`、`user:{id}`；`bus.ts` 事件总线），
-   客户端 `renderer/stores/realtime.ts` 订阅。**新增实时事件要同时改三处**：服务端 bus/socket、Web 端订阅、
-   客户端订阅（灵动岛也依赖它）。
+5. **实时推送只走房间。** 服务端 `src/realtime/`（`SOCKET_ROOMS`：`class:{classId}`、`user:{id}`、
+   `teacher:{id}`、`role:{role}`、`students`、`teachers`；`bus.ts` 事件总线），客户端
+   `renderer/stores/realtime.ts` 订阅。**新增实时事件要同时改三处**：服务端 bus/socket、Web 端订阅、
+   客户端订阅（灵动岛也依赖它）。事件名一律取自共享常量 `SOCKET_EVENTS`，不要手写字符串。
 6. **共享契约只在 `packages/shared`。** 三端都 `import ... from '@classhelper/shared'`；它产出 `dist`，
    改完要 `pnpm build:shared`（或跑着 `pnpm dev` 的 watch）。类型/常量**不要在两端各写一份**。
 7. **数据模型跨库通用。** `schema.prisma` 只用 String / Int / Float / Boolean / DateTime，不用 Prisma enum、
    不用 `@db.*`；角色与优先级存字符串并在 API 层用 zod 校验（这样 SQLite / MySQL 行为一致）。
-   改模型要同步 `schema.mysql.prisma` 和 `prisma/migrations/`。
+   **只有一份 `schema.prisma`**：切库是改写它的 `provider`（`pnpm db:switch:mysql`），没有 `schema.mysql.prisma`。
+   改模型要同步 `prisma/migrations/`（本机用 `pnpm --filter @classhelper/server db:deploy` 应用）。
 8. **周次口径唯一。** 当前教学周 = `shared.resolveCurrentWeek(TERM_START_DATE, now, MAX_TERM_WEEK)`，
-   `MAX_TERM_WEEK = 30`，班级还有自己的 `Class.termWeeks`（默认 20）。别在别处重新实现周次换算。
+   `MAX_TERM_WEEK = 30`，班级还有自己的 `Class.termWeeks`（默认 20，**上限也是 30**）。别在别处重新实现周次换算。
+   周次上限三处必须一致：`MAX_TERM_WEEK`、`lib/schemas.ts` 的 `weekNumberSchema`、`classes.schemas.ts` 的 `termWeeks`
+   （曾经班级能设到 40 而课表只到 30，等于对外承诺了系统兑现不了的学期长度）。
+   `Class.termWeeks` 只有**管理员**能改（`assertCanManageClasses`），班主任不行。
 9. **Electron 安全边界。** `src/preload/` 只通过 contextBridge 暴露白名单方法，**不要暴露 `ipcRenderer` 本体**；
    主进程 ↔ 渲染进程的类型统一写在 `src/types/desktop.d.ts`。
 
-   **跨桥接只能传纯数据。** contextBridge 在参数跨越"主窗口 → 隔离世界"时就做结构化克隆，
+   **跨桥接只能传纯数据。** contextBridge 在参数跨越「主窗口 → 隔离世界」时就做结构化克隆，
    传 Vue 的 `ref.value` / `reactive()` 对象（Proxy）会抛 `An object could not be cloned.`——
    而且它在**进入 preload 函数体之前**就失败了，所以桥接层**无法兜底**，只能由调用方展开成
    字面量再传（`saveConfig({ island: { ...island.value } })`）。这类失败是"半静默"的：
@@ -235,18 +263,15 @@ pnpm dist:classisland-plugin
 10. **客户端离线优先。** 渲染进程数据先落 IndexedDB（`renderer/cache/`），断网回退缓存并在顶部提示离线；
     新增页面/数据源要按这个模式接。
 11. **Web 端设计令牌集中。** 圆角/投影写在 `packages/web-admin/src/styles/index.css` 的 `:root`
-    （`--ch-radius-*` / `--ch-shadow-*`），组件里**不要写死数值**；Element Plus 通过覆盖它的 CSS 变量对齐。
-    手机小屏（≤768px）用抽屉导航 + 卡片内横向滚动，新增页面沿用 `useResponsive.ts` + `.table-card` 约定。
-12. **ClassIsland 联动是独立鉴权通道，不要塞进 JWT。** 插件用设备令牌（`X-ClassIsland-Token`，库里只存 sha256）
-    调 `/api/integrations/classisland/*`；Web 端管理设备仍走 JWT + `requireRole`。新增插件接口时，
-    路由挂 `integrations.module.ts`，并在 `integrations.schemas.ts` 里写 zod —— 插件侧的 C# DTO
+    （`--ch-radius-xl/lg/md/sm/pill`、`--ch-shadow-sm/md`），组件里**不要写死数值**；Element Plus 通过覆盖它的
+    CSS 变量对齐。手机小屏（≤768px）用抽屉导航 + 卡片内横向滚动，新增页面沿用 `useResponsive.ts` + `.table-card`。
+12. **ClassIsland 联动是独立鉴权通道，不要塞进 JWT。** 插件用设备令牌（`X-ClassIsland-Token`，库里只存 sha256，
+    明文前缀为 `chci_`）调 `/api/integrations/classisland/*`；Web 端管理设备仍走 JWT + `requireRole`。
+    新增插件接口时，路由挂 `integrations.module.ts`，并在 `integrations.schemas.ts` 里写 zod —— 插件侧的 C# DTO
     必须**逐字段对齐**（`pnpm verify:classisland-plugin` 会校验字段名与路由）。
 13. **课表镜像契约必须带 `startTime`/`endTime`。** ClassIsland 的 `ClassPlan.Classes[i]` 强制与时间表里
     **第 i 个 `TimeType == 0`（上课）的时间点**对齐：镜像下发少一个时间点，整份课表就会错位，
     而且表现为"课表看着有内容、每节课都对不上"，极难排查。
-
----
-
 14. **所有发布入口共用同一份 ClassIsland 推送实现**（`integrations.service.ts` 的 `pushToClassIsland`）：
     通知发布 / 叫人 / 联动页的下发都走它。新增「发通知」类入口时**必须**复用，不要再各写一套 ——
     否则又会出现「某个页面发的通知不联动 ClassIsland」。
@@ -254,15 +279,14 @@ pnpm dist:classisland-plugin
     客户端设置页写它（班级账号也有写权限，见 `PATCH /api/classes/:id/notification-channel`），
     服务端据此决定是否推 ClassIsland（`shouldPushToClassIsland`）。改动这条链路要同时动三处：
     客户端设置页与本地配置、`lib/mappers` 的 DTO、服务端推送判断。
-
 16. **灵动岛的左右边距只在「左/右停靠」时生效**：默认是「顶部居中」，水平锚点就是屏幕中线，
     此时调 marginX 不会有任何变化（设置页会把滑块置灰并说明，别把这个提示删掉 ——
     用户就是因此以为「调了不生效」）。上下边距与所有停靠位置都相关，不受影响。
 17. **镜像进 ClassIsland 的课表要带课间**：每两节之间补一段（上一节下课 → 下一节上课），
     **最后一节之后不补**（放学）。实现见 `ClassPlanWriter.BuildTimeLayout`（自己按课目时间算），
-    服务端 `synthesizeTimeLayout` 同口径。
+    服务端合成节次时间表同口径。
 18. **提醒分两类，决定"上课时段弹不弹"**：`ClassIslandPush.kind` = `notification`（通知类，上课时段
-    客户端与插件都**暂存**、下课补弹）/`call`（叫人，算「主动通知」，立刻弹）；`urgent` 同样立刻弹。
+    客户端与插件都**暂存**、下课补弹）/`call`（叫人，算「主动通知」，立刻弹）；紧急（`URGENT`）同样立刻弹。
     插件侧的实现在 `ClassHelperNotificationProvider`（`_deferred` + `FlushDeferred`，订阅课程事件），
     客户端的实现在 `renderer/island/bridge.ts`。改这条规则要两端一起改。
 19. **作业按「所属日期」归类，不要用 createdAt 当"哪一天"**：`Homework.assignDate` 是本地日期
@@ -282,12 +306,189 @@ pnpm dist:classisland-plugin
     回归用例：「个性设置：卡片外圈透出桌面（三种风格都没有白底面板）」—— 它**整屏截图**取样
     （`webContents.capturePage()` 拍不到窗口之后的材质，是当初漏掉这个 bug 的原因），
     并在岛底下垫一块已知颜色的底板窗口，好让"环 = 底板色"可以被精确断言。
+22. **灵动岛位置由「屏幕工作区 + 边距」算，默认边距 8px（`DEFAULT_ISLAND_APPEARANCE.marginX/marginY`）**：
+    改默认值会直接改外观，`verify:desktop` 的「停靠位置生效（6 个锚点）」断言的是像素坐标，一动就红。
+    新增边距类设置请只改"可调范围"，别动默认值（夹紧规则收口在主进程 `normalizeIslandAppearance`）。
+23. **课表行有"来源"字段 `Schedule.source`**（`manual` / `classisland`）。插件每次全量上报时，
+    服务端只清理「`source='classisland'` 且本次未再上报」的行 —— 这样老师在 ClassIsland 里删掉/挪动一节
+    能真正同步下来（原先 merge 只 upsert，服务端会永远留着幽灵课），**老师在小助手这边手排的课一律不删**。
+    因此：**新增写课表的入口要显式定 source**（Web 端录入/导入保持默认 `manual`，只有插件上报用 `classisland`），
+    否则要么幽灵课清不掉，要么手排的课被误删。回归用例见 `verify:classisland` 的「幽灵行清理」两条。
+    **`source` 只在 create 时确定，update 一律保持原值。** merge 的去重键是「星期 + 开始时间 + 单双周」，
+    老师在 Web 端手排的同一时间槽会被上报"收养"；若收养时把来源改成 `classisland`，
+    下一次清理就会把这行手排的课删掉 —— 这个坑踩过一次：种子课表被删掉 2 行，
+    `verify:e2e` 的「上课状态接口」用例（AGENTS.md §7 已列为脆弱用例）随即报红。
+    同步时**不要**覆盖 `weekStart/weekEnd`：插件上报契约里没有周次范围，硬写"整学期"会把老师设的「第 1~10 周」抹掉。
+24. **两个登录入口都必须挂 `loginRateLimiter()`**（`app.ts` 用数组形式同时挂 `/auth/login` 与 `/auth/class-login`）。
+    班级密码默认是 `123456`、班级码是固定字符集，班级登录曾是唯一没有暴力破解防护的入口。
+    另外 `auth.service.login` 里**角色判定必须在密码校验之前**：否则"密码错(401) / 密码对但学生账号已停用(403)"
+    的差异会把学生账号密码变成可离线验证的预言机。
+25. **凡是会渲染成链接的字段都要校验 scheme。** `Homework.attachmentUrl` 在服务端用
+    `attachmentUrlSchema`（只允许 `http(s)://` 或 `/` 开头的站内相对路径），Web 端渲染前再兜一层
+    （`HomeworksView.vue` 的 `attachmentHref`）。放行 `javascript:` / `data:text/html` 就是一条存储型 XSS。
+26. **桌面端必须保留 CSP**（`index.html` / `island.html` 的 `meta http-equiv="Content-Security-Policy"`）。
+    渲染进程通过 preload 能拿到 `getConfig()` 的**明文 token**（代表全班身份），CSP 是唯一能拦住
+    "加载并执行远程脚本"的一层。配套的两条导航防线也别删：主窗口 `isAllowedNavigation`（按同源/同一文件精确比对，
+    不要退回 `startsWith`）、灵动岛窗口的 `setWindowOpenHandler` + `will-navigate` 全拒。
+
+27. **桌面端产物里不得出现任何凭据，构建有门禁。** `dist/main/index.js` 与 `dist/renderer/assets/*.js`
+    会被 electron-builder 打进 `app.asar` 发给每台学生机，而 asar 可直接解包
+    （历史问题：冒烟/自检代码里写死了 `teacher1/teacher123`，`grep` 产物即命中）。
+    冒烟与自检用的账号口令、班级码/班级密码**一律通过环境变量注入**
+    （`ELECTRON_SMOKE_USER` / `ELECTRON_SMOKE_PASSWORD` / `ELECTRON_SMOKE_CLASS_CODE` / `..._CLASS_PASSWORD`）：
+    preload 读环境变量 → `window.desktop.smokeCredentials` → `setSmokeTeacherCredentials()`，
+    由 `scripts/smoke.mjs` 与 `scripts/verify-packaged.mjs` 提供（那两个脚本不进安装包）。
+    **把静态 import 改成 `await import('./smoke.js')` 解决不了这个问题**：esbuild 在
+    `format:'cjs'` + `bundle:true` 下不做代码分割，动态 import 同样被内联进同一个产物（已实测）。
+    `pnpm build:desktop` 结尾会跑 `check-bundle-secrets`（`packages/desktop-client/scripts/check-bundle-secrets.mjs`），
+    产物里出现种子口令/把种子班级码当凭据的写法即构建失败 —— 别把这条门禁摘掉。
+28. **表格导入的体积上限是"请求体 12MB ↔ 文件 8MB"**：文件以 base64 放进 JSON（约 4/3 倍），
+    因此 `express.json({ limit: '12mb' })` 必须留够余量，否则声明了 8MB 却连 1.5MB 的文件都传不进来。
+    超限由 `middleware/error.ts` 映射成 413 `IMPORT_TOO_LARGE`（**不要**让它落进 500 兜底分支：
+    原先用户看到的是一句英文的「服务器内部错误：request entity too large」）。
+29. **删除类接口的护栏要与 schema 的级联关系对齐。** `deleteTeacher` 的检查项必须覆盖
+    `Class.teacherId` / `Course.teacherId` / `ClassTeacher.teacherId` / `Homework.createdBy` /
+    `Notification.createdBy` 五项（后两项曾经漏检，会静默删掉该教师在各班发过的作业与通知；
+    回归用例见 `verify:e2e` 的「删除教师护栏覆盖"发布过作业/通知"的账号」）。
+    **改 schema 时先看哪些外键指向 `User` 且是 Cascade，再回来核对这个清单。**
+30. **灵动岛在触摸屏上必须走「触摸模式」（`touchMode`）。** 打开命中的两条链路
+    （渲染进程的 mousemove 转发、主进程读 `screen.getCursorScreenPoint()`）**都以"鼠标指针移动"
+    为前提**，而手指触摸既不产生 mousemove、也不移动系统光标 ⇒ 窗口永远停在
+    `setIgnoreMouseEvents(true)` 的穿透态，**手指点不开岛**（用户反馈：希沃白板）。
+    触摸屏上唯一的解法是"触摸点处窗口可命中"：Electron 没有 `SetWindowRgn`，
+    所以渲染进程按 `navigator.maxTouchPoints > 0` 上报（`island:set-touch-mode`）后，
+    主进程把窗口**贴合岛体**（`windowBox` = 当前形态 + 2×阴影留白）并**始终接收输入**
+    （`setInteractive` 在触摸模式下把入参强制为 true）。三条护栏别动：
+
+- **变小要等岛真的收小**（`cardFitsFormSize` + 渲染进程上报的岛体矩形）—— 立刻缩小会把形变中的卡片裁掉；
+- `expectedHitRect` 必须按**窗口实际尺寸**算偏移（触摸模式下窗口不再是固定包围盒）；
+- 失焦宽限期用 `BLUR_GRACE_TOUCH_MS`（1200ms）：触摸没有光标，`isCursorOnIsland()` 恒为 false，
+  而实测假失焦出现在 70~520ms（跨过 500ms 边界 ⇒ 会把刚展开的岛缩回胶囊）。
+  非触摸屏机器**完全不走这条路**（窗口仍是固定大包围盒 + 按光标命中），
+  `verify:desktop` 会先 `setTouchMode(false)` 再跑既有的光标注入用例，末尾单独断言触摸模式。
+
+31. **"改密码"的入口只剩 Web 管理端两处，客户端一个都没有。** 教师/管理员改本人密码走
+    Web 顶栏下拉（`PATCH /api/auth/password`）；班级密码由管理员在「班级管理 → 修改班级账号」
+    （`PATCH /classes/:id/class-account`）维护；教师设指定新密码用
+    `POST /teachers/:id/reset-password`（可选 `newPassword`，留空 = 默认初始密码）。
+    **2026-10-01 起学生个人账号整体清理**：学生只是名单（成绩/未交/叫人/已读按名单记录），
+    `POST /students/:id/reset-password` 已删除（调用返回 404，e2e 有负断言）、新建学生不设密码
+    （`User.passwordHash` 空串占位，`STUDENT` 的 403 登录判定在密码校验之前）、
+    `DEFAULT_STUDENT_PASSWORD` 已删；客户端设置页的「修改密码」按钮**是按用户要求主动移除的**
+    （防教室机器误改班级密码）——别当成"丢入口"的回归补回来。
+32. **灵动岛卡片的投影（CSS `filter`）必须常驻，形态切换只能改参数。**
+    不要把 `filter: drop-shadow(...)` 只挂在 `.island-card.expanded` 上：**给元素增删 CSS filter**
+    会让 Chromium 新建/销毁它的渲染表面（effect node），首帧的合成可能早于新表面栅格化完成，
+    那一帧被当成空内容画出去 —— 而**卡片的底色恰好画在这个被过滤的元素上**（`.shape path` 的 `fill`），
+    于是开/合的那一瞬间底座会闪掉一帧、只剩未过滤的文字层（用户反馈的"开合时一瞬间的闪动"）。
+    正确写法见 `IslandApp.vue` 的 `.shape path`：filter 常驻，胶囊态用 `0 0 0` 的退化投影
+    （硬轮廓正好压在路径底下，肉眼等同无投影，与 WinIsland「只有展开态有投影」的观感一致）。
+    回归用例：`verify:desktop` / `verify:packaged` 的「灵动岛任意形态的投影都常驻」。
+
+33. **多条通知时展开是「竖排列表」，卡片高度由主进程与渲染进程**各算一次同一个数**。**
+    `@classhelper/shared` 的 `islandListLayout()`（度量表 `ISLAND_LIST_METRICS`）是唯一算法：
+    默认只显示 `defaultVisibleRows`（3）条 + `展开更多（还有 N 条）`，按重要程度排序
+    （`PRIORITY_RANK`，同级按时间新的在前）；点"展开更多"后铺到 `maxCardHeight` 为止，
+    仍然放不下的改成「更多请前往应用内操作」——`maxCardHeight` 是主进程按工作区/任务栏算出的可用高度，
+    随状态下发。两条硬约束：
+    - **窗口包围盒必须跟着列表长高**（`IslandApp.vue` 的列表比任何普通形态都高，窗口不够高会把底部按钮裁掉）；
+      长高发生在卡片形变**之前**（`setState` 里先 `relayout()` 再 `emit()`），用户看不到这一步；
+    - 列表态 CSS 的每个尺寸（行高/行距/内边距/标题行/提示行/按钮行）都要与那份度量**一一对应**，
+      改 CSS 必须改常量，否则"最后一行被切掉"这类问题会以"看着有内容、按钮点不到"的形式出现。
+    回归用例：`verify:desktop` 的「多条通知竖向排列…」「点展开更多…」「通知多到屏幕放不下…」。
+    写这类用例时注意：**断言"单条卡片"的用例（紧急卡/叫人卡/截图比例）必须先 `drainIsland()` 排空队列**，
+    否则量到的是列表高度。
+
+34. **"知道了 / 标为已读"之后要有收回动画，但状态必须同步落地。**
+    状态机与动画分开：主进程先发 `island:closing`（渲染进程据此把当前卡片按"胶囊形态 + 这批消息"收回），
+    **同时**把状态写成 `hidden` / 清空（调用方与冒烟按同步语义断言），窗口随后才淡出隐藏。
+    `closing` 期间的守卫别删：`syncWindow` 要保持窗口可见、`relayout` 不许把窗口收小
+    （收小会把正在缩回的卡片裁掉；真正收小在窗口隐藏之后，见 `syncWindow` 里"不可见时对齐包围盒"）。
+    多条通知时这两个按钮都是**整批**操作：`dismiss-all` / `mark-all-read`（作业卡的合成 id
+    `homework-<id>` 要在主进程按 kind 过滤掉，否则通知中心会去查一条不存在的通知）。
+    回归用例：`verify:desktop` 的「多条通知点「知道了」：整批关闭 + 收回动画」。
+
+    **什么时候淡出不能靠"猜时长"**：渲染进程形变收敛后会 `sendClosingDone()` 上报
+    （`island:closing-done`），主进程 `noteClosingDone()` 才淡出；`closingTimer` 只是**兜底上限**
+    （`max(duration*2, 1200+duration)`，覆盖 rAF 被节流到连 MORPH_FALLBACK 的 1.2s snap 都没跑完的情形）。
+    早期实现按固定 360ms 猜，rAF 一被节流就"卡片缩到一半窗口没了"（用户反馈的"收回动画截断灵动岛"）。
+    **两个配套铁律**：①`finishClosing()` 里"定时器句柄置空"必须与 `clearTimeout` 成对
+    （只置空＝留下幽灵定时器，会在动画正常结束之后又静默隐藏一次，把随后弹出的紧急通知吃掉 —— 踩过）；
+    ②渲染侧 `closing` 快照的清理定时器要给足余量（现在 `durationMs + 1000`），它只负责丢快照。
+
+35. **本机录入的作业不再上灵动岛。** 服务端是**先广播 `homework:new`、后回响应**的，
+    等响应拿到 id 再登记就晚了（事件可能已经到了、岛已经弹出来了）——所以
+    `renderer/island/bridge.ts` 在**发请求之前**按内容登记指纹（班级 + 日期 + 标题 + 正文），
+    回执拿到 id 后再补记一次，投递前用 id / 指纹双重判定。改作业录入入口时别忘了在请求前调
+    `markHomeworkCreatedLocally()`。回归用例：「本机录入的作业不再上灵动岛」。
+
+36. **触摸模式下收回动画期间，窗口必须一动不动**（`syncTouchLayout()` 开头 `if (this.closing) return;`）。
+    触摸模式窗口是"贴合岛体"的，而收回时卡片正在缩小：若跟着缩窗口，**中心停靠下窗口 x 还要右移**，
+    "让出去"的那块区域会留着上一帧（DWM 还没重画桌面）——同一帧里能看到"旧展开卡的左半截 + 新胶囊"
+    两份画面（用户拍照反馈的"收回一瞬间闪一下"）。窗口尺寸一律等**隐藏之后**再对齐
+    （`syncWindow` 里"不可见时对齐包围盒"那条，不可见时改尺寸不会有残影）。
+    回归用例：「触摸模式收回：动画期间窗口不动」逐帧采样窗口矩形（只在"窗口可见 / 正在收回"时追究，
+    收完隐藏后对齐尺寸是正常的）；「收回动画期间卡片不被窗口裁切」。
+    另：`cardFitsFormSize()` 的判据里**不能**再塞 `closing` —— 那条早退已经把收回整个排除了，
+    早先漏掉这一条时窗口会在卡片还很大时就缩成胶囊尺寸，卡片底部被平切（"上半剩圆角、下半截断"）；
+    而"隐藏态改边距不生效"那条修法仍要保留：`this.win.isVisible() && (mode !== 'hidden' || idleSliver)`。
+
+40. **开合时胶囊内容禁止跟着卡片重排/横移。** 卡片在 268 ⇄ 424 之间变宽变窄，中心停靠下左右边都在动；
+    胶囊内容若按卡片宽度布局，就会出现"文字先按宽卡片铺开、再随卡片收窄被省略号收回"
+    （用户反馈的"新消息那行字往右跳一下再缩回"）。所以 `IslandApp.vue` 的胶囊层里套了一层
+    `.pill-inner`，**固定成胶囊自己的几何**（`width: var(--island-w)`），并按停靠方式对齐
+    （`data-anchor` = left/center/right → `justify-content` flex-start/center/flex-end）：
+    左/右停靠贴对应边，居中则居中 —— 静止态外观与之前完全一致，动画全程文字位置与省略号都不变。
+    回归用例：「灵动岛开合时胶囊内容不横移」，逐帧采样 `.pill-title` 左右边缘，波动必须 ≤ 2px。
+
+41. **跑自动化验证时，验证实例的岛要挪到左上角 + 真实输入穿透。**
+    `verify:desktop` / `verify:packaged` 会真的在屏幕上放一个灵动岛窗口（顶部居中），而用户自己的客户端
+    默认也在同一位置（他的设置常是 `top-center` + 较大 `marginY`）—— 两个岛一高一低叠在一起，用户会以为
+    **"屏幕上出现了第二个灵动岛"**，而且点它"反应不对"（它归验证脚本控制，会自己展开/收起/消失）。
+    实测踩过：用户连续两条反馈（"收回去的时候闪一下/下半被截断"）其实都是这个叠影造成的。
+    所以 `runIslandChecks` 开头把验证实例的岛做成**一眼可辨**：
+    `island.setAppearance({ accent: '#e91e8c', style: 'tinted' })`（洋红 = 验证实例；跑完不必还原，
+    验证用的是独立 profile），并且全程 `island.setTestInputPassthrough(true)` 让真实点击穿透。
+    **只改颜色、不要改停靠位置**：命中/几何断言都是按默认位置写的，把岛挪到角落会把
+    「空闲细缝态命中跟随光标」这类用例弄红（实测踩过）。
+    另外：冒烟会**真发通知**给当前班级（实时链路用例必须打到客户端所在班），所以验证期间用户的通知列表/
+    岛上会短暂出现几条「张老师 · *自检*」——它们用完即删（`createSmokeNotification` / `islandRealtimeCleanup`），
+    若验证被中途 kill 会留下残条，收尾时顺手清一下（标题里带「自检 / 红点位置校验」的那几条）。
+
+42. **冒烟期间要让真实鼠标点击穿透（`island.setTestInputPassthrough(true)`）。** 自动化要跑几分钟，
+    而用户很可能正在同一块屏幕上 —— 他的客户端那个岛和冒烟这个窗口都在屏幕顶部居中、互相叠着，
+    他点到的是**冒烟这个窗口**：实测冒烟收到了人发出的 `collapse` / `mark-read`，把「点胶囊展开」
+    「点空白处收起」等用例整片弄红。开关只忽略**真实**输入：`cursorOverride`（`setHitTestCursor`）
+    一旦注入就照常按注入位置判定，所以「光标轮询校正命中」「岛外穿透」「触摸模式始终接收输入」
+    这些断言不受影响（触摸模式那条会临时关掉开关）。跑完在收尾处恢复。
+
+37. **作业页的 `?date=` 深链必须在"已在作业页"时也生效。** `route.query.date` 只在组件 setup 里读
+    一次的话，同路由再推 query（冒烟切到"最近有作业的日期"、用户从别处深链回来）会被复用的组件
+    无视，看板停在原日期 —— 表现为"看板明明有历史作业却显示空"。修法是 watch `route.query.date`
+    （`HomeworkView.vue`，与 `selectDate` 的 `router.replace` 形成环时靠"值相同就跳过"防死循环）。
+    同理，冒烟里"切到有作业的日期"的判据是**看板里没有 `.board-card`**，不是"没有 `.board-host`"
+    （空看板照样渲染容器，拿容器当判据兜底永远不会触发）。
+
+38. **打包版冒烟自检发的通知要"任何时段都可见"**：用 `priority: 'URGENT'` + `confirmDuringClass: true`
+    （上课时段普通通知会被**正确地**暂存到下课、紧急通知不带确认会被 409 `URGENT_DURING_CLASS` 拒掉 ——
+    两个都是产品功能，别为了测试去改产品行为）。凡是断言"窗口已隐藏"的用例一律**轮询**等待，
+    不要写死 sleep：`dismiss` 现在带 ~360ms 收回动画再淡出，机器忙时固定 sleep 会间歇性踩空
+    （「关闭空闲细缝后空闲再次完全隐藏」曾因此 4 连红）。
+
+39. **用户报"打包版用不了/装不上"先查两件事，别急着怀疑产物**（2026-10-01 实测，两次全是环境）：
+    ① **后端起没起** —— 客户端配置指向 `127.0.0.1:4000`，后端不在就进离线模式、数据全空，
+    观感就是"软件坏了"；② **托盘单实例锁** —— 关窗是隐藏到托盘、进程还在，再双击 EXE 会被
+    单实例锁秒退（看起来"点了没反应"），安装包也会因"应用正在运行"装不上：先从托盘退出。
+    完整性标签（§7 第 7 条）用 `icacls | findstr Mandatory` 一眼可辨，优先排除。
+
+---
 
 ## 6. 代码风格
 
 - **TypeScript ESM + NodeNext**：`package.json` 全是 `"type": "module"`，相对导入**必须带 `.js` 后缀**
   （写 `./foo.js`，即使源文件是 `foo.ts`）。`strict` 开启。
-- **Prettier**：单引号、`printWidth: 110`、`trailingComma: all`、`arrowParens: always`、行尾 LF、缩进 2 空格。
+- **Prettier**（`.prettierrc.json`）：单引号、`printWidth: 110`、`trailingComma: all`、`arrowParens: always`、
+  行尾 LF、缩进 2 空格。
 - **ESLint**（`eslint.config.mjs`）：`no-explicit-any` 为 warn；未使用变量为 warn，可用 `_` 前缀豁免；
   `consistent-type-imports` 建议用 `import type`。`.cjs`（Electron 图标渲染、UI 冒烟）允许 `require`。
 - **Vue**：视图命名 `XxxView.vue`，组件多单词；路由入口用 `meta.roles` 控制（如 `['ADMIN']`），
@@ -309,76 +510,154 @@ pnpm dist:classisland-plugin
    教室机器上表现为"填好令牌后立刻 HTTP 404"（其实是代理的错误页）。插件里
    `ClassHelperClient` 用 `LocalAwareProxy` 对本地/内网地址强制直连，
    `verify:classisland-plugin` 有 4 项断言盯着这段逻辑，别删。
-2. **`pnpm` 由 Electron 宿主承载**（`pnpm config list` 里 `userAgent` 是 `node/v24.19.0`，而 `node -v` 是 v22.15.0）。
-   个别情况下依赖的 `.bin` 不会进子进程 PATH，`pnpm run <script>` 报「不是内部或外部命令」。
-   规避：直接用 Node 调入口，例如 `node packages/server/node_modules/prisma/build/index.js generate`
-   （`prisma.config.ts` 里的 seed 命令已按这个思路写成 `node ./node_modules/tsx/dist/cli.mjs`）。
-3. **启动 Electron 的脚本必须清掉 `ELECTRON_RUN_AS_NODE`**，且不要 `import 'electron'` 取可执行文件路径。
-   `scripts/lib/electron-env.mjs`、`scripts/lib/node-runtime.mjs` 已封装，新脚本请复用。
-4. **Electron 二进制要手动装**（见 §3），否则 `pnpm dev:desktop` / `verify:desktop` / `dist:win` 全部失败。
-5. **依赖二进制下载需要 `NODE_OPTIONS=--use-system-ca`**（本机 TLS 中间人证书），否则报
-   `unable to verify the first certificate`。
-6. **`pnpm db:migrate`（= `prisma migrate dev`）在本机不可靠**：首次报 `Schema engine error:`（空消息），
-   数据库建好后再跑会**长时间挂起**（无输出，需手动结束进程）。
-   日常用 **`pnpm db:deploy`**；要写种子直接 `node ./node_modules/tsx/dist/cli.mjs prisma/seed.ts`（cwd 为 `packages/server`）。
-7. **后端启动时才发现 Web 产物**：`packages/web-admin/dist` 不存在就跳过静态托管，`http://127.0.0.1:4000/`
-   只会返回服务首页（文案「Web 管理端未随本服务托管」）。要跑 `verify:web`，先 `pnpm build` 再重启后端。
-8. **原生模块按 Electron ABI 构建**：本项目因此用 libSQL 适配器（`@libsql/win32-x64-msvc` 预编译），
-   不要为了图快换回 `better-sqlite3` 之类需要 node-gyp 的方案。
-9. **Prisma 版本锁死 7.10.0**：npm `latest` 已指向 8.x-rc；生成器是 `prisma-client`，输出到
-   `src/generated/prisma`（gitignored），连接串在 `prisma.config.ts`，并且**必须走 driver adapter**。
-10. **服务端安装包里的 `.cmd` 提示是英文**：cmd.exe 按 GBK 解析脚本，中文会乱码，属有意为之（中文在安装向导与 `README.txt`）。
-11. **`pnpm dist:server` 生成安装程序时可能报 NSIS `Internal compiler error #12345: error creating mmap the size of N`。**
-    原因是模板用了 `SetCompressor /SOLID lzma`，makensis 会在 **`%TEMP%` 所在的盘**建一个上百 MB 的 mmap 临时文件；
-    本机 `C:` 只剩约 100 MB 时会失败（免安装目录其实已经生成好了，只是最后一步打不出安装包）。
-    规避：把临时目录指到空闲的盘再重试，并加 `--reuse-deps` 跳过依赖安装：
-    `$env:TEMP='F:\ClassHelper\.cache\tmp'; $env:TMP=$env:TEMP; node scripts/dist-server.mjs --reuse-deps`。
-12. **仓库根 `.gitignore` 是 GBK 编码**（含一段乱码注释），`apply_patch` 与 Prettier 都读不了它。
-    要补忽略规则请写 `.git/info/exclude`（本地生效、不入库），别试图整文件重写。
-    （`packages/classisland-plugin/.gitignore` 是本仓库里唯一能正常编辑的 .gitignore，用来忽略 bin/obj/cipx。）
-13. **`dotnet` 会把 NuGet 缓存与临时文件写进 C 盘**（`%USERPROFILE%\.nuget`、`%TEMP%`），
-    C 盘紧张时直接构建失败。`pnpm build:classisland-plugin` 已把 `NUGET_PACKAGES/TEMP/TMP/DOTNET_CLI_HOME`
-    指到仓库内 `.cache/`；手敲 `dotnet build` 时请自己带上这几个变量。
-14. **`.cipx` 打包最后一步要 PowerShell**：SDK 的 `CreateCipx` 目标默认调 `pwsh`，
-    本机 PATH 里没有 pwsh 时会失败。构建脚本会探测并把结果透传给 MSBuild
-    （`-p:PowershellBinaryName=…`），直接跑 `dotnet build -p:CreateCipx=true` 则要自己加。
-15. **`releases/`（复数）必须在 ESLint 忽略列表里**：本地跑过 `pnpm dist:*` 之后，
+2. **`db:deploy` 只在 `packages/server` 包里，根 `package.json` 没有这个脚本。**
+   根上跑 `pnpm db:deploy` 会报 `Command "db:deploy" not found`（还会附带一句莫名其妙的
+   `文件名、目录名或卷标语法不正确。`）。正确写法：`pnpm --filter @classhelper/server db:deploy`。
+   根上只有 `db:generate / db:migrate / db:seed / db:reset / db:studio`。
+3. **`pnpm db:migrate`（= `prisma migrate dev`）在本机不可靠**：首次报 `Schema engine error:`（空消息），
+   数据库建好后再跑会**长时间挂起**（无输出，需手动结束进程）。日常用 `db:deploy`；
+   要写种子直接 `pnpm db:seed`，或 `node ./node_modules/tsx/dist/cli.mjs prisma/seed.ts`（cwd 为 `packages/server`）。
+4. **先 `pnpm build:shared`，否则后面全崩**：`packages/shared/dist` 不存在时，`pnpm db:seed` 与任何
+   消费 `@classhelper/shared` 的进程都会 `ERR_MODULE_NOT_FOUND`（报错指向
+   `packages/server/node_modules/@classhelper/shared/dist/index.js`）。`pnpm dev*` / `build` / `typecheck`
+   脚本已内联 `build:shared`，单独跑 `db:seed` 时记得自己先构建。
+5. **Electron 二进制要手动装**：`pnpm install` 实测**不会**下载它（`allowBuilds` 里虽然写了 `electron: true`，
+   但 postinstall 没跑；日志里只看到 esbuild / prisma）。缺失时 `pnpm dev:desktop` / `verify:desktop` /
+   `verify:web` / `dist:win` 全部失败。装法（本机已装好）：
+
+   ```bash
+   cd node_modules/.pnpm/electron@44.3.0/node_modules/electron
+   ELECTRON_MIRROR=https://cdn.npmmirror.com/binaries/electron/ NODE_OPTIONS=--use-system-ca node install.js
+   ```
+
+6. **"AI 会话里启动 Electron GUI 会崩"是一个误诊 —— 真凶是下一条的 Low 完整性标签。**
+   2026-09-30 实测：把 Electron 发行目录的标签从 Low 改成 Medium 后，同一个 `electron.exe`
+   在 AI 会话里**正常启动**（窗口标题 `Electron`、userData 目录正常创建），
+   `pnpm verify:packaged` 也能完整跑完并出结果（86/90、77/78）。
+   ⇒ `verify:desktop` / `verify:web` / `verify:packaged` / `dist:win` 在 AI 会话里**都能跑**；
+   一旦它们又"启动即崩"，先按第 7 条查完整性标签，别急着甩锅给"会话环境"。
+7. **交付物被打了 Low 完整性标签 ⇒ 客户端装不上、便捷版双击没反应、应用 0x80000003 秒崩。**
+   症状极易误判：`electron.exe --version` 都不打印就退出（0x80000003 STATUS_BREAKPOINT），
+   加 `--no-sandbox` 变成 0xC0000005，任何日志都写不出来（崩在日志初始化之前），
+   但 `ELECTRON_RUN_AS_NODE=1` 跑同一个 exe 完全正常、Edge 等系统 Chromium 也正常。
+   根因：**本仓库目录树被宿主沙箱打上了 `Mandatory Label\Low Mandatory Level:(OI)(CI)`（可继承）**，
+   于是仓库内构建出的一切都继承 Low 标签。后果是双重的：
+   - Windows 会把带 Low 标签的 exe **降级到 Low 完整性运行**：`setup.exe` 写不进 `%LOCALAPPDATA%`
+     （报"拒绝访问"→ 用户看到"装不上"）、便捷版解不出 `%TEMP%`（→ 双击没反应）；
+   - 即便装上了，落在 Low 标签目录里的应用文件也**读不了** —— Chromium 的 GPU/渲染子进程跑在
+     AppContainer（更低完整性）里，按"不能向上读"直接秒崩。
+
+   判据与修法（都是实测过的）：
+
+   ```bash
+   # 判据：看交付物（以及 node_modules/electron/dist）有没有 Low 标签
+   icacls packages\desktop-client\release\win-unpacked\班级小助手.exe | findstr Mandatory
+   # 修法：把交付物改成 Medium。dist-win.mjs 收尾会自动做，手工补救用：
+   icacls packages\desktop-client\release /setintegritylevel Medium /T /C
+   # 目录自身要还原成继承，否则下次构建时自带 Low 标签的 7za / makensis 写不进去
+   icacls packages\desktop-client\release /setintegritylevel "(OI)(CI)Low"
+   ```
+
+   连带的三条经验：**归档内部的载荷标签无所谓**（装到仓库外得到的是默认 Medium 文件），
+   所以修标签必须在**打包完成之后**做，打包前改 appOutDir 反而会让 7za 读不到而失败；
+   **别把安装测试装进仓库树**（`install-test` 之类），那里的文件又会继承 Low；
+   **覆盖已存在的产物会被沙箱 ACL 拒绝**（`Can't open output file` / `拒绝访问`），
+   `dist-win.mjs` 因此会先清掉上一轮的 `*.exe / *.7z / *.blockmap` 再打包。
+
+8. **.NET 8 SDK 已装（8.0.425）**，`pnpm build:classisland-plugin` / `pnpm dist:classisland-plugin` 都能跑
+   （2026-09-30 实测：`-t:Rebuild` 全量编译 8.8s，**1 个警告 0 个错误**；`.cipx` 打包成功，
+   包内 DLL 的 sha256 与 `bin/Release` 产物一致）。脚本会自动把
+   `NUGET_PACKAGES / TEMP / TMP / DOTNET_CLI_HOME` 指到仓库内 `.cache/`（`dotnet` 默认往 C 盘写，
+   C 盘紧张时会构建失败）；手敲 `dotnet build` 时请自己带上这几个变量。
+
+   两个容易自我欺骗的地方：
+   - **光看输出会误判"编译通过"**：源码没变时 `dotnet build` 是**空转**（打印
+     `所有项目均是最新的，无法还原` + `已成功生成 / 0 警告 0 错误`），`CoreCompile` 根本没执行 ——
+     那行 `ClassHelper.ClassIslandPlugin -> …dll` 是拷贝回执，不是编译证据。
+     要证明"真的编译过"，用 `node packages/classisland-plugin/scripts/build.mjs -t:Rebuild -v:n`
+     看有没有 `csc.dll` 调用，并核对 DLL 的 mtime 晚于所有 `.cs`。
+   - **那 1 个警告是预期的，别去"修"**：`AVLN3001: XAML resource
+"…/BridgeSettingsPage.axaml" won't be reachable via runtime loader, as no public constructor was found`
+     —— 设置页只有 `BridgeSettingsPage(PluginSettings, BridgeService)` 这个 DI 构造函数、
+     没有公开无参构造，Avalonia 于是警告它无法走**运行时**加载器；本插件走的是编译期 XAML +
+     ClassIsland 的 DI 实例化，加个无参构造反而会把 DI 弄坏。
+
+9. **`.cipx` 打包最后一步要 PowerShell**：SDK 的 `CreateCipx` 目标默认调 `pwsh`，
+   本机 PATH 里没有 pwsh 时会失败。构建脚本会探测并把结果透传给 MSBuild
+   （`-p:PowershellBinaryName=…`），直接跑 `dotnet build -p:CreateCipx=true` 则要自己加。
+10. **仓库根 `.gitignore` 的第 42 行是 GBK 编码**（整文件 CRLF，只有那一行是 GBK 注释），
+    `apply_patch` 与 Prettier 都读不了它，按 UTF-8 读会看到 `\uFFFD`。要补忽略规则**只能用追加的方式**
+    （`printf 'xxx\n' >> .gitignore`，原有字节一个都别动），别试图整文件重写；临时性的可写
+    `.git/info/exclude`（本地生效、不入库）。
+    （`packages/classisland-plugin/.gitignore` 是本仓库里唯一能正常编辑的 .gitignore。）
+11. **`releases/`（复数）必须在 ESLint 忽略列表里**：本地跑过 `pnpm dist:*` 之后，
     这个目录里是构建后的压缩 JS，不忽略的话 `pnpm lint` 会报出几千条与源码无关的 error
-    （`eslint.config.mjs` 里已补 `**/releases/**`，别再删掉）。
+    （`eslint.config.mjs` 里已补 `**/releases/**`，别再删掉；`release-server/` 同理）。
+    **它一度只在 ESLint 里被忽略、`.gitignore` 里漏了**（后者只有单数的 `release/` 和 `release-server/`）：
+    归集一次客户端产物就有 225MB 的 EXE 变成未跟踪文件，`git add -A` 会直接把安装包提交入库。
+    2026-09-30 已在 `.gitignore` 末尾补上 `releases/`。
+12. **ClassIsland 的数据根是 `D:\Classisland\data`**（**不是**旧文档写的 `F:\data`，F 盘已不存在）：
+    - 插件 DLL 覆盖到 `D:\Classisland\data\Plugins\classhelper.classisland.bridge\`（**ClassIsland 运行时会锁住
+      DLL，必须先退出它再覆盖**：`Get-Process ClassIsland.Desktop | Stop-Process -Force`）；
+    - 插件配置在 `D:\Classisland\data\Config\Plugins\<id>\Settings.json`，**ClassIsland 运行中改会被内存里的
+      副本随时回写覆盖**，要改请趁它退出时改；该文件里存着这台机器的服务器地址与设备令牌，**别覆盖**；
+    - 改完 DLL 或配置都要重启 ClassIsland，否则跑的还是旧副本。
+13. **读 ClassIsland 控制台日志要用 GBK**：`.NET` 的控制台输出是**系统 ANSI（GBK）**编码，
+    用 `-Encoding UTF8` 读会变成乱码、**中文关键字一条都搜不到**（只能搜到 ASCII 的类名）。
+    正确姿势：`[System.IO.File]::ReadAllLines($path, [System.Text.Encoding]::GetEncoding(936))`；
+    日志文件被运行中的进程占用时先 `Copy-Item` 一份再读。
+14. **服务端改了代码要重启才生效**（`tsx src/index.ts` 不热载，`pnpm dev:server` 才有 watch）。
+    验证脚本报「某个断言突然不对」时，先确认后端跑的是不是最新代码 —— 这个坑踩过一次。
+15. **后端启动时才发现 Web 产物**：`packages/web-admin/dist` 不存在就跳过静态托管，`http://127.0.0.1:4000/`
+    只会返回服务首页（文案「Web 管理端未随本服务托管」）。要跑 `verify:web`，先 `pnpm build` 再重启后端。
+16. **打包版服务端有生产自检**：`NODE_ENV=production` 时拒绝 `dev.db`（"生产环境仍在使用 dev.db"）、
+    拒绝短 `JWT_SECRET` 与示例密钥；想用演示数据跑打包版就把库**复制**成 `data/classhelper.db` 再启动。
+17. **makensis 建不了临时文件时，NSIS 那一步会失败（`dist:server` 与 `dist:win` 都会踩）。** 两种根因、
+    同一个排查动作 —— 先把 `TEMP` 指到仓库内一个**真实存在的 Windows 绝对路径**再重试：
+    - `pnpm dist:server` 报 `Internal compiler error #12345: error creating mmap the size of N`：模板用了
+      `SetCompressor /SOLID lzma`，makensis 会在 **`%TEMP%` 所在的盘**建一个上百 MB 的 mmap 临时文件，盘紧就失败
+      （免安装目录其实已生成好，只是最后一步打不出安装包）。加 `--reuse-deps` 还能跳过依赖安装。
+    - `pnpm dist:win` 报 `!tempfile: Unable to create temporary file!` / `Error in macro _Switch`：**不是空间不足**，
+      而是 Git Bash 里 `TEMP=TMP=/tmp` —— makensis 是原生程序，把 `/tmp` 当成「当前盘根下的 tmp」解析成
+      `D:\tmp`，该目录不存在。`/c` 有 79G、`/d` 有 124G 也会照样失败（2026-09-30 实测）。
+      `win-unpacked` 与 `release/*.nsis.7z` 此时都已生成，**只需重跑 electron-builder，不必重建前端**：
+
+      ```bash
+      mkdir -p .cache/tmp
+      TEMP='D:\classhelper\.cache\tmp' TMP='D:\classhelper\.cache\tmp' \
+        node packages/desktop-client/scripts/dist-win.mjs
+      ```
+18. **依赖二进制下载需要 `NODE_OPTIONS=--use-system-ca`**（本机 TLS 中间人证书），否则报
+    `unable to verify the first certificate`。
+19. **Prisma 版本锁死 7.10.0**：npm `latest` 已指向 8.x；生成器是 `prisma-client`，输出到
+    `src/generated/prisma`（gitignored），连接串在 `prisma.config.ts`，并且**必须走 driver adapter**
+    （`@prisma/adapter-libsql` + 预编译的 `@libsql/win32-x64-msvc`，避开 electron ABI 的原生编译坑）。
+20. **服务端安装包里的 `.cmd` 提示是英文**：cmd.exe 按 GBK 解析脚本，中文会乱码，属有意为之
+    （中文在安装向导与 `README.txt`）。
+21. **`pnpm format:check` 在 master 基线上本来就是失败的**（含 `tsconfig.base.json` 与 `scripts/*`），
+    不要拿它当门禁、也不要为了让它变绿去批量格式化。只检查你改过的文件：
+    `pnpm exec prettier --check <file>`。
+    **注意它会因为 CRLF 而"全面误报"**：`core.autocrlf=true` 让 git 里存 LF、工作区签出成 CRLF，
+    而 Prettier 配的是 `endOfLine: lf`，于是几乎每个文件都被标红。要判断是不是**你的**代码不合风格，
+    用 `sed 's/\r$//' <file> | pnpm exec prettier --check --stdin-filepath <file>`。
+22. **写冒烟断言时别用"元素还在不在"判断 Element Plus 的弹框关没关。** `el-dialog` 关闭后
+    **DOM 会留在文档里**（Element Plus 只把 `.el-overlay` 置成 `display: none`），
+    `document.querySelector('.el-dialog')` 恒为真 —— `verify:desktop` / `verify:packaged` 里
+    「设置页『修改密码』对话框取消后未关闭」就是这么误报出来的。正确判据：
+    `getComputedStyle(dialog.closest('.el-overlay')).display !== 'none'`。
+    同理，断言岛体尺寸别写死"胶囊尺寸 + 留白"：那一刻是胶囊还是卡片取决于前面用例留下的状态，
+    应改成**与形态无关的不变量**（如"窗口 = 卡片实测尺寸 + 2×阴影留白"）。
 
 ### 已知脆弱用例（不是环境问题，别去"修环境"）
 
-| 用例                                          | 触发条件                                                                                                                                                                                              |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `verify:e2e`「上课状态接口（at=周一 08:10）」 | 种子把「周一第 1 节」限制在第 1 周，且用例把 `2026-09-07` 当第 1 周。`TERM_START_DATE` 对齐到 `2026-09-07` 即全绿（本机 `.env` 已这样配；`.env.example` 仍是 `2026-02-23`，重置 `.env` 时记得改回来） |
-| `verify:desktop`「课表今天时间轴」            | 凌晨约 00:00–03:00 时「已结束」探针被夹紧成 0 长度而被过滤，`已结束=false` 判定失败                                                                                                                   |
-| `verify:web`「课表科目为全校统一目录」        | 种子给每个班建满了全部科目，下拉里没有可自动建课的「统一科目」分组                                                                                                                                    |
+| 用例                                          | 触发条件                                                                                                                                                                                                                                                        |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `verify:e2e`「上课状态接口（at=周一 08:10）」 | 种子把「周一第 1 节」限制在第 1 周，且用例把 `2026-09-07` 当第 1 周。`TERM_START_DATE` 对齐到 `2026-09-07` 即全绿（本机 `.env` 已这样配；`.env.example` 仍是 `2026-02-23`，重置 `.env` 时记得改回来）                                                           |
+| `verify:desktop`「课表今天时间轴」            | 凌晨约 00:00–03:00 时「已结束」探针被夹紧成 0 长度而被过滤，`已结束=false` 判定失败                                                                                                                                                                             |
+| `verify:web`「课表科目为全校统一目录」        | 种子给每个班建满了全部科目，下拉里没有可自动建课的「统一科目」分组                                                                                                                                                                                              |
+| 岛交互 / 岛动画 / 岛截图留档这几个用例        | **AI 会话里会间歇性失败**：同一份产物连跑两次，失败项会在「点击展开 / 紧急展开动画 / 各状态截图留档」之间跳（2026-09-30 实测三轮结果各不相同）。根因是置顶透明小窗的 rAF 被限流、形变采样抓不到帧，属时序敏感；**先原样重跑一次再动手改代码**，别把偶发当成回归 |
 
 ---
-
-16. **改完插件必须更新 `F:\data\Plugins\classhelper.classisland.bridge\` 里的 DLL 并重启 ClassIsland**，
-    否则跑的还是旧副本（ClassIsland 运行时会锁住 DLL，必须先退出再覆盖）。
-    **别把该目录下的 `Settings.json` 覆盖掉** —— 那里面是这台机器的服务器地址与设备令牌。
-17. **ClassIsland 的提醒链路有三个"上机才暴露"的硬约束**（都已在插件里处理，并写进 `verify:classisland-plugin` 的静态断言，别删）：
-    - 提醒内容**必须**在 UI 线程构造 + 显示，否则 `LucideIconSource → AvaloniaObject` 构造时抛
-      `Call from invalid thread`，表现为"ClassHelper 客户端收到了、ClassIsland 毫无反应"；
-    - 服务端"回执才算送达"，因此插件必须对**播放中的提醒按 id 去重**，否则轮询间隔 < 提醒时长时会反复弹；
-    - `Subject.Fallback` 的名字就是 `???` 占位符，上报前要归一化成"没有科目"。
-
-18. **读 ClassIsland 控制台日志要用 GBK**：`.NET` 的控制台输出是**系统 ANSI（GBK）**编码，
-    用 `-Encoding UTF8` 读会变成乱码、**中文关键字一条都搜不到**（只能搜到 ASCII 的类名）。
-    正确姿势：`[System.IO.File]::ReadAllLines(path, [System.Text.Encoding]::GetEncoding(936))`；
-    日志文件被运行中的进程占用时先 `Copy-Item` 一份再读。
-19. **改插件设置要趁 ClassIsland 退出时改**：插件配置在 `F:\data\Config\Plugins\<id>\Settings.json`，
-    ClassIsland 运行时会在内存里持有并随时回写，运行中改文件会被覆盖。改完 DLL/设置都要重启 ClassIsland。
-20. **打包版服务端有生产自检**：`NODE_ENV=production` 时拒绝 `dev.db`（"生产环境仍在使用 dev.db"），
-    想用演示数据跑打包版就把库**复制**成 `data/classhelper.db` 再启动。
-21. **服务端改了代码要重启才生效**（`tsx src/index.ts` 不热载，`pnpm dev:server` 才有 watch）。
-    验证脚本报「某个断言突然不对」时，先确认后端跑的是不是最新代码 —— 这个坑踩过一次。
-
-22. **灵动岛的位置由「屏幕工作区 + 边距」算，改边距默认值会改外观**：`appearance.marginX/marginY` 默认
-    必须与老行为一致（8px）—— `verify:desktop` 的「停靠位置生效（6 个锚点）」断言的是像素坐标，
-    默认值一动它就红（我先把 marginX 设成 16 踩过一次）。新增边距类设置请只改"可调范围"，别动默认值。
 
 ## 8. 交付前检查
 
@@ -387,33 +666,33 @@ pnpm lint                # ESLint（0 error 为底线）
 pnpm typecheck           # 全仓库类型检查
 
 pnpm dev:server          # 另开终端
-pnpm verify:e2e          # 后端 163 项
-pnpm verify:web          # Web 29 项（其中 1 项是"已知脆弱用例"，见上表）
-pnpm verify:classisland  # ClassIsland 联动链路 24 项
-pnpm verify:classisland-plugin          # 插件静态契约 54 项（不需要后端）
-pnpm build:desktop && pnpm verify:desktop   # 客户端冒烟
+pnpm verify:e2e          # 后端端到端（2026-09-30 实测 173 项全过）
+pnpm verify:classisland  # ClassIsland 联动链路（实测 42 项）
+pnpm verify:classisland-plugin          # 插件静态契约（不需要后端，实测 68 项）
+pnpm build:desktop && pnpm verify:desktop   # 客户端冒烟（AI 会话可跑，先看 §7 第 7 条）
+pnpm build && pnpm verify:web               # Web 端真实点击回归（同上）
 ```
 
+条目数由脚本自行统计并打印（`=== 结果：N/N 项通过 ===`、`ClassIsland 联动插件静态校验：N/N 项通过`），
+文档不要写死容易过期的总数。
+
 改动到 ClassIsland 插件时，额外跑 `pnpm dist:classisland-plugin` 确认能打出 `.cipx`；
-并**在真机上过一遍**（本机就有 ClassIsland，见 §3）：
+本机已装 ClassIsland 2.1.0.1（`D:\Classisland`）与 .NET 8 SDK（8.0.425），因此**真机验证是可行的**
+（直接 `pnpm build:classisland-plugin` 编译，再按 §7 第 12 条部署）：
 
 ```powershell
 # 1) 退出 ClassIsland（DLL 被占用时无法覆盖）→ 2) 覆盖插件 → 3) 重新启动
 Get-Process ClassIsland.Desktop | Stop-Process -Force
-Copy-Item packages\classisland-plugin\bin\Release\ClassHelper.ClassIslandPlugin.dll F:\data\Plugins\classhelper.classisland.bridge\ -Force
-Start-Process F:\classisland\ClassIsland.Desktop.exe -WorkingDirectory F:\classisland
-# 4) 在 Web 端「ClassIsland 联动」发一条提醒，看启动时控制台/日志里依次出现：
+Copy-Item packages\classisland-plugin\bin\Release\ClassHelper.ClassIslandPlugin.dll D:\Classisland\data\Plugins\classhelper.classisland.bridge\ -Force
+Start-Process D:\Classisland\ClassIsland.exe -WorkingDirectory D:\Classisland
+# 4) 在 Web 端「ClassIsland 联动」发一条提醒，看日志里依次出现：
 #    取到待弹出提醒 → 已弹出提醒 →（播完）已确认提醒
 ```
 
 交付时要说明"编译 / 打包 / 静态契约已过，运行期需在装了 ClassIsland 的机器上实测"。
 
-`pnpm format:check` **在 master 基线上本来就是失败的**（175 个文件未过 Prettier，含 `tsconfig.base.json`
-与 `scripts/*`），不要拿它当门禁、也不要为了让它变绿去批量格式化。只检查你改过的文件：
-`pnpm exec prettier --check <file>`。
-
 改动涉及打包/交付形态时，额外跑 `pnpm dist:all`（或 `dist:server` + `dist:win`），
 并用 `pnpm verify:packaged --exe "<客户端路径>"` 对**打包后的副本**复验 ——
 开发产物通过不等于用户机器上的副本通过。
 
-自测本地接口记得 `-NoProxy`（见 §7 第 1 条）。
+自测本地接口记得绕过代理（见 §7 第 1 条）。

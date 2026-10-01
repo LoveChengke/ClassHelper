@@ -6,6 +6,11 @@ directories:
   output: release
   buildResources: build
 
+# 注意：这里**不要**加 afterPack 去改 appOutDir 的完整性标签。
+# 归档内部的载荷标签不会被还原（装到正常位置拿到的是默认 Medium 文件），
+# 而在打包前把 appOutDir 改成 Medium 会让 7za（自身带 Low 标签、进程被降到 Low）
+# 因"不能向上读"而无法生成归档。交付物的标签统一在 scripts/dist-win.mjs 收尾时修正。
+
 # 渲染进程产物已由 Vite 打包、主进程/preload 已由 esbuild 打包，
 # 运行时不需要任何 node_modules（electron 模块由 Electron 运行时提供）。
 files:
