@@ -1,12 +1,10 @@
 ﻿import type { StudentDto } from '@classhelper/shared';
-import { env } from '../../config/env.js';
 import { assertCanManageRoster, classScopeWhere, isAdmin, resolveClassScope } from '../../lib/access.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { toStudentDto } from '../../lib/mappers.js';
-import { hashPassword } from '../../lib/password.js';
-import type { CreateStudentInput, ResetPasswordInput, UpdateStudentInput } from './students.schemas.js';
+import type { CreateStudentInput, UpdateStudentInput } from './students.schemas.js';
 
 export interface ListStudentOptions {
   classId?: string;
@@ -35,18 +33,18 @@ export async function listStudents(user: TokenPayload, options: ListStudentOptio
   return students.map(toStudentDto);
 }
 
-/** 新建学生账号（可选直接分班） */
+/** 新建学生（名单实体，可选直接分班）。学生不设密码：登录一律走班级账号，见 createStudentSchema 的说明 */
 export async function createStudent(user: TokenPayload, input: CreateStudentInput): Promise<StudentDto> {
   if (input.classId) assertCanManageRoster(user);
 
-  const passwordHash = await hashPassword(input.password ?? env.defaultStudentPassword);
   const created = await prisma.user.create({
     data: {
       username: input.username,
       name: input.name,
       role: 'STUDENT',
       classId: input.classId ?? null,
-      passwordHash,
+      // User.passwordHash 是必填列，学生用空串占位（登录的 STUDENT 403 判定在密码校验之前，永远不会用到它）
+      passwordHash: '',
     },
   });
 
@@ -125,25 +123,4 @@ export async function deleteStudent(user: TokenPayload, studentId: string): Prom
   }
 
   await prisma.user.delete({ where: { id: studentId } });
-}
-
-/** 重置学生密码（未指定时使用默认初始密码） */
-export async function resetPassword(
-  user: TokenPayload,
-  studentId: string,
-  input: ResetPasswordInput,
-): Promise<void> {
-  const student = await prisma.user.findUnique({ where: { id: studentId } });
-  if (!student || student.role !== 'STUDENT') throw ApiError.notFound('学生不存在');
-
-  if (student.classId) {
-    assertCanManageRoster(user);
-  } else if (!isAdmin(user)) {
-    throw ApiError.forbidden('该学生尚未分班，仅管理员可以重置密码');
-  }
-
-  await prisma.user.update({
-    where: { id: studentId },
-    data: { passwordHash: await hashPassword(input.newPassword ?? env.defaultStudentPassword) },
-  });
 }

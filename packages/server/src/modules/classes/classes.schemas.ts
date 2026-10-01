@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CLASSISLAND_NOTIFICATION_CHANNELS } from '@classhelper/shared';
+import { CLASSISLAND_NOTIFICATION_CHANNELS, MAX_TERM_WEEK } from '@classhelper/shared';
 import { keywordSchema } from '../../lib/schemas.js';
 
 export const createClassSchema = z.object({
@@ -13,13 +13,19 @@ export const createClassSchema = z.object({
     .trim()
     .regex(/^[A-Za-z0-9]{4,16}$/, '班级码需为 4~16 位字母或数字')
     .optional(),
+  /**
+   * 本学期教学周数。上限与课表周次口径统一取 MAX_TERM_WEEK（30）：
+   * 周次选择器与 weekNumberSchema 都只到 30，允许更大的值只会让用户设出一个
+   * 系统兑现不了的学期长度（第 31 周之后永远为空）。
+   */
+  termWeeks: z.coerce.number().int().min(1).max(MAX_TERM_WEEK).optional(),
 });
 
 export const updateClassSchema = z.object({
   name: z.string().trim().min(1).max(64).optional(),
   grade: z.string().trim().min(1).max(32).optional(),
-  /** 本学期教学周数（1~40，班主任可调） */
-  termWeeks: z.coerce.number().int().min(1).max(40).optional(),
+  /** 本学期教学周数（1~30，管理员可调） */
+  termWeeks: z.coerce.number().int().min(1).max(MAX_TERM_WEEK).optional(),
 });
 
 /** 设置 / 重置班级账号（班级码 + 班级密码）：仅管理员 */
@@ -43,7 +49,6 @@ export const listClassesQuerySchema = z.object({
 export const addStudentSchema = z.object({
   username: z.string().trim().min(3, '用户名至少 3 位').max(32),
   name: z.string().trim().min(1, '请输入姓名').max(32),
-  password: z.string().min(6, '密码至少 6 位').max(128).optional(),
 });
 
 export const assignTeacherSchema = z.object({

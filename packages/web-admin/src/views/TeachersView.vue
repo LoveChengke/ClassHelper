@@ -8,7 +8,7 @@ import TableImportDialog from '@/components/TableImportDialog.vue';
 /**
  * 教师管理（**仅管理员可见/可用**，与后端 `requireRole('ADMIN')` 对应）。
  *
- * 与「学生管理」保持同一套交互：单个录入 / 表格导入名单 / 编辑 / 重置密码 / 删除。
+ * 与「学生管理」保持同一套交互：单个录入 / 表格导入名单 / 编辑 / 修改密码 / 删除。
  * 学生端主体是班级账号，教师账号则决定"谁是班主任、谁能录课表与成绩"，
  * 属于系统级配置，所以录入权限只给管理员。
  */
@@ -92,12 +92,33 @@ async function submitForm(): Promise<void> {
   }
 }
 
-async function resetPassword(row: UserDto): Promise<void> {
-  await ElMessageBox.confirm(`将「${row.name}」的密码重置为默认初始密码？`, '重置密码', {
-    type: 'warning',
-  });
-  await teacherApi.resetPassword(row.id);
-  ElMessage.success('密码已重置为默认初始密码');
+/**
+ * 修改教师密码（管理员给教师改密）。
+ *
+ * 后端 `POST /teachers/:id/reset-password` 本来就接受可选的 `newPassword`（留空才用默认初始密码），
+ * 但界面原先只发空请求、按钮还叫「重置密码」 —— 于是管理员**没有任何办法**把某个教师的密码改成
+ * 指定值，只能重置成默认的 `DEFAULT_TEACHER_PASSWORD`（用户反馈："教师账号没有办法修改密码"，
+ * 并且指着教师列表问"教师修改密码呢"）。
+ * 因此这里把入口正名为「修改密码」：填了就设成填的值，留空才是"重置为默认初始密码"。
+ */
+async function changePassword(row: UserDto): Promise<void> {
+  const result = await ElMessageBox.prompt(
+    '输入新密码即可直接为该账号设置密码；留空则重置为默认初始密码。',
+    `修改「${row.name}」的密码`,
+    {
+      confirmButtonText: '确认修改',
+      cancelButtonText: '取消',
+      inputType: 'password',
+      inputPlaceholder: '新密码（至少 6 位，留空 = 默认初始密码）',
+      // 默认校验器不允许空输入，这里必须放行"留空"这一条路
+      inputValidator: (value: string) => !value || value.length >= 6 || '新密码至少 6 位',
+    },
+  ).catch(() => null);
+  if (!result) return;
+
+  const newPassword = (result.value ?? '').trim();
+  await teacherApi.resetPassword(row.id, newPassword || undefined);
+  ElMessage.success(newPassword ? '教师密码已修改' : '密码已重置为默认初始密码');
 }
 
 async function removeTeacher(row: UserDto): Promise<void> {
@@ -129,7 +150,7 @@ onMounted(loadTeachers);
       <div>
         <h2 class="page-title">教师管理</h2>
         <p class="page-subtitle">
-          录入教师账号（单个录入或导入名单）、修改姓名与角色、重置密码（仅管理员可见）
+          录入教师账号（单个录入或导入名单）、修改姓名与角色、修改密码（仅管理员可见）
         </p>
       </div>
       <div class="toolbar">
@@ -139,6 +160,7 @@ onMounted(loadTeachers);
           clearable
           style="width: 180px"
           @keyup.enter="loadTeachers"
+          @clear="loadTeachers"
         />
         <el-button :icon="'Search'" @click="loadTeachers">查询</el-button>
         <el-button type="primary" :icon="'Plus'" @click="openCreate">新建教师</el-button>
@@ -163,7 +185,7 @@ onMounted(loadTeachers);
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="warning" @click="resetPassword(row)">重置密码</el-button>
+            <el-button link type="warning" @click="changePassword(row)">修改密码</el-button>
             <el-button link type="danger" @click="removeTeacher(row)">删除</el-button>
           </template>
         </el-table-column>

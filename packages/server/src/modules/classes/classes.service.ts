@@ -28,7 +28,6 @@ import {
   toStudentDto,
   toTeacherBrief,
 } from '../../lib/mappers.js';
-import { hashPassword } from '../../lib/password.js';
 import { emitToClass } from '../../realtime/bus.js';
 import { SOCKET_EVENTS } from '@classhelper/shared';
 import type {
@@ -152,6 +151,8 @@ export async function createClass(user: TokenPayload, input: CreateClassInput): 
       teacherId,
       code: account.code,
       passwordHash: account.passwordHash,
+      // 新建时就能指定学期周数（之前只有编辑接口支持，Web 端表单里填了也会被丢弃）
+      ...(input.termWeeks !== undefined ? { termWeeks: input.termWeeks } : {}),
     },
     include: {
       teacher: { select: { id: true, name: true, username: true } },
@@ -228,7 +229,7 @@ export async function updateClass(
     data: {
       ...(input.name ? { name: input.name } : {}),
       ...(input.grade ? { grade: input.grade } : {}),
-      // 教学周数（班主任可调）：课表周次选择与默认 weekEnd 都用它
+      // 教学周数（仅管理员可调，见 assertCanManageClasses）：课表周次选择与默认 weekEnd 都用它
       ...(input.termWeeks !== undefined ? { termWeeks: input.termWeeks } : {}),
     },
     include: {
@@ -260,9 +261,9 @@ export async function listClassStudents(user: TokenPayload, classId: string): Pr
 }
 
 /**
- * 添加学生到班级。
- * 已存在的学生账号直接转入本班（同时维护 Enrollment，保证"一个学生一个主班级"）。
- * 新账号使用 DEFAULT_STUDENT_PASSWORD 作为初始密码。
+ * 添加学生到班级（名单实体）。
+ * 已存在的学生直接转入本班（同时维护 Enrollment，保证"一个学生一个主班级"）。
+ * 学生没有账号属性：不设密码、不能登录，学生端统一用班级码 + 班级密码。
  */
 export async function addStudent(
   user: TokenPayload,
@@ -292,7 +293,8 @@ export async function addStudent(
         name: input.name,
         role: 'STUDENT',
         classId,
-        passwordHash: await hashPassword(input.password ?? env.defaultStudentPassword),
+        // 空串占位：User.passwordHash 必填，但学生的 403 登录判定在密码校验之前，永远用不到
+        passwordHash: '',
       },
     });
     studentId = created.id;

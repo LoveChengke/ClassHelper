@@ -19,13 +19,15 @@ export async function login(input: LoginInput): Promise<LoginResponse> {
   const user = await prisma.user.findUnique({ where: { username: input.username } });
   if (!user) throw ApiError.unauthorized('用户名或密码错误');
 
-  const passwordMatched = await verifyPassword(input.password, user.passwordHash);
-  if (!passwordMatched) throw ApiError.unauthorized('用户名或密码错误');
-
-  // 个人学生账号已停用登录入口（需求：以班级为单位，删掉学生用自己用户名登录）
+  // 角色判定必须放在密码校验**之前**：否则"密码错"与"密码对但学生账号已停用"会给出
+  // 不同的响应（401 / 403），攻击者据此就能把学生账号的密码当成可离线验证的预言机。
+  // 文案与状态码保持不变（客户端按 403 提示"请用班级码登录"）。
   if (user.role === 'STUDENT') {
     throw ApiError.forbidden('学生请使用「班级码 + 班级密码」登录（个人学生账号已停用）');
   }
+
+  const passwordMatched = await verifyPassword(input.password, user.passwordHash);
+  if (!passwordMatched) throw ApiError.unauthorized('用户名或密码错误');
 
   const payload: TokenPayload = {
     sub: user.id,

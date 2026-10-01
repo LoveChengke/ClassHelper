@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
   SOCKET_EVENTS,
+  MAX_TERM_WEEK,
   formatDate,
   type ClassDetailDto,
   type ClassDto,
@@ -76,6 +77,11 @@ function openEdit(row: ClassDto): void {
   form.grade = row.grade;
   form.code = '';
   form.termWeeks = row.termWeeks ?? 20;
+  // 必须回填当前班主任：编辑弹窗里的下拉与"新建"共用同一个 form.headTeacherId，
+  // 而 submitForm 会在"值不同"时直接调 assignHeadTeacher。不回填的话，只要之前打开过一次
+  // 「新建班级」（openCreate 会把它设成当前管理员自己），之后保存任何一次编辑都会把
+  // 该班班主任静默改成管理员本人 —— 而班主任决定谁能管这个班的课表与成绩。
+  form.headTeacherId = row.teacher?.id ?? '';
   void loadStaffOptions();
   formVisible.value = true;
 }
@@ -102,6 +108,9 @@ async function submitForm(): Promise<void> {
     await classApi.create({
       name: form.name,
       grade: form.grade,
+      // 学期周数：新建时也要提交。原先只提交名称/年级/班级码，表单里填的周数被直接丢弃，
+      // 服务端落库恒为默认 20，用户看到的是"设置了没生效"且没有任何提示。
+      termWeeks: form.termWeeks,
       ...(form.code.trim() ? { code: form.code.trim().toUpperCase() } : {}),
       ...(isAdmin.value && form.headTeacherId ? { teacherId: form.headTeacherId } : {}),
     });
@@ -452,9 +461,9 @@ onUnmounted(() => {
           </span>
         </el-form-item>
         <el-form-item label="学期周数">
-          <el-input-number v-model="form.termWeeks" :min="1" :max="40" :step="1" />
+          <el-input-number v-model="form.termWeeks" :min="1" :max="MAX_TERM_WEEK" :step="1" />
           <span class="text-muted ml-8">
-            本学期一共多少教学周（默认 20）；课表周次选择与默认结束周都按它来
+            本学期一共多少教学周（默认 20，最多 {{ MAX_TERM_WEEK }} 周）；课表周次选择与默认结束周都按它来
           </span>
         </el-form-item>
       </el-form>

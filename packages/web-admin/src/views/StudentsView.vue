@@ -47,8 +47,8 @@ function openImport(): void {
 const formVisible = ref(false);
 const formRef = ref<FormInstance>();
 const editingId = ref<string | null>(null);
-/** 表单不再暴露「用户名」：新建时由前端自动生成学号式登录名（见 autoCreateStudent） */
-const form = reactive({ name: '', password: '', classId: '' });
+/** 表单不再暴露「用户名」：新建时由前端自动生成学号式名单标识（见 autoCreateStudent） */
+const form = reactive({ name: '', classId: '' });
 const rules: FormRules = {
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
 };
@@ -56,7 +56,6 @@ const rules: FormRules = {
 function openCreate(): void {
   editingId.value = null;
   form.name = '';
-  form.password = '';
   form.classId = filter.classId;
   formVisible.value = true;
 }
@@ -64,18 +63,17 @@ function openCreate(): void {
 function openEdit(row: StudentDto): void {
   editingId.value = row.id;
   form.name = row.name;
-  form.password = '';
   form.classId = row.classId ?? '';
   formVisible.value = true;
 }
 
 /**
- * 自动生成学生登录名（学号式：student01、student02 …，与种子数据 student01~student15 同风格）。
+ * 自动生成学生名单标识（学号式：student01、student02 …，与种子数据同风格）。
  *
- * 后端 `POST /api/students` 的 username 是必填且全局唯一的（教师/管理员账号同样占位），
- * 界面已按需求隐藏「用户名」输入，因此这里用「全量学生账号 + 递增序号」生成，
- * 并在服务端返回 409（唯一约束冲突，例如并发创建或撞上教师账号）时换下一个序号重试；
- * 其它错误（姓名/密码不合法等）立即抛出，不再重试，避免刷屏。
+ * 后端 `POST /api/students` 的 username 必填且全局唯一（教师/管理员账号同样占位），
+ * 界面已按需求隐藏「用户名」输入，因此这里用「全量学生 + 递增序号」生成，
+ * 并在服务端返回 409（唯一约束冲突）时换下一个序号重试；其它错误立即抛出，避免刷屏。
+ * 学生没有密码、不能登录，username 仅作名单标识。
  */
 function studentUsernameAt(index: number): string {
   return index < 100 ? `student${String(index).padStart(2, '0')}` : `student${index}`;
@@ -84,7 +82,7 @@ function studentUsernameAt(index: number): string {
 async function autoCreateStudent(): Promise<void> {
   const existing = new Set((await studentApi.list()).map((item) => item.username));
   let index = existing.size + 1;
-  let lastError: unknown = new Error('自动生成学生账号失败');
+  let lastError: unknown = new Error('自动生成名单标识失败');
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
     let username = studentUsernameAt(index);
@@ -97,7 +95,6 @@ async function autoCreateStudent(): Promise<void> {
         username,
         name: form.name.trim(),
         classId: form.classId || null,
-        ...(form.password ? { password: form.password } : {}),
       });
       return;
     } catch (error) {
@@ -125,7 +122,7 @@ async function submitForm(): Promise<void> {
   } else {
     try {
       await autoCreateStudent();
-      ElMessage.success('学生账号创建成功（登录名已自动生成）');
+      ElMessage.success('学生已创建（名单标识已自动生成）');
     } catch {
       // 接口层已弹出服务端原因，这里补充可执行的兜底建议
       ElMessage.error('创建失败：可稍后重试，或用「导入名单」在表格里显式指定用户名');
@@ -144,12 +141,6 @@ async function removeStudent(row: StudentDto): Promise<void> {
   await studentApi.remove(row.id);
   ElMessage.success('学生已删除');
   await loadStudents();
-}
-
-async function resetPassword(row: StudentDto): Promise<void> {
-  await ElMessageBox.confirm(`将「${row.name}」的密码重置为默认密码？`, '重置密码', { type: 'warning' });
-  await studentApi.resetPassword(row.id);
-  ElMessage.success('密码已重置为默认密码');
 }
 
 onMounted(async () => {
@@ -209,7 +200,7 @@ async function submitCall(): Promise<void> {
     <div class="page-header">
       <div>
         <h2 class="page-title">学生管理</h2>
-        <p class="page-subtitle">学生账号、分班与密码重置（数据范围按班级权限收敛）</p>
+        <p class="page-subtitle">学生名单、分班与叫人（学生端统一用班级账号登录，学生本身没有密码）</p>
       </div>
       <div class="toolbar">
         <el-select
@@ -257,7 +248,6 @@ async function submitCall(): Promise<void> {
           <template #default="{ row }">
             <el-button link type="success" @click="openCall(row)">叫人</el-button>
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="warning" @click="resetPassword(row)">重置密码</el-button>
             <el-button link type="danger" @click="removeStudent(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -328,9 +318,6 @@ async function submitCall(): Promise<void> {
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="姓名" prop="name">
           <el-input v-model="form.name" />
-        </el-form-item>
-        <el-form-item v-if="!editingId" label="初始密码">
-          <el-input v-model="form.password" placeholder="留空使用默认密码" />
         </el-form-item>
         <el-form-item label="班级">
           <el-select v-model="form.classId" placeholder="暂不分班" clearable style="width: 100%">

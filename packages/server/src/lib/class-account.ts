@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { prisma } from './db.js';
 import { ApiError } from './http.js';
 import { hashPassword, verifyPassword } from './password.js';
@@ -30,7 +31,9 @@ export async function generateClassCode(prefix = ''): Promise<string> {
     const length = Math.max(4, 6 - prefix.length);
     let body = '';
     for (let index = 0; index < length; index += 1) {
-      body += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+      // 用 CSPRNG 而不是 Math.random()：班级码会作为学生端登录的账号名打印/张贴，
+      // 用可预测的 PRNG 生成等于把"半个凭证"送给猜码的人（randomInt 无取模偏差）
+      body += CODE_ALPHABET[randomInt(0, CODE_ALPHABET.length)];
     }
     const code = `${prefix}${body}`.toUpperCase();
     const exists = await prisma.class.findUnique({ where: { code }, select: { id: true } });
