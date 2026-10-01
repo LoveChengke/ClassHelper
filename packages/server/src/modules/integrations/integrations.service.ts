@@ -422,6 +422,9 @@ export async function applyReport(
   const now = new Date();
   const week = resolveCurrentWeek(env.termStartDate, now);
 
+  // 0) 机器码回填（设备创建时只能用 pending-… 占位，首次上报才知道它到底是哪台机器）
+  if (input.deviceKey) await syncDeviceKey(device, input.deviceKey);
+
   // 1) 状态快照（无论课表是否上报都更新，Web 端据此显示"现在上什么课"）
   const state = input.state;
   await prisma.integrationDevice.update({
@@ -516,6 +519,39 @@ export async function applyReport(
     },
     pendingNotification: pending,
   };
+}
+
+/**
+ * 把插件上报的机器码回填到设备记录。
+ *
+ * `IntegrationDevice` 上有 `@@unique([classId, deviceKey])`，因此要避开两个坑：
+ * 1) 同一台机器在这个班已有另一条设备记录（例如管理员重复建过设备）时直接写会撞唯一约束 → 500，
+ *    这里改为记 warning 并保留原值；
+ * 2) 值没变时不必白写一次库。
+ */
+async function syncDeviceKey(device: DeviceContext, reportedKey: string): Promise<void> {
+  const key = reportedKey.trim();
+  if (!key) return;
+
+  const current = await prisma.integrationDevice.findUnique({
+    where: { id: device.deviceId },
+    select: { deviceKey: true },
+  });
+  if (!current || current.deviceKey === key) return;
+
+  const taken = await prisma.integrationDevice.findFirst({
+    where: { classId: device.classId, deviceKey: key, id: { not: device.deviceId } },
+    select: { name: true },
+  });
+  if (taken) {
+    logger.warn(
+      `ClassIsland 上报的机器码「${key}」已被本班设备「${taken.name}」占用，本次不回填（设备=${device.name}）`,
+    );
+    return;
+  }
+
+  await prisma.integrationDevice.update({ where: { id: device.deviceId }, data: { deviceKey: key } });
+  logger.info(`ClassIsland 设备机器码已回填：${device.name} -> ${key}`);
 }
 
 /** 该设备/该班级最近一条尚未确认、未过期的下发提醒 */

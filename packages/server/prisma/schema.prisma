@@ -146,8 +146,13 @@ model Schedule {
   weekEnd   Int      @default(20)
   /// 单双周：ALL=每周（默认）/ ODD=单周 / EVEN=双周（ClassIsland WeekCountDiv + WeekCountDivTotal 的映射）
   weekParity String @default("ALL")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  /// 该行的来源：manual=手工建立（Web 端录入 / ClassIsland JSON 导入）
+  /// / classisland=插件上报同步得到。
+  /// 插件每次全量上报时只清理「classisland 来源且本次未再上报」的行（解决"老师在 ClassIsland
+  /// 里删掉一节、服务端却永远留着"的幽灵课），老师手排的课一律不删。
+  source     String @default("manual")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   class  Class  @relation(fields: [classId], references: [id], onDelete: Cascade)
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)

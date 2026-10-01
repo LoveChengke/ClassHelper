@@ -40,7 +40,10 @@ public class PluginSettings : ObservableObject
     public string DeviceToken
     {
         get => _deviceToken;
-        set => SetProperty(ref _deviceToken, value);
+        // 在 setter 里就去掉首尾空白：粘贴令牌时带前导空格非常常见，
+        // 而 Normalize() 只在启动加载时跑一次 —— 运行期粘进来的脏值会让 IsConfigured
+        // 一直为 false，用户看着明明填好了却查不出原因。
+        set => SetProperty(ref _deviceToken, (value ?? "").Trim());
     }
 
     /// <summary>
@@ -154,5 +157,20 @@ public class PluginSettings : ObservableObject
 
     /// <summary>是否已经配置好（地址 + 令牌都填了）。</summary>
     public bool IsConfigured =>
-        Uri.TryCreate(ServerUrl, UriKind.Absolute, out _) && DeviceToken.StartsWith("chci_", StringComparison.Ordinal);
+        TryGetServerUri(out _) && DeviceToken.StartsWith("chci_", StringComparison.Ordinal);
+
+    /// <summary>
+    /// 解析服务器地址，**只接受 http/https 绝对地址**。
+    ///
+    /// 不用裸的 `Uri.TryCreate(..., UriKind.Absolute)`：它会接受 `file://` / `ftp://`，
+    /// 那种地址会在发请求时抛一句难以理解的 NotSupportedException，用户根本猜不到是地址填错了。
+    /// </summary>
+    public bool TryGetServerUri(out Uri uri)
+    {
+        uri = null!;
+        if (!Uri.TryCreate((ServerUrl ?? "").Trim(), UriKind.Absolute, out var parsed)) return false;
+        if (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps) return false;
+        uri = parsed;
+        return true;
+    }
 }

@@ -79,9 +79,22 @@ public static class ClassPlanWriter
         {
             var planName = BuildPlanName(source.ProfileName, group.WeekDay, group.WeekCountDiv,
                 group.WeekCountDivTotal, groups.Count);
+
+            // 时间非法的条目必须**在这里**就整批丢掉：`Classes` 与时间表里的上课点必须等长且同序，
+            // 只在一处跳过会让整份课表错位。原先 ParseTime 把无法解析的值悄悄变成 00:00，
+            // 于是档案里凭空出现 00:00-00:00 的课次（时间轴显示与当前节次判断都会乱），还没有任何日志。
+            var usable = group.Entries
+                .Where(entry => IsValidTime(entry.StartTime) && IsValidTime(entry.EndTime))
+                .ToList();
+            if (usable.Count < group.Entries.Count)
+            {
+                result.Warnings.Add(
+                    $"「{planName}」有 {group.Entries.Count - usable.Count} 节的时间无法解析（需要 HH:mm），已跳过");
+            }
+            if (usable.Count == 0) continue;
+
             var planId = FindPlanId(profile, planName);
-            var (timeLayoutId, timeLayout) = BuildTimeLayout(
-                profile, planName, group.Entries);
+            var (timeLayoutId, timeLayout) = BuildTimeLayout(profile, planName, usable);
 
             var plan = profile.ClassPlans.TryGetValue(planId, out var existing)
                 ? existing
@@ -102,7 +115,7 @@ public static class ClassPlanWriter
             // 档案不会重新触发刷新，课次就会停留在旧时间点上。
             var classes = new ObservableCollection<ClassInfo>();
             var index = 0;
-            foreach (var entry in group.Entries)
+            foreach (var entry in usable)
             {
                 var subjectId = profile.Subjects
                     .FirstOrDefault(pair => pair.Value.Name == entry.Subject).Key;
@@ -250,5 +263,20 @@ public static class ClassPlanWriter
     private static TimeSpan ParseTime(string value)
     {
         return TimeSpan.TryParse(value, out var parsed) ? parsed : TimeSpan.Zero;
+    }
+
+    /// <summary>
+    /// 时间字符串是否可用（HH:mm / HH:mm:ss）。
+    ///
+    /// 服务端输出侧没有校验 `Schedule.startTime`（老数据/异常数据可能是空串），
+    /// 而 <see cref="ParseTime"/> 会把非法值变成 0 点 —— 因此调用方必须先用本方法过滤，
+    /// 并把 Classes 与时间表**同时**按过滤后的列表构造，保证索引仍然一致。
+    /// </summary>
+    private static bool IsValidTime(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        return TimeSpan.TryParse(value, out var parsed)
+               && parsed >= TimeSpan.Zero
+               && parsed < TimeSpan.FromDays(1);
     }
 }

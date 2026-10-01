@@ -127,9 +127,15 @@ public class Plugin : PluginBase
         settings.Normalize();
         if (needGenerateKey)
         {
-            // 机器名 + 随机短码：既是人眼可读的"这台机器"，又不会两台同名机器撞车
+            // 机器名 + 随机短码：既是人眼可读的"这台机器"，又不会两台同名机器撞车。
+            // 注意长度：原先写的是 `[..Math.Min(24, machine.Length + 33)]`，而 machine.Length + 33
+            // 恒大于 24，所以实际**永远只取前 24 个字符** —— 机器名稍长就把随机段整个切掉，
+            // "同名机器不撞车"的保障就没了。这里改成"机器名按需截短 + 保留 8 位随机段"。
             var machine = Environment.MachineName.ToLowerInvariant();
-            settings.DeviceKey = $"{machine}-{Guid.NewGuid():N}"[..Math.Min(24, machine.Length + 33)];
+            var suffix = Guid.NewGuid().ToString("N")[..8];
+            var maxMachineLength = Math.Max(4, 24 - suffix.Length - 1);
+            if (machine.Length > maxMachineLength) machine = machine[..maxMachineLength];
+            settings.DeviceKey = $"{machine}-{suffix}";
         }
 
         Settings = settings;
@@ -146,7 +152,15 @@ public class Plugin : PluginBase
         {
             var folder = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
-            File.WriteAllText(path, JsonSerializer.Serialize(settings, JsonOptions));
+            // 先写临时文件再原子替换。
+            //
+            // 设置页的地址/令牌输入框是 TwoWay 绑定（逐字符提交），直接 `File.WriteAllText`
+            // 会就地截断原文件；一旦此刻进程被杀或断电，留下的是半截 JSON，而 LoadSettings 的
+            // catch 会**静默回退到默认设置** —— 用户看到的是"令牌和地址莫名其妙没了"，
+            // 而且原文件已被覆盖，无从恢复。
+            var temp = path + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(settings, JsonOptions));
+            File.Move(temp, path, overwrite: true);
         }
         catch (Exception exception)
         {

@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Text;
+using Avalonia.Threading;
 using ClassHelper.ClassIslandPlugin.Interop;
 using ClassHelper.ClassIslandPlugin.Models;
 using ClassIsland.Core;
@@ -39,6 +41,11 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
     private bool _reporting;
     private bool _pulling;
     private bool _eventsHooked;
+    /// <summary>
+    /// 上次成功镜像的课表内容指纹。内容没变就完全跳过镜像：既省掉每分钟一次的全量重建 + 落盘，
+    /// 也把"跨线程改档案"的窗口从"每分钟一次"降回"只在课表真的变化时"。
+    /// </summary>
+    private volatile string? _lastMirrorSignature;
 
     public BridgeService(PluginSettings settings, ILogger<BridgeService> logger)
     {
@@ -237,6 +244,8 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
             {
                 PluginVersion = PluginVersion,
                 ClassIslandVersion = SafeAppVersion(),
+                // 机器码：设备创建时服务端只能用 pending-… 占位，靠这里回填，Web 端设备列表才能与教室机器对上
+                DeviceKey = _settings.DeviceKey,
                 State = BuildState(lessons),
             };
 
@@ -274,7 +283,9 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
                     layoutCount = items.Count;
                     request.TimeLayout = new TimeLayoutPayloadDto
                     {
-                        Name = string.IsNullOrWhiteSpace(layout.Name) ? "ClassIsland 时间表" : layout.Name,
+                        Name = ScheduleMapper.Truncate(
+                            string.IsNullOrWhiteSpace(layout.Name) ? "ClassIsland 时间表" : layout.Name,
+                            ScheduleMapper.PlanNameMaxLength)!,
                         Mode = "replace",
                         Items = items,
                     };
@@ -320,6 +331,16 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
             }
 
             return true;
+        }
+        catch (Exception exception)
+        {
+            // ReportAsync 是通过 `_ = ReportAsync(reason)` 这种 fire-and-forget 方式发起的
+            // （事件回调与定时器都是），没有这个 catch，中途抛出的异常（例如跨线程改档案时的
+            // "Collection was modified"）会被 unobserved task 静默吞掉：日志里一条都没有，
+            // 而 LastReportMessage 还停在上一次的成功结果，用户以为一切正常。
+            _logger.LogError(exception, "班级小助手联动：上报异常（{Reason}）", reason);
+            SetState(false, $"上报异常：{exception.Message}", 0, 0, null);
+            return false;
         }
         finally
         {
@@ -397,23 +418,48 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
             return;
         }
 
+        // 内容没变就直接返回：上报是"启动 + 每个课程事件 + 每 N 秒"触发的，原先每次都要
+        // 重建全部课表对象并整体落盘 —— 无谓的网络/磁盘 I/O，还会把档案页刷得不停重绘。
+        var signature = MirrorSignature(plan);
+        if (signature == _lastMirrorSignature)
+        {
+            _logger.LogDebug("班级小助手联动：课表内容与上次一致，跳过镜像");
+            return;
+        }
+
         try
         {
-            var applied = ClassPlanWriter.Apply(profile, plan);
-            if (!applied.Applied)
+            // **必须在 UI 线程上改写档案**：ClassIsland 的档案是 ObservableDictionary /
+            // ObservableCollection，落盘是"属性变化即整体序列化 + FileStream 就地截断"。
+            // 而本方法是从线程池线程继续执行的（ReportAsync 里 ConfigureAwait(false) 之后，
+            // 定时器回调本就在线程池上），在线程池上改集合会与 UI 线程的保存/绑定并发：
+            // 轻则 InvalidOperationException（Collection was modified），重则两次写入互相截断，
+            // **把整个档案写成半截 JSON**（老师的课表/科目全丢，只能靠 .bak 兜底）。
+            var outcome = await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                var applied = ClassPlanWriter.Apply(profile, plan);
+                if (!applied.Applied)
+                {
+                    return applied;
+                }
+
+                // 改写的是 Profile 里的集合，ClassIsland 会靠 INotifyCollectionChanged 落盘；
+                // 这里显式 SaveProfile() 是为了"打开开关马上就能在课表里看到"，不用等下一次自动保存。
+                IAppHost.TryGetService<IProfileService>()?.SaveProfile();
+                return applied;
+            });
+
+            if (!outcome.Applied)
             {
                 _logger.LogInformation("班级小助手联动：课表镜像未生效（{Reason}）",
-                    applied.Warnings.FirstOrDefault() ?? "服务端课表为空");
+                    outcome.Warnings.FirstOrDefault() ?? "服务端课表为空");
                 return;
             }
 
-            // 改写的是 Profile 里的集合，ClassIsland 会靠 INotifyCollectionChanged 落盘；
-            // 这里显式 SaveProfile() 是为了"打开开关马上就能在课表里看到"，不用等下一次自动保存。
-            IAppHost.TryGetService<IProfileService>()?.SaveProfile();
-
+            _lastMirrorSignature = signature;
             _logger.LogInformation("班级小助手联动：已把班级课表写入 ClassIsland（{Plans}）",
-                string.Join("、", applied.PlanNames.Select(name => $"「{name}」")));
-            foreach (var warning in applied.Warnings)
+                string.Join("、", outcome.PlanNames.Select(name => $"「{name}」")));
+            foreach (var warning in outcome.Warnings)
             {
                 _logger.LogWarning("班级小助手联动镜像提示：{Warning}", warning);
             }
@@ -422,6 +468,28 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
         {
             _logger.LogError(exception, "班级小助手联动：课表镜像失败");
         }
+    }
+
+    /// <summary>镜像载荷的内容指纹（只用于"内容没变就跳过"，不参与任何业务判断）</summary>
+    private static string MirrorSignature(ClassPlanMirrorDto plan)
+    {
+        var builder = new StringBuilder();
+        foreach (var entry in plan.Entries)
+        {
+            builder.Append(entry.WeekDay).Append('|').Append(entry.WeekCountDiv).Append('|')
+                .Append(entry.WeekCountDivTotal).Append('|').Append(entry.Subject).Append('|')
+                .Append(entry.StartTime).Append('|').Append(entry.EndTime).Append(';');
+        }
+        foreach (var layout in plan.TimeLayouts)
+        {
+            builder.Append('#').Append(layout.Id).Append(':');
+            foreach (var item in layout.Layouts)
+            {
+                builder.Append(item.StartTime).Append('-').Append(item.EndTime).Append('@')
+                    .Append(item.TimeType).Append(',');
+            }
+        }
+        return builder.ToString();
     }
 
     /* ---------------------------------------------------------------- 内部实现 */

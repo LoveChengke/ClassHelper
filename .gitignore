@@ -41,3 +41,8 @@ Thumbs.db
 
 # ²Î¿¼ÓÃµÄµÚÈı·½Ô´Âë°ü£¨Éè¼Æ token ÒÑÌáÈ¡µ½ docs/winisland-design-tokens.md£©
 WinIsland-master.zip
+releases/
+
+# AI ä¼šè¯äº§ç‰©ï¼ˆZCode è®¡åˆ’/é…ç½®ï¼Œä¸å±äºäº§å“ä»£ç ï¼‰
+.zcode/
+.zcodeignore

@@ -69,6 +69,8 @@ public class ReportRequestDto
 {
     [JsonPropertyName("pluginVersion")] public string PluginVersion { get; set; } = "";
     [JsonPropertyName("classIslandVersion")] public string ClassIslandVersion { get; set; } = "";
+    /// <summary>本机机器码：设备创建时服务端还不知道它，靠这里回填（见服务端 syncDeviceKey）。</summary>
+    [JsonPropertyName("deviceKey")] public string DeviceKey { get; set; } = "";
     [JsonPropertyName("state")] public StateDto? State { get; set; }
     [JsonPropertyName("schedule")] public SchedulePayloadDto? Schedule { get; set; }
     [JsonPropertyName("timeLayout")] public TimeLayoutPayloadDto? TimeLayout { get; set; }
@@ -198,6 +200,12 @@ public sealed class ClassHelperClient : IDisposable
     /// </summary>
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(12);
 
+    /// <summary>
+    /// 响应体上限（4MB）。默认是 2GB —— 服务器地址填错（指到一个会吐大页面的地址）时，
+    /// 一次请求就能在 12 秒内把内存吃光。
+    /// </summary>
+    private const long MaxResponseBytes = 4 * 1024 * 1024;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -216,6 +224,7 @@ public sealed class ClassHelperClient : IDisposable
     private readonly HttpClient _http = new(new SocketsHttpHandler { Proxy = new LocalAwareProxy() })
     {
         Timeout = Timeout,
+        MaxResponseContentBufferSize = MaxResponseBytes,
     };
 
     public string LastError { get; private set; } = "";
@@ -332,6 +341,17 @@ public sealed class ClassHelperClient : IDisposable
                 }
                 LastError = message!;
                 return envelope ?? new ApiEnvelope<T> { Success = false, Message = message! };
+            }
+
+            if (envelope is null)
+            {
+                // 2xx 但响应不是本服务的统一响应体（网关/反代的 HTML 错误页、地址指到了别的服务等）。
+                // 必须留下原因：否则调用方拿到的是"成功但无数据 + 空错误消息"，
+                // 设置页显示"连接异常"却没有原因，与上面专门为代理错误页写的诊断自相矛盾。
+                LastError =
+                    $"HTTP {(int)response.StatusCode}（{method.Method} {request.RequestUri}）——" +
+                    "响应不是班级小助手的标准格式，请检查服务器地址是否正确，或该系统代理是否拦截了内网请求";
+                return new ApiEnvelope<T> { Success = false, Message = LastError };
             }
 
             LastError = "";

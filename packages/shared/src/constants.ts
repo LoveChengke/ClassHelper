@@ -55,6 +55,19 @@ export const PRIORITY_TAG_TYPES: Record<NotificationPriority, 'info' | 'primary'
   URGENT: 'danger',
 };
 
+/**
+ * 优先级权重（越大越重要）。
+ *
+ * 灵动岛有多条通知时按它排序（"默认按重要程度排列"），插件合并同 id 消息时也用它取更高优先级 ——
+ * 两边必须同一份口径，否则会出现"列表里的顺序和合并后的优先级不一致"。
+ */
+export const PRIORITY_RANK: Record<NotificationPriority, number> = {
+  LOW: 0,
+  NORMAL: 1,
+  HIGH: 2,
+  URGENT: 3,
+};
+
 /** 星期：1=周一 ... 7=周日（与数据库 dayOfWeek 一致） */
 export const WEEKDAY_LABELS: Record<number, string> = {
   1: '周一',
@@ -213,6 +226,114 @@ export const ISLAND_TYPE_SCALE = {
   /** 胶囊副标题 */
   pillSub: 0.74,
 } as const;
+
+/**
+ * 展开态"多条通知列表"的排版度量（单位：**基础字号的倍数**，即与 `--island-font` 同源）。
+ *
+ * 为什么这份常量必须放在 shared：列表比普通展开卡高得多，**窗口包围盒要跟着长高**，
+ * 否则卡片底部（那排按钮）会被窗口裁掉 —— 而窗口尺寸只有主进程能改、行高只有渲染进程知道。
+ * 两边用同一份度量各算一次"该显示几行 / 卡片多高"，就不会出现"渲染进程以为放得下、窗口却不够高"的漂移。
+ *
+ * 与 `IslandApp.vue` 里 `.expanded-layer`、`.list-row`、`.list-hint`、`.foot` 的 CSS 逐项对应，
+ * **改 CSS 必须同步改这里**。
+ */
+export const ISLAND_LIST_METRICS = {
+  /** 卡片上下内边距 */
+  paddingY: 1.4,
+  /** 卡片内各块（标题行 / 批次标题 / 列表 / 按钮行）之间的间距 */
+  gap: 0.7,
+  /** 顶部标题行（图标 + 徽标 + 时间 + 收起按钮） */
+  headerHeight: 1.7,
+  /** 批次标题（"共 N 条待处理通知"，单行） */
+  titleHeight: 1.4,
+  /** 单条通知行高 */
+  rowHeight: 2.7,
+  /** 行间距（含提示行上方的间距） */
+  rowGap: 0.4,
+  /** "展开更多 / 更多请前往应用内操作"那一行（含上方间距） */
+  hintHeight: 2.5,
+  /** 底部按钮行（含上方间距、分隔线与内边距） */
+  footerHeight: 3.45,
+  /** 默认只显示前几条 —— 用户要求「只显示前三个，下面显示展开更多」 */
+  defaultVisibleRows: 3,
+  /** 兜底上限：再多也交给"前往应用内操作"，避免窗口长到离谱 */
+  maxRows: 20,
+  /** 高度余量：浮点排版误差不至于让最后一行贴着裁切边 */
+  safetyPad: 6,
+} as const;
+
+/** 列表布局结算结果（主进程据此算窗口包围盒，渲染进程据此渲染） */
+export interface IslandListLayout {
+  /** 实际要展示的通知行数 */
+  rows: number;
+  /** 底部提示行的形态：more=可"展开更多"；app=放不下，请去应用内看；null=没有更多了 */
+  hint: 'more' | 'app' | null;
+  /** 卡片高度（CSS px） */
+  height: number;
+}
+
+/** 列表卡片里"除通知行之外"的固定高度（CSS px）：内边距 + 标题行 + 批次标题 + 底部按钮行 + 可选提示行 */
+function islandListChromeHeight(fontSize: number, withHint: boolean): number {
+  const m = ISLAND_LIST_METRICS;
+  const base = (m.paddingY * 2 + m.headerHeight + m.titleHeight + m.footerHeight + m.gap * 3) * fontSize;
+  return base + (withHint ? m.hintHeight * fontSize : 0);
+}
+
+/** n 行通知（含行间距）占用的高度（CSS px） */
+function islandListRowsHeight(fontSize: number, rows: number): number {
+  const m = ISLAND_LIST_METRICS;
+  if (rows <= 0) return 0;
+  return (rows * m.rowHeight + (rows - 1) * m.rowGap) * fontSize;
+}
+
+/** 在给定高度里最多放得下几行通知（至少 1 行，至多 maxRows） */
+function islandListFittingRows(fontSize: number, maxHeight: number, withHint: boolean): number {
+  const m = ISLAND_LIST_METRICS;
+  const chrome = islandListChromeHeight(fontSize, withHint) + m.safetyPad;
+  const unit = (m.rowHeight + m.rowGap) * fontSize;
+  const rowUnit = m.rowHeight * fontSize;
+  const room = maxHeight - chrome;
+  if (room < rowUnit) return 1;
+  return Math.max(1, Math.min(m.maxRows, Math.floor((room + m.rowGap * fontSize) / unit)));
+}
+
+/**
+ * 结算"多条通知"的展开卡布局（**主进程与渲染进程共用**）：
+ * - 默认只显示前 `defaultVisibleRows` 条，多余的放进"展开更多"；
+ * - 放不下的部分（快到屏幕下沿的任务栏了）不再撑高卡片，改为提示"更多请前往应用内操作"；
+ * - 返回的 `height` 就是卡片（以及窗口包围盒）应有的高度。
+ */
+export function islandListLayout(input: {
+  /** 待处理通知总数 */
+  count: number;
+  /** 基础字号（外观设置） */
+  fontSize: number;
+  /** 当前屏幕/停靠位置下卡片可用的最大高度（CSS px） */
+  maxHeight: number;
+  /** 是否已点过"展开更多" */
+  expanded: boolean;
+}): IslandListLayout {
+  const m = ISLAND_LIST_METRICS;
+  const total = Math.max(0, Math.floor(input.count));
+  // 先按"用户意图"决定想显示几行；再受屏幕高度限制
+  const desired = input.expanded ? Math.min(total, m.maxRows) : Math.min(total, m.defaultVisibleRows);
+  const wantsHint = desired < total;
+  const fitting = islandListFittingRows(input.fontSize, input.maxHeight, wantsHint);
+  const rows = Math.max(1, Math.min(desired, fitting));
+  const hint: IslandListLayout['hint'] =
+    rows >= total ? null : input.expanded || rows >= fitting ? 'app' : 'more';
+  return {
+    rows,
+    hint,
+    height: Math.min(
+      input.maxHeight,
+      islandListChromeHeight(input.fontSize, hint !== null) +
+        islandListRowsHeight(input.fontSize, rows) +
+        m.safetyPad,
+    ),
+  };
+}
+
 /** 默认学期周次上限 */
 export const DEFAULT_WEEK_COUNT = 20;
 

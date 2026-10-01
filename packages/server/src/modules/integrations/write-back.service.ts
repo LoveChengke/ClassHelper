@@ -20,6 +20,8 @@ export interface ScheduleWriteResult {
   applied: boolean;
   created: number;
   updated: number;
+  /** 被清理掉的旧同步行（老师已在 ClassIsland 里删除的课） */
+  removed: number;
   courses: string[];
   weekStart: number;
   weekEnd: number;
@@ -46,6 +48,7 @@ export async function applyReportedSchedule(
     applied: false,
     created: 0,
     updated: 0,
+    removed: 0,
     courses: [],
     weekStart: 1,
     weekEnd: 20,
@@ -91,6 +94,8 @@ export async function applyReportedSchedule(
     // 3) 逐条 upsert：merge 的去重键是「星期 + 开始时间 + 单双周」
     let created = 0;
     let updated = 0;
+    /** 本轮上报覆盖到的行 id：不在其中的 classisland 来源行会被清理（见第 4 步） */
+    const keptIds = new Set<string>();
     for (const entry of entries) {
       const courseId = courseIdByName.get(entry.subject);
       if (!courseId) continue;
@@ -102,8 +107,21 @@ export async function applyReportedSchedule(
       if (existing) {
         await tx.schedule.update({
           where: { id: existing.id },
-          data: { courseId, endTime: entry.endTime, weekStart, weekEnd },
+          data: {
+            courseId,
+            endTime: entry.endTime,
+            // 不覆盖 weekStart / weekEnd：插件上报契约里没有周次范围，
+            // 硬写"整学期"会把老师在 Web 端为选修/短期课设的「第 1~10 周」悄悄抹掉。
+            // 只在新建时给默认值（见下面 create）。
+            //
+            // 同样**不要**把 source 改成 'classisland'：merge 的去重键是「星期 + 开始时间 + 单双周」，
+            // 老师在 Web 端手排的同一时间槽会被这里"收养"。一旦收养时改写来源，
+            // 后续那次"清理插件侧已删除的课"就会把这行老师手排的课一起删掉
+            // （真机上发生过：种子课表 93 行被删成 91 行，`verify:e2e` 的上课状态用例随之失败）。
+            // 因此来源只在 create 时确定，update 永远保持原值。
+          },
         });
+        keptIds.add(existing.id);
         updated += 1;
       } else {
         await tx.schedule.create({
@@ -117,22 +135,53 @@ export async function applyReportedSchedule(
             weekStart,
             weekEnd,
             weekParity,
+            source: 'classisland',
           },
         });
         created += 1;
       }
     }
-    return { created, updated, createdCourses, allCourses: [...courseIdByName.keys()] };
+
+    // 4) 清理"老师已在 ClassIsland 里删掉"的行。
+    //
+    // merge 模式原先只 upsert、从不删除：老师在 ClassIsland 删掉一节，或把 8:00 的课挪到 8:05，
+    // 服务端那行会永远留着（幽灵课 / 同一天两节重复课）。但也不能照 replace 那样整表清空 ——
+    // 那会连老师在 Web 端手排的课一起删。
+    // 因此只清理 `source='classisland'`（即由上报同步产生）且本轮未再出现的行。
+    let removed = 0;
+    if (mode === 'merge') {
+      const synced = await tx.schedule.findMany({
+        where: { classId, source: 'classisland' },
+        select: { id: true, dayOfWeek: true, startTime: true, weekParity: true },
+      });
+      const stale = synced.filter(
+        (row) =>
+          !keptIds.has(row.id) &&
+          !entries.some(
+            (entry) =>
+              entry.dayOfWeek === row.dayOfWeek &&
+              entry.startTime === row.startTime &&
+              resolveParity(entry) === row.weekParity,
+          ),
+      );
+      if (stale.length > 0) {
+        await tx.schedule.deleteMany({ where: { id: { in: stale.map((row) => row.id) } } });
+        removed = stale.length;
+      }
+    }
+
+    return { created, updated, removed, createdCourses, allCourses: [...courseIdByName.keys()] };
   });
 
   logger.info(
     `ClassIsland 上报课表：班级=${classId} 模式=${mode} 新增=${result.created} 更新=${result.updated} ` +
-      `补建科目=[${result.createdCourses.join(',')}]`,
+      `清理=${result.removed} 补建科目=[${result.createdCourses.join(',')}]`,
   );
   return {
     applied: true,
     created: result.created,
     updated: result.updated,
+    removed: result.removed,
     courses: result.allCourses,
     weekStart,
     weekEnd,

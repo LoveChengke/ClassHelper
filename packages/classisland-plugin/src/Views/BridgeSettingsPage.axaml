@@ -26,6 +26,10 @@
                      Watermark="chci_..."
                      PasswordChar="●"
                      Text="{Binding Settings.DeviceToken, Mode=TwoWay}" />
+            <!-- 令牌是设备级长期凭证（只有管理员在 Web 端重置才会失效），而 ClassIsland 的插件配置
+                 是明文 JSON 且会随档案备份/迁移一起被带走，所以这里明确提示用户别外传。 -->
+            <TextBlock Margin="0 6 0 0" TextWrapping="Wrap" Opacity="0.7"
+                       Text="令牌是这台教室机器的长期凭证（仅管理员在 Web 端重置才会失效），会明文保存在本机配置文件里并随 ClassIsland 档案备份一起复制，请不要外传或提交到版本库。" />
 
             <StackPanel Orientation="Horizontal" Margin="0 12 0 0" Spacing="8">
                 <Button Content="立即上报" Command="{Binding ReportCommand}" IsEnabled="{Binding !Bridge.Busy}" />

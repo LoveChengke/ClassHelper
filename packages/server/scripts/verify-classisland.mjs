@@ -466,6 +466,109 @@ async function main() {
     `上课点=${classPoints.length} 条目=${(plan?.entries ?? []).length}`,
   );
 
+  /* ---------------------------------------------------------------- 5.1 课表同步：幽灵行清理 + 机器码回填 */
+  // 老师在 Web 端手排的一节课（source=manual）：插件同步时**绝不能**删它
+  const courseList = await api(`/courses?classId=${target.id}`, { token: teacherToken });
+  const courseId = (courseList.payload?.data ?? [])[0]?.id;
+  const manualCreated = await api('/schedules', {
+    method: 'POST',
+    token: teacherToken,
+    body: {
+      classId: target.id,
+      courseId,
+      dayOfWeek: 7,
+      startTime: '21:00',
+      endTime: '21:45',
+      weekStart: 1,
+      weekEnd: 20,
+      weekParity: 'ALL',
+    },
+  });
+  const manualScheduleId = manualCreated.payload?.data?.id;
+  record(
+    '（准备）Web 端手排一节课（source=manual）',
+    manualCreated.status === 201 && Boolean(manualScheduleId),
+    `status=${manualCreated.status}`,
+  );
+
+  const entry = (startTime, endTime) => ({
+    dayOfWeek: 6,
+    startTime,
+    endTime,
+    subject: '语文',
+    weekParity: 'ALL',
+  });
+
+  /** 该班课表里"周六 19:xx"的行（插件上报写入的那些） */
+  const listSaturday = async () => {
+    const list = await api(`/schedules?classId=${target.id}`, { token: teacherToken });
+    return (list.payload?.data ?? []).filter(
+      (item) => item.dayOfWeek === 6 && item.startTime.startsWith('19:'),
+    );
+  };
+
+  // 第一次上报：两节（第二节随后会被"老师在 ClassIsland 里删掉"）
+  const ghostReport = await api('/integrations/classisland/report', {
+    method: 'POST',
+    deviceToken,
+    body: {
+      deviceKey: 'smoke-machine-01',
+      schedule: { mode: 'merge', entries: [entry('19:00', '19:45'), entry('19:50', '20:35')] },
+    },
+  });
+  record(
+    '插件上报两节课（其中一节随后会被删除）',
+    ghostReport.payload?.data?.scheduleApplied === true,
+    `status=${ghostReport.status}`,
+  );
+
+  const beforePrune = await listSaturday();
+  record('上报后两节都在库里', beforePrune.length === 2, `周六 19 点=${beforePrune.length} 节`);
+
+  // 第二次上报：只报第二节 → 第一节应当被清理。
+  // 原先 merge 只 upsert、从不删除，老师删掉的课会永远留在服务端（幽灵课），
+  // 学生端与 Web 端会一直显示一节实际上已经不上的课。
+  const pruneReport = await api('/integrations/classisland/report', {
+    method: 'POST',
+    deviceToken,
+    body: {
+      deviceKey: 'smoke-machine-01',
+      schedule: { mode: 'merge', entries: [entry('19:50', '20:35')] },
+    },
+  });
+  const afterPrune = await listSaturday();
+  record(
+    '插件侧删除的课被同步清理（不再留幽灵课）',
+    pruneReport.payload?.data?.scheduleApplied === true &&
+      afterPrune.length === 1 &&
+      afterPrune[0]?.startTime === '19:50',
+    `周六 19 点=${afterPrune.map((item) => item.startTime).join(',') || '空'}`,
+  );
+
+  // 只清理"插件同步出来的行"：老师手排的课必须活着
+  const scheduleList = await api(`/schedules?classId=${target.id}`, { token: teacherToken });
+  const manualAlive = (scheduleList.payload?.data ?? []).some((item) => item.id === manualScheduleId);
+  record('Web 端手排的课不被插件同步删除', manualAlive, `手排行 id=${manualScheduleId ?? '-'}`);
+
+  // 机器码回填：设备列表里不再是 pending-…
+  const deviceList = await api(`/integrations/devices?classId=${target.id}`, { token: teacherToken });
+  const backfilledKey =
+    (deviceList.payload?.data ?? []).find((item) => item.id === deviceId)?.deviceKey ?? '';
+  record(
+    '插件上报的机器码已回填到设备记录',
+    backfilledKey === 'smoke-machine-01',
+    `deviceKey=${backfilledKey}`,
+  );
+
+  // 清理：把手排的课与本次上报写进去的课都删掉，避免污染演示数据
+  if (manualScheduleId) {
+    await api(`/schedules/${manualScheduleId}`, { method: 'DELETE', token: teacherToken });
+  }
+  for (const row of await listSaturday()) {
+    await api(`/schedules/${row.id}`, { method: 'DELETE', token: teacherToken });
+  }
+  record('清理：本次验证写入的课表与手排课已删除', (await listSaturday()).length === 0, '周六 19 点已清空');
+
   // ---------------------------------------------------------------- 6. 停用设备
   await api(`/integrations/devices/${deviceId}`, {
     method: 'PATCH',

@@ -61,9 +61,16 @@ public static class ScheduleMapper
     /// 把档案里的一张课表（ClassPlan）展开成"每个上课时间点一条"的课表条目。
     ///
     /// 与 ClassIsland 的语义严格对齐：<c>ClassPlan.Classes[i]</c> 对应
-    /// <c>TimeLayout.Layouts</c> 里**第 i 个 TimeType=0（上课）的点**，
-    /// 课间 / 分割线 / 行动不占 Classes 的位置。因此这里必须按 TimeType 过滤后再配对，
-    /// 否则整张课表会错位。
+    /// <c>TimeLayout.Layouts</c> 里**第 i 个 TimeType=0（上课）的点**，课间 / 分割线 / 行动不占位。
+    ///
+    /// **注意不要用 `plan.ValidTimeLayoutItems`**：它的口径与 `Classes` 不同 ——
+    /// `GetValidTimeLayoutItems()`（ClassIsland ClassPlan.cs）会正反两遍扫描，
+    /// 把 `ClassInfo.IsEnabled == false`（老师在课表编辑里"停用"这一节）的课**连同其后的课间**
+    /// 一起从结果里剔除；而 `RefreshClassesList()` 只按 `TimeType == 0` 的**总数**对齐
+    /// `Classes` 的长度，`ClassInfo.CurrentTimeLayoutItem` 也是按原始列表的第 `Index` 个取的。
+    /// 于是只要停用过任意一节，用 ValidTimeLayoutItems 配对就会让索引整体前移：
+    /// 第 i 节配上第 i+1 节的时间点、最后一节丢失，且 `Math.Min` 会把缺口静默吃掉 ——
+    /// 表现就是"课表看着有内容、每节课都对不上"，极难排查。
     /// </summary>
     public static List<ScheduleEntryDto> MapClassPlan(ClassPlan plan, Profile profile, out string? warning)
     {
@@ -77,11 +84,8 @@ public static class ScheduleMapper
             return entries;
         }
 
-        // 只保留上课类型的时间点，顺序必须与 Classes 的索引一致
+        // 只保留上课类型的时间点，顺序必须与 Classes 的索引一致（见上面注释）
         var classPoints = timeLayout.Layouts.Where(item => item.TimeType == 0).ToList();
-        var validPoints = plan.ValidTimeLayoutItems.Count > 0
-            ? plan.ValidTimeLayoutItems.Where(item => item.TimeType == 0).ToList()
-            : classPoints;
 
         var weekDay = ToServerDayOfWeek(plan.TimeRule.WeekDay);
         var parity = ToWeekParity(plan.TimeRule.WeekCountDiv, plan.TimeRule.WeekCountDivTotal);
@@ -91,12 +95,15 @@ public static class ScheduleMapper
         }
 
         var classes = plan.Classes;
-        var count = Math.Min(classes.Count, validPoints.Count);
+        var count = Math.Min(classes.Count, classPoints.Count);
         for (var index = 0; index < count; index++)
         {
             var info = classes[index];
-            var point = validPoints[index];
+            // 索引必须与 Classes 对齐：这里按下标取时间点，**不能**先用 Where 过滤再取
+            var point = classPoints[index];
             if (info is null) continue;
+            // 老师停用的一节：本系统没有"停用"概念，不上报（否则学生端会看到一节实际上不上的课）
+            if (!info.IsEnabled) continue;
 
             // 空课（未安排科目）不上报：服务端的科目是必填的，空课由课表里的缺席表达
             var subject = ResolveSubjectName(info.SubjectId, profile);
@@ -107,16 +114,31 @@ public static class ScheduleMapper
                 DayOfWeek = weekDay,
                 StartTime = ToHhMm(point.StartTime),
                 EndTime = ToHhMm(point.EndTime),
-                Subject = subject,
-                TeacherName = ResolveSubjectTeacher(info.SubjectId, profile),
+                // 服务端对这几个字段有 zod 长度上限，且是**整批**校验：一个超长名字会让整次上报
+                // 400，连"现在上什么课"的状态与心跳都不更新，Web 端把教室显示成离线。
+                Subject = Truncate(subject, SubjectMaxLength)!,
+                TeacherName = Truncate(ResolveSubjectTeacher(info.SubjectId, profile), NameMaxLength),
                 WeekParity = parity,
                 WeekCountDiv = plan.TimeRule.WeekCountDiv,
                 WeekCountDivTotal = plan.TimeRule.WeekCountDivTotal,
-                PlanName = plan.Name,
+                PlanName = Truncate(plan.Name, PlanNameMaxLength),
             });
         }
 
         return entries;
+    }
+
+    /// <summary>服务端 zod 对各类名称的长度上限（超出会让整批上报 400，所以要截断） */
+    public const int SubjectMaxLength = 40;
+    public const int NameMaxLength = 40;
+    public const int PlanNameMaxLength = 60;
+
+    /// <summary>按服务端上限截断（null / 空串原样返回）</summary>
+    public static string? Truncate(string? value, int max)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+        var trimmed = value.Trim();
+        return trimmed.Length <= max ? trimmed : trimmed[..max];
     }
 
     /// <summary>把时间表（TimeLayout）转成本系统的节次时间配置。</summary>
@@ -131,7 +153,8 @@ public static class ScheduleMapper
             items.Add(new TimeLayoutItemDto
             {
                 Index = index + 1,
-                Name = BuildTimePointName(point, ref classPointIndex),
+                // 节次名同样是服务端有上限的字段（max 40），超长会让整批上报失败
+                Name = Truncate(BuildTimePointName(point, ref classPointIndex), NameMaxLength)!,
                 StartTime = ToHhMm(point.StartTime),
                 EndTime = ToHhMm(point.EndTime),
                 Type = ToTimeLayoutType(point.TimeType),

@@ -75,6 +75,12 @@ export const reportTimeLayoutItemSchema = z.object({
 export const classIslandReportSchema = z.object({
   pluginVersion: z.string().trim().max(40).optional(),
   classIslandVersion: z.string().trim().max(40).optional(),
+  /**
+   * 插件生成的机器码。设备创建时服务端还不知道它是谁，只能用 `pending-…` 占位，
+   * 因此插件每次上报都带上它，服务端据此回填，Web 端设备列表才能与教室机器对上
+   * （见 integrations.service 的 syncDeviceKey）。
+   */
+  deviceKey: z.string().trim().max(64).optional(),
   state: z
     .object({
       inClass: z.boolean().optional(),

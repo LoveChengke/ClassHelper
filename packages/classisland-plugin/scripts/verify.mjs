@@ -295,6 +295,57 @@ check(
     bridgeSource.includes('NotificationPollSeconds'),
 );
 
+/* ------------------------------------------------------------ 8. 回归护栏：本次修复过的坑 */
+
+check(
+  '课表配对用原始 TimeType==0 列表，**不用** ValidTimeLayoutItems（后者会剔除被停用的节次，导致整份课表错位）',
+  // 只查代码形态（`.Count`），因为源码注释里特意点名了这个属性来说明"为什么不能用它"
+  mapperSource.includes('classPoints[index]') && !mapperSource.includes('.ValidTimeLayoutItems.Count'),
+);
+check(
+  '上报字段按服务端 zod 上限截断（一个超长名字会让整批上报 400，连状态与心跳一起丢掉）',
+  mapperSource.includes('Truncate(') &&
+    mapperSource.includes('SubjectMaxLength') &&
+    mapperSource.includes('PlanNameMaxLength'),
+);
+check(
+  '课表镜像在 UI 线程改写档案（线程池上改 Observable 集合会与落盘并发，可能写坏档案）',
+  bridgeSource.includes('Dispatcher.UIThread.InvokeAsync') && bridgeSource.includes('SaveProfile()'),
+);
+check(
+  '镜像内容未变化时跳过（否则每次上报都重建课表并全量落盘）',
+  bridgeSource.includes('_lastMirrorSignature') && bridgeSource.includes('MirrorSignature('),
+);
+check(
+  '上报异常有 catch（fire-and-forget 的异常会被静默吞掉）',
+  bridgeSource.includes('catch (Exception exception)') && bridgeSource.includes('上报异常'),
+);
+check(
+  '镜像前过滤时间非法的条目（避免档案里出现 00:00 的课次，且必须与 Classes 同步过滤）',
+  read('src/Services/ClassPlanWriter.cs').includes('IsValidTime'),
+);
+check(
+  '上报体带上 deviceKey，且服务端 schema 也声明了该字段（回填机器码的契约两端一致）',
+  clientSource.includes('"deviceKey"') && serverSchemas.includes('deviceKey:'),
+);
+check(
+  '2xx 但不是本服务响应体时给出原因（而不是"成功但无数据 + 空消息"），并限制响应体大小',
+  clientSource.includes('响应不是班级小助手的标准格式') &&
+    clientSource.includes('MaxResponseContentBufferSize'),
+);
+check(
+  '提醒提供方惰性获取课程服务并重试（拿不到服务时"上课暂存"会永久失效且静默）',
+  providerSource.includes('EnsureLessons') && providerSource.includes('_lessonsHooked'),
+);
+check(
+  '设置落盘先写临时文件再原子替换（逐字符写盘 + 截断式写入会留下坏 JSON）',
+  pluginSource.includes('File.Move(temp, path, overwrite: true)'),
+);
+check(
+  '服务器地址只接受 http/https（裸 Uri.TryCreate 会放过 file:// / ftp://）',
+  settingsSource.includes('TryGetServerUri') && settingsSource.includes('UriSchemeHttp'),
+);
+
 /* ------------------------------------------------------------ 结果 */
 
 const failed = results.filter((item) => !item.ok);

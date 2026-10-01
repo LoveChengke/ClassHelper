@@ -63,6 +63,7 @@ public sealed class ClassHelperNotificationProvider : NotificationProviderBase
     private readonly List<PushNotificationDto> _deferred = new();
 
     private ILessonsService? _lessons;
+    private bool _lessonsHooked;
 
     public ClassHelperNotificationProvider(
         BridgeService bridge,
@@ -74,26 +75,43 @@ public sealed class ClassHelperNotificationProvider : NotificationProviderBase
         _logger = logger;
         _bridge.NotificationReceived += OnNotificationReceived;
 
-        // 订阅课程事件：下课后把上课时段暂存的提醒补弹出来
+        // 尽力而为地先订阅一次；拿不到也没关系，后面每次需要判定时都会重试
+        // （本类的构造函数可能在课程服务建好之前就被 DI 调用）
+        EnsureLessons();
+    }
+
+    /// <summary>
+    /// 惰性获取课程服务并**只订阅一次**课程事件（下课后补弹上课时段暂存的提醒）。
+    ///
+    /// 为什么不能只在构造函数里订阅：提供方是随主机启动被构造的，而课程服务在启动流程里的
+    /// 创建时机并不固定。一旦构造函数里拿到 null，原先的实现既不重试、也不打日志，
+    /// 于是 `IsInClass()` 恒为 false —— "上课时段先暂存、下课再补弹"这条规则**永久失效**，
+    /// 老师在课上发的通知会直接全屏打断课堂，而且完全静默、无从排查。
+    /// </summary>
+    private void EnsureLessons()
+    {
+        if (_lessonsHooked) return;
         try
         {
             _lessons = IAppHost.TryGetService<ILessonsService>();
-            if (_lessons is not null)
-            {
-                _lessons.OnBreakingTime += (_, _) => Dispatcher.UIThread.Post(FlushDeferred);
-                _lessons.OnAfterSchool += (_, _) => Dispatcher.UIThread.Post(FlushDeferred);
-                _lessons.CurrentTimeStateChanged += (_, _) => Dispatcher.UIThread.Post(FlushDeferred);
-            }
+            if (_lessons is null) return;
+
+            _lessons.OnBreakingTime += (_, _) => Dispatcher.UIThread.Post(FlushDeferred);
+            _lessons.OnAfterSchool += (_, _) => Dispatcher.UIThread.Post(FlushDeferred);
+            _lessons.CurrentTimeStateChanged += (_, _) => Dispatcher.UIThread.Post(FlushDeferred);
+            _lessonsHooked = true;
+            _logger.LogInformation("班级小助手联动：提醒提供方已订阅课程事件（上课时段暂存、下课补弹）");
         }
         catch (Exception exception)
         {
-            _logger.LogWarning(exception, "班级小助手联动：订阅课程事件失败，上课暂存将退化为「立即弹出」");
+            _logger.LogWarning(exception, "班级小助手联动：订阅课程事件失败，将在下次提醒时重试");
         }
     }
 
     /// <summary>当前是否处于上课时段（读不到课程服务时按"不在上课"处理，宁可弹也不静默丢）</summary>
     private bool IsInClass()
     {
+        EnsureLessons();
         try
         {
             return _lessons?.CurrentState == TimeState.OnClass;
