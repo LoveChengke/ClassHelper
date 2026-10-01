@@ -1338,8 +1338,8 @@ async function runIslandChecks(
   island.hide();
   await sleep(400);
   // 排空这一节留下的队列：下面断言的是"单条通知的胶囊 / 详情卡"（多条会走列表形态），
-  // 顺带等"收回动画"播完（窗口真正隐藏，hiddenBeforePush 才有意义）——
-  // 收回动画是"渲染进程收敛上报 → 主进程淡出"，rAF 节流时比固定时长更久，轮询等它真的隐藏。
+  // 顺带等窗口真的隐藏（hiddenBeforePush 才有意义）。
+  // 淡出是主进程逐帧 setOpacity 的动画，机器忙时会比固定时长更久，因此轮询等它隐藏。
   await drainIsland();
   let hiddenBeforePush = !(islandWindow?.isVisible() ?? true);
   for (let attempt = 0; attempt < 25 && !hiddenBeforePush; attempt += 1) {

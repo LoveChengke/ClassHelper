@@ -399,22 +399,27 @@ homeworks / notifications / calls / imports / integrations / grades / students /
     写这类用例时注意：**断言"单条卡片"的用例（紧急卡/叫人卡/截图比例）必须先 `drainIsland()` 排空队列**，
     否则量到的是列表高度。
 
-34. **"知道了 / 标为已读"之后要有收回动画，但状态必须同步落地。**
-    状态机与动画分开：主进程先发 `island:closing`（渲染进程据此把当前卡片按"胶囊形态 + 这批消息"收回），
-    **同时**把状态写成 `hidden` / 清空（调用方与冒烟按同步语义断言），窗口随后才淡出隐藏。
-    `closing` 期间的守卫别删：`syncWindow` 要保持窗口可见、`relayout` 不许把窗口收小
-    （收小会把正在缩回的卡片裁掉；真正收小在窗口隐藏之后，见 `syncWindow` 里"不可见时对齐包围盒"）。
-    多条通知时这两个按钮都是**整批**操作：`dismiss-all` / `mark-all-read`（作业卡的合成 id
-    `homework-<id>` 要在主进程按 kind 过滤掉，否则通知中心会去查一条不存在的通知）。
-    回归用例：`verify:desktop` 的「多条通知点「知道了」：整批关闭 + 收回动画」。
+34. **"知道了 / 标为已读"之后是「状态同步落地 + 窗口淡出」，没有跨进程的收回握手。**
+    收起一律是**主进程单向**的：`handleAction()` 收到 `dismiss` / `dismiss-all` / `mark-read` /
+    `mark-all-read` → `dismissActive()`（还有下一条则退胶囊）或 `clearPendingForClose()`
+    → `hide()` → `fadeOut()`（每帧 `setOpacity(-0.2)`，到 0.02 后 `win.hide()`）。
+    状态在**同一帧就写成** `hidden` / 清空，**不等渲染进程任何回执** —— 调用方与冒烟按"同步语义"断言
+    （`island.ts` 的 `clearPendingForClose()` 注释：「状态同步落地（渲染进程随之收起卡片，窗口由 `hide()` 淡出）」）。
+    渲染进程那侧只有本地弹簧形变（`spring.ts` 的 `targetSize/progress`），是纯视觉动画，不参与淡出时机。
 
-    **什么时候淡出不能靠"猜时长"**：渲染进程形变收敛后会 `sendClosingDone()` 上报
-    （`island:closing-done`），主进程 `noteClosingDone()` 才淡出；`closingTimer` 只是**兜底上限**
-    （`max(duration*2, 1200+duration)`，覆盖 rAF 被节流到连 MORPH_FALLBACK 的 1.2s snap 都没跑完的情形）。
-    早期实现按固定 360ms 猜，rAF 一被节流就"卡片缩到一半窗口没了"（用户反馈的"收回动画截断灵动岛"）。
-    **两个配套铁律**：①`finishClosing()` 里"定时器句柄置空"必须与 `clearTimeout` 成对
-    （只置空＝留下幽灵定时器，会在动画正常结束之后又静默隐藏一次，把随后弹出的紧急通知吃掉 —— 踩过）；
-    ②渲染侧 `closing` 快照的清理定时器要给足余量（现在 `durationMs + 1000`），它只负责丢快照。
+    **曾经有过一层自研的"收回快照"动画，已按用户要求整体删除。** 它叫 `closing` / `closingSnapshot`：
+    点"知道了"后把卡片按"胶囊摘要"收回再淡出，是自研的形变状态机，**实测在触摸屏上会露出旧帧/重影**
+    （触摸模式窗口贴合岛体、卡片形变时窗口跟着动），用户明确要求"动画就用仓库里那套"，于是整段删掉 ——
+    现状见 `IslandApp.vue` 顶部注释。**别照着一份不存在的握手机制去改代码。**
+    （`smoke.ts` 里"收回动画是渲染进程收敛上报 → 主进程淡出"只是一句过时注释，代码里没有这条链路。）
+
+    多条通知时这两个按钮都是**整批**操作：`dismiss-all` / `mark-all-read`（作业卡的合成 id
+    `homework-<id>` 要在主进程按 kind 过滤掉，否则通知中心会去查一条不存在的通知 ——
+    见 `handleAction()` 里 `mark-all-read` 分支的 `.filter((item) => item.kind !== 'homework')`）。
+    回归用例：`verify:desktop` 的「多条通知点「知道了」：整批关闭（状态同步清空，窗口淡出隐藏）」。
+
+    排查"收回时闪一下"这类反馈时注意：**先看是不是自动化验证实例的叠影**（见第 41、42 条），
+    别往这套已经不存在的握手机制上找原因。
 
 35. **本机录入的作业不再上灵动岛。** 服务端是**先广播 `homework:new`、后回响应**的，
     等响应拿到 id 再登记就晚了（事件可能已经到了、岛已经弹出来了）——所以
