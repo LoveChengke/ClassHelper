@@ -1,6 +1,6 @@
 {
   "name": "@classhelper/web-admin",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "班级小助手 Web 管理端（Vue 3 + Vite + Element Plus）",
   "type": "module",

@@ -93,19 +93,26 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 3000, intervalMs 
   return predicate();
 }
 
-/** 侧边栏菜单与期望路由的对应关系（按显示文案匹配） */
+/** 侧边栏菜单与期望路由的对应关系（按显示文案匹配；侧边栏是「分组 + 子菜单」结构） */
 const EXPECTED_MENU: Array<{ label: string; path: string }> = [
   { label: '课表', path: '/schedule' },
   { label: '作业', path: '/homeworks' },
   { label: '通知', path: '/notifications' },
   { label: '成绩', path: '/grades' },
-  { label: '设置', path: '/settings' },
+  /** 设置组的代表子项：设置入口改成分组后，用「通用」验证设置子页导航可用 */
+  { label: '通用', path: '/settings/general' },
+];
+
+/** 分组标题（el-sub-menu）与应包含的子项，点击分组展开后再点子项 */
+const MENU_GROUPS: Array<{ title: string; labels: string[] }> = [
+  { title: '学习', labels: ['课表', '作业', '通知', '成绩'] },
+  { title: '设置', labels: ['通用', '外观', '灵动岛', '提醒', '账号', '关于'] },
 ];
 
 /**
- * 冒烟自检 3：侧边栏点击导航。
- * 直接对真实 DOM 触发 click，验证每次点击后路由与视图都发生切换 ——
- * 这是"点击左侧边栏没反应"这类问题的回归测试。
+ * 冒烟自检 3：侧边栏点击导航（分组结构版）。
+ * 先点分组标题展开，再逐个点击子项，验证每次点击后路由与视图都发生切换 ——
+ * 这是"点击左侧边栏没反应"这类问题的回归测试（侧边栏改为「学习/设置」分组后重写）。
  */
 export async function layoutNavigationSelfTest(): Promise<SmokeCheckResult> {
   const { router } = await import('../router/index.js');
@@ -113,19 +120,42 @@ export async function layoutNavigationSelfTest(): Promise<SmokeCheckResult> {
   // 按**文案那一层 span 的完整文本**匹配，而不是整项 textContent：
   // "通知"项里还有一个未读红点徽标（sup），整项 textContent 会变成 "2通知"，
   // 用 startsWith 匹配就会误报"菜单项缺失"（历史失败原因）。
-  const findMenuItem = (label: string): HTMLElement | undefined =>
-    (Array.from(document.querySelectorAll('.el-menu-item')) as HTMLElement[]).find((element) =>
+  const findByLabel = (selector: string, label: string): HTMLElement | undefined =>
+    (Array.from(document.querySelectorAll(selector)) as HTMLElement[]).find((element) =>
       Array.from(element.querySelectorAll('span')).some(
         (span) => (span.textContent ?? '').trim() === label,
       ),
     );
+  const findMenuItem = (label: string): HTMLElement | undefined => findByLabel('.el-menu-item', label);
+  const findGroupTitle = (title: string): HTMLElement | undefined =>
+    findByLabel('.el-sub-menu__title', title);
 
-  if (!findMenuItem('课表')) {
-    return { ok: false, detail: '侧边栏未渲染（当前不在主布局或未登录）' };
+  if (!findGroupTitle('学习') || !findGroupTitle('设置')) {
+    return { ok: false, detail: '侧边栏分组未渲染（当前不在主布局或未登录）' };
   }
 
   const visited: string[] = [];
   const failures: string[] = [];
+
+  // 展开分组：默认只展开"当前路由所在分组"，其它组需要先点开。
+  // 判据用"子项是否可见"而不是"盲点一次标题" —— 标题点击是 toggle，
+  // 对已经展开的组再点一下会把它**收起**，后续点不到子项。
+  const isVisible = (element: HTMLElement | undefined): boolean =>
+    Boolean(element && element.offsetParent !== null);
+  for (const group of MENU_GROUPS) {
+    const firstItem = findMenuItem(group.labels[0] ?? '');
+    if (!isVisible(firstItem)) {
+      findGroupTitle(group.title)?.click();
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+
+  // 分组结构自检：两个分组各自应包含全部子项
+  for (const group of MENU_GROUPS) {
+    for (const label of group.labels) {
+      if (!findMenuItem(label)) failures.push(`${group.title}组缺少子项 ${label}`);
+    }
+  }
 
   for (const { label, path } of EXPECTED_MENU) {
     const element = findMenuItem(label);
@@ -818,6 +848,66 @@ export async function islandHomeworkSuppressionCheck(): Promise<SmokeCheckResult
   }
 }
 
+/**
+ * 冒烟自检（不需要后端）：**初次启动引导**。
+ *
+ * 冒烟每次都用全新配置目录（等于"首次启动"），因此引导必须自动弹出；
+ * 这里真实点击把它一步步走完，断言：遮罩关闭 + `onboardingDone` 已写入配置。
+ * 关闭判据用「元素从 DOM 消失」——引导是 v-if 自绘遮罩（特意不用 el-dialog，
+ * 避免"关闭后 DOM 残留在文档里"的误报，见 AGENTS §7 第 22 条）。
+ */
+export async function onboardingSelfTest(): Promise<SmokeCheckResult> {
+  try {
+    // 引导在启动后延迟 ~400ms 弹出，这里轮询等它出现
+    const appearDeadline = Date.now() + 5000;
+    while (Date.now() < appearDeadline && !document.querySelector('.onboarding-welcome')) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!document.querySelector('.onboarding-welcome')) {
+      const config = await window.desktop?.getConfig?.();
+      return {
+        ok: false,
+        detail: `初次启动引导未自动出现（onboardingDone=${config?.onboardingDone ?? '-'}）`,
+      };
+    }
+
+    // 逐页「下一步」到最后一页再点「开始使用」（按钮由 data-action 标识，不依赖文案）
+    const clicks: string[] = [];
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const action = document.querySelector('.onboarding-welcome [data-action="finish"]')
+        ? 'finish'
+        : 'next';
+      const button = document.querySelector<HTMLElement>(
+        `.onboarding-welcome [data-action="${action}"]`,
+      );
+      if (!button) break;
+      clicks.push(action);
+      button.click();
+      if (action === 'finish') break;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+
+    let closed = !document.querySelector('.onboarding-welcome');
+    const closeDeadline = Date.now() + 2000;
+    while (Date.now() < closeDeadline && !closed) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      closed = !document.querySelector('.onboarding-welcome');
+    }
+
+    const config = await window.desktop?.getConfig?.();
+    const done = config?.onboardingDone === true;
+    return {
+      ok: closed && done,
+      detail: `步骤点击=[${clicks.join(',')}] 已关闭=${closed} onboardingDone=${config?.onboardingDone ?? '-'}`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: `引导自检异常：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
 /** 冒烟收尾：删除自检临时数据 → 断开实时通道 → 退出登录，保证下次冒烟从登录页开始 */
 export async function sessionCleanup(): Promise<SmokeCheckResult> {
   const [{ useAuthStore }, { useRealtimeStore }] = await Promise.all([
@@ -834,6 +924,158 @@ export async function sessionCleanup(): Promise<SmokeCheckResult> {
   }
 }
 
+/**
+ * 冒烟自检（不需要后端）：主界面外观件 —— 主题切换与侧边栏折叠。
+ * 走**真实 DOM 点击**（顶栏日月按钮 / 汉堡按钮），验证：
+ * 1) html.dark 类与 store 同步翻转，且写入主进程配置；
+ * 2) 侧边栏折叠后 el-menu 进入 collapse 态、宽度收窄，配置同步；
+ * 结束时把主题还原为初始值（后续截图/几何用例依赖固定主题）。
+ */
+export async function layoutChromeSelfTest(): Promise<SmokeCheckResult> {
+  try {
+    const { router } = await import('../router/index.js');
+    await router.push('/schedule');
+    if (!(await waitUntil(() => Boolean(document.querySelector('[data-test="theme-toggle"]')), 6000))) {
+      return { ok: false, detail: '主布局未渲染（找不到主题切换按钮）' };
+    }
+
+    const clickToggle = (selector: string): boolean => {
+      const node = document.querySelector<HTMLElement>(selector);
+      if (!node) return false;
+      node.click();
+      return true;
+    };
+
+    // 1) 主题：真实点击日月按钮 → html.dark 翻转 → 配置落盘
+    const initialDark = document.documentElement.classList.contains('dark');
+    if (!clickToggle('[data-test="theme-toggle"]')) return { ok: false, detail: '主题按钮点击失败' };
+    const flipped = await waitUntil(
+      () => document.documentElement.classList.contains('dark') !== initialDark,
+      2500,
+    );
+    const flippedDark = document.documentElement.classList.contains('dark');
+    const configAfterFlip = await window.desktop?.getConfig?.();
+    const themePersisted = configAfterFlip?.theme === (flippedDark ? 'dark' : 'light');
+
+    // 2) 侧边栏：点汉堡折叠 → collapse 态 + 宽度收窄 → 配置落盘 → 再展开还原
+    const asideBefore = document.querySelector<HTMLElement>('.aside.ch-nav');
+    const widthBefore = asideBefore?.offsetWidth ?? 0;
+    if (!clickToggle('[data-test="sidebar-toggle"]')) return { ok: false, detail: '汉堡按钮点击失败' };
+    const collapsed = await waitUntil(() => Boolean(document.querySelector('.el-menu--collapse')), 2500);
+    const asideAfter = document.querySelector<HTMLElement>('.aside.ch-nav');
+    const widthAfter = asideAfter?.offsetWidth ?? 0;
+    const configAfterCollapse = await window.desktop?.getConfig?.();
+    const collapsePersisted = configAfterCollapse?.sidebarCollapsed === true;
+
+    // 2.1) 折叠态的两条观感硬要求（用户反馈回归）：
+    //   a) 菜单里不允许残留任何**可见**的文字（Element Plus 靠宽度归零隐藏，一旦被外层样式
+    //      干扰就会留"半截字"）；
+    //   b) 折叠后的图标必须与顶部汉堡按钮在同一竖列（中心 x 相差 ≤ 2px），否则看起来"没对齐"。
+    const centerXOf = (element: Element | null | undefined): number | null => {
+      if (!element) return null;
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 ? rect.left + rect.width / 2 : null;
+    };
+    const leftoverText: string[] = [];
+    for (const node of Array.from(
+      document.querySelectorAll('.aside .el-menu-item > span, .aside .el-sub-menu__title > span'),
+    )) {
+      const element = node as HTMLElement;
+      if (element.classList.contains('menu-icon-slot')) continue;
+      const text = (element.textContent ?? '').trim();
+      if (text && element.offsetParent !== null && element.getClientRects().length > 0) {
+        const rect = element.getBoundingClientRect();
+        // 宽高都归零但 display 不为 none 的，正是"0 宽溢出"的残影来源
+        if (rect.width < 1) leftoverText.push(`0宽:${text.slice(0, 6)}`);
+        else leftoverText.push(`可见:${text.slice(0, 6)}`);
+      }
+    }
+    const toggleCenter = centerXOf(document.querySelector('[data-test="sidebar-toggle"]'));
+    const iconCenters = Array.from(
+      document.querySelectorAll('.aside .el-menu--collapse .el-sub-menu__title .el-icon'),
+    ).map((node) => centerXOf(node));
+    const iconDeltas = iconCenters
+      .filter((value): value is number => value !== null && toggleCenter !== null)
+      .map((value) => Math.abs(value - (toggleCenter as number)));
+    const iconsAligned = iconDeltas.length > 0 && Math.max(...iconDeltas) <= 2;
+
+    clickToggle('[data-test="sidebar-toggle"]');
+    await waitUntil(() => !document.querySelector('.el-menu--collapse'), 2500);
+
+    // 3) 侧栏不溢出：菜单区自己滚动（.menu 有 min-height:0 + overflow-y:auto），
+    //    底部「第 N 周 / 最近同步」始终留在窗口内 —— 窗口默认高 582px，
+    //    在加这条结构性保证之前，两个分组全展开会把 footer 挤出屏幕（用户反馈）。
+    const footer = document.querySelector<HTMLElement>('.aside-footer');
+    const footerRect = footer?.getBoundingClientRect();
+    const footerVisible =
+      Boolean(footer && footer.offsetParent !== null) &&
+      Boolean(footerRect && footerRect.bottom <= window.innerHeight + 1);
+
+    // 3) 还原主题，避免影响后续用例
+    clickToggle('[data-test="theme-toggle"]');
+    await waitUntil(() => document.documentElement.classList.contains('dark') === initialDark, 2500);
+
+    const ok =
+      flipped &&
+      themePersisted &&
+      collapsed &&
+      collapsePersisted &&
+      widthAfter < widthBefore &&
+      widthAfter <= 80 &&
+      leftoverText.length === 0 &&
+      iconsAligned &&
+      footerVisible;
+    return {
+      ok,
+      detail:
+        `主题翻转=${flipped} 落盘=${themePersisted}(${configAfterFlip?.theme ?? '-'}) ` +
+        `折叠=${collapsed} 宽度=${widthBefore}→${widthAfter} 落盘=${collapsePersisted} ` +
+        `文字残影=${leftoverText.length === 0 ? '无' : leftoverText.join(',')} ` +
+        `图标与汉堡同列=${iconsAligned}（中心差=${iconDeltas.map((d) => d.toFixed(1)).join('/') || '-'}，要求 ≤2px） ` +
+        `侧栏底部可见=${footerVisible}`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: `外观件自检异常：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/**
+ * 冒烟自检（不需要后端）：关于页（/settings/about）。
+ * 断言页面渲染出标题与「鸣谢 / 诊断信息」区块，且 getAppInfo 返回了新增的 configPath
+ * （诊断信息依赖它）。
+ */
+export async function aboutPageSelfTest(): Promise<SmokeCheckResult> {
+  try {
+    const { router } = await import('../router/index.js');
+    await router.push('/settings/about');
+    const rendered = await waitUntil(
+      () => (document.querySelector('.page-title')?.textContent ?? '').includes('关于'),
+      6000,
+    );
+    if (!rendered) return { ok: false, detail: '关于页未挂载' };
+
+    const text = document.body.innerText.replace(/\s+/g, ' ');
+    const hasThanks = text.includes('鸣谢');
+    const hasDiagnostics = text.includes('诊断信息');
+    const info = await window.desktop?.getAppInfo?.();
+    const hasConfigPath = Boolean(info?.configPath);
+
+    await router.push('/schedule');
+    return {
+      ok: hasThanks && hasDiagnostics && hasConfigPath,
+      detail: `鸣谢=${hasThanks} 诊断=${hasDiagnostics} configPath=${hasConfigPath ? '有' : '无'}`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: `关于页自检异常：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
 /** 注册到 window，供主进程冒烟脚本调用 */
 export function registerSmokeHooks(): void {
   window.__classhelperSmoke__ = {
@@ -845,6 +1087,9 @@ export function registerSmokeHooks(): void {
     islandRealtimeCleanup,
     islandReadState,
     islandHomeworkSuppressionCheck,
+    onboardingSelfTest,
+    layoutChromeSelfTest,
+    aboutPageSelfTest,
     scheduleTimelineSelfTest,
     homeworkBoardSelfTest,
     sessionCleanup,

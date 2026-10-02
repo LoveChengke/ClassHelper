@@ -36,6 +36,12 @@ interface PersistedConfig {
   notificationChannel?: ClassIslandNotificationChannel;
   /** 作业录入快捷短语（向后兼容：旧配置没有该字段时用默认那一组） */
   homeworkPhrases?: string[];
+  /** 是否已看过初次启动引导（向后兼容：旧配置没有该字段视为没看过，首启弹一次） */
+  onboardingDone?: boolean;
+  /** 界面主题（向后兼容：旧配置没有该字段用浅色） */
+  theme?: 'light' | 'dark';
+  /** 主侧边栏是否折叠（向后兼容：旧配置没有该字段视为展开） */
+  sidebarCollapsed?: boolean;
 }
 
 const DEFAULT_CONFIG: PersistedConfig = {
@@ -47,7 +53,15 @@ const DEFAULT_CONFIG: PersistedConfig = {
   homeworkBoard: { ...DEFAULT_HOMEWORK_BOARD },
   notificationChannel: DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL,
   homeworkPhrases: [...HOMEWORK_PHRASE_DEFAULTS],
+  onboardingDone: false,
+  theme: 'light',
+  sidebarCollapsed: false,
 };
+
+/** 主题白名单：非法值一律回落浅色 */
+function normalizeTheme(input?: 'light' | 'dark'): 'light' | 'dark' {
+  return input === 'dark' ? 'dark' : 'light';
+}
 
 /**
  * 作业快捷短语的合法化：去空白、去重、限长限量。
@@ -181,6 +195,9 @@ function readPersisted(): PersistedConfig {
       homeworkBoard: normalizeHomeworkBoard(parsed.homeworkBoard),
       notificationChannel: normalizeNotificationChannel(parsed.notificationChannel),
       homeworkPhrases: normalizeHomeworkPhrases(parsed.homeworkPhrases),
+      onboardingDone: parsed.onboardingDone === true,
+      theme: normalizeTheme(parsed.theme),
+      sidebarCollapsed: parsed.sidebarCollapsed === true,
     };
   } catch {
     return { ...DEFAULT_CONFIG };
@@ -223,6 +240,9 @@ export function getConfig(): DesktopStoredConfig {
     homeworkBoard: normalizeHomeworkBoard(persisted.homeworkBoard),
     notificationChannel: normalizeNotificationChannel(persisted.notificationChannel),
     homeworkPhrases: normalizeHomeworkPhrases(persisted.homeworkPhrases),
+    onboardingDone: persisted.onboardingDone === true,
+    theme: normalizeTheme(persisted.theme),
+    sidebarCollapsed: persisted.sidebarCollapsed === true,
   };
 }
 
@@ -252,6 +272,17 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
   }
   if (patch.notificationChannel !== undefined) {
     persisted.notificationChannel = normalizeNotificationChannel(patch.notificationChannel);
+  }
+  // 引导只接受"已看过"：重看入口不走这里（看过与否只有 true 与"没看过"两种状态，
+  // 想 re-arm 只能清配置 clearConfig）。传 false 一律忽略，避免任何调用点误把用户退回首启状态。
+  if (patch.onboardingDone === true) {
+    persisted.onboardingDone = true;
+  }
+  if (patch.theme !== undefined) {
+    persisted.theme = normalizeTheme(patch.theme);
+  }
+  if (patch.sidebarCollapsed !== undefined) {
+    persisted.sidebarCollapsed = patch.sidebarCollapsed === true;
   }
   if (patch.token !== undefined) {
     const encrypted = encryptToken(patch.token);

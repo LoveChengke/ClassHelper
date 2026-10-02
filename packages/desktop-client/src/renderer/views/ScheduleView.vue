@@ -460,7 +460,7 @@ onUnmounted(() => {
 }
 
 .hero-status.status-idle {
-  background: rgba(0, 0, 0, 0.03);
+  background: var(--ch-hover-soft);
 }
 
 .status-title {
@@ -553,7 +553,7 @@ onUnmounted(() => {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--ch-layer-solid);
   border: 2px solid var(--ch-border-strong);
 }
 
@@ -574,7 +574,8 @@ onUnmounted(() => {
   padding: 10px 14px;
   border: 1px solid var(--ch-border);
   border-radius: var(--ch-radius-card);
-  background: rgba(255, 255, 255, 0.6);
+  /* 走主题变量：浅色是白玻璃、深色是深玻璃（写死白色会在深色主题下变成"浅灰卡 + 浅字"看不清） */
+  background: var(--ch-layer);
   transition:
     border-color 0.15s ease,
     background 0.15s ease,
@@ -595,7 +596,7 @@ onUnmounted(() => {
 }
 
 .timeline-item.is-past .timeline-card-inner {
-  background: rgba(255, 255, 255, 0.35);
+  background: var(--ch-layer-alt);
   color: var(--ch-text-tertiary);
 }
 

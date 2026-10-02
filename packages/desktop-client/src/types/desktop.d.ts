@@ -47,6 +47,17 @@ export interface DesktopStoredConfig {
    * 与班级记录（服务端据此决定要不要推给 ClassIsland）。
    */
   notificationChannel: ClassIslandNotificationChannel;
+  /**
+   * 是否已看过「初次启动引导」。
+   *
+   * 首次启动自动弹出一次（完成或跳过即记为看过并写入配置，之后不再自动弹出）；
+   * 登录页与设置页的「使用引导」入口可随时重看（重看不改变该值）。
+   */
+  onboardingDone: boolean;
+  /** 界面主题：light=浅色（默认）/ dark=深色（黑夜模式） */
+  theme: 'light' | 'dark';
+  /** 主侧边栏是否折叠成图标栏（可由顶栏汉堡按钮切换） */
+  sidebarCollapsed: boolean;
 }
 
 export interface DesktopAppInfo {
@@ -56,6 +67,8 @@ export interface DesktopAppInfo {
   node: string;
   platform: string;
   userDataPath: string;
+  /** 主进程配置文件（config.json）的绝对路径（关于页「诊断信息」展示） */
+  configPath: string;
   /** 是否处于冒烟验证模式（由 ELECTRON_SMOKE_TEST=1 触发） */
   smokeTest: boolean;
 }
@@ -209,6 +222,12 @@ declare global {
       homeworkBoardSelfTest(): Promise<{ ok: boolean; detail: string }>;
       /** 本机录入的作业不上灵动岛自检（内容指纹 + id 双重判定） */
       islandHomeworkSuppressionCheck(): Promise<{ ok: boolean; detail: string }>;
+      /** 初次启动引导自检（首启自动出现 → 真实点击走完 → 完成状态写入配置） */
+      onboardingSelfTest(): Promise<{ ok: boolean; detail: string }>;
+      /** 主界面外观件自检（真实点击：主题切换 html.dark + 落盘、侧边栏折叠 + 落盘） */
+      layoutChromeSelfTest(): Promise<{ ok: boolean; detail: string }>;
+      /** 关于页自检（/settings/about 渲染 + getAppInfo 含 configPath） */
+      aboutPageSelfTest(): Promise<{ ok: boolean; detail: string }>;
       sessionCleanup(): Promise<{ ok: boolean; detail: string }>;
     };
   }

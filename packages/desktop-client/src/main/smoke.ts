@@ -3712,7 +3712,7 @@ async function runSettingsPagePasswordEntryCheck(
          const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
          location.hash = '#/schedule';
          await wait(250);
-         location.hash = '#/settings';
+         location.hash = '#/settings/account';
          let card = null;
          for (let i = 0; i < 40 && !card; i += 1) {
            await wait(100);
@@ -3756,7 +3756,7 @@ async function runSettingsPageAppearanceCheck(win: BrowserWindow): Promise<{ ok:
          window.desktop.islandSetAppearance({ ...before, height: 44 });
          await wait(300);
 
-         location.hash = '#/settings';
+         location.hash = '#/settings/island';
          let runway = null;
          for (let i = 0; i < 40 && !runway; i += 1) {
            await wait(100);
@@ -3838,7 +3838,7 @@ async function runSettingsPageMarginCheck(
        // 页面里会留着过期的位置（这正是"改了设置没反应"的一个真实来源）
        location.hash = '#/schedule';
        await wait(250);
-       location.hash = '#/settings';
+       location.hash = '#/settings/island';
        let item = null;
        for (let i = 0; i < 40 && !item; i += 1) {
          await wait(100);
@@ -3880,15 +3880,15 @@ async function runSettingsPageMarginCheck(
     .executeJavaScript(
       `(async () => {
          const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-         location.hash = '#/schedule';
-         await wait(200);
-         location.hash = '#/settings';
-         let runway = null;
-         for (let i = 0; i < 40 && !runway; i += 1) {
-           await wait(100);
-           const item = Array.from(document.querySelectorAll('.el-form-item')).find((node) =>
-             (node.querySelector('.el-form-item__label')?.textContent ?? '').startsWith('左右边距'),
-           );
+       location.hash = '#/schedule';
+       await wait(200);
+       location.hash = '#/settings/island';
+       let runway = null;
+       for (let i = 0; i < 40 && !runway; i += 1) {
+         await wait(100);
+         const item = Array.from(document.querySelectorAll('.el-form-item')).find((node) =>
+           (node.querySelector('.el-form-item__label')?.textContent ?? '').startsWith('左右边距'),
+         );
            runway = item?.querySelector('.el-slider__runway') ?? null;
          }
          if (!runway) return { ok: false, detail: '设置页里找不到「左右边距」滑块' };
@@ -3986,7 +3986,7 @@ async function runSettingsPageChannelCheck(win: BrowserWindow): Promise<{ ok: bo
       `(async () => {
          const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
          const before = (await window.desktop.getConfig()).notificationChannel;
-         location.hash = '#/settings';
+         location.hash = '#/settings/reminder';
 
          // 找到「通知显示位置」那张卡片里的单选组
          let group = null;
@@ -4151,6 +4151,28 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     `text=${dom?.text ?? ''}`,
   );
 
+  // 初始窗口尺寸：与 ClassIsland 主窗口对齐（实测其可视区 1242x582，见 main/index.ts）
+  const [initialWidth, initialHeight] = win.getSize();
+  record(
+    '初始窗口尺寸与 ClassIsland 对齐（1242x582）',
+    initialWidth === 1242 && initialHeight === 582,
+    `实际 ${initialWidth}x${initialHeight}`,
+  );
+
+  // 初次启动引导（新装客户端首启自动弹出）：真实点击走完一遍，断言完成后写入配置。
+  // 必须放在"登录页不含示例内容"的全文扫描**之前**——那时引导还开着，先把它的文案从屏幕上撤走。
+  const onboarding = await win.webContents.executeJavaScript(
+    `(async () => {
+       if (!window.__classhelperSmoke__?.onboardingSelfTest) return { ok: false, detail: '缺少引导自检钩子' };
+       return await window.__classhelperSmoke__.onboardingSelfTest();
+     })()`,
+  );
+  record(
+    '初次启动引导（首启自动弹出、可走完、状态写入配置）',
+    Boolean(onboarding?.ok),
+    String(onboarding?.detail ?? ''),
+  );
+
   // 需求："删掉登录页所有示例内容" —— 占位符/提示里不允许出现示例班级码或示例账号。
   // 判据不写死具体示例码：用"演示/示例"字样 + 旧版占位符的**形状**（例如 G101）+ 环境变量传入的凭据，
   // 这样断言更严（任何"例如 XXX123"都会被抓到），安装包里也不留示例账号字面量。
@@ -4307,6 +4329,25 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
        })()`,
     );
     record('侧边栏点击导航（逐一点击 5 个菜单）', Boolean(navigation?.ok), String(navigation?.detail ?? ''));
+
+    // 主界面外观件（新功能回归）：真实点击主题日月按钮与侧边栏汉堡按钮，
+    // 断言 html.dark 翻转、collapse 态生效、两者都写入主进程配置；结束时还原主题
+    const chrome = await win.webContents.executeJavaScript(
+      `(async () => {
+         if (!window.__classhelperSmoke__?.layoutChromeSelfTest) return { ok: false, detail: '缺少外观件自检钩子' };
+         return await window.__classhelperSmoke__.layoutChromeSelfTest();
+       })()`,
+    );
+    record('主题切换与侧边栏折叠（真实点击、写回配置）', Boolean(chrome?.ok), String(chrome?.detail ?? ''));
+
+    // 关于页（新功能回归）：/settings/about 渲染 + 诊断信息（getAppInfo 含 configPath）
+    const aboutPage = await win.webContents.executeJavaScript(
+      `(async () => {
+         if (!window.__classhelperSmoke__?.aboutPageSelfTest) return { ok: false, detail: '缺少关于页自检钩子' };
+         return await window.__classhelperSmoke__.aboutPageSelfTest();
+       })()`,
+    );
+    record('关于页渲染（应用信息/诊断信息/鸣谢）', Boolean(aboutPage?.ok), String(aboutPage?.detail ?? ''));
 
     // 未读红点必须挂在"通知"图标右上方（用户反馈：原来挂在文字后面，位置不对）
     const readBadgeGeometry = async (): Promise<{

@@ -37,7 +37,7 @@ async function healthHandler(_req: Request, res: Response): Promise<void> {
     res,
     {
       status: 'ok',
-      version: '0.1.0',
+      version: '1.0.0',
       env: env.nodeEnv,
       uptimeSeconds: Math.round(process.uptime()),
       database: {
@@ -68,7 +68,7 @@ function createRootHandler(webDistDir: string | null) {
         res,
         {
           service: 'class-helper-server',
-          version: '0.1.0',
+          version: '1.0.0',
           environment: env.nodeEnv,
           apiPrefix: API_PREFIX,
           socket: '/socket.io',
@@ -115,7 +115,7 @@ function renderLandingPage(webAdminServed: boolean): string {
   <body>
     <div class="card">
       <h1>班级小助手 · 后端服务 <span class="ok">running</span></h1>
-      <p class="sub">版本 0.1.0 · 运行环境 ${env.nodeEnv} · 数据库 ${env.databaseProvider}</p>
+      <p class="sub">版本 1.0.0 · 运行环境 ${env.nodeEnv} · 数据库 ${env.databaseProvider}</p>
       <p class="sub">
         健康检查 <a href="${API_PREFIX}/health">${API_PREFIX}/health</a> ·
         存活 /healthz · 就绪 /readyz

@@ -4,6 +4,8 @@ import ElementPlus from 'element-plus';
 import zhCn from 'element-plus/es/locale/lang/zh-cn';
 import * as ElementPlusIconsVue from '@element-plus/icons-vue';
 import 'element-plus/dist/index.css';
+// 深色主题：html.dark 下的 --el-* 变量（品牌覆盖在 styles/index.css 的 html.dark 块）
+import 'element-plus/theme-chalk/dark/css-vars.css';
 
 import App from './App.vue';
 import router from './router/index.js';

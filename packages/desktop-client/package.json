@@ -1,6 +1,6 @@
 {
   "name": "@classhelper/desktop-client",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "班级小助手 EXE 客户端（Electron + Vue 3 + Element Plus + Socket.IO + IndexedDB 离线缓存）",
   "author": "Class Helper",

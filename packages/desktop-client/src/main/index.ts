@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BrowserWindow, app, shell } from 'electron';
+import { getConfig } from './config.js';
 import { registerIpcHandlers } from './ipc.js';
 import { island, registerIslandIpc } from './island.js';
 import { logger } from './logger.js';
@@ -49,16 +50,20 @@ function isAllowedNavigation(url: string): boolean {
 }
 
 function createWindow(): BrowserWindow {
+  // 启动底色跟主题走：深色主题下若仍用浅色底，窗口先白后黑会"闪一下"
+  const theme = getConfig().theme;
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 980,
-    minHeight: 640,
+    // 初始尺寸与 ClassIsland 主窗口对齐（实测其可视区 1242x582），保持同一观感
+    width: 1242,
+    height: 582,
+    minWidth: 1000,
+    minHeight: 540,
+    center: true,
     title: '班级小助手',
     // 冒烟验证时不弹窗，避免打扰使用者
     show: !isSmokeTest,
     autoHideMenuBar: true,
-    backgroundColor: '#f5f7fa',
+    backgroundColor: theme === 'dark' ? '#161719' : '#f3f3f3',
     webPreferences: {
       preload: path.join(currentDir, '../preload/index.js'),
       contextIsolation: true,

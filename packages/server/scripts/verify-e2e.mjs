@@ -2340,6 +2340,230 @@ async function main() {
   );
 
   // 清理：删除实时推送用例造的通知/作业、冒烟班级、临时权限校验班级与冒烟教师账号
+  // ---------------------------------------------------------------- 数据库管理（仅管理员）
+  // 覆盖：状态 / 越权 403 / 连接测试 / 备份→导入导出→恢复 roundtrip / 定时配置校验 / 切换校验分支。
+  // 注意：**不真跑切换**（会改写 .env 与 schema.prisma），只验证拒绝分支；真实切换需人工复验。
+  const dbStatus = await api('/database/status', { token: adminToken });
+  const dbStatusData = dbStatus.payload?.data ?? {};
+  record(
+    '数据库状态（管理员）：已连接且返回 14 张表行数',
+    dbStatus.status === 200 &&
+      dbStatusData.connected === true &&
+      Array.isArray(dbStatusData.tables) &&
+      dbStatusData.tables.length === 14 &&
+      dbStatusData.tables.every((item) => item.count >= 0),
+    `provider=${dbStatusData.provider} 延迟=${dbStatusData.latencyMs}ms 版本=${dbStatusData.version} 表=${
+      (dbStatusData.tables ?? []).length
+    }`,
+  );
+
+  const dbStatusTeacher = await api('/database/status', { token: teacherToken });
+  const dbBackupTeacher = await api('/database/backups', { method: 'POST', token: teacherToken });
+  const dbScheduleTeacher = await api('/database/backup-schedule', {
+    method: 'PUT',
+    token: teacherToken,
+    body: { enabled: true, intervalHours: 24, keepCount: 7 },
+  });
+  const dbSwitchTeacher = await api('/database/switch', {
+    method: 'POST',
+    token: teacherToken,
+    body: { provider: 'sqlite', url: 'file:./data/teacher-forbidden.db' },
+  });
+  record(
+    '数据库管理越权（教师全部 403）',
+    dbStatusTeacher.status === 403 &&
+      dbBackupTeacher.status === 403 &&
+      dbScheduleTeacher.status === 403 &&
+      dbSwitchTeacher.status === 403,
+    `status=${dbStatusTeacher.status} 备份=${dbBackupTeacher.status} 定时=${dbScheduleTeacher.status} 切换=${dbSwitchTeacher.status}`,
+  );
+
+  // 连接测试：当前库必须可达（SQLite 用相对路径，MySQL 用一个不可达地址测失败分支）
+  let testOkResult;
+  let testOkName;
+  if (dbStatusData.provider === 'sqlite') {
+    testOkResult = await api('/database/test-connection', {
+      method: 'POST',
+      token: adminToken,
+      body: { provider: 'sqlite', url: 'file:./prisma/dev.db' },
+    });
+    testOkName = '连接测试（当前 SQLite 库可达）';
+  } else {
+    testOkResult = await api('/database/test-connection', {
+      method: 'POST',
+      token: adminToken,
+      body: { provider: 'mysql', url: 'mysql://root:wrong-password@127.0.0.1:1/none' },
+    });
+    testOkName = '连接测试（不可达 MySQL 返回 ok=false）';
+  }
+  record(
+    testOkName,
+    testOkResult.status === 200 &&
+      (dbStatusData.provider === 'sqlite'
+        ? testOkResult.payload?.data?.ok === true
+        : testOkResult.payload?.data?.ok === false),
+    `ok=${testOkResult.payload?.data?.ok} 版本=${testOkResult.payload?.data?.version} 详情=${testOkResult.payload?.data?.error ?? testOkResult.payload?.data?.note ?? '-'}`,
+  );
+
+  const dbTestRedis = await api('/database/test-connection', {
+    method: 'POST',
+    token: adminToken,
+    body: { provider: 'redis', url: 'redis://127.0.0.1:6379' },
+  });
+  record(
+    'Redis 作为主库被拒绝（schema 层面 422，产品口径：主库仅 SQLite/MySQL）',
+    dbTestRedis.status === 422,
+    `status=${dbTestRedis.status}`,
+  );
+
+  const badConnection = await api('/database/test-connection', {
+    method: 'POST',
+    token: adminToken,
+    body: { provider: 'mysql', url: 'mysql://root:wrong@127.0.0.1:1/none' },
+  });
+  record(
+    '连接测试（不可达 MySQL → ok=false 且不抛 500）',
+    badConnection.status === 200 && badConnection.payload?.data?.ok === false,
+    `ok=${badConnection.payload?.data?.ok} error=${(badConnection.payload?.data?.error ?? '').slice(0, 60)}`,
+  );
+
+  // 切换校验分支：同库拒绝（真实切换不在此跑，避免改写 .env）
+  const switchSame =
+    dbStatusData.provider === 'sqlite'
+      ? await api('/database/switch', {
+          method: 'POST',
+          token: adminToken,
+          body: { provider: 'sqlite', url: dbStatusData.databaseUrlMasked },
+        })
+      : { status: 0, payload: null };
+  const switchInvalid = await api('/database/switch', {
+    method: 'POST',
+    token: adminToken,
+    body: { provider: 'redis', url: 'redis://127.0.0.1:6379' },
+  });
+  record(
+    '一键切换校验分支（同库 400 / 非法 provider 422，不真跑切换）',
+    (dbStatusData.provider === 'sqlite' ? switchSame.status === 400 : true) && switchInvalid.status === 422,
+    `同库=${switchSame.status}（${dbStatusData.provider === 'sqlite' ? 'sqlite 当前库' : 'mysql 跳过'}） redis=${switchInvalid.status}`,
+  );
+
+  // 备份 → 导出快照 → 造数据 → 快照导入 → 造数据 → 从备份恢复（三个恢复路径全验）
+  const dbBackup = await api('/database/backups', { method: 'POST', token: adminToken });
+  const backupName = dbBackup.payload?.data?.name ?? '';
+  record(
+    '手动备份（201，文件名符合约定格式）',
+    dbBackup.status === 201 && /^backup-manual-\d{8}-\d{6}\.json\.gz$/.test(backupName),
+    `name=${backupName} size=${dbBackup.payload?.data?.sizeBytes ?? '-'}`,
+  );
+
+  const dbExport = await fetch(`${BASE_URL}/api/database/export`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  const snapshotJson = dbExport.status === 200 ? await dbExport.text() : '';
+  let snapshotParsed = null;
+  try {
+    snapshotParsed = JSON.parse(snapshotJson);
+  } catch {
+    snapshotParsed = null;
+  }
+  record(
+    '导出快照（JSON 格式正确、14 张表、用户数 > 0）',
+    dbExport.status === 200 &&
+      snapshotParsed?.format === 'classhelper-snapshot' &&
+      Object.keys(snapshotParsed?.data ?? {}).length === 14 &&
+      (snapshotParsed?.counts?.User ?? 0) > 0,
+    `status=${dbExport.status} 格式=${snapshotParsed?.format ?? '-'} 用户=${snapshotParsed?.counts?.User ?? '-'}`,
+  );
+
+  // 造一条临时通知 → 快照导入（应被清掉）→ 再造一条 → 从备份恢复（也应被清掉）
+  const dbRoundtripNotice = await api('/notifications', {
+    method: 'POST',
+    token: adminToken,
+    body: { classId, title: '数据库roundtrip自检', content: '导入/恢复后应消失' },
+  });
+  const dbRoundtripNoticeId = dbRoundtripNotice.payload?.data?.id;
+  const dbImport = await api('/database/import', {
+    method: 'POST',
+    token: adminToken,
+    body: { data: Buffer.from(snapshotJson, 'utf8').toString('base64') },
+  });
+  const afterImport = await api(`/notifications?classId=${classId}`, { token: adminToken });
+  const roundtripNoticeGone = !(afterImport.payload?.data ?? []).some(
+    (item) => item.id === dbRoundtripNoticeId,
+  );
+  record(
+    '快照导入（整库覆盖：导入后临时通知消失）',
+    dbImport.status === 200 && roundtripNoticeGone,
+    `导入=${dbImport.status} 通知已清除=${roundtripNoticeGone} 行数=${JSON.stringify(dbImport.payload?.data?.counts ?? {}).slice(0, 80)}`,
+  );
+
+  const dbRoundtripNotice2 = await api('/notifications', {
+    method: 'POST',
+    token: adminToken,
+    body: { classId, title: '数据库roundtrip自检2', content: '备份恢复后应消失' },
+  });
+  const dbRoundtripNotice2Id = dbRoundtripNotice2.payload?.data?.id;
+  const dbRestore = await api(`/database/backups/${backupName}/restore`, { method: 'POST', token: adminToken });
+  const afterRestore = await api(`/notifications?classId=${classId}`, { token: adminToken });
+  const restoreNoticeGone = !(afterRestore.payload?.data ?? []).some(
+    (item) => item.id === dbRoundtripNotice2Id,
+  );
+  record(
+    '从备份恢复（整库覆盖：恢复后临时通知消失）',
+    dbRestore.status === 200 && restoreNoticeGone,
+    `恢复=${dbRestore.status} 通知已清除=${restoreNoticeGone}`,
+  );
+  if (dbRoundtripNoticeId) {
+    await api(`/notifications/${dbRoundtripNoticeId}`, { method: 'DELETE', token: adminToken });
+  }
+  if (dbRoundtripNotice2Id) {
+    await api(`/notifications/${dbRoundtripNotice2Id}`, { method: 'DELETE', token: adminToken });
+  }
+
+  const dbBackupList = await api('/database/backups', { token: adminToken });
+  const dbBackupDelete = await api(`/database/backups/${backupName}`, { method: 'DELETE', token: adminToken });
+  const dbBackupListAfter = await api('/database/backups', { token: adminToken });
+  record(
+    '备份列表与删除（创建后可见，删除后消失）',
+    dbBackupList.status === 200 &&
+      (dbBackupList.payload?.data ?? []).some((item) => item.name === backupName) &&
+      dbBackupDelete.status === 200 &&
+      !(dbBackupListAfter.payload?.data ?? []).some((item) => item.name === backupName),
+    `删除前=${(dbBackupList.payload?.data ?? []).length} 删除后=${(dbBackupListAfter.payload?.data ?? []).length}`,
+  );
+
+  const dbScheduleInvalid = await api('/database/backup-schedule', {
+    method: 'PUT',
+    token: adminToken,
+    body: { enabled: true, intervalHours: 0, keepCount: 7 },
+  });
+  const dbScheduleSave = await api('/database/backup-schedule', {
+    method: 'PUT',
+    token: adminToken,
+    body: { enabled: false, intervalHours: 24, keepCount: 7 },
+  });
+  record(
+    '定时备份配置（非法间隔 422 / 合法保存并回读）',
+    dbScheduleInvalid.status === 422 &&
+      dbScheduleSave.status === 200 &&
+      dbScheduleSave.payload?.data?.enabled === false &&
+      dbScheduleSave.payload?.data?.intervalHours === 24,
+    `非法=${dbScheduleInvalid.status} 保存=${dbScheduleSave.status} enabled=${dbScheduleSave.payload?.data?.enabled}`,
+  );
+
+  if (dbStatusData.provider === 'sqlite') {
+    const sqliteFile = await fetch(`${BASE_URL}/api/database/sqlite-file`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    const sqliteBytes = sqliteFile.status === 200 ? (await sqliteFile.arrayBuffer()).byteLength : 0;
+    record(
+      'SQLite 数据文件下载（快捷导出 .db 文件）',
+      sqliteFile.status === 200 && sqliteBytes > 0,
+      `status=${sqliteFile.status} bytes=${sqliteBytes}`,
+    );
+  }
+
+  // 清理：删除实时推送用例造的通知/作业、冒烟班级、临时权限校验班级与冒烟教师账号
   const realtimeNoticeId = createdNotification.payload?.data?.id;
   if (realtimeNoticeId) {
     await api(`/notifications/${realtimeNoticeId}`, { method: 'DELETE', token: teacherToken });

@@ -1017,3 +1017,84 @@ export interface SocketAuthPayload {
   token: string;
   clientType?: 'admin' | 'desktop';
 }
+
+/* ================================================================ 数据库管理（仅管理员） */
+
+/** 数据库管理支持的提供方（Redis 等键值库不是 Prisma 支持的主库，不在范围内） */
+export type DatabaseProvider = 'sqlite' | 'mysql';
+
+/** GET /api/database/status 的返回 */
+export interface DatabaseStatusDto {
+  provider: DatabaseProvider;
+  connected: boolean;
+  /** ping 延迟（毫秒）；未连接时为 null */
+  latencyMs: number | null;
+  /** 数据库引擎版本（sqlite_version() / VERSION()） */
+  version: string | null;
+  /** 数据体积（字节）；MySQL 取 information_schema 汇总 */
+  sizeBytes: number | null;
+  /** 当前连接串的脱敏展示（MySQL 隐藏密码） */
+  databaseUrlMasked: string;
+  /** SQLite 数据文件绝对路径（MySQL 为空串） */
+  sqliteFilePath: string;
+  /** 数据目录（备份与定时配置所在处） */
+  dataDir: string;
+  backupDir: string;
+  tables: DatabaseTableCountDto[];
+  backups: DatabaseBackupMetaDto[];
+  schedule: DatabaseBackupScheduleDto;
+  /** 是否有正在进行的切换任务（期间禁止备份/导入/恢复） */
+  switchRunning: boolean;
+}
+
+export interface DatabaseTableCountDto {
+  name: string;
+  /** -1 表示统计失败（表结构与代码不一致时出现） */
+  count: number;
+}
+
+export interface DatabaseBackupMetaDto {
+  name: string;
+  kind: 'manual' | 'auto';
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface DatabaseBackupScheduleDto {
+  enabled: boolean;
+  intervalHours: number;
+  keepCount: number;
+  lastAutoBackupAt: string | null;
+}
+
+/** POST /api/database/test-connection 的返回 */
+export interface DatabaseConnectionTestDto {
+  ok: boolean;
+  provider: DatabaseProvider;
+  latencyMs: number | null;
+  version: string | null;
+  /** 新建 SQLite 库时目标文件还不存在，属正常情况（切换时会自动建库） */
+  note?: string;
+  error?: string;
+}
+
+/** 数据库切换任务（POST /switch 后用 jobId 轮询） */
+export interface DatabaseSwitchJobDto {
+  id: string;
+  status: 'running' | 'done' | 'error';
+  target: { provider: DatabaseProvider; url: string };
+  steps: DatabaseSwitchStepDto[];
+  error?: string;
+  /** 完成后为 true：需要重启服务端才能让新数据库生效 */
+  restartRequired: boolean;
+  counts?: Record<string, number>;
+  backupName?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+export interface DatabaseSwitchStepDto {
+  name: string;
+  status: 'running' | 'done' | 'error';
+  detail?: string;
+}

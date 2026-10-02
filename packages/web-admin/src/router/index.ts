@@ -68,6 +68,13 @@ const routes: RouteRecordRaw[] = [
         // 与后端 requireRole('ADMIN','TEACHER') 对齐：学生角色不该看到这一页
         meta: { title: 'ClassIsland 联动', icon: 'Connection', roles: ['ADMIN', 'TEACHER'] },
       },
+      {
+        path: 'database',
+        name: 'database',
+        component: () => import('@/views/DatabaseView.vue'),
+        // 与后端 requireRole('ADMIN') 对齐：改动数据库是最高危操作，仅管理员
+        meta: { title: '数据库管理', icon: 'Coin', roles: ['ADMIN'] },
+      },
     ],
   },
   {

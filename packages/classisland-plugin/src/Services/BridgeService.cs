@@ -495,7 +495,7 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
     /* ---------------------------------------------------------------- 内部实现 */
 
     /// <summary>插件版本（与 manifest.yml / csproj 保持一致）。</summary>
-    private const string PluginVersion = "0.1.0.0";
+    private const string PluginVersion = "1.0.0.0";
 
     /// <summary>ClassIsland 版本读不到时不该让上报失败（开发版可能为 null）。</summary>
     private static string SafeAppVersion()

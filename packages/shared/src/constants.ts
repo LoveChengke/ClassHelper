@@ -25,6 +25,8 @@ export const API_PATHS = {
   imports: '/imports',
   /** ClassIsland 联动：设备接入、状态上报、通知下发 */
   integrations: '/integrations',
+  /** 数据库管理（仅管理员）：状态/备份/导入导出/一键切换 */
+  database: '/database',
   dashboard: '/dashboard/summary',
 } as const;
 
@@ -476,6 +478,12 @@ export const STORAGE_KEYS = {
   serverUrl: 'classhelper.serverUrl',
   cachePrefix: 'classhelper.cache',
   lastSyncAt: 'classhelper.lastSyncAt',
+  /**
+   * 新手引导「已看过」标记（Web 管理端 localStorage）。
+   * 值为引导版本号：改版引导内容后版本 +1，看过旧版的老用户会再收到一次新版引导。
+   * EXE 客户端不用这个键 —— 它的引导状态在主进程配置（`onboardingDone`）里。
+   */
+  onboarding: 'classhelper.onboarding',
 } as const;
 
 /** 桌面客户端默认后端地址 */

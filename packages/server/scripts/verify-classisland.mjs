@@ -182,7 +182,7 @@ async function main() {
 
   // ---------------------------------------------------------------- 3. 上报（状态 + 课表 + 节次）
   const reportBody = {
-    pluginVersion: '0.1.0.0',
+    pluginVersion: '1.0.0.0',
     classIslandVersion: '2.1.0.0',
     state: {
       inClass: true,

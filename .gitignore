@@ -46,3 +46,5 @@ releases/
 # AI 会话产物（ZCode 计划/配置，不属于产品代码）
 .zcode/
 .zcodeignore
+packages/server/prisma/backups/
+packages/server/prisma/database-settings.json

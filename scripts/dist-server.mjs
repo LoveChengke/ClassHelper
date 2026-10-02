@@ -156,6 +156,16 @@ function buildRuntime() {
     path.join(serverDir, 'prisma', 'migrations'),
     path.join(staging, 'server', 'prisma', 'migrations'),
   );
+  // 数据库管理模块「一键切换」需要的 Prisma 配置三件套：
+  //   schema.prisma       —— 切换时改写 provider 后供 prisma generate / db push 使用
+  //   prisma.config.ts    —— Prisma 7 的 CLI 配置（连接串来自子进程环境变量）
+  //   tsconfig.generate.json —— generate 产出的是 .ts，切换后用它编译进 dist/generated
+  for (const file of ['schema.prisma']) {
+    fs.copyFileSync(path.join(serverDir, 'prisma', file), path.join(staging, 'server', 'prisma', file));
+  }
+  for (const file of ['prisma.config.ts', 'tsconfig.generate.json']) {
+    fs.copyFileSync(path.join(serverDir, file), path.join(staging, 'server', file));
+  }
   // 工作区共享包（tsc 产物）
   const sharedTarget = path.join(staging, 'node_modules', '@classhelper', 'shared');
   fs.mkdirSync(sharedTarget, { recursive: true });

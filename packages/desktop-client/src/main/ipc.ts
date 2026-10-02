@@ -30,6 +30,7 @@ export function registerIpcHandlers(): void {
     node: process.versions.node ?? '',
     platform: `${process.platform} ${process.arch}`,
     userDataPath: app.getPath('userData'),
+    configPath: getConfigPath(),
     smokeTest: process.env.ELECTRON_SMOKE_TEST === '1',
   }));
 

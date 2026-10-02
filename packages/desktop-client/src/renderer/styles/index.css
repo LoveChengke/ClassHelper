@@ -1,12 +1,19 @@
 /* ============================================================================
- * 班级小助手客户端主题 —— ClassIsland 同款 Fluent 风格
+ * 班级小助手客户端主题 —— ClassIsland 同款 Fluent 风格（浅色 / 深色双主题）
  *
  * 参考 ClassIsland（Windows 课件表应用）的观感：
- *  - WinUI / Fluent 设计语言：浅色 Mica 底 + 半透明"亚克力"卡片 + 1px 细腻描边
+ *  - WinUI / Fluent 设计语言：Mica 底 + 半透明"亚克力"卡片 + 1px 细腻描边
  *  - 强调色 #0F6CBD（悬停 #115EA3），选中项用强调色淡底 + 左侧强调条
  *  - 圆角：卡片 8px、控件 4~6px、胶囊 999px
  *  - 字体：Segoe UI Variable / 微软雅黑 UI，字号偏小、行距偏松
  *  - 阴影极轻（0 2px 4px rgba(0,0,0,.04)），层次主要靠描边与底色区分
+ *
+ * 主题机制：
+ *  - 全部颜色走 --ch-* / --el-* 变量，:root 是浅色值；
+ *  - 深色主题 = html 根元素挂 .dark 类（由 stores/ui.ts 按配置切换），
+ *    Element Plus 的 dark/css-vars.css（main.ts 引入）提供 --el-* 深色默认，
+ *    下面的 html.dark 块覆盖品牌变量（特异性高于 :root，必定生效）；
+ *  - 组件里**不要写死颜色**，一律用变量——深色回归靠这条纪律守着。
  * ========================================================================== */
 
 :root {
@@ -32,6 +39,13 @@
   --ch-text: #1b1b1b;
   --ch-text-secondary: #5c5c5c;
   --ch-text-tertiary: #8a8a8a;
+
+  /* 交互态（悬停底色 / 侧栏与顶栏的亚克力底 / 滚动条） */
+  --ch-hover-soft: rgba(0, 0, 0, 0.04);
+  --ch-nav-bg: rgba(255, 255, 255, 0.65);
+  --ch-header-bg: rgba(255, 255, 255, 0.6);
+  --ch-scrollbar: rgba(0, 0, 0, 0.18);
+  --ch-scrollbar-hover: rgba(0, 0, 0, 0.3);
 
   /* 圆角与阴影 */
   --ch-radius-card: 8px;
@@ -60,6 +74,55 @@
   --el-border-color-lighter: rgba(0, 0, 0, 0.05);
   --el-fill-color-blank: transparent;
   --el-font-size-base: 13px;
+}
+
+/* ---------------------------------------------------------------- 深色主题 */
+
+html.dark {
+  --ch-accent: #5aabec;
+  --ch-accent-hover: #7cc0f4;
+  --ch-accent-soft: rgba(90, 171, 236, 0.16);
+  --ch-accent-soft-strong: rgba(90, 171, 236, 0.26);
+
+  --ch-bg: #161719;
+  --ch-layer: rgba(32, 33, 36, 0.72);
+  --ch-layer-solid: #1e1f23;
+  --ch-layer-alt: rgba(28, 29, 32, 0.5);
+  --ch-card-subtle: rgba(255, 255, 255, 0.04);
+
+  --ch-border: rgba(255, 255, 255, 0.08);
+  --ch-border-strong: rgba(255, 255, 255, 0.14);
+  --ch-divider: rgba(255, 255, 255, 0.06);
+
+  --ch-text: #e8e8ea;
+  --ch-text-secondary: #b0b1b5;
+  --ch-text-tertiary: #7e7f85;
+
+  --ch-hover-soft: rgba(255, 255, 255, 0.07);
+  --ch-nav-bg: rgba(28, 29, 32, 0.65);
+  --ch-header-bg: rgba(30, 31, 34, 0.6);
+  --ch-scrollbar: rgba(255, 255, 255, 0.22);
+  --ch-scrollbar-hover: rgba(255, 255, 255, 0.36);
+
+  --ch-shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.45);
+  --ch-shadow-card: 0 2px 4px rgba(0, 0, 0, 0.3);
+
+  --ch-sidebar: #1e1f23;
+
+  /* Element Plus 深色下的品牌色对齐（dark/css-vars.css 的默认蓝偏亮，这里对齐品牌） */
+  --el-color-primary: #4a9eff;
+  --el-color-primary-light-3: #337fd6;
+  --el-color-primary-light-5: #2563ab;
+  --el-color-primary-light-7: #1b4a82;
+  --el-color-primary-light-8: #163c6b;
+  --el-color-primary-light-9: #122f55;
+  --el-color-primary-dark-2: #6cb4ff;
+  --el-text-color-primary: #e8e8ea;
+  --el-text-color-regular: #c9cacd;
+  --el-text-color-secondary: #9a9b9f;
+  --el-border-color: rgba(255, 255, 255, 0.12);
+  --el-border-color-light: rgba(255, 255, 255, 0.08);
+  --el-border-color-lighter: rgba(255, 255, 255, 0.06);
 }
 
 * {
@@ -179,12 +242,12 @@ textarea {
 }
 
 .el-button--default {
-  background: rgba(255, 255, 255, 0.7) !important;
+  background: var(--ch-layer) !important;
   border-color: var(--ch-border-strong) !important;
 }
 
 .el-button--default:hover {
-  background: rgba(0, 0, 0, 0.04) !important;
+  background: var(--ch-hover-soft) !important;
 }
 
 .el-button--primary {
@@ -195,7 +258,7 @@ textarea {
 .el-textarea__inner,
 .el-select__wrapper {
   border-radius: var(--ch-radius-control) !important;
-  background: rgba(255, 255, 255, 0.7) !important;
+  background: var(--ch-layer) !important;
   box-shadow: 0 0 0 1px var(--ch-border-strong) inset !important;
 }
 
@@ -224,12 +287,38 @@ textarea {
   box-shadow: var(--ch-shadow-flyout) !important;
 }
 
+/* 关于页的折叠卡片：与 el-card 同一套观感（分割线代替卡片描边） */
+.el-collapse {
+  --el-collapse-border-color: var(--ch-divider);
+  border: none !important;
+}
+
+.el-collapse-item__header {
+  background: var(--ch-layer) !important;
+  border: 1px solid var(--ch-border) !important;
+  border-radius: var(--ch-radius-card) !important;
+  padding: 0 16px;
+  margin-top: 8px;
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.el-collapse-item__wrap {
+  background: transparent !important;
+  border-bottom: none !important;
+}
+
+.el-collapse-item__content {
+  padding: 12px 6px 4px !important;
+  color: var(--ch-text);
+}
+
 /* ---------------------------------------------------------------- 表格 */
 
 .el-table {
   --el-table-border-color: var(--ch-divider);
   --el-table-header-bg-color: transparent;
-  --el-table-row-hover-bg-color: rgba(0, 0, 0, 0.03);
+  --el-table-row-hover-bg-color: var(--ch-hover-soft);
   background: transparent !important;
 }
 
@@ -251,12 +340,13 @@ textarea {
 /* ---------------------------------------------------------------- 侧边导航（Fluent NavigationView 观感） */
 
 .ch-nav {
-  background: rgba(255, 255, 255, 0.65);
+  background: var(--ch-nav-bg);
   backdrop-filter: blur(24px) saturate(1.2);
   border-right: 1px solid var(--ch-border);
 }
 
-.ch-nav .el-menu-item {
+.ch-nav .el-menu-item,
+.ch-nav .el-sub-menu__title {
   height: 40px;
   line-height: 40px;
   margin: 2px 8px;
@@ -266,8 +356,19 @@ textarea {
   position: relative;
 }
 
-.ch-nav .el-menu-item:hover {
-  background: rgba(0, 0, 0, 0.04);
+.ch-nav .el-menu-item:hover,
+.ch-nav .el-sub-menu__title:hover {
+  background: var(--ch-hover-soft);
+}
+
+/* 分组标题：比普通菜单项轻一档（分组是"容器"，不是目的地） */
+.ch-nav .el-sub-menu__title {
+  font-weight: 600;
+  color: var(--ch-text-secondary);
+}
+
+.ch-nav .el-sub-menu .el-menu {
+  background: transparent;
 }
 
 /* 选中项：强调色淡底 + 左侧强调条（WinUI 经典样式） */
@@ -286,6 +387,58 @@ textarea {
   height: 16px;
   border-radius: 2px;
   background: var(--ch-accent);
+}
+
+/* 折叠态：图标居中（el-menu collapse 自带收窄，这里压掉分组缩进） */
+.ch-nav .el-menu--collapse .el-menu-item,
+.ch-nav .el-menu--collapse .el-sub-menu__title {
+  margin: 2px 8px;
+  padding: 0 !important;
+}
+
+/*
+ * 折叠态：把菜单文字**彻底不渲染**，只留图标槽。
+ *
+ * Element Plus 自己的隐藏方式是"把 span 的宽高压成 0 + overflow"，一旦外层样式
+ * （缩进、margin、transition）稍有干扰，文字就会以 0 宽溢出的形式留在画面上 ——
+ * 表现为折叠后菜单里残留"半截字"。这里直接 display:none，从根上消除残影。
+ * 图标槽（.menu-icon-slot）必须保留（它同时承载未读红点）。
+ */
+.ch-nav .el-menu--collapse .el-menu-item > span:not(.menu-icon-slot),
+.ch-nav .el-menu--collapse .el-sub-menu__title > span:not(.menu-icon-slot) {
+  display: none !important;
+}
+
+/* 折叠态：图标在 64px 栏内严格水平居中，且与顶部的汉堡按钮同一竖列（中心都在 32px） */
+.ch-nav .el-menu--collapse .el-menu-item,
+.ch-nav .el-menu--collapse .el-sub-menu__title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/*
+ * 折叠态点分组图标会弹出子菜单浮层 —— 它被 teleport 到 body 下，
+ * 不受 .ch-nav 作用域影响，所以这些规则写在全局；不写的话深色主题下会是浅色浮层。
+ */
+.el-menu--popup {
+  background: var(--ch-layer-solid);
+  border: 1px solid var(--ch-border);
+  border-radius: var(--ch-radius-card);
+  box-shadow: var(--ch-shadow-flyout);
+}
+
+.el-menu--popup .el-menu-item {
+  color: var(--ch-text);
+}
+
+.el-menu--popup .el-menu-item:hover {
+  background: var(--ch-hover-soft);
+}
+
+.el-menu--popup .el-menu-item.is-active {
+  background: var(--ch-accent-soft);
+  color: var(--ch-text);
 }
 
 /* ---------------------------------------------------------------- 课表时间轴 */
@@ -320,14 +473,14 @@ textarea {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--ch-scrollbar);
   border: 3px solid transparent;
   background-clip: content-box;
   border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--ch-scrollbar-hover);
   background-clip: content-box;
 }
 

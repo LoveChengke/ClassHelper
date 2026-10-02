@@ -916,7 +916,7 @@ onUnmounted(() => {
 .content-block {
   white-space: pre-wrap;
   line-height: 1.75;
-  background: #fafafa;
+  background: var(--ch-layer-alt);
   border-radius: 12px;
   padding: 12px;
   margin: 0;
@@ -1148,7 +1148,7 @@ onUnmounted(() => {
   transform: translateX(-50%);
   font-size: 14px;
   font-weight: 500;
-  color: #6b7280;
+  color: var(--ch-text-tertiary);
   white-space: nowrap;
 }
 
@@ -1176,7 +1176,7 @@ onUnmounted(() => {
 .submission-list {
   max-height: 46vh;
   overflow-y: auto;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--ch-divider);
   border-radius: 12px;
   padding: 12px;
 }

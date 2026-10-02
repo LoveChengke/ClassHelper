@@ -89,7 +89,7 @@ packages/desktop-client/
   src/types/desktop.d.ts     主进程 ↔ 渲染进程契约
   scripts/                   build-main / dev / smoke / dist-win
 packages/classisland-plugin/ .NET 8 插件（独立于 pnpm workspace，不参与 pnpm install）
-  manifest.yml               清单：id=classhelper.classisland.bridge / apiVersion=2.0.0.0 / version=0.1.0.0
+  manifest.yml               清单：id=classhelper.classisland.bridge / apiVersion=2.0.0.0 / version=1.0.0.0
   ClassHelper.ClassIslandPlugin.csproj（TargetFramework=net8.0）
   src/Plugin.cs              入口：读配置 → 注册提醒提供方 / 设置页 / BridgeService
   src/Models/PluginSettings.cs
@@ -395,9 +395,9 @@ homeworks / notifications / calls / imports / integrations / grades / students /
       长高发生在卡片形变**之前**（`setState` 里先 `relayout()` 再 `emit()`），用户看不到这一步；
     - 列表态 CSS 的每个尺寸（行高/行距/内边距/标题行/提示行/按钮行）都要与那份度量**一一对应**，
       改 CSS 必须改常量，否则"最后一行被切掉"这类问题会以"看着有内容、按钮点不到"的形式出现。
-    回归用例：`verify:desktop` 的「多条通知竖向排列…」「点展开更多…」「通知多到屏幕放不下…」。
-    写这类用例时注意：**断言"单条卡片"的用例（紧急卡/叫人卡/截图比例）必须先 `drainIsland()` 排空队列**，
-    否则量到的是列表高度。
+      回归用例：`verify:desktop` 的「多条通知竖向排列…」「点展开更多…」「通知多到屏幕放不下…」。
+      写这类用例时注意：**断言"单条卡片"的用例（紧急卡/叫人卡/截图比例）必须先 `drainIsland()` 排空队列**，
+      否则量到的是列表高度。
 
 34. **"知道了 / 标为已读"之后是「状态同步落地 + 窗口淡出」，没有跨进程的收回握手。**
     收起一律是**主进程单向**的：`handleAction()` 收到 `dismiss` / `dismiss-all` / `mark-read` /
@@ -438,7 +438,7 @@ homeworks / notifications / calls / imports / integrations / grades / students /
     早先漏掉这一条时窗口会在卡片还很大时就缩成胶囊尺寸，卡片底部被平切（"上半剩圆角、下半截断"）；
     而"隐藏态改边距不生效"那条修法仍要保留：`this.win.isVisible() && (mode !== 'hidden' || idleSliver)`。
 
-40. **开合时胶囊内容禁止跟着卡片重排/横移。** 卡片在 268 ⇄ 424 之间变宽变窄，中心停靠下左右边都在动；
+37. **开合时胶囊内容禁止跟着卡片重排/横移。** 卡片在 268 ⇄ 424 之间变宽变窄，中心停靠下左右边都在动；
     胶囊内容若按卡片宽度布局，就会出现"文字先按宽卡片铺开、再随卡片收窄被省略号收回"
     （用户反馈的"新消息那行字往右跳一下再缩回"）。所以 `IslandApp.vue` 的胶囊层里套了一层
     `.pill-inner`，**固定成胶囊自己的几何**（`width: var(--island-w)`），并按停靠方式对齐
@@ -446,7 +446,7 @@ homeworks / notifications / calls / imports / integrations / grades / students /
     左/右停靠贴对应边，居中则居中 —— 静止态外观与之前完全一致，动画全程文字位置与省略号都不变。
     回归用例：「灵动岛开合时胶囊内容不横移」，逐帧采样 `.pill-title` 左右边缘，波动必须 ≤ 2px。
 
-41. **跑自动化验证时，验证实例的岛要挪到左上角 + 真实输入穿透。**
+38. **跑自动化验证时，验证实例的岛要挪到左上角 + 真实输入穿透。**
     `verify:desktop` / `verify:packaged` 会真的在屏幕上放一个灵动岛窗口（顶部居中），而用户自己的客户端
     默认也在同一位置（他的设置常是 `top-center` + 较大 `marginY`）—— 两个岛一高一低叠在一起，用户会以为
     **"屏幕上出现了第二个灵动岛"**，而且点它"反应不对"（它归验证脚本控制，会自己展开/收起/消失）。
@@ -457,34 +457,111 @@ homeworks / notifications / calls / imports / integrations / grades / students /
     **只改颜色、不要改停靠位置**：命中/几何断言都是按默认位置写的，把岛挪到角落会把
     「空闲细缝态命中跟随光标」这类用例弄红（实测踩过）。
     另外：冒烟会**真发通知**给当前班级（实时链路用例必须打到客户端所在班），所以验证期间用户的通知列表/
-    岛上会短暂出现几条「张老师 · *自检*」——它们用完即删（`createSmokeNotification` / `islandRealtimeCleanup`），
+    岛上会短暂出现几条「张老师 · _自检_」——它们用完即删（`createSmokeNotification` / `islandRealtimeCleanup`），
     若验证被中途 kill 会留下残条，收尾时顺手清一下（标题里带「自检 / 红点位置校验」的那几条）。
 
-42. **冒烟期间要让真实鼠标点击穿透（`island.setTestInputPassthrough(true)`）。** 自动化要跑几分钟，
+39. **冒烟期间要让真实鼠标点击穿透（`island.setTestInputPassthrough(true)`）。** 自动化要跑几分钟，
     而用户很可能正在同一块屏幕上 —— 他的客户端那个岛和冒烟这个窗口都在屏幕顶部居中、互相叠着，
     他点到的是**冒烟这个窗口**：实测冒烟收到了人发出的 `collapse` / `mark-read`，把「点胶囊展开」
     「点空白处收起」等用例整片弄红。开关只忽略**真实**输入：`cursorOverride`（`setHitTestCursor`）
     一旦注入就照常按注入位置判定，所以「光标轮询校正命中」「岛外穿透」「触摸模式始终接收输入」
     这些断言不受影响（触摸模式那条会临时关掉开关）。跑完在收尾处恢复。
 
-37. **作业页的 `?date=` 深链必须在"已在作业页"时也生效。** `route.query.date` 只在组件 setup 里读
+40. **作业页的 `?date=` 深链必须在"已在作业页"时也生效。** `route.query.date` 只在组件 setup 里读
     一次的话，同路由再推 query（冒烟切到"最近有作业的日期"、用户从别处深链回来）会被复用的组件
     无视，看板停在原日期 —— 表现为"看板明明有历史作业却显示空"。修法是 watch `route.query.date`
     （`HomeworkView.vue`，与 `selectDate` 的 `router.replace` 形成环时靠"值相同就跳过"防死循环）。
     同理，冒烟里"切到有作业的日期"的判据是**看板里没有 `.board-card`**，不是"没有 `.board-host`"
     （空看板照样渲染容器，拿容器当判据兜底永远不会触发）。
 
-38. **打包版冒烟自检发的通知要"任何时段都可见"**：用 `priority: 'URGENT'` + `confirmDuringClass: true`
+41. **打包版冒烟自检发的通知要"任何时段都可见"**：用 `priority: 'URGENT'` + `confirmDuringClass: true`
     （上课时段普通通知会被**正确地**暂存到下课、紧急通知不带确认会被 409 `URGENT_DURING_CLASS` 拒掉 ——
     两个都是产品功能，别为了测试去改产品行为）。凡是断言"窗口已隐藏"的用例一律**轮询**等待，
     不要写死 sleep：`dismiss` 现在带 ~360ms 收回动画再淡出，机器忙时固定 sleep 会间歇性踩空
     （「关闭空闲细缝后空闲再次完全隐藏」曾因此 4 连红）。
 
-39. **用户报"打包版用不了/装不上"先查两件事，别急着怀疑产物**（2026-10-01 实测，两次全是环境）：
+42. **用户报"打包版用不了/装不上"先查两件事，别急着怀疑产物**（2026-10-01 实测，两次全是环境）：
     ① **后端起没起** —— 客户端配置指向 `127.0.0.1:4000`，后端不在就进离线模式、数据全空，
     观感就是"软件坏了"；② **托盘单实例锁** —— 关窗是隐藏到托盘、进程还在，再双击 EXE 会被
     单实例锁秒退（看起来"点了没反应"），安装包也会因"应用正在运行"装不上：先从托盘退出。
     完整性标签（§7 第 7 条）用 `icacls | findstr Mandatory` 一眼可辨，优先排除。
+
+43. **Web 端新手引导（`el-tour`）在自动化里的判据有三条坑**（2026-10-02 实测，`verify:web`
+    「首次登录展示新手引导且可跳过」踩过）：
+    ① **外壳先出现、内容晚一拍** —— `document.querySelector('.el-tour')` 先于步骤卡片渲染成立，
+    急着找 `.el-tour__closebtn` 会拿到 null；出现判据要等 **× 按钮渲染出来**（等 10s 不为过）。
+    ② **关闭后内容元素残留** —— 和 el-dialog 一样（本表第 22 条），点 × 生效后 `.el-tour` 仍在 DOM
+    （父级 `.el-popper` 被隐藏，computed display 仍是 block）；**关闭判据是 `.el-tour__mask` 卸载**，
+    不是 `.el-tour` 消失。跳过 / 走完都会写 `classhelper.onboarding`（版本号），可顺带断言。
+    ③ **全高元素（侧边栏）作锚点必须显式 `placement: 'right'`** —— 默认 bottom 会把卡片推到
+    视口外（表现为"遮罩挖了洞、卡片不见了"）。
+    另外 `ui-smoke` 管理员用例里的 `localStorage.clear()` 会把「已看过」标记一并清掉，管理员登录后
+    引导会再次弹出 —— 该用例里必须先跳过它再继续，别只处理首次登录那一次。
+
+44. **数据库管理模块（服务端）** 见 §5 第 36 条；做"切库/备份/迁移"类改动前先读那一条，
+    那里写清了快照格式、外键陷阱、切换为什么必须走子进程、以及打包为何要带上 prisma CLI + tsc。
+
+45. **客户端设置页已拆成子路由**（2026-10-02）：`/settings/{general,appearance,island,reminder,account,about}`，
+    `/settings` 重定向到 `/settings/general`；旧的单一 `views/SettingsView.vue` **已删除**。
+    改设置相关冒烟用例时必须改到对应子路由（`smoke.ts` 里 `location.hash = '#/settings'` 已全部改掉），
+    否则会停在通用页、找不到灵动岛滑块或「ClassIsland 联动」卡片而误报失败。
+
+46. **深色主题的实现边界**：颜色一律走 `--ch-*` / `--el-*` 变量（`styles/index.css` 的 `:root`
+    是浅色值、`html.dark` 是深色值），**组件里不要写死颜色**。已知的固定深色区域（灵动岛、
+    登录页、App 启动过渡页、全屏作业看板）刻意不随主题 —— 改它们会被当成回归。
+    主题状态在 `stores/ui.ts`（持久化到主进程配置 `theme`），主窗口 `backgroundColor` 也按主题设置
+    （深色下若仍用浅色底会"先白后黑"闪一下）。
+
+47. **数据库管理模块（`/api/database/*`，仅 ADMIN）——改它之前必须知道的四件事**：
+    ① **一切都建立在 `lib/snapshot.ts` 的 JSON 快照上**（备份 / 导入导出 / 跨库迁移共用一种格式，
+    14 张表按拓扑序导出、恢复时临时关外键检查、分批 `createMany`）。恢复时**必须**先关外键检查：
+    schema 里 `User.classId → Class` 与 `Class.teacherId → User` **互相引用**，任何排序都会被一侧卡死。
+    ② **一键切换必须走子进程**：运行中的服务进程缓存的是旧方言的 Prisma Client，改完 provider 后
+    只有**新进程**才能加载重新生成的客户端 —— 因此 `generate` / `db push` / 写数据分别用
+    `spawn(process.execPath, ...)` 拉起（数据写入走 `dist/tools/apply-snapshot.js`）。
+    **顺序不能换**：备份 → 导出 → 测试连接 → 校验目标库为空 → 改 schema → generate → 编译 → db push → 写数据 → 改 .env；
+    `.env` 只在**全部成功后**才改写，中途失败回滚 `schema.prisma`（现有库不受影响）。
+    ③ **`prisma generate` 的产物是 `.ts`**（`prisma-client` 生成器），所以：dev 由 tsx 直接跑 src；
+    **打包形态必须再跑一次 `tsc -p tsconfig.generate.json`** 把新客户端编进 `dist/generated`，
+    生产包因此要随包带上 `prisma` CLI、`typescript` 与 `schema.prisma`/`prisma.config.ts`
+    （`scripts/dist-server.mjs` 的 `buildRuntime` 已拷；安装包 ~34MB → ~71MB）。
+    ④ **主库只支持 SQLite / MySQL**：Redis 等键值库 Prisma 不支持（无法建表/迁移），
+    schema 层直接 422 拒绝；这是产品口径，别"顺手"加上。
+    e2e 只覆盖校验分支（同库 400 / 非法 provider 422 / 目标库非空），**不真跑切换**（会改写 .env）；
+    真实切换用子进程链路单独实测（快照 728 行逐表一致）。切换后**必须重启服务端**才生效。
+
+48. **客户端主窗口初始尺寸与 ClassIsland 对齐（1242×582）**。这个数不是拍的：用
+    `GetWindowRect` + `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` 量运行中的
+    `ClassIsland.Desktop` 主窗口（实测可视区 1242×582，屏幕工作区 1600×852、DPI 100%）。
+    `main/index.ts` 的 `createWindow` 按它设 width/height + `center: true`，
+    **`minHeight` 必须 ≤ 582**（否则窗口达不到目标高度，用户会看到"设置不了那个大小"）。
+    冒烟断言：「初始窗口尺寸与 ClassIsland 对齐（1242x582）」（`win.getSize()`），改尺寸即红。
+
+49. **侧栏（分组折叠菜单）的三条硬要求**，都是用户报过的问题固化的：
+    ① **折叠态文字必须 `display: none`** —— Element Plus 自己的隐藏方式是"把 span 的宽高压成 0 +
+    overflow"，外层只要有缩进/margin/transition 干扰，文字就会以"0 宽溢出"留在画面上
+    （用户截图里的半截字）。规则写在 `styles/index.css` 的 `.ch-nav .el-menu--collapse ... > span:not(.menu-icon-slot)`。
+    ② **折叠态图标必须与顶部汉堡按钮同一竖列**（冒烟断言中心差 ≤ 2px）—— 一个居中、一个偏左就会
+    看起来"没对齐"。汉堡在 `.brand` 里也是居中的，两边都在 64/2 = 32px。
+    ③ **菜单区必须 `min-height: 0` + `overflow-y: auto`** —— 否则菜单项多时会把底部
+    「第 N 周 / 最近同步」挤出窗口（窗口 582px 高、两组全展开时必然发生）。footer 是 aside 的
+    兄弟 flex 子项，菜单区滚动后它恒定可见（冒烟断言「侧栏底部可见」）。
+    另：分组**默认只展开当前路由所在分组**（ClassIsland 同款，也让小窗口侧栏不溢出）；
+    `el-sub-menu__title` 的点击是 **toggle**，自动化里要先判"子项是否可见"再决定点不点标题
+    （盲点会把已展开的组收起来，后续点不到子项）。
+
+50. **深色主题：渲染进程里除固定深色区域外，颜色一律走 `--ch-*` 变量。**
+    §5 第 46 条讲了机制，这里补具体踩坑：课表页时间轴卡片曾写死 `rgba(255, 255, 255, 0.6)`，
+    深色主题下变成"浅灰卡 + 近白字"几乎不可读（用户截图）。自查命令：
+    `grep -rn "rgba(255, 255, 255\|rgba(0, 0, 0\|#fff" packages/desktop-client/src/renderer`，
+    除**明确固定深色**的区域（全屏作业看板、登录页渐变、App 启动过渡页、灵动岛自身、
+    以及 accent 渐变底上的白字）外，都应该是变量。
+
+51. **跑 `verify:desktop` / `verify:packaged` 若大面积报"教师登录失败"，先核对本机 teacher1 的密码**：
+    本机实测是 **`123456`**，不是种子默认的 `teacher123` —— 因为「修改密码」弹窗留空会落到
+    `DEFAULT_TEACHER_PASSWORD`（=123456），某次人工/脚本操作就会把演示账号改成它。
+    处理方式是用环境变量传实际凭据（脚本原生支持，**不要去改数据**）：
+    `set "ELECTRON_SMOKE_USER=teacher1" && set "ELECTRON_SMOKE_PASSWORD=123456" && pnpm verify:desktop`。
 
 ---
 

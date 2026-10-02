@@ -1,6 +1,6 @@
 {
   "name": "@classhelper/shared",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "班级小助手 - 三端共享的类型、常量与工具函数",
   "type": "module",

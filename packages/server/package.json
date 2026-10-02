@@ -1,6 +1,6 @@
 {
   "name": "@classhelper/server",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "班级小助手后端服务：REST API + Socket.IO 实时推送 + Prisma 数据访问",
   "type": "module",
@@ -25,6 +25,7 @@
     "@classhelper/shared": "workspace:*",
     "@libsql/client": "^0.17.0",
     "@prisma/adapter-libsql": "7.10.0",
+    "@prisma/adapter-mariadb": "7.10.0",
     "@prisma/client": "7.10.0",
     "bcryptjs": "^3.0.3",
     "compression": "^1.8.2",
@@ -34,7 +35,9 @@
     "express-rate-limit": "^8.7.0",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
+    "prisma": "7.10.0",
     "socket.io": "^4.8.3",
+    "typescript": "~5.9.3",
     "xlsx": "0.18.5",
     "zod": "^4.6.2"
   },

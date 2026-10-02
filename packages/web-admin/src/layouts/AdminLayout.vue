@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
+import { STORAGE_KEYS } from '@classhelper/shared';
 import { authApi } from '@/api';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
@@ -22,6 +23,7 @@ const { isMobile } = useResponsive();
  *   （需求 6：成绩与表格导入老师端可用且不越权；科任老师只能看，写入会被后端 403）
  * - 作业 / 通知：所有教师
  * - ClassIsland 联动：管理员 + 教师（设备令牌按班签发，页面内再按"能否管理该班"控制按钮）
+ * - 数据库管理：仅管理员（备份/恢复/导入导出/一键切换是最高危操作，后端同样 requireRole('ADMIN')）
  */
 const menuItems = [
   { path: '/dashboard', title: '仪表盘', icon: 'Odometer', roles: ['ADMIN', 'TEACHER'] },
@@ -33,6 +35,7 @@ const menuItems = [
   { path: '/notifications', title: '通知发布', icon: 'Bell', roles: ['ADMIN', 'TEACHER'] },
   { path: '/grades', title: '成绩录入', icon: 'Trophy', roles: ['ADMIN', 'TEACHER'] },
   { path: '/integrations', title: 'ClassIsland 联动', icon: 'Connection', roles: ['ADMIN', 'TEACHER'] },
+  { path: '/database', title: '数据库管理', icon: 'Coin', roles: ['ADMIN'] },
 ];
 
 /** 当前账号可见的菜单（班级/学生管理仅管理员可见） */
@@ -141,12 +144,90 @@ async function submitPassword(): Promise<void> {
   await auth.logout();
   void router.push({ name: 'login' });
 }
+
+/* ------------------------------------------------------------ 首次登录引导 */
+
+/**
+ * 引导版本：内容改版后 +1，看过旧版的老用户会再收到一次新版引导。
+ * 「已看过」存 localStorage（STORAGE_KEYS.onboarding，值为版本号）。
+ */
+const ONBOARDING_VERSION = 1;
+
+const tourOpen = ref(false);
+
+/** 「看过」落盘：走完、跳过（右上角 × / Esc）都算看过，之后不再自动弹出 */
+function markOnboardingSeen(): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.onboarding, String(ONBOARDING_VERSION));
+  } catch {
+    // localStorage 不可用（隐私模式等）时仅本次会话内生效
+  }
+}
+
+onMounted(() => {
+  try {
+    if (localStorage.getItem(STORAGE_KEYS.onboarding) === String(ONBOARDING_VERSION)) return;
+  } catch {
+    return;
+  }
+  // 等布局与首屏数据渲染稳定后再弹，避免和首屏加载抢注意力
+  window.setTimeout(() => {
+    tourOpen.value = true;
+  }, 600);
+});
+
+/**
+ * 引导锚点：按 data-tour 属性惰性查询 DOM（弹出某一步时才找元素）。
+ * 找不到（例如手机小屏没有侧边栏）就返回 null，el-tour 会把卡片放到屏幕居中，不会报错。
+ */
+function tourTarget(name: string): () => HTMLElement | null {
+  return () => document.querySelector<HTMLElement>(`[data-tour="${name}"]`);
+}
+
+const tourSteps = computed(() => [
+  {
+    target: null,
+    title: '欢迎使用班级小助手',
+    description:
+      '教师与管理员在这里发布课表、作业、通知与成绩，学生通过桌面客户端实时接收。花一分钟认识一下界面。',
+  },
+  isMobile.value
+    ? {
+        target: tourTarget('nav-toggle'),
+        title: '打开功能菜单',
+        description: '小屏幕下侧边栏收进抽屉，点左上角按钮即可唤出全部功能页面。',
+        placement: 'bottom-start',
+      }
+    : {
+        target: tourTarget('side-nav'),
+        title: '左侧功能菜单',
+        description:
+          '菜单按角色显示：管理员可管理班级、学生与教师；班主任与科任老师可维护课表、发布作业与通知、录入成绩。',
+        // 侧栏是全高元素，默认 bottom 会把卡片推到视口外，必须放右侧
+        placement: 'right',
+      },
+  {
+    target: tourTarget('conn-tag'),
+    title: '实时通道',
+    description: '绿色表示与后端保持实时连接，发布的内容会立刻推送到对应班级的学生端与灵动岛。',
+  },
+  {
+    target: tourTarget('user-chip'),
+    title: '账号菜单',
+    description: '在这里修改密码、退出登录，也可以随时重看本引导。',
+  },
+  {
+    target: null,
+    title: '开始使用',
+    description: '发布第一条内容试试吧。以后随时可以点右上角头像 →「使用引导」重看。',
+  },
+]);
 </script>
 
 <template>
   <el-container class="layout">
     <!-- 桌面/平板：常驻深色侧边栏 -->
-    <el-aside v-if="!isMobile" width="210px" class="layout-aside ch-sidebar">
+    <el-aside v-if="!isMobile" width="210px" class="layout-aside ch-sidebar" data-tour="side-nav">
       <div class="brand">
         <el-icon :size="22"><School /></el-icon>
         <span class="brand-text">班级小助手</span>
@@ -169,12 +250,13 @@ async function submitPassword(): Promise<void> {
             class="nav-toggle"
             aria-label="打开菜单"
             :aria-expanded="drawerVisible ? 'true' : 'false'"
+            data-tour="nav-toggle"
             @click="drawerVisible = true"
           >
             <el-icon :size="20"><Menu /></el-icon>
           </button>
           <span class="header-title">{{ isMobile ? currentTitle : APP_TITLE }}</span>
-          <el-tag v-if="!isMobile" :type="connectionType" size="small" effect="light">
+          <el-tag v-if="!isMobile" :type="connectionType" size="small" effect="light" data-tour="conn-tag">
             <span class="header-conn">{{ connectionText }}</span>
           </el-tag>
           <!-- 小屏：连接正常时不显示任何圆点/标签，只在异常态显示带文字的紧凑标签 -->
@@ -194,7 +276,7 @@ async function submitPassword(): Promise<void> {
 
         <div class="header-right">
           <el-dropdown trigger="click">
-            <span class="user-chip">
+            <span class="user-chip" data-tour="user-chip">
               <el-icon><UserFilled /></el-icon>
               <template v-if="!isMobile">
                 {{ auth.displayName }}
@@ -208,6 +290,10 @@ async function submitPassword(): Promise<void> {
                 <el-dropdown-item divided @click="passwordVisible = true">
                   <el-icon><Lock /></el-icon>
                   修改密码
+                </el-dropdown-item>
+                <el-dropdown-item divided @click="tourOpen = true">
+                  <el-icon><Guide /></el-icon>
+                  使用引导
                 </el-dropdown-item>
                 <el-dropdown-item divided @click="handleLogout">
                   <el-icon><SwitchButton /></el-icon>
@@ -265,6 +351,21 @@ async function submitPassword(): Promise<void> {
         <el-button type="primary" @click="submitPassword">确认修改</el-button>
       </template>
     </el-dialog>
+
+    <!--
+      新手引导：首次登录自动弹出（见 script 的 onMounted），头像菜单「使用引导」可重看。
+      target 为 null 的步骤（首尾两步）由 el-tour 放到屏幕居中；其余步骤锚定真实 UI。
+    -->
+    <el-tour v-model="tourOpen" @close="markOnboardingSeen" @finish="markOnboardingSeen">
+      <el-tour-step
+        v-for="(step, index) in tourSteps"
+        :key="index"
+        :target="step.target"
+        :title="step.title"
+        :description="step.description"
+        :placement="step.placement"
+      />
+    </el-tour>
   </el-container>
 </template>
 

@@ -62,4 +62,9 @@ export const api = {
   patch: <T>(url: string, data?: unknown): Promise<T> => request<T>({ method: 'PATCH', url, data }),
   put: <T>(url: string, data?: unknown): Promise<T> => request<T>({ method: 'PUT', url, data }),
   delete: <T>(url: string): Promise<T> => request<T>({ method: 'DELETE', url }),
+  /**
+   * 下载二进制（返回 Blob，调用方负责触发浏览器保存）。
+   * 请求拦截器照常带 token；响应是 Blob 时拦截器原样放行（不含 success 字段）。
+   */
+  download: (url: string): Promise<Blob> => request<Blob>({ method: 'GET', url, responseType: 'blob' }),
 };

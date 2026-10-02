@@ -226,7 +226,7 @@ onUnmounted(() => {
 
 <style scoped>
 .stat-card {
-  background: #fff;
+  background: var(--ch-layer-solid);
   border: 1px solid var(--ch-border);
   border-radius: 10px;
   padding: 16px;
@@ -234,7 +234,7 @@ onUnmounted(() => {
 
 .stat-label {
   font-size: 13px;
-  color: #909399;
+  color: var(--ch-text-secondary);
 }
 
 .stat-value {
@@ -246,7 +246,7 @@ onUnmounted(() => {
 .stat-hint {
   margin-top: 4px;
   font-size: 12px;
-  color: #c0c4cc;
+  color: var(--ch-text-tertiary);
 }
 
 .level-list {

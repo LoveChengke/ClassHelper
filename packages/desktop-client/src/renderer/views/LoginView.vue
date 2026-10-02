@@ -5,12 +5,14 @@ import { ElMessage, type FormInstance, type FormRules } from 'element-plus';
 import { pingHealth, setApiBaseUrl } from '../api/http.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
+import { useOnboardingStore } from '../stores/onboarding.js';
 import { useRealtimeStore } from '../stores/realtime.js';
 import { DEFAULT_SERVER, normalizeServerUrl } from '../config.js';
 
 const router = useRouter();
 const appStore = useAppStore();
 const auth = useAuthStore();
+const onboarding = useOnboardingStore();
 const realtime = useRealtimeStore();
 
 const formRef = ref<FormInstance>();
@@ -134,6 +136,14 @@ async function enterOffline(): Promise<void> {
           <el-button type="primary" :loading="auth.loading" @click="submit">登录</el-button>
         </div>
 
+        <!-- 重看初次启动引导：首次启动会自动弹出过一次，这里供随时回看 -->
+        <div class="login-guide">
+          <el-button link type="primary" @click="onboarding.open()">
+            <el-icon><Guide /></el-icon>
+            查看使用引导
+          </el-button>
+        </div>
+
         <el-alert
           v-if="testResult === 'ok'"
           class="mt-12"
@@ -177,7 +187,7 @@ async function enterOffline(): Promise<void> {
 
 .login-card {
   width: 420px;
-  background: #fff;
+  background: var(--ch-layer-solid);
   border-radius: 14px;
   padding: 28px 26px 20px;
   box-shadow: 0 18px 40px rgba(15, 30, 50, 0.28);
@@ -198,7 +208,7 @@ async function enterOffline(): Promise<void> {
 .login-sub {
   margin: 4px 0 0;
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-text-secondary);
 }
 
 .login-actions {
@@ -210,6 +220,12 @@ async function enterOffline(): Promise<void> {
   flex: 1;
 }
 
+.login-guide {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
 .offline-button {
   width: 100%;
 }
@@ -218,6 +234,6 @@ async function enterOffline(): Promise<void> {
   margin: 16px 0 0;
   font-size: 12px;
   line-height: 1.7;
-  color: #c0c4cc;
+  color: var(--ch-text-tertiary);
 }
 </style>

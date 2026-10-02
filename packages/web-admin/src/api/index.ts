@@ -15,6 +15,11 @@ import {
   type CreateNotificationRequest,
   type CreateScheduleRequest,
   type DashboardSummary,
+  type DatabaseBackupMetaDto,
+  type DatabaseBackupScheduleDto,
+  type DatabaseConnectionTestDto,
+  type DatabaseStatusDto,
+  type DatabaseSwitchJobDto,
   type GradeDto,
   type GradeStats,
   type HomeworkDaysDto,
@@ -327,4 +332,37 @@ export const integrationApi = {
   /** 把一条提醒下发到该班的 ClassIsland 设备（ClassIsland 上全屏弹出） */
   notify: (payload: SendClassIslandNotificationRequest): Promise<SendClassIslandNotificationResult> =>
     api.post(`${API_PATHS.integrations}/classisland/notify`, payload),
+};
+
+/* ------------------------------------------------------------------ 数据库管理（仅管理员） */
+
+/**
+ * 数据库管理：状态 / 连接测试 / 备份 / 导入导出 / 定时备份 / 一键切换。
+ *
+ * 「快照下载」与「数据库文件下载」是二进制流，走 http.ts 的 download()（返回 Blob），
+ * 由页面负责触发浏览器保存；导入把快照 JSON 转 base64 放进请求体（受 12MB 请求体限制）。
+ */
+export const databaseApi = {
+  status: (): Promise<DatabaseStatusDto> => api.get(`${API_PATHS.database}/status`),
+  testConnection: (payload: { provider: 'sqlite' | 'mysql'; url: string }): Promise<DatabaseConnectionTestDto> =>
+    api.post(`${API_PATHS.database}/test-connection`, payload),
+  listBackups: (): Promise<DatabaseBackupMetaDto[]> => api.get(`${API_PATHS.database}/backups`),
+  createBackup: (): Promise<DatabaseBackupMetaDto> => api.post(`${API_PATHS.database}/backups`, {}),
+  restoreBackup: (name: string): Promise<{ counts: Record<string, number> }> =>
+    api.post(`${API_PATHS.database}/backups/${encodeURIComponent(name)}/restore`, {}),
+  deleteBackup: (name: string): Promise<{ name: string }> =>
+    api.delete(`${API_PATHS.database}/backups/${encodeURIComponent(name)}`),
+  importSnapshot: (base64: string): Promise<{ counts: Record<string, number> }> =>
+    api.post(`${API_PATHS.database}/import`, { data: base64 }),
+  /** 下载当前库的 JSON 快照（Blob，页面触发浏览器保存） */
+  downloadSnapshot: (): Promise<Blob> => api.download(`${API_PATHS.database}/export`),
+  /** 下载数据库文件（仅 SQLite 模式；MySQL 无单文件概念） */
+  downloadSqliteFile: (): Promise<Blob> => api.download(`${API_PATHS.database}/sqlite-file`),
+  getSchedule: (): Promise<DatabaseBackupScheduleDto> => api.get(`${API_PATHS.database}/backup-schedule`),
+  saveSchedule: (payload: DatabaseBackupScheduleDto): Promise<DatabaseBackupScheduleDto> =>
+    api.put(`${API_PATHS.database}/backup-schedule`, payload),
+  startSwitch: (payload: { provider: 'sqlite' | 'mysql'; url: string }): Promise<{ jobId: string }> =>
+    api.post(`${API_PATHS.database}/switch`, payload),
+  getSwitchJob: (jobId: string): Promise<DatabaseSwitchJobDto | null> =>
+    api.get(`${API_PATHS.database}/switch/jobs/${encodeURIComponent(jobId)}`),
 };

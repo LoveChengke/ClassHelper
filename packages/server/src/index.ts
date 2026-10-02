@@ -9,6 +9,7 @@ import { ensureInitialAdmin, ensureSchema } from './lib/db-bootstrap.js';
 import { logger } from './lib/logger.js';
 import { resolveWebDistDir } from './lib/web-static.js';
 import { initRealtime } from './realtime/socket.js';
+import { startBackupScheduler } from './modules/database/database.service.js';
 
 /** 数据库自检与可选的首次初始化 */
 async function prepareDatabase(): Promise<void> {
@@ -85,6 +86,8 @@ httpServer.listen(env.port, env.host, () => {
   }
   logger.info(`探针：/healthz（存活） · /readyz（就绪） · ${API_PREFIX}/health（详情）`);
   logger.info(`WebSocket：ws://${displayHost}:${env.port}/socket.io`);
+  // 数据库管理模块的定时备份调度（配置与"到点时间"持久化在 data/database-settings.json）
+  startBackupScheduler();
 });
 
 let shuttingDown = false;

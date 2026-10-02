@@ -7,13 +7,18 @@ import {
   subscribeIslandMarkAllRead,
   subscribeIslandMarkRead,
 } from './island/bridge.js';
+import OnboardingWelcome from './components/OnboardingWelcome.vue';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
+import { useOnboardingStore } from './stores/onboarding.js';
 import { useRealtimeStore } from './stores/realtime.js';
+import { useUiStore } from './stores/ui.js';
 
 const router = useRouter();
 const appStore = useAppStore();
 const auth = useAuthStore();
+const onboarding = useOnboardingStore();
+const ui = useUiStore();
 const realtime = useRealtimeStore();
 
 const booting = ref(true);
@@ -27,6 +32,10 @@ const bootText = ref('正在读取本地配置...');
  */
 onMounted(async () => {
   try {
+    bootText.value = '正在读取本地配置...';
+    // 主题与侧栏折叠最先恢复：在首屏渲染前挂好 html.dark，避免"先白后黑"闪一下
+    await ui.init();
+
     bootText.value = '正在恢复登录状态...';
     const session = await auth.restore();
 
@@ -52,6 +61,17 @@ onMounted(async () => {
 
     if (auth.isAuthenticated) await router.replace('/schedule');
     else await router.replace('/login');
+
+    // 初次启动引导：配置里没记「已看过」就自动弹一次（完成/跳过后由引导组件写入配置）。
+    // 稍等一拍再弹：让登录页/主界面先渲染完，避免和启动过渡的收尾抢帧。
+    window.setTimeout(() => {
+      void window.desktop
+        ?.getConfig()
+        .then((config) => {
+          if (config.onboardingDone !== true) onboarding.open();
+        })
+        .catch(() => undefined);
+    }, 400);
   } finally {
     booting.value = false;
   }
@@ -69,6 +89,8 @@ onUnmounted(() => {
     <p class="boot-text">{{ bootText }}</p>
   </div>
   <router-view v-else />
+  <!-- 初次启动引导：常驻挂载，由 onboarding store 控制显隐（登录页/主界面/设置页都能唤起） -->
+  <OnboardingWelcome v-if="!booting" />
 </template>
 
 <style scoped>

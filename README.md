@@ -113,10 +113,13 @@ class-helper/
     │       ├── index.ts                 # 启动入口（自检/初始化 + HTTP + Socket.IO + 优雅退出）
     │       ├── config/env.ts            # 环境变量校验（zod）+ 生产配置自检
     │       ├── lib/                     # access(RBAC) / class-account / session / db / db-bootstrap /
-    │       │                            #   web-static / http / jwt / logger / mappers / password / schemas / term
+    │       │                            #   snapshot(全库 JSON 快照) / web-static / http / jwt / logger /
+    │       │                            #   mappers / password / schemas / term
+    │       ├── tools/apply-snapshot.ts  # 跨库迁移的子进程入口（编译到 dist/tools/）
     │       ├── middleware/              # auth / error / validate / security(helmet+限流+耗时日志)
     │       ├── realtime/                # socket.ts + bus.ts（事件总线）
-    │       └── modules/                 # 13 个功能模块 + registry.ts（模块注册表）
+    │       └── modules/                 # 14 个功能模块 + registry.ts（模块注册表）
+    │           └── database/             # 数据库管理（状态/备份/导入导出/定时/一键切换，仅管理员）
     ├── classisland-plugin/      # ClassIsland 联动插件（.NET 8 / C#，独立于 pnpm workspace）
     │   ├── src/Plugin.cs                # 插件入口（读配置 → 注册提醒提供方/设置页/联动服务）
     │   ├── src/Models/PluginSettings.cs
@@ -251,14 +254,14 @@ pnpm verify:packaged    # 对**打包后/已安装**的客户端 EXE 跑同一�
 课表 93（每班 5 天 × 6 节 + 1 条双周对调）/ 作业 15 / 通知 12 / 成绩 90
 ```
 
-| 角色   | 用户名        | 密码         | 说明                                        |
-| ------ | ------------- | ------------ | ------------------------------------------- |
-| 管理员 | `admin`       | `admin123`   | 可访问全部班级                              |
-| 教师   | `teacher1`    | `teacher123` | 张老师：高一(1)班、高二(3)班班主任          |
-| 教师   | `teacher2`    | `teacher123` | 李老师：高一(2)班班主任，高二(3)班协作教师  |
-| 班级   | 班级码 `G101` | `123456`     | 高一(1)班（**学生端唯一登录方式**）         |
-| 班级   | 班级码 `G102` | `123456`     | 高一(2)班                                   |
-| 班级   | 班级码 `G203` | `123456`     | 高二(3)班                                   |
+| 角色   | 用户名        | 密码         | 说明                                       |
+| ------ | ------------- | ------------ | ------------------------------------------ |
+| 管理员 | `admin`       | `admin123`   | 可访问全部班级                             |
+| 教师   | `teacher1`    | `teacher123` | 张老师：高一(1)班、高二(3)班班主任         |
+| 教师   | `teacher2`    | `teacher123` | 李老师：高一(2)班班主任，高二(3)班协作教师 |
+| 班级   | 班级码 `G101` | `123456`     | 高一(1)班（**学生端唯一登录方式**）        |
+| 班级   | 班级码 `G102` | `123456`     | 高一(2)班                                  |
+| 班级   | 班级码 `G203` | `123456`     | 高二(3)班                                  |
 
 - 密码由**种子脚本硬编码**（`admin123` / `teacher123` / 班级 `123456`）；`.env` 的
   `DEFAULT_CLASS_PASSWORD` 决定**新建**班级时的初始班级密码。
@@ -307,9 +310,18 @@ pnpm verify:packaged    # 对**打包后/已安装**的客户端 EXE 跑同一�
 布局沿用 **1Panel 风格**：固定深色侧边栏（`#1f2d3d` + 蓝色圆角选中态）+ 白色顶栏（当前页标题/连接状态/用户菜单）+
 浅灰底 + 白色圆角卡片内容区。手机小屏下侧边栏收进抽屉，由顶栏汉堡按钮唤出。
 
-页面（路由）共 11 个：登录、仪表盘、班级管理、学生管理、教师管理、课表管理、作业发布、通知发布、
-成绩录入、ClassIsland 联动、页面不存在；其中**班级管理 / 学生管理 / 教师管理**为 `meta.roles: ['ADMIN']`
-（直接输网址会被挡回仪表盘，服务端同样拦），**ClassIsland 联动**为 `['ADMIN','TEACHER']`。
+页面（路由）共 12 个：登录、仪表盘、班级管理、学生管理、教师管理、课表管理、作业发布、通知发布、
+成绩录入、ClassIsland 联动、数据库管理、页面不存在；其中**班级管理 / 学生管理 / 教师管理 / 数据库管理**
+为 `meta.roles: ['ADMIN']`（直接输网址会被挡回仪表盘，服务端同样拦），
+**ClassIsland 联动**为 `['ADMIN','TEACHER']`。
+
+### 新手引导（首次登录 + 随时重看）
+
+首次登录进入主布局后会自动弹出**聚焦式引导**（Element Plus `el-tour`）：欢迎页 → 侧边菜单（小屏为汉堡按钮，
+锚点不存在时卡片自动改为屏幕居中）→ 实时通道状态 → 账号菜单 → 完成。走完或跳过（右上角 × / Esc）即记为
+"已看过"（localStorage `classhelper.onboarding`，值为引导版本号，内容改版后 +1 可让老用户再看一次），
+之后不再自动弹出；**右上角头像菜单 →「使用引导」可随时重看**。实现集中在 `AdminLayout.vue`（锚点用
+`data-tour` 属性惰性查询）。
 
 ### 圆角设计（统一设计令牌）
 
@@ -410,18 +422,52 @@ pnpm verify:packaged    # 对**打包后/已安装**的客户端 EXE 跑同一�
 渲染进程能通过桥接拿到明文登录令牌，CSP 是唯一能拦住"加载并执行远程脚本"的那一层；
 灵动岛窗口另有独立的导航防线（拒绝一切导航与新开窗口）。
 
+**主窗口初始尺寸与 ClassIsland 对齐（1242×582）**：这个数是从运行中的 ClassIsland 主窗口实测来的
+（`GetWindowRect` + `DwmWindowAttribute` 读可视区），启动时居中显示；窗口底色按主题设置，避免深色下"先白后黑"。
+
 **安装包里不得出现任何凭据**：`dist/main/index.js` 与 `dist/renderer/assets/*.js` 会被打进 `app.asar`（可直接解包），因此冒烟/自检代码用的账号口令一律由 `scripts/smoke.mjs` / `scripts/verify-packaged.mjs` 通过环境变量（`ELECTRON_SMOKE_USER` / `ELECTRON_SMOKE_PASSWORD` / `..._CLASS_CODE` / `..._CLASS_PASSWORD`）注入，不写在源码里；`pnpm build:desktop` 结尾会跑 `check-bundle-secrets` 门禁，产物里一旦出现种子口令即构建失败。
 
 ### 功能页面
 
 | 页面 | 功能                                                                                                                                                                                                                       |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 登录 | 服务器地址 + **班级码 + 班级密码**，附带「测试连接」；已登录但服务器不可达时可「离线进入」                                                                                                                                 |
+| 登录 | 服务器地址 + **班级码 + 班级密码**，附带「测试连接」；已登录但服务器不可达时可「离线进入」；下方有「查看使用引导」入口                                                                                                     |
 | 课表 | 按周展示 7 列课表（周次下拉 + 单双周标签），另有「今天」时间轴视图（大时钟 + 当前状态卡 + 已结束/正在上/下一节）                                                                                                           |
 | 作业 | **看板模式**（按科目卡片、全屏放大、显示时间开关、看板字号）＋ 列表模式、详情抽屉、附件链接（只接受 `http(s)://` 或站内相对路径，挡住 `javascript:` 这类可执行链接）；教室设备可**录入作业**（快捷短语）与勾选**未交名单** |
 | 通知 | 未读红点（侧边栏徽标）、优先级标签、点击自动标为已读、全部已读、未读过滤、详情抽屉                                                                                                                                         |
 | 成绩 | 班级账号看到**全班成绩总览**：表格（分数/得分率/等级）+ ECharts 柱状图 + 等级分布 + 最近更新                                                                                                                               |
-| 设置 | 服务器地址（保存并测试）、通知显示位置、ClassIsland 联动状态、作业录入短语、灵动岛个性化、**修改密码**、缓存统计与清空、版本信息、退出登录                                                                                 |
+| 设置 | 拆成六个子页（见下）：通用（服务器/离线缓存/作业录入短语 + 使用引导）、外观（黑夜/白天）、灵动岛、提醒（ClassIsland 联动）、账号、关于                                                                                     |
+
+### 设置改版：分组侧边栏 + 子页 + 深色模式 + 关于页
+
+**侧边栏（ClassIsland 同款 NavigationView）**：主侧边栏改为「学习」「设置」两个**可展开分组**
+（学习 = 课表/作业/通知/成绩；设置 = 通用/外观/灵动岛/提醒/账号/关于，每个子项是独立路由
+`/settings/*`）；顶部**汉堡按钮**把整栏折叠成 64px 图标栏（折叠状态持久化到主进程配置，
+重启仍记忆）。红点徽标仍挂在「通知」项图标右上角。
+
+**设置子页**：原单页设置按卡片拆为 6 个子页——通用（服务器连接 + 离线缓存 + 作业录入短语 +
+「使用引导」）、外观、灵动岛、提醒、账号、关于；设置入口重定向到 `/settings/general`。
+
+**黑夜/白天模式**：外观子页选「浅色 / 深色」，顶栏右上角有日月快捷切换按钮；切换立即生效
+（`html.dark` + Element Plus dark css-vars + 品牌变量 `html.dark` 覆盖）并写入主进程配置
+（`theme` 字段），启动窗口底色也按主题设置（避免"先白后黑"闪一下）。灵动岛、登录页、
+全屏作业看板本来就是深色/固定配色，不随主题变化。
+
+**关于页**（ClassIsland 同款折叠卡片）：应用信息（版本 / Electron / Chromium / Node / 常用链接）、
+查看诊断信息（服务器与连接状态、缓存条目、数据目录、**配置文件路径**）、鸣谢；底部寄语。
+诊断信息依赖 `getAppInfo` 新增的 `configPath` 字段。
+
+### 初次启动引导（六步向导，可重看）
+
+客户端**首次启动**（配置里没有 `onboardingDone`）会在登录页上自动弹出六步向导：
+欢迎 → 连接服务器 → 登录班级 → 登录之后（主界面与离线缓存）→ 灵动岛提醒 → 完成。
+完成或跳过（右上角「跳过引导」/ Esc）都会把 `onboardingDone: true` 写入主进程配置（`config.json`），
+之后不再自动弹出；**登录页「查看使用引导」与「设置 → 通用 → 使用引导」可随时重看**。
+
+实现说明：引导是自绘遮罩 + `v-if`（`renderer/components/OnboardingWelcome.vue`），关闭即从 DOM 卸载
+（特意不用 el-dialog，避免"关闭后 DOM 残留"的断言陷阱）；显隐由 `stores/onboarding.ts` 承载，
+让登录页 / 设置页 / App.vue 三处共用一个开关。`verify:desktop` 有一条端到端回归：
+「初次启动引导（首启自动弹出、可走完、状态写入配置）」——真实点击把六步走完并断言配置落盘。
 
 **作业看板（学生端）**：默认按科目分卡片（每张卡列该科作业，条目可点开详情），
 工具栏可切「看板 / 列表」、开关「显示时间」、拖「字号」（11–28px 即时生效），
@@ -492,27 +538,27 @@ pnpm verify:packaged    # 对**打包后/已安装**的客户端 EXE 跑同一�
 >
 > 由于窗口固定，Windows 那条"透明窗口最小高度约 36px"的限制不再作用于岛：空闲细缝可以真正做到 6px 宽。
 
-| 场景                          | 灵动岛行为                                                                                                                       |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| 收到通知（非上课时段）        | **直接出现胶囊**（无"上岛"入场动画）：`新消息 · 共 N 条` + 发送人 + `点击查看`                                                   |
-| 多条未处理消息                | 胶囊标题汇总类型：`新消息：叫人/作业/通知（共 3 条）` + `点击查看`，右侧附类型小标签（单条时显示具体类型名）                     |
-| 点击胶囊（只有一条）          | 展开为**详情卡**（形变 + 淡入，无回弹）：标题、内容、时间、`打开应用 / 标为已读 / 知道了`                                        |
-| **点击胶囊（多条）**          | 展开为**竖排列表**：按**重要程度**排序（紧急 > 重要 > 普通 > 低，同级按时间新的在前），默认**只显示前三条**，下面一行 `展开更多（还有 N 条）`；列表始终只有**一排按钮** |
-| **点"展开更多"**              | 把放得下的通知都铺出来；铺到屏幕工作区下沿（任务栏）仍放不下时，不再硬撑，改成 `更多请前往应用内操作`（卡片高度始终 ≤ 可用高度） |
-| **多条时的"知道了 / 标为已读"** | 都是**整批**操作：`知道了` 整批关闭（通知中心仍为未读）、`标为已读` 把这一批全部标为已读并关闭；两者都是状态同步清空 + 窗口淡出隐藏 |
-| **上课时段的"普通叫人"**      | **不自动展开**（不打断课堂），但保留 `叫人` 胶囊并**允许学生主动点开**；下课自动展开（`isOpenable`：紧急消息与任何叫人都可点开） |
-| **收起后胶囊常驻**            | 自动收起 / 手动收起只把卡片回缩为胶囊，**有未处理通知时胶囊不会消失**；彻底消失只在"知道了 / 标为已读"、队列清空或进入上课时段   |
-| **收起态点击命中**            | 收起瞬间窗口会保持可交互，且渲染进程在每次状态变化后都按**缓存的指针位置**重算命中                                               |
-| 点击卡片空白处 / 屏幕任意位置 | 回缩为**胶囊**（不直接消失，仍可再次点开）；展开时窗口临时可聚焦，点到别处即失焦收起                                             |
-| **点"标为已读"**              | 通知中心同步标记已读、未读红点立即减少（多条时是整批，见上）                                                                     |
-| **新作业发布**                | 也上岛：胶囊显示"新作业"（青蓝描边 + 书本图标），展开可见作业要求（**截止时间功能已下线**）；**本机刚录入的那条不上岛**（自己通知自己没意义，见下） |
-| **紧急叫人**（老师点名·紧急） | **上课时段也立即展开**：琥珀金卡片、`叫人` 徽标、"请 XXX 同学找 XXX 老师"、按钮为"收到"（`priority=URGENT`）                     |
-| **普通叫人**（默认级别）      | 课间先显示 `叫人` 胶囊、点击展开；**上课时段只进队列**（不打断课堂），下课后自动弹出详情（`priority=HIGH`）                      |
-| 卡片形变                      | 卡片是**固定尺寸、顶部居中锚定**的，窗口只负责露出/裁切透明区域                                                                  |
-| 上课时间段收到普通通知        | **完全不显示**（窗口直接隐藏，不打扰课堂）并进入待发队列；下课后自动弹出详情 → 收起为胶囊                                        |
-| 上课时间段收到**紧急**通知    | **无论是否上课立刻展开**显示详情（带内部红色呼吸光晕与"紧急"角标，无需点击），45 秒后收起                                        |
-| 上课时间段内的任何点击        | 一律不显示（不会展开、也不会回缩出胶囊），只有紧急通知能出现在屏幕上                                                             |
-| 退出/断开                     | 主窗口退出时灵动岛一并关闭；上课状态来自 `GET /api/schedules/current`                                                            |
+| 场景                            | 灵动岛行为                                                                                                                                                              |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 收到通知（非上课时段）          | **直接出现胶囊**（无"上岛"入场动画）：`新消息 · 共 N 条` + 发送人 + `点击查看`                                                                                          |
+| 多条未处理消息                  | 胶囊标题汇总类型：`新消息：叫人/作业/通知（共 3 条）` + `点击查看`，右侧附类型小标签（单条时显示具体类型名）                                                            |
+| 点击胶囊（只有一条）            | 展开为**详情卡**（形变 + 淡入，无回弹）：标题、内容、时间、`打开应用 / 标为已读 / 知道了`                                                                               |
+| **点击胶囊（多条）**            | 展开为**竖排列表**：按**重要程度**排序（紧急 > 重要 > 普通 > 低，同级按时间新的在前），默认**只显示前三条**，下面一行 `展开更多（还有 N 条）`；列表始终只有**一排按钮** |
+| **点"展开更多"**                | 把放得下的通知都铺出来；铺到屏幕工作区下沿（任务栏）仍放不下时，不再硬撑，改成 `更多请前往应用内操作`（卡片高度始终 ≤ 可用高度）                                        |
+| **多条时的"知道了 / 标为已读"** | 都是**整批**操作：`知道了` 整批关闭（通知中心仍为未读）、`标为已读` 把这一批全部标为已读并关闭；两者都是状态同步清空 + 窗口淡出隐藏                                     |
+| **上课时段的"普通叫人"**        | **不自动展开**（不打断课堂），但保留 `叫人` 胶囊并**允许学生主动点开**；下课自动展开（`isOpenable`：紧急消息与任何叫人都可点开）                                        |
+| **收起后胶囊常驻**              | 自动收起 / 手动收起只把卡片回缩为胶囊，**有未处理通知时胶囊不会消失**；彻底消失只在"知道了 / 标为已读"、队列清空或进入上课时段                                          |
+| **收起态点击命中**              | 收起瞬间窗口会保持可交互，且渲染进程在每次状态变化后都按**缓存的指针位置**重算命中                                                                                      |
+| 点击卡片空白处 / 屏幕任意位置   | 回缩为**胶囊**（不直接消失，仍可再次点开）；展开时窗口临时可聚焦，点到别处即失焦收起                                                                                    |
+| **点"标为已读"**                | 通知中心同步标记已读、未读红点立即减少（多条时是整批，见上）                                                                                                            |
+| **新作业发布**                  | 也上岛：胶囊显示"新作业"（青蓝描边 + 书本图标），展开可见作业要求（**截止时间功能已下线**）；**本机刚录入的那条不上岛**（自己通知自己没意义，见下）                     |
+| **紧急叫人**（老师点名·紧急）   | **上课时段也立即展开**：琥珀金卡片、`叫人` 徽标、"请 XXX 同学找 XXX 老师"、按钮为"收到"（`priority=URGENT`）                                                            |
+| **普通叫人**（默认级别）        | 课间先显示 `叫人` 胶囊、点击展开；**上课时段只进队列**（不打断课堂），下课后自动弹出详情（`priority=HIGH`）                                                             |
+| 卡片形变                        | 卡片是**固定尺寸、顶部居中锚定**的，窗口只负责露出/裁切透明区域                                                                                                         |
+| 上课时间段收到普通通知          | **完全不显示**（窗口直接隐藏，不打扰课堂）并进入待发队列；下课后自动弹出详情 → 收起为胶囊                                                                               |
+| 上课时间段收到**紧急**通知      | **无论是否上课立刻展开**显示详情（带内部红色呼吸光晕与"紧急"角标，无需点击），45 秒后收起                                                                               |
+| 上课时间段内的任何点击          | 一律不显示（不会展开、也不会回缩出胶囊），只有紧急通知能出现在屏幕上                                                                                                    |
+| 退出/断开                       | 主窗口退出时灵动岛一并关闭；上课状态来自 `GET /api/schedules/current`                                                                                                   |
 
 - 动画：窗口尺寸用逐帧缓动实现"形变"，**单调不过冲**——展开 300ms、收回 220ms，统一 `easeOutCubic`
   （早期版本用过冲弹簧缓动，实测窗口会冲到目标之外再回落，观感就是"开合时震一下"，现已移除）；
@@ -580,7 +626,10 @@ pnpm verify:packaged    # 对**打包后/已安装**的客户端 EXE 跑同一�
 
 ### 个性化设置与系统托盘
 
-**设置页分区**：服务器地址 / 通知显示位置 / ClassIsland 联动 / 作业录入短语 / 灵动岛 · 个性化 / 账号信息 / 离线缓存 / 关于。
+**设置页结构（2026-10-02 改版）**：侧边栏「设置」分组下六个子页 ——
+**通用**（服务器地址 / 离线缓存 / 作业录入短语 / 使用引导）、**外观**（黑夜白天）、
+**灵动岛**（下表全部选项）、**提醒**（通知显示位置 / ClassIsland 联动状态）、**账号**（账号信息 / 退出登录）、
+**关于**（版本 / 诊断信息 / 鸣谢）。详见上文「设置改版」一节。
 
 > **改密入口（2026-10-01 调整）**：客户端不再提供「修改密码」（曾有过，改的是班级密码；随学生个人
 > 账号清理一并移除，防止教室机器上误改班级密码后其他机器被锁在门外）。班级密码由管理员在 Web 端
@@ -1010,74 +1059,113 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 - 部署到 `D:\Classisland`（先退出 ClassIsland 再覆盖 DLL，别覆盖 `Settings.json`）的完整步骤见
   [AGENTS.md](AGENTS.md) §7 第 12 条与 §8。
 
+## 数据库管理（仅管理员）
+
+Web 管理端新增「数据库管理」页（`/database`，仅 ADMIN 可见，后端同样 `requireRole('ADMIN')`），
+把过去要手工完成的数据库运维全部收进界面：
+
+| 能力         | 说明                                                                                                                                                          |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 连接状态检测 | 当前类型（SQLite/MySQL）、连通性与延迟、引擎版本、数据体积、14 张表行数、连接串（MySQL 密码脱敏）                                                             |
+| 连接测试     | 任意目标库的连通性试连（切换前的第一步）                                                                                                                      |
+| **一键切换** | SQLite ⇄ MySQL：自动「备份当前库 → 改写 schema provider → prisma generate / db push 建表 → 子进程迁移全部数据 → 改写 .env」，异步任务带步骤进度，失败自动回滚 |
+| 备份 / 恢复  | gzip JSON 快照存 `<数据目录>/backups/`；手动备份 / 从备份恢复（整库覆盖）/ 删除                                                                               |
+| 定时备份     | enabled + 间隔小时数 + 保留份数，存 `data/database-settings.json`；服务端每 10 分钟检查一次到点任务（进程不运行不补跑）                                       |
+| 快捷导入导出 | 下载快照 JSON（跨库通用）/ 下载数据库文件（仅 SQLite）/ 导入快照（整库覆盖，base64 上传）                                                                     |
+
+关键设计：**备份、导入导出、跨库迁移共用同一种「JSON 快照」**（`lib/snapshot.ts`，14 张表按拓扑序导出，
+恢复时临时关外键检查——`User.classId` 与 `Class.teacherId` 互相引用）。因此任意备份都能恢复回任意一种
+受支持的数据库。MySQL 的连接测试/建表/写入依赖随包内置的 `@prisma/adapter-mariadb`（已在依赖里，
+不再是"切换时手动安装"）。
+
+> 边界与须知：
+>
+> - **主库只支持 SQLite 与 MySQL**。Redis 是内存键值库，Prisma ORM 不支持它作为主数据库（无法建表/迁移），
+>   接口层直接拒绝（e2e 有 422 断言）；PostgreSQL 暂未纳入。
+> - **切换完成后必须重启服务端**（安装版运行 `restart.cmd`，开发模式重跑 `pnpm dev:server`）才会连接新库；
+>   切换过程失败会自动回滚 schema.prisma，`.env` 只在数据全部迁移成功后才改写。
+> - **目标库必须为空**（有表即拒绝），防止误覆盖。
+> - 安装包体积因此增大约 37MB（~34MB → ~71MB）：切换需要随包内置 prisma CLI 与 TypeScript 编译器
+>   （Prisma 7 的生成器产出 .ts 源码，切换后要在目标机编译进 dist）。
+> - 真实切换（SQLite→MySQL）已在本机用完整子进程链路实测（快照 728 行逐表一致）；
+>   e2e 只覆盖校验分支（同库 400 / 非法 provider 422 / 目标库非空拒绝），避免测试改写 `.env`。
+
 ## REST API 一览
 
 统一响应体：`{ "success": true, "data": {}, "message": "" }`（错误为 `success:false` + `code`）。
 所有接口前缀 `/api`，除登录/健康检查外均需 `Authorization: Bearer <token>`
 （ClassIsland 设备接口用 `X-ClassIsland-Token`）。
 
-| 方法                        | 路径                                                        | 权限                         | 说明                                                                             |
-| --------------------------- | ----------------------------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------- |
-| POST                        | `/auth/login`                                               | 公开                         | 登录（教师 / 管理员）；`role=STUDENT` 返回 403（学生只有名单，改用班级登录）     |
-| POST                        | `/auth/class-login`                                         | 公开                         | **班级账号登录**：班级码 + 班级密码 → `classSession` 会话                        |
-| GET                         | `/auth/me`                                                  | 登录                         | 当前用户（学生附带班级/年级）                                                    |
-| PATCH                       | `/auth/password`                                            | 登录                         | 修改自己的密码                                                                   |
-| POST                        | `/auth/logout`                                              | 登录                         | 退出（无状态，客户端丢弃 token）                                                 |
-| GET                         | `/classes`                                                  | 登录                         | 班级列表（按权限收敛）                                                           |
-| GET                         | `/classes/:id`                                              | 班级可见                     | 班级详情（学生/课程/协作教师）                                                   |
-| POST                        | `/classes`                                                  | 管理员                       | 创建班级（自动生成班级码 = 班级账号，可指定班主任）                              |
-| PATCH / DELETE              | `/classes/:id`                                              | 管理员 / 教师                | 编辑 / 删除班级                                                                  |
-| PATCH                       | `/classes/:id/class-account`                                | 管理员                       | 设置 / 重置班级账号（班级码 + 班级密码）                                         |
-| PATCH                       | `/classes/:id/head-teacher`                                 | 管理员                       | 设置 / 更换班主任                                                                |
-| GET                         | `/classes/:id/classisland-status`                           | 班级可见                     | 本班 ClassIsland 联动状态（教室客户端设置页用）                                  |
-| GET                         | `/classes/:id/notification-channel`                         | 班级可见                     | 读取"通知显示到哪个端"                                                           |
-| PATCH                       | `/classes/:id/notification-channel`                         | 班级账号 / 教师 / 管理员     | 设置"通知显示到哪个端"（默认由教室机器自己选）                                   |
-| GET / POST                  | `/classes/:id/students`                                     | 班级可见 / ADMIN·TEACHER     | 学生名单 / 添加学生（已存在账号直接转入）                                        |
-| DELETE                      | `/classes/:id/students/:userId`                             | ADMIN·TEACHER                | 移出学生                                                                         |
-| POST / DELETE               | `/classes/:id/teachers[/:teacherId]`                        | ADMIN·TEACHER                | 分配 / 取消协作教师                                                              |
-| GET / POST / PATCH / DELETE | `/courses`                                                  | 登录（写：班主任/管理员）    | 课程管理                                                                         |
-| GET                         | `/schedules?classId=&week=&dayOfWeek=`                      | 登录                         | 课表列表（week 过滤周次范围）                                                    |
-| GET                         | `/schedules/grid?classId=&week=`                            | 登录                         | 周视图（7 列结构，供客户端直接渲染）                                             |
-| GET                         | `/schedules/current?classId=&at=`                           | 登录                         | 当前上课状态（`inClass` / `current` / `next`；`at` 为诊断用时间覆盖）            |
-| POST / PATCH / DELETE       | `/schedules[/:id]`                                          | 班主任 / 管理员              | 课表增删改（广播 `schedule:updated`）                                            |
-| GET                         | `/homeworks?classId=&courseId=&date=&pendingOnly=&keyword=` | 登录                         | 作业列表（支持按所属日期；学生带完成状态，教师带完成人数）                       |
-| GET                         | `/homeworks/days?classId=&from=&to=`                        | 登录                         | 哪些天有作业（日期高亮）                                                         |
-| GET                         | `/homeworks/:id`                                            | 班级可见                     | 作业详情                                                                         |
-| POST                        | `/homeworks`                                                | 教师 / 管理员 / **班级账号** | 发布作业（附 `assignDate`；班级账号用于教室机器录入，归属班主任）                |
-| PATCH / DELETE              | `/homeworks/:id`                                            | 教师 / 管理员                | 修改 / 删除（广播 `homework:new` / `homework:updated`）                          |
-| PATCH                       | `/homeworks/:id/status`                                     | 登录                         | 标记完成/取消（广播 `homework:status`）                                          |
-| GET / PATCH                 | `/homeworks/:id/submissions`                                | 登录                         | 未交名单：读名单 / 回写全班完成状态                                              |
-| GET                         | `/notifications?classId=&priority=&unreadOnly=&keyword=`    | 登录                         | 通知列表（带已读状态）                                                           |
-| GET                         | `/notifications/unread-count`                               | 登录                         | 未读数（红点）                                                                   |
-| POST                        | `/notifications`                                            | 教师 / 管理员                | 发布通知（广播 `notification:new`）；上课时段发布紧急通知需 `confirmDuringClass` |
-| POST                        | `/notifications/:id/read`、`/notifications/read-all`        | 登录                         | 标记已读（班级设备会写全班）                                                     |
-| DELETE                      | `/notifications/:id`                                        | 教师 / 管理员                | 删除通知                                                                         |
-| POST                        | `/calls`                                                    | 教师 / 管理员                | **叫人**（`urgent` 决定 URGENT / HIGH；广播 `notification:new` 与 `call:new`）   |
-| GET                         | `/grades/my`                                                | 登录                         | 个人成绩（班级会话 → 全班总览）                                                  |
-| GET                         | `/grades?classId=&courseId=&userId=&examName=`              | 教师 / 管理员                | 班级成绩                                                                         |
-| GET                         | `/grades/stats?classId=&courseId=&examName=`                | 教师 / 管理员                | 等级分布 + 各课程平均得分率                                                      |
-| POST                        | `/grades`、`/grades/bulk`                                   | 班主任 / 管理员              | 单条 / 批量录入（广播 `grade:updated`）                                          |
-| PATCH / DELETE              | `/grades/:id`                                               | 班主任 / 管理员              | 修改 / 删除成绩                                                                  |
-| GET                         | `/students?classId=&keyword=`                               | **管理员**                   | 学生名单                                                                         |
-| POST / PATCH / DELETE       | `/students[/:id]`                                           | **管理员**                   | 学生名单增删改（无密码概念；重置密码接口已下线 → 404）                           |
-| GET                         | `/teachers?keyword=`                                        | **管理员**                   | 教师列表                                                                         |
-| POST / PATCH / DELETE       | `/teachers[/:id]`                                           | **管理员**                   | 新建 / 编辑 / 删除教师账号                                                       |
-| POST                        | `/teachers/:id/reset-password`                              | **管理员**                   | 修改 / 重置教师密码（`newPassword` 可选，留空 = 默认初始密码）                   |
-| GET                         | `/dashboard/summary` / `/dashboard/term`                    | 登录                         | 仪表盘汇总 / 学期周次                                                            |
-| GET                         | `/imports/template?kind=&format=`                           | 管理员 / 班主任              | 导入模板下载（`csv` 走 JSON，`xlsx` 走二进制）                                   |
-| POST                        | `/imports/table/preview`                                    | 管理员 / 班主任              | 上传表格（base64）解析预览：列名 + 前 20 行 + 校验问题 + 建议映射                |
-| POST                        | `/imports/table/commit`                                     | 管理员 / 班主任              | 按字段映射与写入模式导入（成绩 / 学生名单 / 教师名单）                           |
-| POST                        | `/imports/time-layout/preview`                              | 管理员 / 本班班主任          | 解析 ClassIsland 时间配置 JSON（只解析不落库）                                   |
-| GET / POST / DELETE         | `/imports/time-layout[/:id]`                                | 管理员 / 本班班主任          | 时间配置列表 / 导入（`replace` 覆盖、`merge` 合并）/ 删除                        |
-| POST                        | `/imports/class-plan/preview`、`/imports/class-plan`        | 管理员 / 本班班主任          | ClassIsland 课程表解析预览 / 导入（支持单双周）                                  |
-| GET / POST / PATCH / DELETE | `/integrations/devices[/:id]`                               | 管理员 / 教师                | ClassIsland 联动设备管理（令牌只存 sha256，令牌前缀用于人眼识别）                |
-| POST                        | `/integrations/devices/:id/token`                           | 管理员 / 教师                | 重置设备令牌（旧令牌立即失效，明文只返回一次）                                   |
-| POST                        | `/integrations/classisland/notify`                          | 管理员 / 教师                | 下发提醒到该班 ClassIsland 设备（广播 `classisland:notification`）               |
-| POST                        | `/integrations/classisland/report`                          | **设备令牌**                 | 插件上报状态 + 课表 + 节次时间（`X-ClassIsland-Token`，非 JWT）                  |
-| GET                         | `/integrations/classisland/pending`                         | **设备令牌**                 | 插件拉取尚未确认的提醒（离线期间老师发的通知，重连后补齐）                       |
-| POST                        | `/integrations/classisland/ack`                             | **设备令牌**                 | 插件确认提醒已弹出（确认后不再补发）                                             |
-| GET                         | `/integrations/classisland/class-plan`                      | **设备令牌**                 | 插件拉取本班课表（开启镜像时）用于写回 ClassIsland                               |
-| GET                         | `/health`                                                   | 公开                         | 健康检查（含已挂载模块列表）；另有 `/healthz` 存活探针与 `/readyz` 就绪探针      |
+| 方法                        | 路径                                                          | 权限                         | 说明                                                                             |
+| --------------------------- | ------------------------------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------- |
+| POST                        | `/auth/login`                                                 | 公开                         | 登录（教师 / 管理员）；`role=STUDENT` 返回 403（学生只有名单，改用班级登录）     |
+| POST                        | `/auth/class-login`                                           | 公开                         | **班级账号登录**：班级码 + 班级密码 → `classSession` 会话                        |
+| GET                         | `/auth/me`                                                    | 登录                         | 当前用户（学生附带班级/年级）                                                    |
+| PATCH                       | `/auth/password`                                              | 登录                         | 修改自己的密码                                                                   |
+| POST                        | `/auth/logout`                                                | 登录                         | 退出（无状态，客户端丢弃 token）                                                 |
+| GET                         | `/classes`                                                    | 登录                         | 班级列表（按权限收敛）                                                           |
+| GET                         | `/classes/:id`                                                | 班级可见                     | 班级详情（学生/课程/协作教师）                                                   |
+| POST                        | `/classes`                                                    | 管理员                       | 创建班级（自动生成班级码 = 班级账号，可指定班主任）                              |
+| PATCH / DELETE              | `/classes/:id`                                                | 管理员 / 教师                | 编辑 / 删除班级                                                                  |
+| PATCH                       | `/classes/:id/class-account`                                  | 管理员                       | 设置 / 重置班级账号（班级码 + 班级密码）                                         |
+| PATCH                       | `/classes/:id/head-teacher`                                   | 管理员                       | 设置 / 更换班主任                                                                |
+| GET                         | `/classes/:id/classisland-status`                             | 班级可见                     | 本班 ClassIsland 联动状态（教室客户端设置页用）                                  |
+| GET                         | `/classes/:id/notification-channel`                           | 班级可见                     | 读取"通知显示到哪个端"                                                           |
+| PATCH                       | `/classes/:id/notification-channel`                           | 班级账号 / 教师 / 管理员     | 设置"通知显示到哪个端"（默认由教室机器自己选）                                   |
+| GET / POST                  | `/classes/:id/students`                                       | 班级可见 / ADMIN·TEACHER     | 学生名单 / 添加学生（已存在账号直接转入）                                        |
+| DELETE                      | `/classes/:id/students/:userId`                               | ADMIN·TEACHER                | 移出学生                                                                         |
+| POST / DELETE               | `/classes/:id/teachers[/:teacherId]`                          | ADMIN·TEACHER                | 分配 / 取消协作教师                                                              |
+| GET / POST / PATCH / DELETE | `/courses`                                                    | 登录（写：班主任/管理员）    | 课程管理                                                                         |
+| GET                         | `/schedules?classId=&week=&dayOfWeek=`                        | 登录                         | 课表列表（week 过滤周次范围）                                                    |
+| GET                         | `/schedules/grid?classId=&week=`                              | 登录                         | 周视图（7 列结构，供客户端直接渲染）                                             |
+| GET                         | `/schedules/current?classId=&at=`                             | 登录                         | 当前上课状态（`inClass` / `current` / `next`；`at` 为诊断用时间覆盖）            |
+| POST / PATCH / DELETE       | `/schedules[/:id]`                                            | 班主任 / 管理员              | 课表增删改（广播 `schedule:updated`）                                            |
+| GET                         | `/homeworks?classId=&courseId=&date=&pendingOnly=&keyword=`   | 登录                         | 作业列表（支持按所属日期；学生带完成状态，教师带完成人数）                       |
+| GET                         | `/homeworks/days?classId=&from=&to=`                          | 登录                         | 哪些天有作业（日期高亮）                                                         |
+| GET                         | `/homeworks/:id`                                              | 班级可见                     | 作业详情                                                                         |
+| POST                        | `/homeworks`                                                  | 教师 / 管理员 / **班级账号** | 发布作业（附 `assignDate`；班级账号用于教室机器录入，归属班主任）                |
+| PATCH / DELETE              | `/homeworks/:id`                                              | 教师 / 管理员                | 修改 / 删除（广播 `homework:new` / `homework:updated`）                          |
+| PATCH                       | `/homeworks/:id/status`                                       | 登录                         | 标记完成/取消（广播 `homework:status`）                                          |
+| GET / PATCH                 | `/homeworks/:id/submissions`                                  | 登录                         | 未交名单：读名单 / 回写全班完成状态                                              |
+| GET                         | `/notifications?classId=&priority=&unreadOnly=&keyword=`      | 登录                         | 通知列表（带已读状态）                                                           |
+| GET                         | `/notifications/unread-count`                                 | 登录                         | 未读数（红点）                                                                   |
+| POST                        | `/notifications`                                              | 教师 / 管理员                | 发布通知（广播 `notification:new`）；上课时段发布紧急通知需 `confirmDuringClass` |
+| POST                        | `/notifications/:id/read`、`/notifications/read-all`          | 登录                         | 标记已读（班级设备会写全班）                                                     |
+| DELETE                      | `/notifications/:id`                                          | 教师 / 管理员                | 删除通知                                                                         |
+| POST                        | `/calls`                                                      | 教师 / 管理员                | **叫人**（`urgent` 决定 URGENT / HIGH；广播 `notification:new` 与 `call:new`）   |
+| GET                         | `/grades/my`                                                  | 登录                         | 个人成绩（班级会话 → 全班总览）                                                  |
+| GET                         | `/grades?classId=&courseId=&userId=&examName=`                | 教师 / 管理员                | 班级成绩                                                                         |
+| GET                         | `/grades/stats?classId=&courseId=&examName=`                  | 教师 / 管理员                | 等级分布 + 各课程平均得分率                                                      |
+| POST                        | `/grades`、`/grades/bulk`                                     | 班主任 / 管理员              | 单条 / 批量录入（广播 `grade:updated`）                                          |
+| PATCH / DELETE              | `/grades/:id`                                                 | 班主任 / 管理员              | 修改 / 删除成绩                                                                  |
+| GET                         | `/students?classId=&keyword=`                                 | **管理员**                   | 学生名单                                                                         |
+| POST / PATCH / DELETE       | `/students[/:id]`                                             | **管理员**                   | 学生名单增删改（无密码概念；重置密码接口已下线 → 404）                           |
+| GET                         | `/teachers?keyword=`                                          | **管理员**                   | 教师列表                                                                         |
+| POST / PATCH / DELETE       | `/teachers[/:id]`                                             | **管理员**                   | 新建 / 编辑 / 删除教师账号                                                       |
+| POST                        | `/teachers/:id/reset-password`                                | **管理员**                   | 修改 / 重置教师密码（`newPassword` 可选，留空 = 默认初始密码）                   |
+| GET                         | `/dashboard/summary` / `/dashboard/term`                      | 登录                         | 仪表盘汇总 / 学期周次                                                            |
+| GET                         | `/imports/template?kind=&format=`                             | 管理员 / 班主任              | 导入模板下载（`csv` 走 JSON，`xlsx` 走二进制）                                   |
+| POST                        | `/imports/table/preview`                                      | 管理员 / 班主任              | 上传表格（base64）解析预览：列名 + 前 20 行 + 校验问题 + 建议映射                |
+| POST                        | `/imports/table/commit`                                       | 管理员 / 班主任              | 按字段映射与写入模式导入（成绩 / 学生名单 / 教师名单）                           |
+| POST                        | `/imports/time-layout/preview`                                | 管理员 / 本班班主任          | 解析 ClassIsland 时间配置 JSON（只解析不落库）                                   |
+| GET / POST / DELETE         | `/imports/time-layout[/:id]`                                  | 管理员 / 本班班主任          | 时间配置列表 / 导入（`replace` 覆盖、`merge` 合并）/ 删除                        |
+| POST                        | `/imports/class-plan/preview`、`/imports/class-plan`          | 管理员 / 本班班主任          | ClassIsland 课程表解析预览 / 导入（支持单双周）                                  |
+| GET / POST / PATCH / DELETE | `/integrations/devices[/:id]`                                 | 管理员 / 教师                | ClassIsland 联动设备管理（令牌只存 sha256，令牌前缀用于人眼识别）                |
+| POST                        | `/integrations/devices/:id/token`                             | 管理员 / 教师                | 重置设备令牌（旧令牌立即失效，明文只返回一次）                                   |
+| POST                        | `/integrations/classisland/notify`                            | 管理员 / 教师                | 下发提醒到该班 ClassIsland 设备（广播 `classisland:notification`）               |
+| GET                         | `/database/status`                                            | **管理员**                   | 数据库状态（连接/版本/体积/14 张表行数/备份列表/定时配置）                       |
+| POST                        | `/database/test-connection`                                   | **管理员**                   | 测试任意目标库连通性（切换前置检查；provider 仅 sqlite / mysql）                 |
+| GET / POST                  | `/database/backups`                                           | **管理员**                   | 备份列表 / 立即备份（gzip JSON 快照，存 `<数据目录>/backups/`）                  |
+| POST / DELETE               | `/database/backups/:name/restore` · `/database/backups/:name` | **管理员**                   | 从备份恢复（整库覆盖）/ 删除备份                                                 |
+| GET                         | `/database/export`、`/database/sqlite-file`                   | **管理员**                   | 下载 JSON 快照 / 下载数据库文件（后者仅 SQLite）                                 |
+| POST                        | `/database/import`                                            | **管理员**                   | 导入快照（base64，整库覆盖；可在 SQLite/MySQL 之间互迁）                         |
+| GET / PUT                   | `/database/backup-schedule`                                   | **管理员**                   | 定时备份配置（enabled/intervalHours/keepCount，存 data/database-settings.json）  |
+| POST / GET                  | `/database/switch`、`/database/switch/jobs/:id`               | **管理员**                   | **一键切换数据库**（异步任务：备份→建表→迁数据→改 .env，需重启生效）/ 轮询进度   |
+| POST                        | `/integrations/classisland/report`                            | **设备令牌**                 | 插件上报状态 + 课表 + 节次时间（`X-ClassIsland-Token`，非 JWT）                  |
+| GET                         | `/integrations/classisland/pending`                           | **设备令牌**                 | 插件拉取尚未确认的提醒（离线期间老师发的通知，重连后补齐）                       |
+| POST                        | `/integrations/classisland/ack`                               | **设备令牌**                 | 插件确认提醒已弹出（确认后不再补发）                                             |
+| GET                         | `/integrations/classisland/class-plan`                        | **设备令牌**                 | 插件拉取本班课表（开启镜像时）用于写回 ClassIsland                               |
+| GET                         | `/health`                                                     | 公开                         | 健康检查（含已挂载模块列表）；另有 `/healthz` 存活探针与 `/readyz` 就绪探针      |
 
 ## WebSocket 事件
 
@@ -1161,7 +1249,7 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 后端每个功能是一个独立目录，统一契约 `ApiModule = { name, basePath, router, enabled? }`：
 
 ```ts
-// packages/server/src/modules/registry.ts（当前 13 个模块）
+// packages/server/src/modules/registry.ts（当前 14 个模块）
 export const apiModules: ApiModule[] = [
   authModule,
   classesModule,
@@ -1176,6 +1264,7 @@ export const apiModules: ApiModule[] = [
   studentsModule,
   teachersModule,
   dashboardModule,
+  databaseModule, // ← 数据库管理（仅管理员）
 ].filter((module) => module.enabled !== false);
 ```
 
@@ -1224,59 +1313,68 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 
 ## 验收标准对照
 
-| 验收项                                           | 结果 | 证据                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ------------------------------------------------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 教师 Web 端发布通知，学生端 5 秒内收到           | ✅   | `verify:e2e`：`notification:new` 实测 30–50ms 到达（要求 < 5 秒）                                                                                                                                                                                                                                                                                                                                                         |
-| 教师发布作业，学生能查看并标记完成               | ✅   | `homework:new` 实时到达，`PATCH /homeworks/:id/status` 200 且列表回显 `completed=true`                                                                                                                                                                                                                                                                                                                                    |
-| 教师录入成绩，学生能查看个人成绩                 | ✅   | `grade:updated` 实时到达，`/grades/my` 返回记录；批量录入与统计接口通过                                                                                                                                                                                                                                                                                                                                                   |
-| 学生能查看课表，支持按周切换                     | ✅   | `/schedules/grid?week=1` 返回周视图条目，`week` 过滤 `weekStart ≤ week ≤ weekEnd`，单双周按第 1 周=单周过滤                                                                                                                                                                                                                                                                                                               |
-| 断网后客户端可查看缓存数据                       | ✅   | 客户端冒烟：`断网时回退到本地缓存 → fromCache=true`；离线横幅 + 缓存统计页可用                                                                                                                                                                                                                                                                                                                                            |
-| 权限隔离：学生不能访问其他班级数据               | ✅   | e2e 中 10 余项越权断言全部 403/401（学生跨班/跨班作业/跨班课表、教师跨班发布、未登录访问…）                                                                                                                                                                                                                                                                                                                               |
-| 上课时段发布紧急通知必须二次确认                 | ✅   | 服务端 409 `URGENT_DURING_CLASS`（`confirmDuringClass` 后 201）；Web 端全屏警告 + 3 秒倒计时                                                                                                                                                                                                                                                                                                                              |
-| 客户端灵动岛：上课隐藏 / 下课弹出 / 紧急立即展开 | ✅   | `verify:desktop` 状态断言 + 像素级截图（`docs/screenshots/island/`）                                                                                                                                                                                                                                                                                                                                                      |
-| 灵动岛：收回无"方框"闪烁 / 点击屏幕任意处收回    | ✅   | 逐帧采样卡片尺寸恒定（窗口固定包围盒）+ 失焦自动收回                                                                                                                                                                                                                                                                                                                                                                      |
-| 灵动岛"标为已读"同步通知中心                     | ✅   | 真实链路：点击后 `read=false → true`、未读数减少                                                                                                                                                                                                                                                                                                                                                                          |
-| **多条通知展开为竖排列表**                       | ✅   | `verify:desktop`：按重要程度排序、默认 3 行 + `展开更多（还有 N 条）`、卡片高度与 `islandListLayout()` 一致；点"展开更多"铺满；放不下时提示 `更多请前往应用内操作` 且卡片高度 ≤ 可用高度                                                                                                                                                                                                                                     |
-| **多条通知的整批操作**                | ✅   | `verify:desktop`：`知道了` 整批关闭且状态同步清空、窗口随后淡出隐藏；`标为已读` 经真实链路把**两条**通知都标为已读                                                                                                                                                                                                                                                                                                        |
-| **本机录入的作业不再上岛**                       | ✅   | `verify:desktop`：按 id 与内容指纹双重判定，投递后灵动岛状态不变；别的作业照常上岛                                                                                                                                                                                                                                                                                                                                        |
-| 作业发布也上岛（"新作业"胶囊）                   | ✅   | `kind=homework` + 展开显示作业要求；**截止时间功能已下线**（接口不再返回 `dueAt`，e2e 有断言）                                                                                                                                                                                                                                                                                                                            |
-| **灵动岛收起后始终可再次打开**                   | ✅   | `verify:desktop`：收起后胶囊常驻、「收起态点击可再次展开」、「空闲细缝态保持可交互」                                                                                                                                                                                                                                                                                                                                      |
-| 叫人（老师点名，分紧急/普通两级）                | ✅   | `verify:e2e` 8 项（普通 HIGH / 紧急 URGENT）+ `verify:desktop`「紧急叫人上课也立即展开」「普通叫人上课只进队列、下课弹出」                                                                                                                                                                                                                                                                                                |
-| 成绩 / 名单表格导入（xlsx·xls·csv）              | ✅   | 模板下载 + 预览映射 + 重复处理 + 行号级错误：`verify:e2e` 覆盖 20 余项，`verify:web` 弹窗实测                                                                                                                                                                                                                                                                                                                             |
-| ClassIsland 时间配置导入（覆盖 / 合并 / 回滚）   | ✅   | 合法 200、非法 400 `IMPORT_INVALID` 且原配置仍在、merge 覆盖与保留行为符合预期                                                                                                                                                                                                                                                                                                                                            |
-| 安装版覆盖升级自动补迁移                         | ✅   | 真实旧库升级日志：`升级安装：已应用 N 个迁移文件，跳过 M 个已存在对象`，新表自动建好                                                                                                                                                                                                                                                                                                                                      |
-| 学生端主体 = 班级（班级码 + 班级密码登录）       | ✅   | `verify:e2e` 班级账号 19 项：登录 / 错误密码 401 / 跨班 403 / 发布 403 / 班级码重复 400 / 密码重置 / 班级码用后还原                                                                                                                                                                                                                                                                                                       |
-| 班级设备代全班操作（已读 · 完成 · 成绩总览）     | ✅   | 标记已读写入全班、教师端 `readCount` = 班级学生数、`completedCount` 一致、`/grades/my` 返回全班成绩                                                                                                                                                                                                                                                                                                                       |
-| 客户端只保留班级登录入口                         | ✅   | `verify:desktop`：导航「成绩」标题变为「本班成绩」；个人学生登录 403                                                                                                                                                                                                                                                                                                                                                      |
-| **教师录入（仅管理员）**                         | ✅   | `verify:e2e`：教师读/建教师 403、管理员建 201 → 编辑 → 重置密码（新密码 200/旧密码 401）→ 删除（有职责 409 / 无职责 200）；`verify:web`：管理员真人点「教师管理 → 新建教师 → 保存 → 列表出现 → 删除」                                                                                                                                                                                                                     |
-| **教师名单表格导入（仅管理员）**                 | ✅   | `verify:e2e`：教师预览 403、管理员预览/提交 200（`inserted=1`）、导入账号可登录；模板列＝用户名/姓名/初始密码/角色                                                                                                                                                                                                                                                                                                        |
-| **教师/学生的「修改密码」（管理员）**            | ✅   | 服务端 `POST /teachers\|students/:id/reset-password` 本来就收可选 `newPassword`，但界面原先只发空请求、按钮还叫「重置密码」——等于**只能重置成默认密码，没法改成指定值**（用户指着教师列表问"教师修改密码呢"）。现两个页面都改成「修改密码」弹框输入：**填了就设成填的值，留空才是默认初始密码**。实测（真实浏览器点界面）：设 `teacher777` → 新密码可登录、旧密码 401；留空 → 落到 `DEFAULT_TEACHER_PASSWORD`（`123456`） |
-| **教室机器自助改密（班级账号 / 教师账号）**      | ✅   | 客户端「设置 → 账号信息 → 修改密码」；服务端同一个 `PATCH /auth/password` 按会话分流（班级账号 → 班级密码，教师/管理员 → 本人密码）。实测：班级账号改 `123456`→`class999` 后新密码可登录、旧密码 401；`verify:desktop` 断言该入口存在且对话框有 3 个密码框                                                                                                                                                                |
-| **触摸屏触摸灵动岛可展开（希沃白板）**           | ⏳   | 触摸模式下窗口贴合岛体 + 始终接收输入（见「灵动岛」一节）；`verify:desktop` 断言「触摸模式窗口=岛体 + 2×阴影留白、`interactive=true`、退出后恢复固定包围盒」。**真机（希沃白板）触摸需在装有触摸屏的机器上人工复验** —— AI 会话里跑不了 Electron GUI（见 AGENTS.md §7）                                                                                                                                                   |
-| **创建班级仅管理员 + 设置/更改班主任**           | ✅   | `verify:e2e`：教师建班 403；管理员建班可带 `teacherId`、`PATCH /classes/:id/head-teacher` 落库生效；`verify:web`：教师直接访问 `/teachers` 被挡回仪表盘                                                                                                                                                                                                                                                                   |
-| **授课科目统一（18 科固定目录）**                | ✅   | `verify:web`：新增课表的科目下拉出现「统一科目（选中后自动建课）」，选中 → 自动建课 → 写入课表成功（收尾删除该条课表）                                                                                                                                                                                                                                                                                                    |
-| **登录页无示例内容**                             | ✅   | `verify:web`（管理端）与 `verify:desktop`（客户端）都断言登录页正文/占位符不含 `演示 / 示例 / admin123 / teacher123 / G101`                                                                                                                                                                                                                                                                                               |
-| **其他页面发通知也会联动 ClassIsland**           | ✅   | `verify:classisland`：「通知发布页发的通知也会推送」「叫人也会推送」；真机实测截图 [03-from-notify-page](docs/screenshots/classisland/03-from-notify-page.png)                                                                                                                                                                                                                                                            |
-| **作业按天查看（日期选择器 + 有作业日期高亮）**  | ✅   | `verify:e2e`：`assignDate` 默认服务器当天、`?date=` 只返回该天、`/homeworks/days` 返回有作业日期、非法日期 422                                                                                                                                                                                                                                                                                                            |
-| **支持在客户端录入作业（含自定义快捷短语）**     | ✅   | `verify:e2e`：班级账号录入 201（归属班主任）、跨班 403；客户端录入弹窗 + 「设置 → 作业录入」管理短语                                                                                                                                                                                                                                                                                                                      |
-| **提醒弹在哪个端由客户端自行选择**               | ✅   | 客户端「设置 → 通知显示位置」三选一（`verify:desktop`：设置页真实点击 → 写回本地配置）；服务端按班级设置决定是否推送（`verify:classisland`：client 时通知与联动页下发都被跳过）                                                                                                                                                                                                                                           |
-| **班级小助手能读取 ClassIsland 的课表**          | ✅   | `verify:classisland`：插件上报课表 → 本班课表新增/更新（重复上报幂等）、节次时间写入、设备状态快照可在 Web 端展示；`verify:web`：教师在「ClassIsland 联动」页真实签发设备令牌                                                                                                                                                                                                                                             |
-| **用户可选择通知是否在 ClassIsland 上显示**      | ✅   | 插件设置页开关「接收班级小助手提醒」（本机总闸）+ Web 端「下发提醒」（标题/内容/时长/优先级/语音朗读/是否同步通知中心）；`verify:classisland`：提醒落库 → 待提醒 → 回执 → 确认后不补发                                                                                                                                                                                                                                    |
-| 能成功打包 Windows EXE                           | ✅   | `-x64-setup.exe` / `-x64-portable.exe` / `win-unpacked/*.exe`（见下表）                                                                                                                                                                                                                                                                                                                                                   |
-| 提供完整 README（启动、构建、打包、默认账号）    | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、MySQL 切换、打包与常见问题                                                                                                                                                                                                                                                                                                                                        |
+| 验收项                                                  | 结果 | 证据                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 教师 Web 端发布通知，学生端 5 秒内收到                  | ✅   | `verify:e2e`：`notification:new` 实测 30–50ms 到达（要求 < 5 秒）                                                                                                                                                                                                                                                                                                                                                         |
+| 教师发布作业，学生能查看并标记完成                      | ✅   | `homework:new` 实时到达，`PATCH /homeworks/:id/status` 200 且列表回显 `completed=true`                                                                                                                                                                                                                                                                                                                                    |
+| 教师录入成绩，学生能查看个人成绩                        | ✅   | `grade:updated` 实时到达，`/grades/my` 返回记录；批量录入与统计接口通过                                                                                                                                                                                                                                                                                                                                                   |
+| 学生能查看课表，支持按周切换                            | ✅   | `/schedules/grid?week=1` 返回周视图条目，`week` 过滤 `weekStart ≤ week ≤ weekEnd`，单双周按第 1 周=单周过滤                                                                                                                                                                                                                                                                                                               |
+| 断网后客户端可查看缓存数据                              | ✅   | 客户端冒烟：`断网时回退到本地缓存 → fromCache=true`；离线横幅 + 缓存统计页可用                                                                                                                                                                                                                                                                                                                                            |
+| 权限隔离：学生不能访问其他班级数据                      | ✅   | e2e 中 10 余项越权断言全部 403/401（学生跨班/跨班作业/跨班课表、教师跨班发布、未登录访问…）                                                                                                                                                                                                                                                                                                                               |
+| 上课时段发布紧急通知必须二次确认                        | ✅   | 服务端 409 `URGENT_DURING_CLASS`（`confirmDuringClass` 后 201）；Web 端全屏警告 + 3 秒倒计时                                                                                                                                                                                                                                                                                                                              |
+| 客户端灵动岛：上课隐藏 / 下课弹出 / 紧急立即展开        | ✅   | `verify:desktop` 状态断言 + 像素级截图（`docs/screenshots/island/`）                                                                                                                                                                                                                                                                                                                                                      |
+| 灵动岛：收回无"方框"闪烁 / 点击屏幕任意处收回           | ✅   | 逐帧采样卡片尺寸恒定（窗口固定包围盒）+ 失焦自动收回                                                                                                                                                                                                                                                                                                                                                                      |
+| 灵动岛"标为已读"同步通知中心                            | ✅   | 真实链路：点击后 `read=false → true`、未读数减少                                                                                                                                                                                                                                                                                                                                                                          |
+| **多条通知展开为竖排列表**                              | ✅   | `verify:desktop`：按重要程度排序、默认 3 行 + `展开更多（还有 N 条）`、卡片高度与 `islandListLayout()` 一致；点"展开更多"铺满；放不下时提示 `更多请前往应用内操作` 且卡片高度 ≤ 可用高度                                                                                                                                                                                                                                  |
+| **多条通知的整批操作**                                  | ✅   | `verify:desktop`：`知道了` 整批关闭且状态同步清空、窗口随后淡出隐藏；`标为已读` 经真实链路把**两条**通知都标为已读                                                                                                                                                                                                                                                                                                        |
+| **本机录入的作业不再上岛**                              | ✅   | `verify:desktop`：按 id 与内容指纹双重判定，投递后灵动岛状态不变；别的作业照常上岛                                                                                                                                                                                                                                                                                                                                        |
+| 作业发布也上岛（"新作业"胶囊）                          | ✅   | `kind=homework` + 展开显示作业要求；**截止时间功能已下线**（接口不再返回 `dueAt`，e2e 有断言）                                                                                                                                                                                                                                                                                                                            |
+| **灵动岛收起后始终可再次打开**                          | ✅   | `verify:desktop`：收起后胶囊常驻、「收起态点击可再次展开」、「空闲细缝态保持可交互」                                                                                                                                                                                                                                                                                                                                      |
+| 叫人（老师点名，分紧急/普通两级）                       | ✅   | `verify:e2e` 8 项（普通 HIGH / 紧急 URGENT）+ `verify:desktop`「紧急叫人上课也立即展开」「普通叫人上课只进队列、下课弹出」                                                                                                                                                                                                                                                                                                |
+| 成绩 / 名单表格导入（xlsx·xls·csv）                     | ✅   | 模板下载 + 预览映射 + 重复处理 + 行号级错误：`verify:e2e` 覆盖 20 余项，`verify:web` 弹窗实测                                                                                                                                                                                                                                                                                                                             |
+| ClassIsland 时间配置导入（覆盖 / 合并 / 回滚）          | ✅   | 合法 200、非法 400 `IMPORT_INVALID` 且原配置仍在、merge 覆盖与保留行为符合预期                                                                                                                                                                                                                                                                                                                                            |
+| 安装版覆盖升级自动补迁移                                | ✅   | 真实旧库升级日志：`升级安装：已应用 N 个迁移文件，跳过 M 个已存在对象`，新表自动建好                                                                                                                                                                                                                                                                                                                                      |
+| 学生端主体 = 班级（班级码 + 班级密码登录）              | ✅   | `verify:e2e` 班级账号 19 项：登录 / 错误密码 401 / 跨班 403 / 发布 403 / 班级码重复 400 / 密码重置 / 班级码用后还原                                                                                                                                                                                                                                                                                                       |
+| 班级设备代全班操作（已读 · 完成 · 成绩总览）            | ✅   | 标记已读写入全班、教师端 `readCount` = 班级学生数、`completedCount` 一致、`/grades/my` 返回全班成绩                                                                                                                                                                                                                                                                                                                       |
+| 客户端只保留班级登录入口                                | ✅   | `verify:desktop`：导航「成绩」标题变为「本班成绩」；个人学生登录 403                                                                                                                                                                                                                                                                                                                                                      |
+| **教师录入（仅管理员）**                                | ✅   | `verify:e2e`：教师读/建教师 403、管理员建 201 → 编辑 → 重置密码（新密码 200/旧密码 401）→ 删除（有职责 409 / 无职责 200）；`verify:web`：管理员真人点「教师管理 → 新建教师 → 保存 → 列表出现 → 删除」                                                                                                                                                                                                                     |
+| **教师名单表格导入（仅管理员）**                        | ✅   | `verify:e2e`：教师预览 403、管理员预览/提交 200（`inserted=1`）、导入账号可登录；模板列＝用户名/姓名/初始密码/角色                                                                                                                                                                                                                                                                                                        |
+| **教师/学生的「修改密码」（管理员）**                   | ✅   | 服务端 `POST /teachers\|students/:id/reset-password` 本来就收可选 `newPassword`，但界面原先只发空请求、按钮还叫「重置密码」——等于**只能重置成默认密码，没法改成指定值**（用户指着教师列表问"教师修改密码呢"）。现两个页面都改成「修改密码」弹框输入：**填了就设成填的值，留空才是默认初始密码**。实测（真实浏览器点界面）：设 `teacher777` → 新密码可登录、旧密码 401；留空 → 落到 `DEFAULT_TEACHER_PASSWORD`（`123456`） |
+| **教室机器自助改密（班级账号 / 教师账号）**             | ✅   | 客户端「设置 → 账号信息 → 修改密码」；服务端同一个 `PATCH /auth/password` 按会话分流（班级账号 → 班级密码，教师/管理员 → 本人密码）。实测：班级账号改 `123456`→`class999` 后新密码可登录、旧密码 401；`verify:desktop` 断言该入口存在且对话框有 3 个密码框                                                                                                                                                                |
+| **触摸屏触摸灵动岛可展开（希沃白板）**                  | ⏳   | 触摸模式下窗口贴合岛体 + 始终接收输入（见「灵动岛」一节）；`verify:desktop` 断言「触摸模式窗口=岛体 + 2×阴影留白、`interactive=true`、退出后恢复固定包围盒」。**真机（希沃白板）触摸需在装有触摸屏的机器上人工复验** —— AI 会话里跑不了 Electron GUI（见 AGENTS.md §7）                                                                                                                                                   |
+| **创建班级仅管理员 + 设置/更改班主任**                  | ✅   | `verify:e2e`：教师建班 403；管理员建班可带 `teacherId`、`PATCH /classes/:id/head-teacher` 落库生效；`verify:web`：教师直接访问 `/teachers` 被挡回仪表盘                                                                                                                                                                                                                                                                   |
+| **授课科目统一（18 科固定目录）**                       | ✅   | `verify:web`：新增课表的科目下拉出现「统一科目（选中后自动建课）」，选中 → 自动建课 → 写入课表成功（收尾删除该条课表）                                                                                                                                                                                                                                                                                                    |
+| **登录页无示例内容**                                    | ✅   | `verify:web`（管理端）与 `verify:desktop`（客户端）都断言登录页正文/占位符不含 `演示 / 示例 / admin123 / teacher123 / G101`                                                                                                                                                                                                                                                                                               |
+| **初次启动引导（首启弹出 + 随时重看）**                 | ✅   | Web 管理端：首次登录弹出 `el-tour` 聚焦引导，头像菜单「使用引导」重看（`verify:web`：「首次登录展示新手引导且可跳过」）；学生端：首启六步向导，登录页 / 设置页可重看（`verify:desktop`：「初次启动引导（首启自动弹出、可走完、状态写入配置）」）                                                                                                                                                                          |
+| **数据库管理（仅管理员：状态/备份/导入导出/一键切换）** | ✅   | `verify:e2e` 新增 13 项：状态与 14 表行数、教师全端点 403、连接测试（当前库可达 / 不可达 MySQL ok=false）、**Redis 主库 422**、切换校验分支（同库 400）、备份→快照导入→备份恢复 roundtrip（临时数据被清除）、定时配置校验、SQLite 文件下载；**切换子进程链路真机实测**：快照 728 行 → generate → db push → apply-snapshot 逐表写入一致；`verify:web`：「数据库管理页（仅管理员）」状态卡与备份表渲染                      |
+| **客户端设置改版（分组侧栏/深色模式/关于页）**          | ✅   | `verify:desktop`：「侧边栏点击导航」适配「学习/设置」分组结构；「主题切换与侧边栏折叠（真实点击、写回配置）」——html.dark 翻转 + 折叠宽度 200→64 + 双双落盘；「关于页渲染（应用信息/诊断信息/鸣谢）」含 configPath；四个设置页用例改走子路由后全过（101/101 + 二次启动 88/88）                                                                                                                                             |
+| **其他页面发通知也会联动 ClassIsland**                  | ✅   | `verify:classisland`：「通知发布页发的通知也会推送」「叫人也会推送」；真机实测截图 [03-from-notify-page](docs/screenshots/classisland/03-from-notify-page.png)                                                                                                                                                                                                                                                            |
+| **作业按天查看（日期选择器 + 有作业日期高亮）**         | ✅   | `verify:e2e`：`assignDate` 默认服务器当天、`?date=` 只返回该天、`/homeworks/days` 返回有作业日期、非法日期 422                                                                                                                                                                                                                                                                                                            |
+| **支持在客户端录入作业（含自定义快捷短语）**            | ✅   | `verify:e2e`：班级账号录入 201（归属班主任）、跨班 403；客户端录入弹窗 + 「设置 → 作业录入」管理短语                                                                                                                                                                                                                                                                                                                      |
+| **提醒弹在哪个端由客户端自行选择**                      | ✅   | 客户端「设置 → 通知显示位置」三选一（`verify:desktop`：设置页真实点击 → 写回本地配置）；服务端按班级设置决定是否推送（`verify:classisland`：client 时通知与联动页下发都被跳过）                                                                                                                                                                                                                                           |
+| **班级小助手能读取 ClassIsland 的课表**                 | ✅   | `verify:classisland`：插件上报课表 → 本班课表新增/更新（重复上报幂等）、节次时间写入、设备状态快照可在 Web 端展示；`verify:web`：教师在「ClassIsland 联动」页真实签发设备令牌                                                                                                                                                                                                                                             |
+| **用户可选择通知是否在 ClassIsland 上显示**             | ✅   | 插件设置页开关「接收班级小助手提醒」（本机总闸）+ Web 端「下发提醒」（标题/内容/时长/优先级/语音朗读/是否同步通知中心）；`verify:classisland`：提醒落库 → 待提醒 → 回执 → 确认后不补发                                                                                                                                                                                                                                    |
+| 能成功打包 Windows EXE                                  | ✅   | `-x64-setup.exe` / `-x64-portable.exe` / `win-unpacked/*.exe`（见下表）                                                                                                                                                                                                                                                                                                                                                   |
+| 提供完整 README（启动、构建、打包、默认账号）           | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、MySQL 切换、打包与常见问题                                                                                                                                                                                                                                                                                                                                        |
 
-验收脚本实测（**2026-09-30**，本机）：
+验收脚本实测（**2026-10-02**，本机）：
 
-| 验证                                                                                        | 结果                                                               |
-| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `pnpm verify:e2e`（后端 + REST + Socket.IO + RBAC + 上课时段 + 导入 + 班级账号 + 教师录入） | **173/173** ✅                                                     |
-| `pnpm verify:classisland`（设备令牌 / 上报 / 提醒下发与回执 / 镜像契约）                    | **42/42** ✅                                                       |
-| `pnpm verify:classisland-plugin`（插件静态契约）                                            | **68/68** ✅                                                       |
-| `pnpm verify:packaged`（对打包后的 EXE 跑客户端冒烟）                                       | 首次 **89/91**、二次 **79/79**（未过的 2 项是既有功能用例，见下）  |
-| `pnpm typecheck` / `pnpm lint`                                                              | 全过 ✅（lint 0 error，1 条既有 warning）                          |
-| 安装程序完整生命周期（静默安装 → 启动 → 卸载，装到 `%LOCALAPPDATA%\Programs`）              | 通过 ✅（2026-09-30 实测：安装 76 个文件，启动出窗口，卸载干净）   |
-| 便捷版（单文件）解包启动                                                                    | 通过 ✅（2026-09-30 实测：wrapper + 6 个进程，主窗口正常）         |
-| Docker / Nginx 部署样例                                                                     | 文件已提供（含 Linux systemd 脚本），本机无 Docker/Linux 未实测 ⚠️ |
+| 验证                                                                                                     | 结果                                                                    |
+| -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `pnpm verify:e2e`（后端 + REST + Socket.IO + RBAC + 上课时段 + 导入 + 班级账号 + 教师录入 + 数据库管理） | **186/186** ✅（2026-10-02 实测）                                       |
+| `pnpm verify:desktop`（客户端冒烟，不弹窗）                                                              | **101/101** ✅ + 二次启动 **88/88** ✅                                  |
+| `pnpm verify:web`（Web 管理端真实点击回归）                                                              | **30/31** ✅（未过的 1 项是既有脆弱用例，见下）                         |
+| `pnpm verify:classisland`（设备令牌 / 上报 / 提醒下发与回执 / 镜像契约）                                 | **42/42** ✅                                                            |
+| `pnpm verify:classisland-plugin`（插件静态契约）                                                         | **68/68** ✅                                                            |
+| `pnpm dist:server`（服务端安装包 + Web 端）                                                              | ✅ 打出 71MB 安装程序（体积增大是因随包内置切换链路所需的依赖）         |
+| `pnpm typecheck` / `pnpm lint`                                                                           | 全过 ✅（lint 0 error，1 条既有 warning）                               |
+| 数据库切换子进程链路（快照 → generate → db push → 写入目标库）                                           | ✅ 实测：728 行逐表一致（users=18 / schedules=93 / grades=98 抽查一致） |
+| 安装程序完整生命周期（静默安装 → 启动 → 卸载，装到 `%LOCALAPPDATA%\Programs`）                           | 通过 ✅（2026-09-30 实测：安装 76 个文件，启动出窗口，卸载干净）        |
+| 便捷版（单文件）解包启动                                                                                 | 通过 ✅（2026-09-30 实测：wrapper + 6 个进程，主窗口正常）              |
+| Docker / Nginx 部署样例                                                                                  | 文件已提供（含 Linux systemd 脚本），本机无 Docker/Linux 未实测 ⚠️      |
+
+> 本轮 `verify:web` 未过的 1 项是**既有脆弱用例**（AGENTS.md 「已知脆弱用例」表已列明）：
+> 「课表科目为全校统一目录」——种子给每个班建满了全部科目，下拉里没有可自动建课的「统一科目」分组。
 
 > 打包版冒烟未过的都是**应用功能用例**（与打包/安装无关）。其中前两项是**测试自身的 bug、已修**
 > （2026-09-30 复跑确认不再失败）：

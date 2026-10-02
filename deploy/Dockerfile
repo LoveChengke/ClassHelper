@@ -5,13 +5,13 @@
 #   runtime —— 仅保留运行时所需内容（生产依赖 + 构建产物），镜像更小
 #
 # 构建（在仓库根目录执行）：
-#   docker build -f deploy/Dockerfile -t classhelper-server:0.1.0 .
+#   docker build -f deploy/Dockerfile -t classhelper-server:1.0.0 .
 #
 # 运行（SQLite + 数据卷）：
 #   docker run -d --name classhelper -p 4000:4000 \
 #     -e JWT_SECRET=<48字节随机串> \
 #     -v classhelper-data:/app/data \
-#     classhelper-server:0.1.0
+#     classhelper-server:1.0.0
 #
 # 生产推荐用 docker compose（见 deploy/docker-compose.yml，含 MySQL 与 HTTPS 反代）
 

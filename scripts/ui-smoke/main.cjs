@@ -44,7 +44,7 @@ const MENU_ITEMS = [
 ];
 
 /** 教师端必须隐藏的入口（前端隐藏 + 后端 403，双重保障） */
-const HIDDEN_MENU_LABELS = ['班级管理', '学生管理', '教师管理'];
+const HIDDEN_MENU_LABELS = ['班级管理', '学生管理', '教师管理', '数据库管理'];
 
 /** 管理员账号（教师录入用例）：与种子/安装初始化账号一致 */
 const ADMIN_USERNAME = process.env.UI_SMOKE_ADMIN ?? 'admin';
@@ -117,6 +117,54 @@ async function runAdminTeacherChecks(win) {
   const adminReady = await fillLoginAndSubmit(ADMIN_USERNAME, ADMIN_PASSWORD);
   record('管理员登录（教师录入前置）', adminReady, `账号=${ADMIN_USERNAME}`);
   if (!adminReady) return;
+
+  // 1.1) localStorage.clear() 把「已看过引导」的标记也一并清掉 → 管理员登录后引导会再次自动
+  //      弹出；先把它跳过再继续，避免遮罩留在屏幕上干扰后续真实点击（跳过即记「已看过」）。
+  //      出现/关闭判据与 3.5 相同：等 × 按钮渲染，关闭看 .el-tour__mask 卸载。
+  await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline && !document.querySelector('.el-tour__closebtn')) await sleep(120);
+    document.querySelector('.el-tour__closebtn')?.click();
+    const closeDeadline = Date.now() + 2000;
+    while (Date.now() < closeDeadline && document.querySelector('.el-tour__mask')) await sleep(100);
+    return true;
+  })()`);
+
+  // 1.2) 数据库管理页（仅管理员）：点开菜单 → 状态卡与备份表渲染
+  const databasePage = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
+      (node.textContent ?? '').trim().startsWith('数据库管理'),
+    );
+    if (!menu) return { ok: false, reason: '管理员菜单里没有「数据库管理」' };
+    menu.click();
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline && location.pathname !== '/database') await sleep(80);
+    // 等状态卡与备份表渲染（状态卡含「当前数据库」标题，备份表在 el-table 里）
+    let hasStatusCard = false;
+    let hasBackupTable = false;
+    const tableDeadline = Date.now() + 8000;
+    while (Date.now() < tableDeadline && !(hasStatusCard && hasBackupTable)) {
+      hasStatusCard = Boolean(document.querySelector('.page-title'));
+      hasBackupTable = Boolean(document.querySelector('.el-table'));
+      await sleep(100);
+    }
+    const title = (document.querySelector('.page-title')?.textContent ?? '').trim();
+    return {
+      ok: location.pathname === '/database' && title === '数据库管理' && hasStatusCard && hasBackupTable,
+      reason: '',
+      path: location.pathname,
+      title,
+      hasStatusCard,
+      hasBackupTable,
+    };
+  })()`);
+  record(
+    '数据库管理页（仅管理员：状态卡与备份表渲染）',
+    databasePage?.ok === true,
+    `path=${databasePage?.path ?? '-'} 标题=${databasePage?.title ?? '-'} 状态卡=${databasePage?.hasStatusCard} 表=${databasePage?.hasBackupTable} ${databasePage?.reason ?? ''}`,
+  );
 
   // 2) 打开「教师管理」→ 新建教师（表单 → 保存 → 列表出现）
   const created = await win.webContents.executeJavaScript(`(async () => {
@@ -298,6 +346,28 @@ async function main() {
     await finish(win);
     return;
   }
+
+  // 3.5 初次登录引导（新功能）：首次登录自动弹出聚焦式引导，可跳过；
+  // 跳过（右上角 ×）后写入「已看过」标记，本次 profile 里不会再自动弹出。
+  // 判据说明：el-tour 关闭后内容元素会像 el-dialog 一样残留在 DOM（父级 .el-popper 被隐藏，
+  // AGENTS §7 第 22 条同款陷阱），所以「出现」等 × 按钮渲染、「关闭」看遮罩 .el-tour__mask 卸载。
+  const tour = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    // 引导在布局挂载后延迟 ~600ms 弹出，且 popper 内容晚于外壳渲染，等 × 按钮真正出现
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline && !document.querySelector('.el-tour__closebtn')) await sleep(120);
+    if (!document.querySelector('.el-tour__closebtn')) return { appeared: false, closed: false };
+    const close = document.querySelector('.el-tour__closebtn');
+    close.click();
+    const closeDeadline = Date.now() + 3000;
+    while (Date.now() < closeDeadline && document.querySelector('.el-tour__mask')) await sleep(120);
+    return { appeared: true, closed: !document.querySelector('.el-tour__mask') };
+  })()`);
+  record(
+    '首次登录展示新手引导且可跳过',
+    tour?.appeared === true && tour?.closed === true,
+    `出现=${tour?.appeared ?? '-'} 跳过后关闭=${tour?.closed ?? '-'}`,
+  );
 
   // 4. 逐一点击侧边栏菜单
   const visited = [];

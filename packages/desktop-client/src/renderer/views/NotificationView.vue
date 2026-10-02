@@ -165,11 +165,11 @@ onUnmounted(() => {
 }
 
 .notice-item:hover {
-  background: #f7f9fc;
+  background: var(--ch-hover-soft);
 }
 
 .notice-item.unread {
-  background: #f0f7ff;
+  background: var(--ch-accent-soft);
 }
 
 .notice-item:last-child {
@@ -194,7 +194,7 @@ onUnmounted(() => {
 .notice-content {
   margin-top: 6px;
   font-size: 13px;
-  color: #606266;
+  color: var(--ch-text-secondary);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -220,7 +220,7 @@ onUnmounted(() => {
 .content-block {
   white-space: pre-wrap;
   line-height: 1.8;
-  background: #fafafa;
+  background: var(--ch-layer-alt);
   border-radius: 8px;
   padding: 14px;
   margin: 0 0 16px;

@@ -2,6 +2,7 @@ import { authModule } from './auth/auth.module.js';
 import { callsModule } from './calls/calls.module.js';
 import { classesModule } from './classes/classes.module.js';
 import { coursesModule } from './courses/courses.module.js';
+import { databaseModule } from './database/database.module.js';
 import { dashboardModule } from './dashboard/dashboard.module.js';
 import { gradesModule } from './grades/grades.module.js';
 import { homeworksModule } from './homeworks/homeworks.module.js';
@@ -34,4 +35,5 @@ export const apiModules: ApiModule[] = [
   studentsModule,
   teachersModule,
   dashboardModule,
+  databaseModule,
 ].filter((module) => module.enabled !== false);
