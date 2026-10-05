@@ -49,6 +49,23 @@ fi
 log()  { printf '%s[classhelper]%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
 info() { printf '%s[classhelper]%s %s\n' "$C_CYAN" "$C_RESET" "$*"; }
 warn() { printf '%s[classhelper]%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
+
+# 给"正在交互输入"的那几行提示用的输出口：
+# 优先直接写 /dev/tty —— 交互提示语是往 fd 3（/dev/tty）写的，警告也从同一个设备出去，
+# 才能保证"警告紧挨着它对应的那次输入"、不会被 stdout/stderr 的缓冲或分流弄丢/错位
+# （read_secret 结束时会把 fd 3 关掉，所以这里不用 fd 3，而是重新开 /dev/tty 写）。
+# 没有终端时退回 stderr。整句包在 if 条件里，写失败也不会因 set -e 打断命令。
+warn_user() {
+  # `{ …; } 2>/dev/null` 这个形状是必需的：/dev/tty 打不开时（没有控制终端）bash 会先自己打一句
+  # "bash: /dev/tty: No such device or address"，而 `… >/dev/tty 2>/dev/null` 这种写法压不住它
+  # —— 重定向是从左往右处理的，报错发生在 `2>/dev/null` 生效之前。把整句包进一个 stderr
+  # 已经被接管的组里，那行噪音才会被吃掉，调用方也仍然走得到下面的 stderr 回退。
+  if [ "${PROMPT_FD:-}" = "3" ] &&
+     { printf '%s[classhelper]%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >/dev/tty; } 2>/dev/null; then
+    return 0
+  fi
+  warn "$*"
+}
 die()  { printf '%s[classhelper]%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- 2. 定位自身与安装元数据
@@ -872,36 +889,43 @@ cmd_password() {
   fi
 
   printf '%s现在修改 %s 的密码%s\n' "$C_BOLD" "$label" "$C_RESET"
-  printf '%s提示：输入不回显；密码不会出现在命令行、进程列表或日志里。%s\n\n' "$C_DIM" "$C_RESET"
+  # 要求提前说清楚：原来是"先让人撞墙、再看报错才知道规则"，用户得失败一两次才明白
+  # （而且 read -s 不回显，屏幕上什么都没有，更容易以为卡住了）
+  printf '%s密码要求：至少 8 位；小写字母 / 大写字母 / 数字 / 符号 中至少包含 3 类；不能与用户名相同；\n' "$C_DIM"
+  printf '          也不要用 admin / 123456 / password 这类开头（例如 RainYun-2026 就合规）。%s\n' "$C_RESET"
+  printf '%s提示：输入不回显 —— 敲键盘时屏幕上不会出现任何字符（连星号都没有），这是正常的，输完直接回车。%s\n\n' "$C_DIM" "$C_RESET"
 
   # 有界循环：每次尝试都计数，且 stdin 读完（EOF）立刻退出 ——
   # 否则管道喂入不合规的密码时会一直重读空值，表现为"卡住不动"。
   local pw1='' pw2='' problems='' tries=0 accepted=0
   while [ "$tries" -lt 3 ] && [ "$accepted" = "0" ]; do
     tries=$((tries + 1))
-    read_secret "新密码：" pw1
+    read_secret "新密码（第 ${tries}/3 次）：" pw1
     if [ -z "$pw1" ]; then
       if [ "${READ_SECRET_EOF:-0}" = "1" ]; then
-        die "读不到输入（标准输入已结束）。自动化请用管道：printf '%s\\n%s\\n' \"\$PW\" \"\$PW\" | classhelper password ${key}"
+        die "读不到输入（标准输入已结束）。自动化请用管道：
+  printf '%s\\n%s\\n' \"\$PW\" \"\$PW\" | CLASSHELPER_NO_TTY=1 classhelper password ${key}"
       fi
-      warn "密码不能为空，请重试"
+      warn_user "密码不能为空，请重试"
       continue
     fi
     problems="$(password_problems "$pw1" "${target:-admin}")"
     if [ -n "$problems" ]; then
-      warn "密码不合规：${problems}"
+      warn_user "密码不合规：${problems}"
       continue
     fi
     read_secret "再输入一次确认：" pw2
     if [ "$pw1" != "$pw2" ]; then
-      warn "两次输入不一致，请重来"
+      warn_user "两次输入不一致，请重来"
       continue
     fi
     accepted=1
   done
   if [ "$accepted" != "1" ]; then
     audit password "$key" rejected
-    die "连续 3 次输入不合规，已退出（密码未改动）"
+    warn_user "连续 3 次都没通过校验，已退出（密码未改动）"
+    die "如需非交互改密，用：
+  read -r -s -p '新密码: ' PW; echo; printf '%s\\n%s\\n' \"\$PW\" \"\$PW\" | CLASSHELPER_NO_TTY=1 classhelper password ${key}; unset PW"
   fi
 
   # 改前备份原哈希：失败或复核不过时按这份文件回滚（只含用户名 + bcrypt 哈希，权限 600）。
