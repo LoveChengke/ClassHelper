@@ -10,17 +10,19 @@
 #   docker        —— 用随包的 Dockerfile 构建镜像 + compose 起容器（需要 docker）
 #
 # 用法（一行安装，推荐给最终用户）：
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/LoveChengke/ClassHelper/master/deploy/install.sh)"
+#   curl -fsSL -o /tmp/classhelper-install.sh \
+#     https://raw.githubusercontent.com/LoveChengke/ClassHelper/master/deploy/install.sh \
+#     && sudo bash /tmp/classhelper-install.sh
 #
 #   脚本会自动从 GitHub Release 取**最新版**服务端安装包，并取发布页上同名的 .sha256 做校验，
-#   所以整条链路只需要这一行。常见变体（都加在同一行末尾）：
-#     … --version 1.1.0     装指定版本      … --yes            全部默认、不交互
-#     … --check             只体检、不安装  … --port 8080      自定义端口
-#     … --admin-password-stdin              从 stdin 读初始管理员密码（不进 argv / history）
+#   所以整条链路只需要这一行。要加参数就接在最后：`sudo bash /tmp/classhelper-install.sh --check`
+#     --check             只体检、不安装（不需要 root）      --yes            全部默认、不交互
+#     --version 1.1.0     装指定版本                         --port 8080      自定义端口
+#     --admin-password-stdin                                从 stdin 读初始管理员密码
 #
-#   为什么写 `bash -c "$(curl …)"` 而不是 `curl … | bash`：后者的 stdin 被脚本内容占用，
-#   交互问答会读不到输入（本脚本会尽量兜到 /dev/tty，但前者从根上没有这个问题）。
-#   内网/离线：先把 tar.gz 与 install.sh 拷到机器上，再
+#   ⚠ 别写成 `bash -c "$(curl …)" --check`：`bash -c '代码' 第一个参数` 里那个参数会变成 **$0**、
+#     不是 $1，脚本根本收不到它（实测踩到：想着体检、结果走进交互式安装）。先落盘再执行没这个坑。
+#   内网/离线：把 tar.gz 与 install.sh 一起拷进去，再
 #     sudo bash install.sh --package /path/to/classhelper-server-linux-x64-<版本>.tar.gz
 #
 # 本地已有的脚本用法：
@@ -416,7 +418,8 @@ choose_mode_interactive() {
     die "读不到终端（/dev/tty 打不开），没法交互式选择安装形态。
    · 确实想非交互安装：加 --yes（默认 native + SQLite + ${INSTALL_DIR} + 端口 ${PORT}）
    · 或者先把脚本存成文件，再在同一终端里执行：
-       curl -fsSL -o /tmp/install.sh <脚本地址> && sudo bash /tmp/install.sh
+       curl -fsSL -o /tmp/classhelper-install.sh https://raw.githubusercontent.com/LoveChengke/ClassHelper/master/deploy/install.sh
+       sudo bash /tmp/classhelper-install.sh
    · 只想先体检（不需要终端、也不需要 root）：加 --check"
   fi
   printf '%s请选择：%s\n' "$C_BOLD" "$C_RESET"

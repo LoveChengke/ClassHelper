@@ -73,38 +73,41 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 
 ## 2. 交付产物与部署形态
 
-| 产物                            | 产物文件位置（打包后）                                               | 用途                                                                                      |
-| ------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| **服务端 + Web 管理端安装程序** | `release-server/班级小助手服务端-<版本>-x64-setup.exe`               | 装到教师电脑 / 校服务器即完整系统，**内置 Node 运行时**，双击安装、开机自启、自动建库建号 |
-| **服务端 Linux 安装包**         | `release-server/classhelper-server-linux-x64-<版本>.tar.gz`          | 给 `deploy/install.sh` 用（另见同名 `.sha256`）；由 Actions 在 Linux 上构建后挂 Release   |
-| **学生客户端安装程序**          | `packages/desktop-client/release/班级小助手-<版本>-x64-setup.exe`    | 学生机安装（NSIS）                                                                        |
-| **学生客户端单文件版**          | `packages/desktop-client/release/班级小助手-<版本>-x64-portable.exe` | 免安装直接运行（U 盘分发）                                                                |
-| Web 管理端（PWA）               | 由服务端在 `/` 直接托管                                              | 浏览器打开即用，可在 Edge/Chrome 中「安装为应用」；已适配手机小屏                         |
-| **ClassIsland 联动插件**        | `releases/classisland-plugin/ClassHelper.ClassIslandPlugin.cipx`     | 装在教室机器的 ClassIsland 上（也可把 `ClassHelper.ClassIslandPlugin/` 目录丢进 Plugins） |
+| 产物                            | 产物文件位置（打包后）                                                          | 用途                                                                                      |
+| ------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| **服务端 + Web 管理端安装程序** | `releases/server/<版本>/安装包/班级小助手服务端-<版本>-x64-setup.exe`           | 装到教师电脑 / 校服务器即完整系统，**内置 Node 运行时**，双击安装、开机自启、自动建库建号 |
+| **服务端 Linux 安装包**         | `releases/server/<版本>/linux-x64/classhelper-server-linux-x64-<版本>.tar.gz`   | 给 `deploy/install.sh` 用（另见同名 `.sha256`）；由 Actions 在 Linux 上构建后挂 Release   |
+| **学生客户端安装程序**          | `releases/client/<版本>/安装包/班级小助手-<版本>-x64-setup.exe`                  | 学生机安装（NSIS）                                                                        |
+| **学生客户端单文件版**          | `releases/client/<版本>/安装包/班级小助手-<版本>-x64-portable.exe`               | 免安装直接运行（U 盘分发）                                                                |
+| Web 管理端（PWA）               | 由服务端在 `/` 直接托管                                                         | 浏览器打开即用，可在 Edge/Chrome 中「安装为应用」；已适配手机小屏                         |
+| **ClassIsland 联动插件**        | `releases/classisland-plugin/<版本>/安装包/ClassHelper.ClassIslandPlugin.cipx`  | 装在教室机器的 ClassIsland 上（也可把 `ClassHelper.ClassIslandPlugin/` 目录丢进 Plugins） |
 
-> 这些产物**都不入库**（`release-server/`、`packages/*/release/`、`releases/` 均已忽略）。
-> 仓库约定是把它们归集到根目录 `releases/`（`client/`、`server/`、`classisland-plugin/`），详见 [AGENTS.md](AGENTS.md) §4。
+> 这些产物**都不入库**（`releases/` 已 gitignore + eslint ignore）。三个打包脚本**直接输出**到
+> `releases/<组件>/<版本>/`，每个版本目录下按 `安装包/`、`免安装/`、`构建中间/` 分层，
+> 历史版本原样保留 —— 详见 [AGENTS.md](AGENTS.md) §4。
 
 四种部署形态按场景选（Linux 完整步骤见 [docs/linux-deploy.md](docs/linux-deploy.md)，
 其余见 [docs/production.md](docs/production.md)）：
 
 | 场景                                | 形态                                                        | 入口                                                                                     |
 | ----------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| 学校机房 / 教师电脑（Windows 单机） | Windows 服务端安装程序（内置 Node，双击即用）               | `release-server/班级小助手服务端-<版本>-x64-setup.exe`                                   |
+| 学校机房 / 教师电脑（Windows 单机） | Windows 服务端安装程序（内置 Node，双击即用）               | `releases/server/<版本>/安装包/班级小助手服务端-<版本>-x64-setup.exe`                    |
 | 云服务器 / 多终端共享（推荐长期）   | Docker Compose + MySQL（另有 SQLite 单容器版）              | `deploy/Dockerfile`、`deploy/docker-compose{,.sqlite}.yml`                               |
 | 已有 Linux 服务器                   | **一键安装器 + `classhelper` 运维命令**（systemd / docker） | `sudo bash deploy/install.sh`（先 `--check` 体检）；运维见 `classhelper help`            |
-| 自定义 / 已有 Node 环境             | 手动部署免安装目录                                          | `pnpm dist:server` → `release-server/classhelper-server/`                                |
+| 自定义 / 已有 Node 环境             | 手动部署免安装目录                                          | `pnpm dist:server` → `releases/server/<版本>/免安装/`                                    |
 
 **Linux 服务器最快路径是一行命令**：脚本会自己从 GitHub Release 取最新版服务端包、取发布页上的
 `.sha256` 校验，再装成 systemd 服务并带上 `classhelper` 运维命令。完整步骤与验收清单见
 [docs/linux-deploy.md](docs/linux-deploy.md)。
 
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/LoveChengke/ClassHelper/master/deploy/install.sh)"
+curl -fsSL -o /tmp/classhelper-install.sh https://raw.githubusercontent.com/LoveChengke/ClassHelper/master/deploy/install.sh && sudo bash /tmp/classhelper-install.sh
 ```
 
-> 用 `bash -c "$(curl …)"` 而不是 `curl … | bash`：后者的 stdin 被脚本内容占用，交互问答会读不到输入。
-> 只想先看看这台机器能不能装：把末尾换成 `--check` 并去掉 `sudo`（只读，不改动系统）。
+> 参数接在最后即可，例如先只体检（不需要 root、不改动系统）：把末尾换成
+> `sudo bash /tmp/classhelper-install.sh --check`。
+> **别写成 `bash -c "$(curl …)" --check`**：`bash -c '代码' 第一个参数` 里那个参数会变成 `$0`
+> 而不是 `$1`，脚本收不到（实测踩到：想体检却走进了交互式安装）。
 
 ## 3. 快速开始
 
@@ -198,7 +201,7 @@ pnpm verify:desktop
 | `pnpm build:shared`                           | 只构建 shared（改完 `packages/shared` 必须跑）                                      |
 | `pnpm build:desktop`                          | 只构建客户端（esbuild 主进程 / preload + Vite 渲染进程，末尾跑产物凭据门禁）        |
 | `pnpm build:classisland-plugin`               | 构建 ClassIsland 联动插件（.NET 8）                                                 |
-| `pnpm dist:classisland-plugin`                | 打包插件为 `.cipx` 并归集到 `releases/classisland-plugin/`                          |
+| `pnpm dist:classisland-plugin`                | 打包插件为 `.cipx` 并归集到 `releases/classisland-plugin/<版本>/`                  |
 | `pnpm icons`                                  | 生成应用图标（Electron 渲染 SVG → PNG/ICO）                                         |
 | `pnpm dist:server`                            | 打包服务端 + Web 管理端（免安装目录 + NSIS 安装程序，内置 Node）                    |
 | `pnpm dist:dir`                               | 打包客户端免安装目录 `release/win-unpacked`（最快）                                 |
@@ -1236,19 +1239,21 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 ### 客户端（Windows EXE）
 
 ```bash
-pnpm dist:dir     # 免安装目录：packages/desktop-client/release/win-unpacked/班级小助手.exe
+pnpm dist:dir     # 免安装目录：releases/client/<版本>/免安装/班级小助手.exe
 pnpm dist:win     # nsis 安装包 + portable 单文件（需联网下载 NSIS 工具，可用镜像）
 ```
 
 打包脚本 `packages/desktop-client/scripts/dist-win.mjs` 做了几件事以规避常见问题：复用本地已解压的 Electron
 （`--config.electronDist`，不重复下载 150MB+）；默认走国内镜像（`ELECTRON_MIRROR`、
 `ELECTRON_BUILDER_BINARIES_MIRROR`，可用环境变量覆盖）；构建缓存固定到仓库内 `.cache/`；
+用 `--config.directories.output` 把输出目录覆盖成 `releases/client/<版本>/`，打包成功后再把
+electron-builder 的原始布局整理成 `安装包/`、`免安装/`、`构建中间/`；
 收尾把交付物完整性标签改成 Medium（Low 标签会导致装不上 / 双击没反应，见 [8. 常见问题](#8-常见问题)）。
 
-产物结构：`release/win-unpacked/班级小助手.exe`（Electron 运行时）+ `resources/app.asar`
+产物结构：`免安装/班级小助手.exe`（Electron 运行时）+ `resources/app.asar`
 （仅含 `dist/` 与 `package.json`，运行时不需要 node_modules）。
 
-> **把修复交付到「已安装的客户端」**：`pnpm dist:win` 只产出 `packages/desktop-client/release/`。
+> **把修复交付到「已安装的客户端」**：`pnpm dist:win` 只产出 `releases/client/<版本>/`。
 > 若学生机上是**安装版**（例如装在 `D:\class\@classhelperdesktop-client`），只更新 release 而不同步安装目录，
 > 用户打开的还是旧 `resources/app.asar`，会出现「改了但界面不生效」。覆盖升级（用户配置在 `%APPDATA%`，不受影响）：
 >
@@ -1265,16 +1270,16 @@ pnpm dist:win     # nsis 安装包 + portable 单文件（需联网下载 NSIS �
 | 产物                                   | 大小   | 冒烟结果                                                             |
 | -------------------------------------- | ------ | -------------------------------------------------------------------- |
 | 服务端安装程序（内置 Node + Web 端）   | ~62MB  | ✅ 静默安装（升级保留 `.env` 与数据库）→ 自动建库建号 → 服务就绪     |
-| `release/win-unpacked/班级小助手.exe`  | ~235MB | ✅ 打包版冒烟全绿，`packaged: true`，退出码 0                        |
-| `release/…-x64-portable.exe`（单文件） | ~98MB  | ✅ 打包后冒烟全绿，`packaged: true`，退出码 0                        |
-| `release/…-x64-setup.exe`（客户端）    | ~98MB  | ✅ 构建成功，已嵌入自定义图标                                        |
-| `releases/classisland-plugin/….cipx`   | ~88KB  | ✅ 全量编译通过（1 警告 0 错误），包内 DLL 哈希与 `bin/Release` 一致 |
+| `releases/client/<版本>/免安装/班级小助手.exe`  | ~235MB | ✅ 打包版冒烟全绿，`packaged: true`，退出码 0                        |
+| `releases/client/<版本>/安装包/…-portable.exe` | ~98MB  | ✅ 打包后冒烟全绿，`packaged: true`，退出码 0                        |
+| `releases/client/<版本>/安装包/…-setup.exe`    | ~98MB  | ✅ 构建成功，已嵌入自定义图标                                        |
+| `releases/classisland-plugin/<版本>/…cipx`     | ~88KB  | ✅ 全量编译通过（1 警告 0 错误），包内 DLL 哈希与 `bin/Release` 一致 |
 
 ### ClassIsland 插件
 
 ```bash
 pnpm build:classisland-plugin    # 编译（.NET 8，缓存与临时目录自动指到仓库内 .cache/）
-pnpm dist:classisland-plugin     # 打包 .cipx 并归集到 releases/classisland-plugin/
+pnpm dist:classisland-plugin     # 打包 .cipx 并归集到 releases/classisland-plugin/<版本>/
 pnpm verify:classisland-plugin   # 静态契约校验（不需要 .NET，不需要服务端）
 ```
 
