@@ -30,7 +30,8 @@ DEFAULT_LOG_DIR="/var/log/classhelper"
 DEFAULT_BACKUP_DIR="/var/backups/classhelper"
 REPO_SLUG="LoveChengke/ClassHelper"
 GITHUB_API="https://api.github.com/repos/${REPO_SLUG}"
-GITHUB_RELEASES_PAGE="https://github.com/${REPO_SLUG}/releases"
+GITHUB_REPO_URL="https://github.com/${REPO_SLUG}"
+GITHUB_RELEASES_PAGE="${GITHUB_REPO_URL}/releases"
 # GitHub 对没有 User-Agent 的请求直接 403
 HTTP_UA="ClassHelper-Ops"
 CURL_OPTS=(-fsSL --max-time 20 -H "User-Agent: ${HTTP_UA}")
@@ -1115,8 +1116,10 @@ resolve_download() { # $1=版本(可空) $2=url(可空)；输出下载地址
   if [ -n "$want" ]; then tag="v${want#v}"; else tag="$(github_latest_tag)" || true; fi
   [ -n "$tag" ] || return 1
   ver="${tag#v}"
+  # 用 GITHUB_REPO_URL（不含 /releases）拼接：GITHUB_RELEASES_PAGE 已以 /releases 结尾，
+  # 拼错就成了 .../releases/releases/download/... 必然 404（install.sh 里踩过同一个坑）。
   printf '%s/releases/download/%s/classhelper-server-linux-%s-%s.tar.gz' \
-    "$GITHUB_RELEASES_PAGE" "$tag" "$(asset_arch)" "$ver"
+    "$GITHUB_REPO_URL" "$tag" "$(asset_arch)" "$ver"
 }
 
 download_to() { # $1=url $2=目标文件

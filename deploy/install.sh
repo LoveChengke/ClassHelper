@@ -75,7 +75,8 @@ MYSQL_PASSWORD=""
 
 # 服务端安装包（默认取 GitHub Release 上的 Linux 资产）
 REPO_SLUG="LoveChengke/ClassHelper"
-GITHUB_RELEASES_PAGE="https://github.com/${REPO_SLUG}/releases"
+GITHUB_REPO_URL="https://github.com/${REPO_SLUG}"
+GITHUB_RELEASES_PAGE="${GITHUB_REPO_URL}/releases"
 PACKAGE_URL=""
 PACKAGE_SHA256=""
 VERSION=""
@@ -532,8 +533,10 @@ resolve_package_url() {
     fi
   fi
   ver="${tag#v}"
+  # 注意这里用 GITHUB_REPO_URL 而不是 GITHUB_RELEASES_PAGE：后者本身已经以 /releases 结尾，
+  # 再拼一次就变成 .../releases/releases/download/... （必然 404，实测踩到）。
   printf '%s/releases/download/%s/classhelper-server-linux-%s-%s.tar.gz' \
-    "$GITHUB_RELEASES_PAGE" "$tag" "$(asset_arch)" "$ver"
+    "$GITHUB_REPO_URL" "$tag" "$(asset_arch)" "$ver"
 }
 
 # 下载 + 校验 + 解压；结果放进全局 STAGE_DIR（不用命令替换取，否则会把日志一起捕获）
@@ -1154,8 +1157,23 @@ print_result() {
 main() {
   parse_args "$@"
 
+  # `--check` 与菜单里的"4) 只体检"是同一条路：都不需要 root、都不改动系统。
+  # 菜单必须出现在 root 检查**之前** —— 否则非 root 用户连菜单都看不到，只能靠 --check。
   if [ "$CHECK_ONLY" = "1" ]; then
     banner
+    check_only
+    exit $?
+  fi
+
+  banner
+  detect_os
+  info "系统：${OS_NAME:-未知}｜包管理器：${PKG:-未知}｜架构：$(uname -m)"
+  choose_mode_interactive
+
+  # 菜单里选了 4：到这里才分流。
+  # （原来这段判断写在菜单**之前**，从菜单选 4 时 CHECK_ONLY 设了也没人看 —— 实测踩到：
+  #   用户选"只体检"，脚本却直接开始安装。）
+  if [ "$CHECK_ONLY" = "1" ]; then
     check_only
     exit $?
   fi
@@ -1167,7 +1185,6 @@ main() {
     die "请用 root 执行：在刚才那条命令前面加 sudo（只体检不需要 root：末尾加 --check）"
   fi
 
-  banner
   mkdir -p "$LOG_DIR" && chmod 700 "$LOG_DIR"
   {
     printf '\n===== %s 安装开始 =====\n' "$(date '+%F %T')"
@@ -1176,10 +1193,6 @@ main() {
   # 后续输出同时进日志（tee 不占 stdin，交互问答照常）
   exec > >(tee -a "$LOG_FILE") 2>&1
 
-  detect_os
-  info "系统：${OS_NAME:-未知}｜包管理器：${PKG:-未知}｜架构：$(uname -m)"
-
-  choose_mode_interactive
   collect_answers
   # 把最终生效的选择打出来：非交互（--yes）或问答被跳过时，这一行是唯一能看出"到底按什么装的"地方
   info "本次安装：形态 ${MODE}｜目录 ${INSTALL_DIR}｜端口 ${PORT}｜数据库 ${DB_KIND}｜Node ${NODE_SOURCE}"
