@@ -348,7 +348,11 @@ PROMPT_FD=""
 open_prompt_fd() {
   if [ -n "$PROMPT_FD" ]; then return 0; fi
   if [ "${CLASSHELPER_NO_TTY:-0}" = "1" ]; then return 1; fi
-  if exec 3</dev/tty 2>/dev/null; then PROMPT_FD=3; return 0; fi
+  # 必须用 `<>`（读写）打开，不能只用 `<`（只读）：下面 read_prompt 要往 fd 3 **写**提示语，
+  # 而往只读 fd 写会 EBADF（"printf: write error: Bad file descriptor"），在 set -e 下
+  # 直接把安装脚本打死 —— 现象是"菜单打印完就默默退回 shell"，错误还被 tee 吞掉，极难查。
+  # 2026-10-05 在 Ubuntu 24.04 上实测踩到并定位。
+  if exec 3<>/dev/tty 2>/dev/null; then PROMPT_FD=3; return 0; fi
   return 1
 }
 
@@ -362,9 +366,13 @@ read_prompt() {
   local prompt="$1" var="$2" hidden="${3:-0}" value=""
   printf -v "$var" ''
   if open_prompt_fd; then
-    printf '%s' "$prompt" >&3
-    if [ "$hidden" = "1" ]; then IFS= read -r -s value <&3 || true; else IFS= read -r value <&3 || true; fi
-    printf '\n' >&3
+    # 提示语写不进去时**不能让它把脚本打死**：退化成"这一项用默认值"，并且把这件事说出来
+    if printf '%s' "$prompt" >&3 2>/dev/null; then
+      if [ "$hidden" = "1" ]; then IFS= read -r -s value <&3 || true; else IFS= read -r value <&3 || true; fi
+      printf '\n' >&3 2>/dev/null || true
+    else
+      fail_print "$(printf '%s[classhelper]%s 写不进终端（fd 3 不可写），这一项按默认值处理' "$C_YELLOW" "$C_RESET")"
+    fi
   fi
   # 刻意**不**退回 stdin：`curl … | bash` 时 stdin 就是脚本内容本身，
   # 从 stdin 读会把脚本的下一行当成用户输入吃掉，表现为"脚本后半段莫名其妙乱套"。

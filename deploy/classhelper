@@ -747,8 +747,10 @@ cmd_doctor() {
       "这是交叉构建的包（$(tr -d '\n' <"${INSTALL_DIR}/.cross-built" 2>/dev/null)）：Web 端「数据库一键切换」可能失败，其余功能正常；正式部署请用 GitHub Actions 出的包"
   fi
 
-  local avail; avail="$(df -Pk "$INSTALL_DIR" 2>/dev/null | awk 'NR==2 {print $4}')"
-  doctor_check "磁盘剩余 ≥1GB（$(human_size "${avail:-0}")）" "$([ "${avail:-0}" -ge 1048576 ] && echo 0 || echo 1)" "清理旧备份：classhelper backup list"
+  local avail_kb; avail_kb="$(df -Pk "$INSTALL_DIR" 2>/dev/null | awk 'NR==2 {print $4}')"
+  case "$avail_kb" in ''|*[!0-9]*) avail_kb=0 ;; esac
+  # df -Pk 给的是 1K 块，human_size 收的是字节 —— 不乘 1024 会把 25 GB 显示成 25 MB
+  doctor_check "磁盘剩余 ≥1GB（$(human_size "$((avail_kb * 1024))")）" "$([ "$avail_kb" -ge 1048576 ] && echo 0 || echo 1)" "清理旧备份：classhelper backup list"
 
   local newest="" backup_ok=1
   newest="$(ls -1t "$BACKUP_DIR" 2>/dev/null | grep -E '^[0-9]{8}-[0-9]{6}' | head -1)"
@@ -778,23 +780,32 @@ cmd_doctor() {
 # 也不进 shell history。
 open_tty() {
   [ "${CLASSHELPER_NO_TTY:-0}" = "1" ] && return 1
-  exec 3</dev/tty 2>/dev/null
+  # 必须用 `<>`（读写）：read_secret 既要往 fd 3 写提示语、又要从它读输入，
+  # 而只读打开的 fd 一写就 EBADF（"write error: Bad file descriptor"）——
+  # 在 set -e 下会让整个命令当场退出。install.sh 里踩过同一个坑（见那边的注释）。
+  exec 3<>/dev/tty 2>/dev/null
 }
 
 read_secret() { # $1=提示语 $2=目标变量名；读到 EOF 时把 READ_SECRET_EOF 置 1
   local prompt="$1" var="$2" value=''
   READ_SECRET_EOF=0
   if open_tty; then
-    printf '%s' "$prompt" >&3
-    if ! IFS= read -r -s value <&3; then READ_SECRET_EOF=1; fi
-    printf '\n' >&3
-    exec 3<&- || true
+    # 提示语写不进去（fd 3 不可写）时按"读不到输入"处理，交给调用方报错退出；
+    # 千万别让这行失败把命令打死 —— set -e 下它会让 `classhelper password` 毫无提示地退出。
+    if printf '%s' "$prompt" >&3 2>/dev/null; then
+      if ! IFS= read -r -s value <&3; then READ_SECRET_EOF=1; fi
+      printf '\n' >&3 2>/dev/null || true
+    else
+      READ_SECRET_EOF=1
+    fi
+    exec 3<&- 2>/dev/null || true
   else
     printf '%s' "$prompt" >&2
     if ! IFS= read -r -s value; then READ_SECRET_EOF=1; fi
     printf '\n' >&2
   fi
   printf -v "$var" '%s' "$value"
+  return 0
 }
 
 # 与服务端 tools/admin-cli.mjs 同一套强度规则（两处口径必须一致）
