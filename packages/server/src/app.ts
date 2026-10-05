@@ -6,6 +6,7 @@ import { env } from './config/env.js';
 import { pingDatabase } from './lib/db.js';
 import { sendOk } from './lib/http.js';
 import { logger } from './lib/logger.js';
+import { APP_VERSION } from './lib/version.js';
 import { mountWebAdmin, resolveWebDistDir } from './lib/web-static.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { apiRateLimiter, loginRateLimiter, requestLogger, securityHeaders } from './middleware/security.js';
@@ -37,7 +38,8 @@ async function healthHandler(_req: Request, res: Response): Promise<void> {
     res,
     {
       status: 'ok',
-      version: '1.0.0',
+      // 版本号取自 package.json（见 lib/version.ts）：更新检查要拿它跟 GitHub 上的 Release 比
+      version: APP_VERSION,
       env: env.nodeEnv,
       uptimeSeconds: Math.round(process.uptime()),
       database: {
@@ -68,7 +70,7 @@ function createRootHandler(webDistDir: string | null) {
         res,
         {
           service: 'class-helper-server',
-          version: '1.0.0',
+          version: APP_VERSION,
           environment: env.nodeEnv,
           apiPrefix: API_PREFIX,
           socket: '/socket.io',
@@ -115,7 +117,7 @@ function renderLandingPage(webAdminServed: boolean): string {
   <body>
     <div class="card">
       <h1>班级小助手 · 后端服务 <span class="ok">running</span></h1>
-      <p class="sub">版本 1.0.0 · 运行环境 ${env.nodeEnv} · 数据库 ${env.databaseProvider}</p>
+      <p class="sub">版本 ${APP_VERSION} · 运行环境 ${env.nodeEnv} · 数据库 ${env.databaseProvider}</p>
       <p class="sub">
         健康检查 <a href="${API_PREFIX}/health">${API_PREFIX}/health</a> ·
         存活 /healthz · 就绪 /readyz

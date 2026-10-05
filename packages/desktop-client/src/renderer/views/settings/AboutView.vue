@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { ElMessage } from 'element-plus';
+import type { UpdateInfo } from '@classhelper/shared';
 import type { DesktopAppInfo } from '../../../types/desktop.js';
 import { useAppStore } from '../../stores/app.js';
 
 /**
  * 关于（ClassIsland 同款折叠卡片式）：
- * 应用信息（版本/运行时/常用链接）→ 诊断信息（排查问题用）→ 鸣谢。
+ * 应用信息（版本/运行时/常用链接/检查更新）→ 诊断信息（排查问题用）→ 鸣谢。
  * 所有外链走主进程 openExternal（只放行 http/https，见 main/ipc.ts 的白名单）。
  */
 const appStore = useAppStore();
@@ -13,6 +15,10 @@ const appStore = useAppStore();
 const appInfo = ref<DesktopAppInfo | null>(null);
 /** 折叠面板默认展开第一项（应用信息），诊断信息默认收起 */
 const expandedNames = ref(['app']);
+
+/** 检查更新：结果由主进程直连 GitHub 得到（见 main/update.ts） */
+const checking = ref(false);
+const updateInfo = ref<UpdateInfo | null>(null);
 
 const PROJECT_URL = 'https://github.com/LoveChengke/ClassHelper';
 const ISSUES_URL = 'https://github.com/LoveChengke/ClassHelper/issues';
@@ -31,9 +37,34 @@ async function openExternal(url: string): Promise<void> {
   window.open(url, '_blank');
 }
 
+/**
+ * 检查更新。
+ *
+ * @param force true = 用户主动点击（绕过主进程缓存）；false = 进页面时带出启动自动检查的结果
+ */
+async function checkUpdate(force: boolean): Promise<void> {
+  if (!window.desktop?.checkForUpdates) return;
+  checking.value = true;
+  try {
+    updateInfo.value = await window.desktop.checkForUpdates(force);
+  } finally {
+    checking.value = false;
+  }
+}
+
+/** 忽略这个版本：写进配置，启动自动检查不再提示它 */
+async function ignoreVersion(): Promise<void> {
+  const version = updateInfo.value?.latestVersion;
+  if (!version) return;
+  await window.desktop?.ignoreUpdateVersion(version);
+  ElMessage.success(`已忽略 v${version} 的更新提示`);
+}
+
 onMounted(async () => {
   if (!window.desktop) return;
   appInfo.value = await window.desktop.getAppInfo().catch(() => null);
+  // 带出启动自动检查的结果（命中主进程缓存，不会再发一次请求）
+  void checkUpdate(false);
 });
 </script>
 
@@ -54,9 +85,7 @@ onMounted(async () => {
             <el-icon><School /></el-icon>
             {{ collapseItems[0].title }}
           </span>
-          <span class="about-extra">
-            班级小助手 v{{ appInfo?.appVersion ?? '-' }}
-          </span>
+          <span class="about-extra">班级小助手 v{{ appInfo?.appVersion ?? '-' }}</span>
         </template>
         <div class="about-section">
           <p class="about-copy">
@@ -77,6 +106,51 @@ onMounted(async () => {
             </el-descriptions-item>
             <el-descriptions-item label="平台">{{ appInfo?.platform ?? '-' }}</el-descriptions-item>
           </el-descriptions>
+
+          <!-- 检查更新：直连 GitHub 看最新的 Release 是不是比本机新 -->
+          <div class="about-update" data-test="update-check">
+            <div class="about-update-head">
+              <span class="about-update-label">检查更新</span>
+              <el-button
+                size="small"
+                :loading="checking"
+                data-test="update-check-button"
+                @click="checkUpdate(true)"
+              >
+                检查更新
+              </el-button>
+            </div>
+            <div class="about-update-body">
+              <template v-if="checking">正在检查…</template>
+              <template v-else-if="!updateInfo">尚未检查</template>
+              <template v-else-if="!updateInfo.ok">
+                <!-- 教室机器没有外网是常态，这里只是"查不到"，不是错误 -->
+                <span class="about-update-muted">{{ updateInfo.error ?? '暂时无法检查更新' }}</span>
+              </template>
+              <template v-else-if="updateInfo.hasUpdate">
+                <el-tag size="small" type="success" effect="light">
+                  发现新版本 v{{ updateInfo.latestVersion }}
+                </el-tag>
+                <span class="about-update-muted">当前 v{{ updateInfo.currentVersion }}</span>
+                <el-button
+                  link
+                  type="primary"
+                  size="small"
+                  data-test="update-download"
+                  @click="openExternal(updateInfo.releaseUrl)"
+                >
+                  前往下载
+                </el-button>
+                <el-button link size="small" @click="ignoreVersion">忽略此版本</el-button>
+              </template>
+              <template v-else>
+                <el-tag size="small" type="info" effect="plain">已是最新版本</el-tag>
+                <span class="about-update-muted">
+                  v{{ updateInfo.currentVersion }} · {{ updateInfo.latestVersion }}
+                </span>
+              </template>
+            </div>
+          </div>
         </div>
       </el-collapse-item>
 
@@ -115,9 +189,18 @@ onMounted(async () => {
         </template>
         <div class="about-section">
           <ul class="about-thanks">
-            <li><strong>ClassIsland</strong> —— 界面风格、设置页与「今天」时间轴的交互参考</li>
-            <li><strong>WinIsland</strong> —— 灵动岛的窗口形态与弹簧动画参考</li>
-            <li><strong>Vue / Element Plus / Prisma / Express / Socket.IO</strong> —— 本项目赖以构建的开源基石</li>
+            <li>
+              <strong>ClassIsland</strong>
+              —— 界面风格、设置页与「今天」时间轴的交互参考
+            </li>
+            <li>
+              <strong>WinIsland</strong>
+              —— 灵动岛的窗口形态与弹簧动画参考
+            </li>
+            <li>
+              <strong>Vue / Element Plus / Prisma / Express / Socket.IO</strong>
+              —— 本项目赖以构建的开源基石
+            </li>
           </ul>
         </div>
       </el-collapse-item>
@@ -163,6 +246,42 @@ onMounted(async () => {
   font-size: 12.5px;
   color: var(--ch-text-secondary);
   margin-right: 4px;
+}
+
+/* 检查更新：颜色一律走 --ch-* 变量（深色主题下不能写死浅色底/深色字） */
+.about-update {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ch-border);
+  border-radius: var(--ch-radius-card);
+  background: var(--ch-layer-alt);
+}
+
+.about-update-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.about-update-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ch-text-secondary);
+}
+
+.about-update-body {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--ch-text);
+}
+
+.about-update-muted {
+  color: var(--ch-text-tertiary);
 }
 
 .about-thanks {

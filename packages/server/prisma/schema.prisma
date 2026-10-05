@@ -4,7 +4,8 @@
 // 1) 本 schema 使用 sqlite provider（本地 MVP / 离线开发）。
 //    字段全部使用 String / Int / Float / Boolean / DateTime 等跨库通用类型，
 //    不使用 Prisma enum 与 @db.* 原生类型，因此可平移到 MySQL。
-//    MySQL 版本见同目录 schema.mysql.prisma，切换步骤见 docs/mysql.md。
+//    MySQL 复用这一份 schema（就地改写下面的 provider，见 `pnpm db:switch:mysql`），
+//    没有第二份 schema.mysql.prisma；切换步骤见 docs/mysql.md。
 // 2) 角色与优先级用 String 存储（'ADMIN' | 'TEACHER' | 'STUDENT'、
 //    'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'），在 API 层用 zod 校验，
 //    这样 SQLite / MySQL 行为完全一致。

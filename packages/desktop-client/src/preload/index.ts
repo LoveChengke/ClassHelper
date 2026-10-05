@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from '../main/ipc.js';
+import { UPDATE_AVAILABLE_CHANNEL } from '../main/update.js';
 import type {
   DesktopAppInfo,
   DesktopBridge,
@@ -7,7 +8,7 @@ import type {
   IslandClassStatePayload,
   IslandPushContext,
 } from '../types/desktop.js';
-import type { IslandNotification } from '@classhelper/shared';
+import type { IslandNotification, UpdateInfo } from '@classhelper/shared';
 
 /**
  * 预加载脚本：在开启了 contextIsolation + sandbox 的前提下，
@@ -36,6 +37,15 @@ const bridge: DesktopBridge = {
   clearConfig: (): Promise<DesktopStoredConfig> => ipcRenderer.invoke(IPC_CHANNELS.clearConfig),
   getAppInfo: (): Promise<DesktopAppInfo> => ipcRenderer.invoke(IPC_CHANNELS.appInfo),
   openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.openExternal, url),
+
+  /* 更新检查（主进程直连 GitHub，见 main/update.ts） */
+  checkForUpdates: (force = false): Promise<UpdateInfo> =>
+    ipcRenderer.invoke(IPC_CHANNELS.updateCheck, force),
+  ignoreUpdateVersion: (version: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.updateIgnore, version),
+  onUpdateAvailable: (handler: (info: UpdateInfo) => void): void => {
+    ipcRenderer.on(UPDATE_AVAILABLE_CHANNEL, (_event, info: UpdateInfo) => handler(info));
+  },
 
   islandPush: (payload: { notification: IslandNotification; context?: IslandPushContext }): void => {
     ipcRenderer.send('island:push', payload);

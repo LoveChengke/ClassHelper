@@ -1098,3 +1098,41 @@ export interface DatabaseSwitchStepDto {
   status: 'running' | 'done' | 'error';
   detail?: string;
 }
+
+/* ------------------------------------------------------------------ 更新检查 */
+
+/** Release 里的一个附件（安装包 / 便携版 / 插件包） */
+export interface UpdateAssetDto {
+  name: string;
+  downloadUrl: string;
+  size: number;
+}
+
+/**
+ * 更新检查结果（服务端 `GET /api/update/check` 与桌面客户端 IPC 共用同一结构）。
+ *
+ * 两点约定：
+ * 1. **`ok:false` 是正常结果，不是异常** —— 服务器没有外网、GitHub 限流、请求超时都会走到这里，
+ *    调用方按"暂时查不到"呈现即可（与 ClassIsland 推送失败只记日志是同一种处理思路）。
+ * 2. **`currentVersion` 由调用方各自提供**：服务端比的是服务端版本、客户端比的是客户端版本。
+ *    两边安装版本可能不同（例如教室机没跟着升级），所以不能由一端替另一端判断。
+ */
+export interface UpdateInfo {
+  ok: boolean;
+  /** 失败原因（给人看的一句话）；ok=true 时为 null */
+  error: string | null;
+  /** 本机版本 */
+  currentVersion: string;
+  /** GitHub 上最新 Release 的版本号；ok=false 时为 null */
+  latestVersion: string | null;
+  hasUpdate: boolean;
+  /** 给人看的 Release 页面地址（「前往下载」用） */
+  releaseUrl: string;
+  /** Release 标题 */
+  releaseName: string | null;
+  publishedAt: string | null;
+  /** Release 说明（Markdown 原文，由界面自行截断展示） */
+  notes: string | null;
+  assets: UpdateAssetDto[];
+  checkedAt: string;
+}

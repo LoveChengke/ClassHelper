@@ -42,6 +42,8 @@ interface PersistedConfig {
   theme?: 'light' | 'dark';
   /** 主侧边栏是否折叠（向后兼容：旧配置没有该字段视为展开） */
   sidebarCollapsed?: boolean;
+  /** 用户选择「忽略此版本」的版本号（向后兼容：旧配置没有该字段视为没忽略过任何版本） */
+  ignoredUpdateVersion?: string;
 }
 
 const DEFAULT_CONFIG: PersistedConfig = {
@@ -56,6 +58,7 @@ const DEFAULT_CONFIG: PersistedConfig = {
   onboardingDone: false,
   theme: 'light',
   sidebarCollapsed: false,
+  ignoredUpdateVersion: '',
 };
 
 /** 主题白名单：非法值一律回落浅色 */
@@ -179,7 +182,7 @@ function decryptToken(raw: PersistedConfig): string | null {
   }
 }
 
-function readPersisted(): PersistedConfig {
+function readPersistedFromDisk(): PersistedConfig {
   try {
     const content = fs.readFileSync(configFilePath(), 'utf8');
     const parsed = JSON.parse(content) as Partial<PersistedConfig>;
@@ -198,16 +201,125 @@ function readPersisted(): PersistedConfig {
       onboardingDone: parsed.onboardingDone === true,
       theme: normalizeTheme(parsed.theme),
       sidebarCollapsed: parsed.sidebarCollapsed === true,
+      ignoredUpdateVersion:
+        typeof parsed.ignoredUpdateVersion === 'string' ? parsed.ignoredUpdateVersion : '',
     };
   } catch {
     return { ...DEFAULT_CONFIG };
   }
 }
 
-function writePersisted(config: PersistedConfig): void {
-  const target = configFilePath();
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, JSON.stringify(config, null, 2), 'utf8');
+/* ------------------------------------------------------------ 内存缓存 + 异步合并写
+ *
+ * 为什么不能每次 saveConfig 都同步读写盘（原来的写法）：
+ * 侧栏折叠（`stores/ui.ts` 的 toggleSidebar）、主题切换、通知渠道、作业看板偏好、登录/登出
+ * 全都走 `saveConfig`，而它一次调用要做「readFileSync + JSON.parse + 8 个 normalize」**两遍**
+ * （开头读一遍、结尾 `getConfig()` 又读一遍）+ `writeFileSync` 一遍 + DPAPI 解密一遍，
+ * **全部同步跑在主进程主线程上**。主进程是 Electron 的消息泵进程，被它摁住的那一拍
+ * 渲染进程也跟着掉帧 —— 用户反馈的"点汉堡展开/收回侧栏时卡一下"就是这一拍。
+ *
+ * 现在：配置常驻内存（连已解密的 token 一起缓存），写盘改成**异步 + 合并** ——
+ * 同一拍内的多次改动只落最后一次，写入串行不会互相覆盖；退出前由 `flushConfigSync()` 兜底。
+ *
+ * **语义变化（有意为之）**：`saveConfig()` 返回时数据可能还没落盘（延迟 CONFIG_WRITE_DEBOUNCE_MS）。
+ * 正常退出（托盘 → 退出）会走 `flushConfigSync()`，不会丢最后一次改动；只有进程被强杀
+ * 才可能丢这最后 120ms 内的改动。
+ */
+
+/** 写入合并窗口：拖动同类控件（滑块/连续点击）时的连续改动只落最后一次 */
+const CONFIG_WRITE_DEBOUNCE_MS = 120;
+
+interface ConfigCache {
+  config: PersistedConfig;
+  /** 已解密的登录令牌（null = 未登录 / 解密失败）。缓存它是为了不再每次都走一遍 DPAPI */
+  token: string | null;
+}
+
+/**
+ * 内存配置。**必须懒初始化**：`main/index.ts` 会先 `app.setPath('userData', smokeProfile)`
+ * 把配置目录指到冒烟专用 profile，之后才第一次读配置；在模块顶层立即读盘会读错文件。
+ */
+let cache: ConfigCache | null = null;
+
+function loadCache(): ConfigCache {
+  if (cache) return cache;
+  const config = readPersistedFromDisk();
+  cache = { config, token: decryptToken(config) };
+  return cache;
+}
+
+/** 待写入的配置快照（合并窗口内只保留最后一次） */
+let pendingWrite: PersistedConfig | null = null;
+let writeTimer: ReturnType<typeof setTimeout> | null = null;
+/** 是否有一次异步写入正在进行（用它把写入串行化，避免两次写互相覆盖） */
+let writing = false;
+
+/** 排一次落盘。合并窗口内的多次调用只会写最后一次；`immediate` 用于不该被延迟的场景 */
+function scheduleWrite(config: PersistedConfig, immediate = false): void {
+  pendingWrite = config;
+  if (immediate) {
+    if (writeTimer !== null) {
+      clearTimeout(writeTimer);
+      writeTimer = null;
+    }
+    void flushConfigAsync();
+    return;
+  }
+  // 已有待写任务（定时器在跑或正在写）：内容已经记在 pendingWrite 里，等它自己收尾即可。
+  // 正在写的那次结束后会再检查一次 pendingWrite（见 flushConfigAsync 的 finally）。
+  if (writeTimer !== null || writing) return;
+  writeTimer = setTimeout(() => {
+    writeTimer = null;
+    void flushConfigAsync();
+  }, CONFIG_WRITE_DEBOUNCE_MS);
+}
+
+/** 异步落盘（不阻塞主进程消息泵）。失败只记日志 —— 与 readPersistedFromDisk 的容错口径一致 */
+async function flushConfigAsync(): Promise<void> {
+  if (writing) return;
+  const target = pendingWrite;
+  if (!target) return;
+  pendingWrite = null;
+  writing = true;
+  // 先把内容序列化下来：写入期间的后续改动由 pendingWrite 负责补一次，
+  // 不会出现"这一次写的是半新半旧的对象"
+  const payload = JSON.stringify(target, null, 2);
+  try {
+    const file = configFilePath();
+    await fs.promises.mkdir(path.dirname(file), { recursive: true });
+    await fs.promises.writeFile(file, payload, 'utf8');
+  } catch (error) {
+    logger.warn(`写入配置失败（${configFilePath()}）：${error instanceof Error ? error.message : error}`);
+  } finally {
+    writing = false;
+    // 写入期间又有改动：再写一次（内容已被 pendingWrite 合并成最后一次）
+    if (pendingWrite) void flushConfigAsync();
+  }
+}
+
+/**
+ * 退出前同步落地一次（`main/index.ts` 的 shutdownResources 调用）。
+ *
+ * 即使没有待写内容也把内存里的配置重写一遍：那一时刻可能正有一次异步写在进行中，
+ * 它未必来得及完成；退出时多写一次的代价可以忽略。
+ */
+export function flushConfigSync(): void {
+  if (writeTimer !== null) {
+    clearTimeout(writeTimer);
+    writeTimer = null;
+  }
+  const target = pendingWrite ?? cache?.config ?? null;
+  if (!target) return;
+  pendingWrite = null;
+  try {
+    const file = configFilePath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(target, null, 2), 'utf8');
+  } catch (error) {
+    logger.warn(
+      `退出前写入配置失败（${configFilePath()}）：${error instanceof Error ? error.message : error}`,
+    );
+  }
 }
 
 /**
@@ -229,13 +341,13 @@ function normalizeServerUrl(input: string): string | null {
   }
 }
 
-/** 读取配置（token 已解密），供渲染进程使用 */
-export function getConfig(): DesktopStoredConfig {
-  const persisted = readPersisted();
+/** 由内存缓存组装对渲染进程暴露的配置（不再读盘、不再解密） */
+function toDesktopConfig(state: ConfigCache): DesktopStoredConfig {
+  const persisted = state.config;
   return {
     serverUrl: persisted.serverUrl,
     username: persisted.username,
-    token: decryptToken(persisted),
+    token: state.token,
     island: normalizeIslandAppearance(persisted.island),
     homeworkBoard: normalizeHomeworkBoard(persisted.homeworkBoard),
     notificationChannel: normalizeNotificationChannel(persisted.notificationChannel),
@@ -243,12 +355,19 @@ export function getConfig(): DesktopStoredConfig {
     onboardingDone: persisted.onboardingDone === true,
     theme: normalizeTheme(persisted.theme),
     sidebarCollapsed: persisted.sidebarCollapsed === true,
+    ignoredUpdateVersion: persisted.ignoredUpdateVersion ?? '',
   };
+}
+
+/** 读取配置（token 已解密），供渲染进程使用 */
+export function getConfig(): DesktopStoredConfig {
+  return toDesktopConfig(loadCache());
 }
 
 /** 局部更新配置：只覆盖传入的字段 */
 export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredConfig {
-  const persisted = readPersisted();
+  const state = loadCache();
+  const persisted = state.config;
 
   if (typeof patch.serverUrl === 'string' && patch.serverUrl.trim()) {
     const normalized = normalizeServerUrl(patch.serverUrl);
@@ -284,20 +403,28 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
   if (patch.sidebarCollapsed !== undefined) {
     persisted.sidebarCollapsed = patch.sidebarCollapsed === true;
   }
+  // 空串是合法值（= 没有忽略任何版本），因此这里只判类型不判空
+  if (typeof patch.ignoredUpdateVersion === 'string') {
+    persisted.ignoredUpdateVersion = patch.ignoredUpdateVersion;
+  }
   if (patch.token !== undefined) {
     const encrypted = encryptToken(patch.token);
     persisted.token = encrypted.token;
     persisted.tokenEncrypted = encrypted.tokenEncrypted;
+    // 明文一并进缓存：既省掉一次 DPAPI 解密，也保证紧接着的 getConfig() 读到的就是刚存的令牌
+    state.token = patch.token;
   }
 
-  writePersisted(persisted);
-  return getConfig();
+  scheduleWrite(persisted);
+  return toDesktopConfig(state);
 }
 
-/** 清空为默认配置（退出登录 / 重置） */
+/** 清空为默认配置（退出登录 / 重置）。立即落盘：它对应退出登录，不该被合并窗口延迟 */
 export function clearConfig(): DesktopStoredConfig {
-  writePersisted({ ...DEFAULT_CONFIG });
-  return getConfig();
+  const state: ConfigCache = { config: { ...DEFAULT_CONFIG }, token: null };
+  cache = state;
+  scheduleWrite(state.config, true);
+  return toDesktopConfig(state);
 }
 
 export function getConfigPath(): string {

@@ -15,6 +15,7 @@ import {
   ISLAND_URGENT_SIZE,
 } from './island.js';
 import { destroyTray, getTrayState, isTrayReady } from './tray.js';
+import { checkForUpdates, wasStartupCheckSkipped } from './update.js';
 
 interface SmokeResult {
   name: string;
@@ -555,11 +556,26 @@ async function diagnoseClosingFlash(label: string, withTouch: boolean): Promise<
   );
   if (buttonPoint) {
     const bounds = win.getBounds();
-    island.setHitTestCursor({ x: Math.round(bounds.x + buttonPoint.x), y: Math.round(bounds.y + buttonPoint.y) });
+    island.setHitTestCursor({
+      x: Math.round(bounds.x + buttonPoint.x),
+      y: Math.round(bounds.y + buttonPoint.y),
+    });
     await sleep(160);
-    win.webContents.sendInputEvent({ type: 'mouseDown', x: buttonPoint.x, y: buttonPoint.y, button: 'left', clickCount: 1 });
+    win.webContents.sendInputEvent({
+      type: 'mouseDown',
+      x: buttonPoint.x,
+      y: buttonPoint.y,
+      button: 'left',
+      clickCount: 1,
+    });
     await sleep(40);
-    win.webContents.sendInputEvent({ type: 'mouseUp', x: buttonPoint.x, y: buttonPoint.y, button: 'left', clickCount: 1 });
+    win.webContents.sendInputEvent({
+      type: 'mouseUp',
+      x: buttonPoint.x,
+      y: buttonPoint.y,
+      button: 'left',
+      clickCount: 1,
+    });
   }
   const deadline = Date.now() + 1600;
   let index = 0;
@@ -581,14 +597,8 @@ async function diagnoseClosingFlash(label: string, withTouch: boolean): Promise<
       const crop = image.crop({
         x: Math.max(0, Math.round((geometry.window.x - pad) * shotScale)),
         y: Math.max(0, Math.round((geometry.window.y - pad) * shotScale)),
-        width: Math.min(
-          image.getSize().width,
-          Math.round((geometry.window.width + pad * 2) * shotScale),
-        ),
-        height: Math.min(
-          image.getSize().height,
-          Math.round((geometry.window.height + pad * 2) * shotScale),
-        ),
+        width: Math.min(image.getSize().width, Math.round((geometry.window.width + pad * 2) * shotScale)),
+        height: Math.min(image.getSize().height, Math.round((geometry.window.height + pad * 2) * shotScale)),
       });
       fs.writeFileSync(path.join(dir, `${label}-${String(index).padStart(2, '0')}.png`), crop.toPNG());
       lines.push(
@@ -2087,7 +2097,8 @@ async function runIslandChecks(
     let count = 0;
     for (let y = Math.max(0, fromY); y < Math.min(collapseShotSize.height, toY); y += 2) {
       for (let x = Math.max(0, fromX); x < Math.min(collapseShotSize.width, toX); x += 2) {
-        if (x >= cardBox.x && x <= cardBox.x + cardBox.w && y >= cardBox.y && y <= cardBox.y + cardBox.h) continue;
+        if (x >= cardBox.x && x <= cardBox.x + cardBox.w && y >= cardBox.y && y <= cardBox.y + cardBox.h)
+          continue;
         const index = (y * collapseShotSize.width + x) * 4;
         if (index + 3 >= bitmap.length) continue;
         const b = bitmap[index];
@@ -4348,6 +4359,46 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
        })()`,
     );
     record('关于页渲染（应用信息/诊断信息/鸣谢）', Boolean(aboutPage?.ok), String(aboutPage?.detail ?? ''));
+
+    // 更新检查（新功能回归）：主进程直连 GitHub 取最新 Release。
+    //
+    // **刻意不断言"一定有新版本"**：那会把冒烟绑死在外网可达上，而教室机器常常没有外网
+    // （`ok=false` 是设计内的降级结果，不是失败）。因此两种结果都算通过，验的是：
+    // 结构完整、失败时有可读原因、以及缓存真的生效。
+    const updateFirst = await checkForUpdates(true);
+    const isVersionLike = (value: unknown): boolean => typeof value === 'string' && /^\d/.test(value);
+    const updateShapeOk =
+      isVersionLike(updateFirst.currentVersion) &&
+      typeof updateFirst.ok === 'boolean' &&
+      typeof updateFirst.hasUpdate === 'boolean' &&
+      (updateFirst.ok
+        ? isVersionLike(updateFirst.latestVersion) &&
+          Array.isArray(updateFirst.assets) &&
+          /^https:\/\//.test(updateFirst.releaseUrl) &&
+          updateFirst.error === null
+        : typeof updateFirst.error === 'string' && updateFirst.error.length > 0);
+    record(
+      '更新检查返回结构正确（无外网时降级为 ok=false 且带原因）',
+      updateShapeOk,
+      `ok=${updateFirst.ok} 本机=${updateFirst.currentVersion} 最新=${updateFirst.latestVersion ?? '-'} ` +
+        `有新版本=${updateFirst.hasUpdate} 附件=${updateFirst.assets.length}` +
+        `${updateFirst.error ? ` 原因=${updateFirst.error}` : ''}`,
+    );
+
+    // 缓存：紧接着再查一次（不传 force）应命中缓存 —— checkedAt 不变即说明没有二次请求
+    const updateSecond = await checkForUpdates();
+    record(
+      '更新检查结果带缓存（不重复请求 GitHub）',
+      updateSecond.checkedAt === updateFirst.checkedAt,
+      `两次 checkedAt 相同=${updateSecond.checkedAt === updateFirst.checkedAt}`,
+    );
+
+    // 启动自动检查在冒烟模式下必须被跳过，否则每次验证都会产生一次真实网络请求与提示条
+    record(
+      '冒烟模式下跳过启动自动检查（验证不依赖外网）',
+      wasStartupCheckSkipped(),
+      `skipped=${wasStartupCheckSkipped()}`,
+    );
 
     // 未读红点必须挂在"通知"图标右上方（用户反馈：原来挂在文字后面，位置不对）
     const readBadgeGeometry = async (): Promise<{

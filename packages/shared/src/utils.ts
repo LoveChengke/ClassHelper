@@ -28,9 +28,7 @@ export function isDayKey(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const [year, month, day] = value.split('-').map(Number);
   const date = new Date(year, month - 1, day);
-  return (
-    date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
-  );
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
 }
 
 /** 在 YYYY-MM-DD 上加减天数（用于日期选择器的区间与"昨天/明天"） */
@@ -356,4 +354,66 @@ export function minutesUntil(time: string, now: Date = new Date()): number {
   const target = timeToMinutes(time);
   if (target < 0) return 0;
   return target - (now.getHours() * 60 + now.getMinutes());
+}
+
+/* ------------------------------------------------------------------ 版本比较（更新检查） */
+
+/**
+ * 版本号归一化：去掉首尾空白与前导的 `v` / `V`。
+ *
+ * 之所以需要：GitHub 的 tag 是 `v1.0.0`，而 package.json / `app.getVersion()` 给的是 `1.0.0`，
+ * 两边不归一化就没法比。三端共用这一个实现，避免"客户端说有新版、服务端说没有"。
+ */
+export function normalizeVersion(value: string | null | undefined): string {
+  return (value ?? '').trim().replace(/^[vV]/, '');
+}
+
+/**
+ * 比较两个版本号：`a` 比 `b` 新返回正数，旧返回负数，相同返回 0。
+ *
+ * 规则：
+ * 1. 按 `.` 分段比数字（每段只取开头的连续数字，因此 `1.0.0-fix` 的第三段仍是 `0`）；
+ * 2. 数字全部相同、只有后缀不同时，**带后缀的一方视为更新**。
+ *
+ * 第 2 条是为 `v0.1.0-fix` 这种"同一个版本号的修复发布"定的：按标准 semver，
+ * `0.1.0-fix` 是 `0.1.0` 的**预发布**（应当更旧），但本项目是拿它当"修完再补发一版"用的，
+ * 照 semver 判会让那条修复版永远提示不出来。另外 `/releases/latest` 本身会跳过预发布，
+ * 所以不用担心把 `-beta` 当成正式版。
+ */
+export function compareVersions(a: string | null | undefined, b: string | null | undefined): number {
+  const left = normalizeVersion(a);
+  const right = normalizeVersion(b);
+  if (left === right) return 0;
+
+  const parse = (value: string): { numbers: number[]; suffix: string } => {
+    const [core = '', ...rest] = value.split('-');
+    const numbers = core.split('.').map((part) => {
+      const matched = /^\d+/.exec(part.trim());
+      return matched ? Number(matched[0]) : 0;
+    });
+    return { numbers, suffix: rest.join('-') };
+  };
+
+  const l = parse(left);
+  const r = parse(right);
+  const length = Math.max(l.numbers.length, r.numbers.length);
+  for (let index = 0; index < length; index += 1) {
+    const diff = (l.numbers[index] ?? 0) - (r.numbers[index] ?? 0);
+    if (diff !== 0) return diff > 0 ? 1 : -1;
+  }
+
+  if (l.suffix === r.suffix) return 0;
+  // 数字相同时：裸版本更旧（1.0.0 < 1.0.0-fix），两个都有后缀才按字典序
+  if (!l.suffix) return -1;
+  if (!r.suffix) return 1;
+  return l.suffix.localeCompare(r.suffix);
+}
+
+/** `latest` 是否比 `current` 新（更新检查的判定入口；latest 为空一律视为"没有新版"） */
+export function isNewerVersion(
+  current: string | null | undefined,
+  latest: string | null | undefined,
+): boolean {
+  if (!normalizeVersion(latest)) return false;
+  return compareVersions(latest, current) > 0;
 }

@@ -1,6 +1,6 @@
 {
   "name": "class-helper",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "班级小助手 - 班级信息管理系统（Web 管理端 + 后端服务 + 桌面客户端）",
   "packageManager": "pnpm@11.8.0",
@@ -16,6 +16,7 @@
     "build": "pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build && pnpm --filter @classhelper/desktop-client build",
     "build:desktop": "pnpm build:shared && pnpm --filter @classhelper/desktop-client build",
     "build:classisland-plugin": "node packages/classisland-plugin/scripts/build.mjs",
+    "check:icons": "node scripts/check-icons.mjs",
     "typecheck": "pnpm build:shared && pnpm -r --no-bail typecheck",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -38,6 +39,7 @@
     "dist:win": "pnpm --filter @classhelper/desktop-client dist:win",
     "dist:dir": "pnpm --filter @classhelper/desktop-client dist:dir",
     "dist:server": "pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build && node scripts/dist-server.mjs",
+    "dist:server:linux": "pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build && node scripts/dist-server.mjs --platform linux",
     "dist:classisland-plugin": "node packages/classisland-plugin/scripts/build.mjs --cipx",
     "dist:all": "pnpm dist:server && pnpm dist:win && pnpm dist:classisland-plugin"
   },

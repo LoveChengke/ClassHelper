@@ -265,6 +265,72 @@ async function runAdminTeacherChecks(win) {
     Boolean(removed?.ok),
     `${removed?.ok ? `已删除 ${username}` : `原因=${removed?.reason ?? '-'}`}`,
   );
+
+  // 4) 更新检查：顶栏用户菜单 →「检查更新」→ 弹窗渲染出结果
+  //
+  // 只断言"入口可用 + 弹窗给出了结论"，**刻意不断言一定有新版本** ——
+  // 那会把用例绑死在外网可达上（机房服务器查不到 GitHub 是常态，"暂时无法检查更新"是设计内的结果）。
+  // 判据用弹窗内的文案（与本脚本其余用例一致）：data-test 打在 el-dialog / el-alert 上，
+  // 是否透传到根元素取决于组件实现，不如文案直接。
+  const updateCheck = await win.webContents.executeJavaScript(`(async () => {
+    const chip = document.querySelector('[data-tour="user-chip"]');
+    if (!chip) return { ok: false, reason: '顶栏找不到用户菜单' };
+    chip.click();
+
+    const menuDeadline = Date.now() + 5000;
+    let entry = null;
+    while (Date.now() < menuDeadline && !entry) {
+      entry = Array.from(document.querySelectorAll('.el-dropdown-menu__item')).find((node) =>
+        (node.textContent ?? '').includes('检查更新'),
+      );
+      if (!entry) await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+    if (!entry) return { ok: false, reason: '用户下拉菜单里没有「检查更新」' };
+    entry.click();
+
+    const findDialog = () =>
+      Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
+        (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('检查更新'),
+      );
+
+    const deadline = Date.now() + 25000;
+    let state = '';
+    while (Date.now() < deadline && !state) {
+      const dialog = findDialog();
+      const text = (dialog?.innerText ?? '').replace(/\\s+/g, ' ');
+      if (text.includes('发现新版本')) state = '发现新版本';
+      else if (text.includes('已是最新版本')) state = '已是最新版本';
+      else if (text.includes('暂时无法检查更新')) state = '暂时无法检查更新';
+      if (!state) await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+
+    // 收尾关闭，避免影响后续用例。Element Plus 关闭后 DOM 仍在（只把 .el-overlay 置成 display:none），
+    // 而且淡出有过渡 —— 所以要轮询等遮罩真的隐藏，不能点完 sleep 一下就看（会误报"没关上"）。
+    const dialog = findDialog();
+    const closeButton = Array.from(dialog?.querySelectorAll('.el-dialog__footer button') ?? []).find(
+      (node) => (node.textContent ?? '').trim() === '关闭',
+    );
+    closeButton?.click();
+
+    const closeDeadline = Date.now() + 5000;
+    let closed = false;
+    while (Date.now() < closeDeadline && !closed) {
+      const overlay = findDialog()?.closest('.el-overlay');
+      closed = !overlay || getComputedStyle(overlay).display === 'none';
+      if (!closed) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    return state
+      ? { ok: true, state, closed }
+      : { ok: false, reason: '弹窗 25 秒内没有渲染出结论' };
+  })()`);
+  record(
+    '更新检查（管理员入口）：顶栏菜单 → 弹窗给出结论并可关闭',
+    Boolean(updateCheck?.ok) && updateCheck?.closed !== false,
+    `结论=${updateCheck?.state ?? '-'} 已关闭=${updateCheck?.closed ?? '-'}${
+      updateCheck?.reason ? ` 原因=${updateCheck.reason}` : ''
+    }`,
+  );
 }
 
 async function main() {
@@ -742,6 +808,53 @@ async function main() {
     return true;
   })()`);
   await sleep(300);
+
+  // 7.66 成绩图表：内置 SVG/CSS 图表（替换 echarts 后的回归）
+  //      echarts 全量引入曾让 GradesView 分块有 1.1MB；换成两个自包含组件后
+  //      分块降到十几 KB。这里断言的是"真的画出来了"：柱子有实际高度、
+  //      折线有路径、数据点落在不同的纵坐标上（否则说明比例换算写错了）。
+  const gradeCharts = await win.webContents.executeJavaScript(`(() => {
+    const bar = document.querySelector('.bar-chart');
+    const line = document.querySelector('.line-chart');
+    if (!bar || !line) return { ok: false, reason: '成绩页没有渲染图表容器' };
+    const empty = Boolean(bar.querySelector('.bar-chart-empty'));
+    const heights = Array.from(bar.querySelectorAll('.bar')).map(
+      (node) => node.getBoundingClientRect().height,
+    );
+    const points = Array.from(line.querySelectorAll('.point'));
+    const tops = new Set(points.map((node) => Math.round(node.getBoundingClientRect().top)));
+    // 柱高比例要跟数据对上：最高的柱应接近绘图区高度，而不是全都贴地或全都顶格
+    const track = bar.querySelector('.bar-track')?.getBoundingClientRect().height ?? 0;
+    return {
+      ok: true,
+      empty,
+      barCount: heights.length,
+      drawnBars: heights.filter((h) => h > 0).length,
+      distinctHeights: new Set(heights.map((h) => Math.round(h))).size,
+      tallestRatio: track > 0 ? Number((Math.max(0, ...heights) / track).toFixed(2)) : 0,
+      linePaths: line.querySelectorAll('svg path').length,
+      pointCount: points.length,
+      distinctTops: tops.size,
+    };
+  })()`);
+  // 注意：某个等级人数为 0 时它的柱高本来就是 0（echarts 也一样），
+  // 所以判据是「至少画出一根、且柱高有区分度」，不是「每根都有高度」。
+  record(
+    '成绩图表为内置 SVG/CSS（柱子按数据出高度、折线有路径与数据点）',
+    Boolean(gradeCharts?.ok) &&
+      gradeCharts?.empty === false &&
+      gradeCharts?.barCount > 0 &&
+      gradeCharts?.drawnBars >= 1 &&
+      gradeCharts?.distinctHeights > 1 &&
+      gradeCharts?.tallestRatio > 0.3 &&
+      gradeCharts?.tallestRatio <= 1.01 &&
+      gradeCharts?.linePaths >= 1 &&
+      gradeCharts?.pointCount > 0 &&
+      gradeCharts?.distinctTops > 1,
+    `柱=${gradeCharts?.drawnBars}/${gradeCharts?.barCount}（高度种类=${gradeCharts?.distinctHeights} 最高占绘图区=${gradeCharts?.tallestRatio}）` +
+      ` 折线路径=${gradeCharts?.linePaths} 数据点=${gradeCharts?.pointCount} 纵坐标种类=${gradeCharts?.distinctTops}` +
+      `${gradeCharts?.reason ? ` 原因=${gradeCharts.reason}` : ''}`,
+  );
 
   // 7.7 ClassIsland 时间配置导入弹窗（班主任可见：粘贴 JSON → 解析预览 → 确认导入）
   // 7.7 ClassIsland 课程表导入弹窗（班主任可见：粘贴 JSON → 解析预览 → 单双周识别）

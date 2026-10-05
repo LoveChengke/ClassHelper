@@ -1,13 +1,13 @@
 {
   "name": "@classhelper/desktop-client",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "班级小助手 EXE 客户端（Electron + Vue 3 + Element Plus + Socket.IO + IndexedDB 离线缓存）",
   "author": "Class Helper",
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "build": "npm run build:main && npm run build:renderer && npm run check:secrets",
+    "build": "node ../../scripts/check-icons.mjs && npm run build:main && npm run build:renderer && npm run check:secrets",
     "build:main": "node scripts/build-main.mjs",
     "build:renderer": "vite build",
     "check:secrets": "node scripts/check-bundle-secrets.mjs",
@@ -21,7 +21,6 @@
     "@classhelper/shared": "workspace:*",
     "@element-plus/icons-vue": "^2.3.2",
     "axios": "^1.20.0",
-    "echarts": "^6.1.0",
     "element-plus": "^2.14.5",
     "pinia": "^4.0.3",
     "socket.io-client": "^4.8.3",

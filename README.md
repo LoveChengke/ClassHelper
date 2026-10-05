@@ -1,7 +1,7 @@
 # 班级小助手（Class Helper）
 
 班级信息管理系统。一个 pnpm monorepo，一份代码产出四个交付物：**后端服务**、**Web 管理端**（教师 / 管理员）、
-**桌面客户端**（学生端 / 教室机器）与 **ClassIsland 联动插件**（装在教室的 ClassIsland 上）。**当前版本 1.0.0**。
+**桌面客户端**（学生端 / 教室机器）与 **ClassIsland 联动插件**（装在教室的 ClassIsland 上）。**当前版本 1.1.0**。
 
 核心链路：
 
@@ -40,6 +40,7 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
   - [4.7 表格与 ClassIsland 导入](#47-表格与-classisland-导入)
   - [4.8 ClassIsland 联动](#48-classisland-联动)
   - [4.9 数据库管理](#49-数据库管理仅管理员)
+  - [4.10 更新检查](#410-更新检查)
 - [5. 技术参考](#5-技术参考)
   - [5.1 目录结构](#51-目录结构)
   - [5.2 技术栈](#52-技术栈)
@@ -75,6 +76,7 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 | 产物                            | 产物文件位置（打包后）                                               | 用途                                                                                      |
 | ------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | **服务端 + Web 管理端安装程序** | `release-server/班级小助手服务端-<版本>-x64-setup.exe`               | 装到教师电脑 / 校服务器即完整系统，**内置 Node 运行时**，双击安装、开机自启、自动建库建号 |
+| **服务端 Linux 安装包**         | `release-server/classhelper-server-linux-x64-<版本>.tar.gz`          | 给 `deploy/install.sh` 用（另见同名 `.sha256`）；由 Actions 在 Linux 上构建后挂 Release   |
 | **学生客户端安装程序**          | `packages/desktop-client/release/班级小助手-<版本>-x64-setup.exe`    | 学生机安装（NSIS）                                                                        |
 | **学生客户端单文件版**          | `packages/desktop-client/release/班级小助手-<版本>-x64-portable.exe` | 免安装直接运行（U 盘分发）                                                                |
 | Web 管理端（PWA）               | 由服务端在 `/` 直接托管                                              | 浏览器打开即用，可在 Edge/Chrome 中「安装为应用」；已适配手机小屏                         |
@@ -83,14 +85,15 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 > 这些产物**都不入库**（`release-server/`、`packages/*/release/`、`releases/` 均已忽略）。
 > 仓库约定是把它们归集到根目录 `releases/`（`client/`、`server/`、`classisland-plugin/`），详见 [AGENTS.md](AGENTS.md) §4。
 
-四种部署形态按场景选（完整步骤见 [docs/production.md](docs/production.md)）：
+四种部署形态按场景选（Linux 完整步骤见 [docs/linux-deploy.md](docs/linux-deploy.md)，
+其余见 [docs/production.md](docs/production.md)）：
 
-| 场景                                | 形态                                                        | 入口                                                                                   |
-| ----------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| 学校机房 / 教师电脑（Windows 单机） | Windows 服务端安装程序（内置 Node，双击即用）               | `release-server/班级小助手服务端-<版本>-x64-setup.exe`                                 |
-| 云服务器 / 多终端共享（推荐长期）   | Docker Compose + MySQL（另有 SQLite 单容器版）              | `deploy/Dockerfile`、`deploy/docker-compose{,.sqlite}.yml`                             |
-| 已有 Linux 服务器                   | systemd + SQLite 一键脚本（含 Nginx 反代与 WebSocket 配置） | `sudo bash deploy/install-linux.sh`（先 `--check` 体检）、`deploy/classhelper.service` |
-| 自定义 / 已有 Node 环境             | 手动部署免安装目录                                          | `pnpm dist:server` → `release-server/classhelper-server/`                              |
+| 场景                                | 形态                                                        | 入口                                                                                     |
+| ----------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| 学校机房 / 教师电脑（Windows 单机） | Windows 服务端安装程序（内置 Node，双击即用）               | `release-server/班级小助手服务端-<版本>-x64-setup.exe`                                   |
+| 云服务器 / 多终端共享（推荐长期）   | Docker Compose + MySQL（另有 SQLite 单容器版）              | `deploy/Dockerfile`、`deploy/docker-compose{,.sqlite}.yml`                               |
+| 已有 Linux 服务器                   | **一键安装器 + `classhelper` 运维命令**（systemd / docker） | `sudo bash deploy/install.sh`（先 `--check` 体检）；运维见 `classhelper help`            |
+| 自定义 / 已有 Node 环境             | 手动部署免安装目录                                          | `pnpm dist:server` → `release-server/classhelper-server/`                                |
 
 ## 3. 快速开始
 
@@ -320,16 +323,17 @@ Element Plus 也通过对齐它的 `--el-border-radius-*` 一并改造：
 | 课表 | 按周展示 7 列课表（周次下拉 + 单双周标签），另有「今天」时间轴视图（大时钟 + 当前状态卡 + 已结束 / 正在上 / 下一节）                                                       |
 | 作业 | **看板模式**（按科目卡片、全屏放大、显示时间开关、看板字号）＋列表模式、详情抽屉、附件链接（只接受 `http(s)://` 或站内相对路径）；教室设备可**录入作业**与勾选**未交名单** |
 | 通知 | 未读红点（侧边栏徽标）、优先级标签、点击自动标为已读、全部已读、未读过滤、详情抽屉                                                                                         |
-| 成绩 | 班级账号看到**全班成绩总览**：表格（分数 / 得分率 / 等级）+ ECharts 柱状图 + 等级分布 + 最近更新                                                                           |
+| 成绩 | 班级账号看到**全班成绩总览**：表格（分数 / 得分率 / 等级）+ 柱状图 + 等级分布 + 最近更新（图表为内置 HTML/SVG 实现，不引图表库）                                           |
 | 设置 | 六个子页：通用、外观、灵动岛、提醒、账号、关于（见下）                                                                                                                     |
 
 #### 设置改版：分组侧边栏 + 子页 + 深色模式 + 关于页
 
-**侧边栏（ClassIsland 同款 NavigationView）**：主侧边栏改为「学习」「设置」两个**可展开分组**
-（学习 = 课表 / 作业 / 通知 / 成绩；设置 = 通用 / 外观 / 灵动岛 / 提醒 / 账号 / 关于，每个子项是独立路由
-`/settings/*`）；顶部**汉堡按钮**把整栏折叠成 64px 图标栏（折叠状态持久化到主进程配置，重启仍记忆）。
-折叠态隐藏文字、图标与汉堡按钮同一竖列、菜单区可滚动（底部「第 N 周 / 最近同步」恒定可见）。
-红点徽标仍挂在「通知」项图标右上方。
+**侧边栏（ClassIsland 同款 NavigationView）**：主侧边栏是**四个一级项**（课表 / 作业 / 通知 / 成绩）
+加上一个**可展开分组**「设置」（通用 / 外观 / 灵动岛 / 提醒 / 账号 / 关于，每个子项是独立路由
+`/settings/*`）；顶部**汉堡按钮**把整栏收成 64px **图标导轨**（折叠状态持久化到主进程配置，重启仍记忆）。
+收放是连续的 CSS 过渡（栏宽 + 文字收放 + 图标位移，260ms），全程没有结构切换；导轨里文字淡出、
+分组子项与一级项都以图标列出、图标与汉堡按钮同一竖列，**整条导轨一眼看全、不出滚动条**
+（页脚在折叠态连高度一起收掉）。红点徽标仍挂在「通知」项图标右上方。
 
 **设置子页**：原单页设置按卡片拆为 6 个子页 —— 通用（服务器连接 + 离线缓存 + 作业录入短语 +「使用引导」）、
 外观、灵动岛、提醒、账号、关于；`/settings` 重定向到 `/settings/general`。
@@ -750,10 +754,47 @@ MySQL 的连接测试 / 建表 / 写入依赖随包内置的 `@prisma/adapter-ma
 >   （422，e2e 有断言）；PostgreSQL 暂未纳入。
 > - **切换完成后必须重启服务端**（安装版运行 `restart.cmd`，开发模式重跑 `pnpm dev:server`）才会连接新库；
 >   切换失败会自动回滚 `schema.prisma`，`.env` 只在数据全部迁移成功后才改写；**目标库必须为空**（有表即拒绝）。
-> - 安装包体积因此增大约 37MB（~34MB → ~71MB）：切换需要随包内置 prisma CLI 与 TypeScript 编译器
+> - 安装包体积因此增大（约 34MB → **62MB**）：切换需要随包内置 prisma CLI 与 TypeScript 编译器
 >   （Prisma 7 的生成器产出 .ts 源码，切换后要在目标机编译进 dist）。
+>   打包末尾会做一次**运行时裁剪**（删掉 Prisma 为其它数据库方言准备的查询编译器副本等死载荷，
+>   见 `scripts/dist-server.mjs` 的 `pruneRuntime()`），免安装目录 469MB → 335MB。
 > - 真实切换（SQLite→MySQL）已在本机用完整子进程链路实测（快照 728 行逐表一致）；e2e 只覆盖校验分支
 >   （同库 400 / 非法 provider 422 / 目标库非空拒绝），避免测试改写 `.env`。
+
+### 4.10 更新检查
+
+交付物是通过 **GitHub Releases** 分发的（服务端 / 客户端安装包、便携版、插件 `.cipx`），
+因此"有没有新版本"就是问那条 Release：拉 `releases/latest`（不含草稿与预发布）、
+把 `tag_name` 与本机版本比一下，比本机新就提示并给一个「前往下载」。
+
+| 端                  | 入口                                                            | 检查路径                                             |
+| ------------------- | --------------------------------------------------------------- | ---------------------------------------------------- |
+| 服务端 / Web 管理端 | 顶栏用户菜单 →「检查更新」                                      | 浏览器 **→ 服务端 `GET /api/update/check` → GitHub** |
+| 桌面客户端          | 启动后自动一次（延迟 5 秒）+「设置 → 关于」里的「检查更新」按钮 | 主进程 **→ GitHub**（不经后端）                      |
+
+两端的检查路径不同是**被约束逼出来的**，不是随手选的：
+
+- **Web 端不能直连 GitHub**。服务端下发的 CSP（`middleware/security.ts`）里 `connect-src`
+  只放行 `'self'` 与 WebSocket，浏览器发往 `api.github.com` 的请求会被直接拦掉。
+  走服务端转发还有个好处：所有管理员共享同一份缓存（GitHub 匿名限流是 60 次/小时/IP）。
+- **客户端在主进程做**。渲染进程的 CSP 与导航防线是安全模型里最要紧的一层，
+  不让它去连外部域名、解析外部 JSON；主进程本来就在做网络与文件。
+
+**"查不到"是设计内的结果，不是错误**：机房服务器与教室机器常常只有内网，请求会超时/失败。
+此时接口返回 `ok: false` + 一句人话（「无法连接 GitHub，本机可能没有外网」），
+界面按"暂时查不到更新"呈现并给重试入口，而不是弹红字报错。**失败结果同样进缓存**，
+否则断网时每点一次按钮都要白等一个超时。
+
+| 细节                 | 说明                                                                                                                                                                                                            |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 版本比较             | `@classhelper/shared` 的 `compareVersions` / `isNewerVersion`，三端共用一套口径（避免"客户端说有新版、服务端说没有"）。数字相同、只有后缀不同时**带后缀的算更新** —— 对应 `v0.1.0-fix` 这种"同版本号的修复发布" |
+| 缓存                 | 两端各缓存 30 分钟；`?force=1` 绕过服务端缓存，但**仅管理员生效**（否则任意登录用户都能刷爆匿名限流）                                                                                                           |
+| 权限                 | 任何已登录用户都能查（信息来自公开仓库）；`force` 除外                                                                                                                                                          |
+| 提示一次就够         | 客户端启动检查发现新版才推提示；点「忽略此版本」记进 `config.json`，同一版本不再提示（「关于」页仍可手动查）                                                                                                    |
+| 版本号单一来源       | 服务端版本由 `lib/version.ts` 读 package.json 得到（原先 `app.ts` 里硬编码了三处 `'1.0.0'`，与 5 份 package.json 一定会漂移）                                                                                   |
+| **自动化里不查外网** | 冒烟模式跳过启动自动检查；`verify:e2e` / `verify:desktop` / `verify:web` 的断言都只验"结构完整 + 能降级"，**不断言"一定有新版本"**（那会把用例绑死在外网可达上）                                                |
+
+只提示、不自动下载、不自动安装 —— 安装包仍由人从 Release 页取（`SHA256SUMS-<版本>.txt` 可核对）。
 
 ## 5. 技术参考
 
@@ -779,11 +820,18 @@ class-helper/
 │   ├── nsis/server-installer.nsi# 安装程序脚本模板（版本号由 dist-server 注入）
 │   └── ui-smoke/                # Web 管理端 UI 真实点击回归（Electron 驱动 + 上课时段探针）
 ├── deploy/                      # 生产部署：Dockerfile / docker-compose{,.sqlite}.yml / nginx.conf
-│   ├── install-linux.sh         # Linux 一键部署（systemd + SQLite，含 .env 生成与就绪探针）
-│   ├── classhelper.service      # systemd 单元模板（脚本会替换 __NODE__/__DIR__/__USER__）
+│   ├── install.sh               # Linux 一键安装器（TUI；native/docker 双形态；自带 --check 体检）
+│   ├── install-linux.sh         # 兼容壳：转发到 install.sh（旧命令仍可用）
+│   ├── classhelper              # 运维命令本体（装到 <安装目录>/bin，软链 /usr/local/bin/classhelper）
+│   ├── verify-linux.sh          # Linux 安装/改密/备份/升级/回滚验收（自统计 N/N 项）
+│   ├── tools/admin-cli.mjs      # 离线账号工具（改密、列账号、SQLite 一致性快照）
+│   ├── profile.d/ logrotate.d/ systemd/   # /etc 下的环境变量、日志轮转、定时备份模板
+│   ├── Dockerfile.linux-package # 安装包内那份 Dockerfile（--mode docker 用它构建镜像）
+│   ├── classhelper.service      # systemd 单元模板（替换 __NODE__/__DIR__/__USER__/__CONFIG__）
 │   ├── package.runtime.json     # 运行时依赖清单（安装包 / 容器 / Linux 部署共用）
 │   └── .env.example / .env.sqlite.example
 ├── docs/
+│   ├── linux-deploy.md          # Linux 部署与运维指南（安装/命令/升级回滚/备份/验收/安全清单）
 │   ├── production.md            # 生产部署指南（四种形态 + Linux systemd + 运维 + 安全清单）
 │   ├── mysql.md                 # MySQL 切换指南
 │   ├── winisland-design-tokens.md  # 灵动岛照 WinIsland 提取的设计 token
@@ -807,12 +855,13 @@ class-helper/
     │       ├── config/env.ts            # 环境变量校验（zod）+ 生产配置自检
     │       ├── lib/                     # access(RBAC) / class-account / session / db / db-bootstrap /
     │       │                            #   snapshot(全库 JSON 快照) / web-static / http / jwt / logger /
-    │       │                            #   mappers / password / schemas / term
+    │       │                            #   mappers / password / schemas / term / version(读 package.json)
     │       ├── tools/apply-snapshot.ts  # 跨库迁移的子进程入口（编译到 dist/tools/）
     │       ├── middleware/              # auth / error / validate / security(helmet+限流+耗时日志)
     │       ├── realtime/                # socket.ts + bus.ts（事件总线）
-    │       └── modules/                 # 14 个功能模块 + registry.ts（模块注册表）
-    │           └── database/            # 数据库管理（状态/备份/导入导出/定时/一键切换，仅管理员）
+    │       └── modules/                 # 15 个功能模块 + registry.ts（模块注册表）
+    │           ├── database/            # 数据库管理（状态/备份/导入导出/定时/一键切换，仅管理员）
+    │           └── update/              # 更新检查（查 GitHub 最新 Release，服务端唯一出网请求）
     ├── classisland-plugin/      # ClassIsland 联动插件（.NET 8 / C#，独立于 pnpm workspace）
     │   ├── manifest.yml                 # 清单（id / version / apiVersion / entranceAssembly）
     │   ├── src/Plugin.cs                # 入口（读配置 → 注册提醒提供方 / 设置页 / 联动服务）
@@ -852,7 +901,7 @@ class-helper/
 | 实时      | Socket.IO                                                            | 4.8                                                        |
 | 认证      | jsonwebtoken + bcryptjs                                              | 9.0 / 3.0                                                  |
 | 校验      | zod                                                                  | 4.6                                                        |
-| Web 端    | Vue + Vite + Element Plus + Pinia + Vue Router + Axios + ECharts     | 3.5 / 8.3 / 2.14 / 4.0 / 5.3 / 1.20 / 6.1                  |
+| Web 端    | Vue + Vite + Element Plus + Pinia + Vue Router + Axios               | 3.5 / 8.3 / 2.14 / 4.0 / 5.3 / 1.20                        |
 | 客户端    | Electron + Vue + Element Plus + Pinia + Socket.IO Client + IndexedDB | 44.3 / 3.5 / 2.14 / 4.0 / 4.8                              |
 | 插件      | .NET 8 / C# + Avalonia（ClassIsland 插件 API 2.0）                   | net8.0（本机 SDK 8.0.425）                                 |
 | 打包      | electron-builder（nsis / portable）+ NSIS                            | 26.15                                                      |
@@ -933,6 +982,7 @@ class-helper/
 | GET                         | `/integrations/classisland/pending`                           | **设备令牌**                 | 插件拉取尚未确认的提醒（离线期间老师发的通知，重连后补齐）                       |
 | POST                        | `/integrations/classisland/ack`                               | **设备令牌**                 | 插件确认提醒已弹出（确认后不再补发）                                             |
 | GET                         | `/integrations/classisland/class-plan`                        | **设备令牌**                 | 插件拉取本班课表（开启镜像时）用于写回 ClassIsland                               |
+| GET                         | `/update/check`                                               | 登录                         | 更新检查（服务端代查 GitHub 最新 Release；`?force=1` 绕过缓存仅管理员生效）      |
 | GET                         | `/health`                                                     | 公开                         | 健康检查（含版本号与已挂载模块）；另有 `/healthz` 存活与 `/readyz` 就绪探针      |
 
 ### 5.4 WebSocket 事件
@@ -1004,7 +1054,7 @@ class-helper/
 后端每个功能是一个独立目录，统一契约 `ApiModule = { name, basePath, router, enabled? }`：
 
 ```ts
-// packages/server/src/modules/registry.ts（当前 14 个模块）
+// packages/server/src/modules/registry.ts（当前 15 个模块）
 export const apiModules: ApiModule[] = [
   authModule,
   classesModule,
@@ -1020,6 +1070,7 @@ export const apiModules: ApiModule[] = [
   teachersModule,
   dashboardModule,
   databaseModule, // ← 数据库管理（仅管理员）
+  updateModule, // ← 更新检查（查 GitHub 最新 Release）
 ].filter((module) => module.enabled !== false);
 ```
 
@@ -1062,67 +1113,71 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 
 ### 6.1 验收标准对照
 
-| 验收项                                                        | 结果 | 证据                                                                                                                                                                                                                                                                                                                                                                                        |
-| ------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 教师 Web 端发布通知，学生端 5 秒内收到                        | ✅   | `verify:e2e`：`notification:new` 实测 30–50ms 到达（要求 < 5 秒）                                                                                                                                                                                                                                                                                                                           |
-| 教师发布作业，学生能查看并标记完成                            | ✅   | `homework:new` 实时到达，`PATCH /homeworks/:id/status` 200 且列表回显 `completed=true`                                                                                                                                                                                                                                                                                                      |
-| 教师录入成绩，学生能查看个人成绩                              | ✅   | `grade:updated` 实时到达，`/grades/my` 返回记录；批量录入与统计接口通过                                                                                                                                                                                                                                                                                                                     |
-| 学生能查看课表，支持按周切换                                  | ✅   | `/schedules/grid?week=1` 返回周视图条目，`week` 过滤 `weekStart ≤ week ≤ weekEnd`，单双周按第 1 周 = 单周过滤                                                                                                                                                                                                                                                                               |
-| 断网后客户端可查看缓存数据                                    | ✅   | 客户端冒烟：`断网时回退到本地缓存 → fromCache=true`；离线横幅 + 缓存统计页可用                                                                                                                                                                                                                                                                                                              |
-| 权限隔离：学生不能访问其他班级数据                            | ✅   | e2e 中 10 余项越权断言全部 403/401（学生跨班 / 跨班作业 / 跨班课表、教师跨班发布、未登录访问…）                                                                                                                                                                                                                                                                                             |
-| 上课时段发布紧急通知必须二次确认                              | ✅   | 服务端 409 `URGENT_DURING_CLASS`（`confirmDuringClass` 后 201）；Web 端全屏警告 + 3 秒倒计时                                                                                                                                                                                                                                                                                                |
-| 客户端灵动岛：上课隐藏 / 下课弹出 / 紧急立即展开              | ✅   | `verify:desktop` 状态断言 + 像素级截图（`docs/screenshots/island/`）                                                                                                                                                                                                                                                                                                                        |
-| 灵动岛：收回无「方框」闪烁 / 点击任意处收回                   | ✅   | 逐帧采样卡片尺寸恒定（窗口固定包围盒）+ 失焦自动收回                                                                                                                                                                                                                                                                                                                                        |
-| 灵动岛「标为已读」同步通知中心                                | ✅   | 真实链路：点击后 `read=false → true`、未读数减少                                                                                                                                                                                                                                                                                                                                            |
-| **多条通知展开为竖排列表**                                    | ✅   | `verify:desktop`：按重要程度排序、默认 3 行 + `展开更多（还有 N 条）`、卡片高度与 `islandListLayout()` 一致；放不下时提示 `更多请前往应用内操作`                                                                                                                                                                                                                                            |
-| **多条通知的整批操作**                                        | ✅   | `verify:desktop`：`知道了` 整批关闭且状态同步清空、窗口随后淡出隐藏；`标为已读` 经真实链路把两条通知都标为已读                                                                                                                                                                                                                                                                              |
-| **本机录入的作业不再上岛**                                    | ✅   | `verify:desktop`：按 id 与内容指纹双重判定，投递后灵动岛状态不变；别的作业照常上岛                                                                                                                                                                                                                                                                                                          |
-| 作业发布也上岛（「新作业」胶囊）                              | ✅   | `kind=homework` + 展开显示作业要求；**截止时间功能已下线**（接口不再返回 `dueAt`，e2e 有断言）                                                                                                                                                                                                                                                                                              |
-| **灵动岛收起后始终可再次打开**                                | ✅   | `verify:desktop`：收起后胶囊常驻、「收起态点击可再次展开」、「空闲细缝态保持可交互」                                                                                                                                                                                                                                                                                                        |
-| **触摸屏触摸灵动岛可展开（希沃白板）**                        | ⏳   | 触摸模式下窗口贴合岛体 + 始终接收输入；`verify:desktop` 断言「窗口 = 岛体 + 2×阴影留白、`interactive=true`、退出后恢复固定包围盒」。**真机（触摸屏）需人工复验**                                                                                                                                                                                                                            |
-| 叫人（老师点名，分紧急 / 普通两级）                           | ✅   | `verify:e2e` 8 项（普通 HIGH / 紧急 URGENT）+ `verify:desktop`「紧急叫人上课也立即展开」「普通叫人上课只进队列、下课弹出」                                                                                                                                                                                                                                                                  |
-| 成绩 / 名单表格导入（xlsx·xls·csv）                           | ✅   | 模板下载 + 预览映射 + 重复处理 + 行号级错误：`verify:e2e` 覆盖 20 余项，`verify:web` 弹窗实测                                                                                                                                                                                                                                                                                               |
-| ClassIsland 时间配置导入（覆盖 / 合并 / 回滚）                | ✅   | 合法 200、非法 400 `IMPORT_INVALID` 且原配置仍在、merge 覆盖与保留行为符合预期                                                                                                                                                                                                                                                                                                              |
-| 安装版覆盖升级自动补迁移                                      | ✅   | 真实旧库升级日志：`升级安装：已应用 N 个迁移文件，跳过 M 个已存在对象`，新表自动建好                                                                                                                                                                                                                                                                                                        |
-| 学生端主体 = 班级（班级码 + 班级密码登录）                    | ✅   | `verify:e2e` 班级账号 19 项：登录 / 错误密码 401 / 跨班 403 / 发布 403 / 班级码重复 400 / 密码重置 / 班级码用后还原                                                                                                                                                                                                                                                                         |
-| 班级设备代全班操作（已读 · 完成 · 成绩总览）                  | ✅   | 标记已读写入全班、教师端 `readCount` = 班级学生数、`completedCount` 一致、`/grades/my` 返回全班成绩                                                                                                                                                                                                                                                                                         |
-| 客户端只保留班级登录入口                                      | ✅   | `verify:desktop`：导航「成绩」标题变为「本班成绩」；个人学生登录 403                                                                                                                                                                                                                                                                                                                        |
-| **教师录入（仅管理员）**                                      | ✅   | `verify:e2e`：教师读 / 建教师 403、管理员建 201 → 编辑 → 重置密码（新密码 200 / 旧密码 401）→ 删除（有职责 409 / 无职责 200）；`verify:web`：管理员真人点「教师管理 → 新建教师 → 保存 → 列表出现 → 删除」                                                                                                                                                                                   |
-| **教师名单表格导入（仅管理员）**                              | ✅   | `verify:e2e`：教师预览 403、管理员预览 / 提交 200（`inserted=1`）、导入账号可登录；模板列＝用户名 / 姓名 / 初始密码 / 角色                                                                                                                                                                                                                                                                  |
-| **教师修改密码（管理员）**                                    | ✅   | 服务端 `POST /teachers/:id/reset-password` 收可选 `newPassword`，界面「修改密码」填了就设成填的值、留空才是默认初始密码（`123456`）。**学生没有账号，`POST /students/:id/reset-password` 已下线（404，e2e 有负断言）**                                                                                                                                                                      |
-| **客户端不提供改密入口（有意为之）**                          | ✅   | 按用户要求移除：防教室机器误改班级密码把其他机器锁在门外。`verify:desktop` 断言账号页「修改密码」按钮不存在、只有「退出登录」；班级密码由管理员在 Web 端维护                                                                                                                                                                                                                                |
-| **创建班级仅管理员 + 设置 / 更改班主任**                      | ✅   | `verify:e2e`：教师建班 403；管理员建班可带 `teacherId`、`PATCH /classes/:id/head-teacher` 落库生效；`verify:web`：教师直接访问 `/teachers` 被挡回仪表盘                                                                                                                                                                                                                                     |
-| **授课科目统一（18 科固定目录）**                             | ✅   | `verify:web`：新增课表的科目下拉出现「统一科目（选中后自动建课）」，选中 → 自动建课 → 写入课表成功（收尾删除该条课表）                                                                                                                                                                                                                                                                      |
-| **登录页无示例内容**                                          | ✅   | `verify:web`（管理端）与 `verify:desktop`（客户端）都断言登录页正文 / 占位符不含 `演示 / 示例 / admin123 / teacher123 / G101`                                                                                                                                                                                                                                                               |
-| **新手引导（首启弹出 + 随时重看）**                           | ✅   | Web 管理端：首次登录弹出 `el-tour` 聚焦引导，头像菜单「使用引导」重看（`verify:web`）；客户端：首启六步向导，登录页 / 设置页可重看（`verify:desktop`）                                                                                                                                                                                                                                      |
-| **客户端设置改版（分组侧栏 / 深色模式 / 关于页）**            | ✅   | `verify:desktop`：「侧边栏点击导航」适配「学习 / 设置」分组；「主题切换与侧边栏折叠（真实点击、写回配置）」——`html.dark` 翻转 + 折叠宽度 200→64 + 双双落盘；「关于页渲染」含 configPath                                                                                                                                                                                                     |
-| **数据库管理（仅管理员：状态 / 备份 / 导入导出 / 一键切换）** | ✅   | `verify:e2e` 13 项：状态与 14 表行数、教师全端点 403、连接测试（当前库可达 / 不可达 MySQL ok=false）、**Redis 主库 422**、切换校验分支（同库 400）、备份 → 快照导入 → 备份恢复 roundtrip（临时数据被清除）、定时配置校验、SQLite 文件下载；**切换子进程链路真机实测**：快照 728 行 → generate → db push → apply-snapshot 逐表一致；`verify:web`：数据库管理页（仅管理员）状态卡与备份表渲染 |
-| **其他页面发通知也会联动 ClassIsland**                        | ✅   | `verify:classisland`：「通知发布页发的通知也会推送」「叫人也会推送」；真机实测截图 [03-from-notify-page](docs/screenshots/classisland/03-from-notify-page.png)                                                                                                                                                                                                                              |
-| **作业按天查看（日期选择器 + 有作业日期高亮）**               | ✅   | `verify:e2e`：`assignDate` 默认服务器当天、`?date=` 只返回该天、`/homeworks/days` 返回有作业日期、非法日期 422                                                                                                                                                                                                                                                                              |
-| **支持在客户端录入作业（含自定义快捷短语）**                  | ✅   | `verify:e2e`：班级账号录入 201（归属班主任）、跨班 403；客户端录入弹窗 + 「设置 → 通用」管理短语                                                                                                                                                                                                                                                                                            |
-| **提醒弹在哪个端由客户端自行选择**                            | ✅   | 客户端「设置 → 提醒」三选一（`verify:desktop`：设置页真实点击 → 写回本地配置）；服务端按班级设置决定是否推送（`verify:classisland`：`client` 时通知与联动页下发都被跳过）                                                                                                                                                                                                                   |
-| **班级小助手能读取 ClassIsland 的课表**                       | ✅   | `verify:classisland`：插件上报课表 → 本班课表新增 / 更新（重复上报幂等）、节次时间写入、设备状态快照可在 Web 端展示；`verify:web`：教师在「ClassIsland 联动」页真实签发设备令牌                                                                                                                                                                                                             |
-| **用户可选择通知是否在 ClassIsland 上显示**                   | ✅   | 插件设置页开关「接收班级小助手提醒」（本机总闸）+ Web 端「下发提醒」（标题 / 内容 / 时长 / 优先级 / 语音朗读 / 是否同步通知中心）；`verify:classisland`：提醒落库 → 待提醒 → 回执 → 确认后不补发                                                                                                                                                                                            |
-| 能成功打包 Windows EXE                                        | ✅   | `-x64-setup.exe` / `-x64-portable.exe` / `win-unpacked/*.exe`（见 [7. 打包与交付](#7-打包与交付)）                                                                                                                                                                                                                                                                                          |
-| 提供完整 README（启动、构建、打包、默认账号）                 | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、数据库、打包与常见问题                                                                                                                                                                                                                                                                                                              |
+| 验收项                                                        | 结果 | 证据                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 教师 Web 端发布通知，学生端 5 秒内收到                        | ✅   | `verify:e2e`：`notification:new` 实测 30–50ms 到达（要求 < 5 秒）                                                                                                                                                                                                                                                                                                                                                                                     |
+| 教师发布作业，学生能查看并标记完成                            | ✅   | `homework:new` 实时到达，`PATCH /homeworks/:id/status` 200 且列表回显 `completed=true`                                                                                                                                                                                                                                                                                                                                                                |
+| 教师录入成绩，学生能查看个人成绩                              | ✅   | `grade:updated` 实时到达，`/grades/my` 返回记录；批量录入与统计接口通过                                                                                                                                                                                                                                                                                                                                                                               |
+| 学生能查看课表，支持按周切换                                  | ✅   | `/schedules/grid?week=1` 返回周视图条目，`week` 过滤 `weekStart ≤ week ≤ weekEnd`，单双周按第 1 周 = 单周过滤                                                                                                                                                                                                                                                                                                                                         |
+| 断网后客户端可查看缓存数据                                    | ✅   | 客户端冒烟：`断网时回退到本地缓存 → fromCache=true`；离线横幅 + 缓存统计页可用                                                                                                                                                                                                                                                                                                                                                                        |
+| 权限隔离：学生不能访问其他班级数据                            | ✅   | e2e 中 10 余项越权断言全部 403/401（学生跨班 / 跨班作业 / 跨班课表、教师跨班发布、未登录访问…）                                                                                                                                                                                                                                                                                                                                                       |
+| 上课时段发布紧急通知必须二次确认                              | ✅   | 服务端 409 `URGENT_DURING_CLASS`（`confirmDuringClass` 后 201）；Web 端全屏警告 + 3 秒倒计时                                                                                                                                                                                                                                                                                                                                                          |
+| 客户端灵动岛：上课隐藏 / 下课弹出 / 紧急立即展开              | ✅   | `verify:desktop` 状态断言 + 像素级截图（`docs/screenshots/island/`）                                                                                                                                                                                                                                                                                                                                                                                  |
+| 灵动岛：收回无「方框」闪烁 / 点击任意处收回                   | ✅   | 逐帧采样卡片尺寸恒定（窗口固定包围盒）+ 失焦自动收回                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 灵动岛「标为已读」同步通知中心                                | ✅   | 真实链路：点击后 `read=false → true`、未读数减少                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **多条通知展开为竖排列表**                                    | ✅   | `verify:desktop`：按重要程度排序、默认 3 行 + `展开更多（还有 N 条）`、卡片高度与 `islandListLayout()` 一致；放不下时提示 `更多请前往应用内操作`                                                                                                                                                                                                                                                                                                      |
+| **多条通知的整批操作**                                        | ✅   | `verify:desktop`：`知道了` 整批关闭且状态同步清空、窗口随后淡出隐藏；`标为已读` 经真实链路把两条通知都标为已读                                                                                                                                                                                                                                                                                                                                        |
+| **本机录入的作业不再上岛**                                    | ✅   | `verify:desktop`：按 id 与内容指纹双重判定，投递后灵动岛状态不变；别的作业照常上岛                                                                                                                                                                                                                                                                                                                                                                    |
+| 作业发布也上岛（「新作业」胶囊）                              | ✅   | `kind=homework` + 展开显示作业要求；**截止时间功能已下线**（接口不再返回 `dueAt`，e2e 有断言）                                                                                                                                                                                                                                                                                                                                                        |
+| **灵动岛收起后始终可再次打开**                                | ✅   | `verify:desktop`：收起后胶囊常驻、「收起态点击可再次展开」、「空闲细缝态保持可交互」                                                                                                                                                                                                                                                                                                                                                                  |
+| **触摸屏触摸灵动岛可展开（希沃白板）**                        | ⏳   | 触摸模式下窗口贴合岛体 + 始终接收输入；`verify:desktop` 断言「窗口 = 岛体 + 2×阴影留白、`interactive=true`、退出后恢复固定包围盒」。**真机（触摸屏）需人工复验**                                                                                                                                                                                                                                                                                      |
+| 叫人（老师点名，分紧急 / 普通两级）                           | ✅   | `verify:e2e` 8 项（普通 HIGH / 紧急 URGENT）+ `verify:desktop`「紧急叫人上课也立即展开」「普通叫人上课只进队列、下课弹出」                                                                                                                                                                                                                                                                                                                            |
+| 成绩 / 名单表格导入（xlsx·xls·csv）                           | ✅   | 模板下载 + 预览映射 + 重复处理 + 行号级错误：`verify:e2e` 覆盖 20 余项，`verify:web` 弹窗实测                                                                                                                                                                                                                                                                                                                                                         |
+| ClassIsland 时间配置导入（覆盖 / 合并 / 回滚）                | ✅   | 合法 200、非法 400 `IMPORT_INVALID` 且原配置仍在、merge 覆盖与保留行为符合预期                                                                                                                                                                                                                                                                                                                                                                        |
+| 安装版覆盖升级自动补迁移                                      | ✅   | 真实旧库升级日志：`升级安装：已应用 N 个迁移文件，跳过 M 个已存在对象`，新表自动建好                                                                                                                                                                                                                                                                                                                                                                  |
+| 学生端主体 = 班级（班级码 + 班级密码登录）                    | ✅   | `verify:e2e` 班级账号 19 项：登录 / 错误密码 401 / 跨班 403 / 发布 403 / 班级码重复 400 / 密码重置 / 班级码用后还原                                                                                                                                                                                                                                                                                                                                   |
+| 班级设备代全班操作（已读 · 完成 · 成绩总览）                  | ✅   | 标记已读写入全班、教师端 `readCount` = 班级学生数、`completedCount` 一致、`/grades/my` 返回全班成绩                                                                                                                                                                                                                                                                                                                                                   |
+| 客户端只保留班级登录入口                                      | ✅   | `verify:desktop`：导航「成绩」标题变为「本班成绩」；个人学生登录 403                                                                                                                                                                                                                                                                                                                                                                                  |
+| **教师录入（仅管理员）**                                      | ✅   | `verify:e2e`：教师读 / 建教师 403、管理员建 201 → 编辑 → 重置密码（新密码 200 / 旧密码 401）→ 删除（有职责 409 / 无职责 200）；`verify:web`：管理员真人点「教师管理 → 新建教师 → 保存 → 列表出现 → 删除」                                                                                                                                                                                                                                             |
+| **教师名单表格导入（仅管理员）**                              | ✅   | `verify:e2e`：教师预览 403、管理员预览 / 提交 200（`inserted=1`）、导入账号可登录；模板列＝用户名 / 姓名 / 初始密码 / 角色                                                                                                                                                                                                                                                                                                                            |
+| **教师修改密码（管理员）**                                    | ✅   | 服务端 `POST /teachers/:id/reset-password` 收可选 `newPassword`，界面「修改密码」填了就设成填的值、留空才是默认初始密码（`123456`）。**学生没有账号，`POST /students/:id/reset-password` 已下线（404，e2e 有负断言）**                                                                                                                                                                                                                                |
+| **客户端不提供改密入口（有意为之）**                          | ✅   | 按用户要求移除：防教室机器误改班级密码把其他机器锁在门外。`verify:desktop` 断言账号页「修改密码」按钮不存在、只有「退出登录」；班级密码由管理员在 Web 端维护                                                                                                                                                                                                                                                                                          |
+| **创建班级仅管理员 + 设置 / 更改班主任**                      | ✅   | `verify:e2e`：教师建班 403；管理员建班可带 `teacherId`、`PATCH /classes/:id/head-teacher` 落库生效；`verify:web`：教师直接访问 `/teachers` 被挡回仪表盘                                                                                                                                                                                                                                                                                               |
+| **授课科目统一（18 科固定目录）**                             | ✅   | `verify:web`：新增课表的科目下拉出现「统一科目（选中后自动建课）」，选中 → 自动建课 → 写入课表成功（收尾删除该条课表）                                                                                                                                                                                                                                                                                                                                |
+| **登录页无示例内容**                                          | ✅   | `verify:web`（管理端）与 `verify:desktop`（客户端）都断言登录页正文 / 占位符不含 `演示 / 示例 / admin123 / teacher123 / G101`                                                                                                                                                                                                                                                                                                                         |
+| **新手引导（首启弹出 + 随时重看）**                           | ✅   | Web 管理端：首次登录弹出 `el-tour` 聚焦引导，头像菜单「使用引导」重看（`verify:web`）；客户端：首启六步向导，登录页 / 设置页可重看（`verify:desktop`）                                                                                                                                                                                                                                                                                                |
+| **客户端设置改版（分组侧栏 / 深色模式 / 关于页）**            | ✅   | `verify:desktop`：「侧边栏点击导航」适配「学习 / 设置」分组；「主题切换与侧边栏折叠（真实点击、写回配置）」——`html.dark` 翻转 + 折叠宽度 200→64 + 双双落盘；「关于页渲染」含 configPath                                                                                                                                                                                                                                                               |
+| **数据库管理（仅管理员：状态 / 备份 / 导入导出 / 一键切换）** | ✅   | `verify:e2e` 13 项：状态与 14 表行数、教师全端点 403、连接测试（当前库可达 / 不可达 MySQL ok=false）、**Redis 主库 422**、切换校验分支（同库 400）、备份 → 快照导入 → 备份恢复 roundtrip（临时数据被清除）、定时配置校验、SQLite 文件下载；**切换子进程链路真机实测**：快照 728 行 → generate → db push → apply-snapshot 逐表一致；`verify:web`：数据库管理页（仅管理员）状态卡与备份表渲染                                                           |
+| **更新检查（服务端 / Web 端 / 客户端）**                      | ✅   | `verify:e2e` 4 项：未登录 401、管理员结构完整且本机版本取自 package.json、教师可查但 `force` 仅管理员生效、健康检查暴露版本号与 15 个模块；`verify:desktop` 4 项：IPC 返回结构正确（无外网时降级 `ok=false` 且带原因）、结果带缓存、冒烟模式跳过启动自动检查、关于页出现「检查更新」；`verify:web`：「顶栏用户菜单 → 弹窗给出结论并可关闭」。**真机联网实测**：`GET /api/update/check` → `ok=true`、`latestVersion=1.0.0`、5 个附件、更新说明 1358 字 |
+| **其他页面发通知也会联动 ClassIsland**                        | ✅   | `verify:classisland`：「通知发布页发的通知也会推送」「叫人也会推送」；真机实测截图 [03-from-notify-page](docs/screenshots/classisland/03-from-notify-page.png)                                                                                                                                                                                                                                                                                        |
+| **作业按天查看（日期选择器 + 有作业日期高亮）**               | ✅   | `verify:e2e`：`assignDate` 默认服务器当天、`?date=` 只返回该天、`/homeworks/days` 返回有作业日期、非法日期 422                                                                                                                                                                                                                                                                                                                                        |
+| **支持在客户端录入作业（含自定义快捷短语）**                  | ✅   | `verify:e2e`：班级账号录入 201（归属班主任）、跨班 403；客户端录入弹窗 + 「设置 → 通用」管理短语                                                                                                                                                                                                                                                                                                                                                      |
+| **提醒弹在哪个端由客户端自行选择**                            | ✅   | 客户端「设置 → 提醒」三选一（`verify:desktop`：设置页真实点击 → 写回本地配置）；服务端按班级设置决定是否推送（`verify:classisland`：`client` 时通知与联动页下发都被跳过）                                                                                                                                                                                                                                                                             |
+| **班级小助手能读取 ClassIsland 的课表**                       | ✅   | `verify:classisland`：插件上报课表 → 本班课表新增 / 更新（重复上报幂等）、节次时间写入、设备状态快照可在 Web 端展示；`verify:web`：教师在「ClassIsland 联动」页真实签发设备令牌                                                                                                                                                                                                                                                                       |
+| **用户可选择通知是否在 ClassIsland 上显示**                   | ✅   | 插件设置页开关「接收班级小助手提醒」（本机总闸）+ Web 端「下发提醒」（标题 / 内容 / 时长 / 优先级 / 语音朗读 / 是否同步通知中心）；`verify:classisland`：提醒落库 → 待提醒 → 回执 → 确认后不补发                                                                                                                                                                                                                                                      |
+| 能成功打包 Windows EXE                                        | ✅   | `-x64-setup.exe` / `-x64-portable.exe` / `win-unpacked/*.exe`（见 [7. 打包与交付](#7-打包与交付)）                                                                                                                                                                                                                                                                                                                                                    |
+| 提供完整 README（启动、构建、打包、默认账号）                 | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、数据库、打包与常见问题                                                                                                                                                                                                                                                                                                                                                                        |
 
 ### 6.2 最近一次实测
 
-| 验证                                                                              | 结果                                                                                    |
-| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `pnpm verify:e2e`（后端 + 实时 + RBAC + 上课时段 + 导入 + 班级账号 + 数据库管理） | **186/186** ✅（2026-10-02 实测）                                                       |
-| `pnpm verify:desktop`（客户端冒烟，不弹窗）                                       | **99/102**（2026-10-02 实测；3 项为上课时段下的时序相关用例，见下）                     |
-| `pnpm verify:web`（Web 管理端真实点击回归）                                       | **30/31**（2026-10-02 实测；未过的 1 项是既有脆弱用例「课表科目为全校统一目录」，见下） |
-| `pnpm verify:classisland`（设备令牌 / 上报 / 提醒下发与回执 / 镜像契约）          | **42/42** ✅                                                                            |
-| `pnpm verify:classisland-plugin`（插件静态契约）                                  | **68/68** ✅                                                                            |
-| `pnpm typecheck` / `pnpm lint`                                                    | 全过 ✅（lint 0 error，1 条既有 warning）                                               |
-| `pnpm build:desktop`（含产物凭据门禁 `check-bundle-secrets`）                     | 通过 ✅（60 个产物文件里无种子凭据字面量）                                              |
-| 插件 `dotnet` 编译（`pnpm build:classisland-plugin`）                             | 0 错误 ✅（1 条预期内的 Avalonia `AVLN3001` 警告）                                      |
-| 数据库切换子进程链路（快照 → generate → db push → 写入目标库）                    | ✅ 实测：728 行逐表一致（users / schedules / grades 抽查一致）                          |
-| `pnpm dist:server`（服务端安装包 + Web 端）                                       | ✅ 打出 ~71MB 安装程序（体积增大是因随包内置切换链路所需的 prisma CLI 与 tsc）          |
-| 安装程序完整生命周期（静默安装 → 启动 → 卸载）                                    | 通过 ✅（安装到 `%LOCALAPPDATA%\Programs`，卸载干净）                                   |
-| 便捷版（单文件）解包启动                                                          | 通过 ✅（wrapper + 多个进程，主窗口正常）                                               |
-| Docker / Nginx 部署样例                                                           | 文件已提供（含 Linux systemd 脚本），本机无 Docker / Linux 未实测 ⚠️                    |
+| 验证                                                                                         | 结果                                                                                         |
+| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `pnpm verify:e2e`（后端 + 实时 + RBAC + 上课时段 + 导入 + 班级账号 + 数据库管理 + 更新检查） | **190/190** ✅（2026-10-05 实测）                                                            |
+| `pnpm verify:desktop`（客户端冒烟，不弹窗）                                                  | **105/105** ✅（在线轮）+ **89/89** ✅（二次启动轮），0 失败（2026-10-05 实测）              |
+| `pnpm verify:web`（Web 管理端真实点击回归）                                                  | **32/33**（2026-10-05 实测；未过的 1 项是既有脆弱用例「课表科目为全校统一目录」，见下）      |
+| `pnpm verify:classisland`（设备令牌 / 上报 / 提醒下发与回执 / 镜像契约）                     | **42/42** ✅（2026-10-05 实测）                                                              |
+| `pnpm verify:classisland-plugin`（插件静态契约）                                             | **68/68** ✅                                                                                 |
+| `pnpm typecheck` / `pnpm lint` / `pnpm check:icons`                                          | 全过 ✅（lint 0 error **0 warning**）                                                        |
+| `pnpm build:desktop`（含产物凭据门禁 `check-bundle-secrets`）                                | 通过 ✅（61 个产物文件里无种子凭据字面量）                                                   |
+| `pnpm verify:packaged --exe …`（对打包副本复验）                                             | **105/105** ✅ + **89/89** ✅（2026-10-05 实测，0 失败）                                     |
+| 裁剪后的服务端运行时（起服务 → 登录查表 → `prisma generate` → `tsc` → `db push`）            | 通过 ✅（2026-10-05 实测，建出 14 张表；详见 AGENTS.md §8）                                  |
+| 插件 `dotnet` 编译（`pnpm build:classisland-plugin`）                                        | 0 错误 ✅（1 条预期内的 Avalonia `AVLN3001` 警告）                                           |
+| 数据库切换子进程链路（快照 → generate → db push → 写入目标库）                               | ✅ 实测：728 行逐表一致（users / schedules / grades 抽查一致）                               |
+| `pnpm dist:server`（服务端安装包 + Web 端）                                                  | ✅ 打出 ~62MB 安装程序（随包内置切换链路所需的 prisma CLI 与 tsc，并在打包末尾做运行时裁剪） |
+| 安装程序完整生命周期（静默安装 → 启动 → 卸载）                                               | 通过 ✅（安装到 `%LOCALAPPDATA%\Programs`，卸载干净）                                        |
+| 便捷版（单文件）解包启动                                                                     | 通过 ✅（wrapper + 多个进程，主窗口正常）                                                    |
+| Docker / Nginx 部署样例                                                                      | 文件已提供；本机无 Docker 未实测 ⚠️                                                         |
+| Linux 一键安装 + `classhelper` 运维命令（`deploy/install.sh` / `deploy/classhelper` / `pnpm dist:server:linux`） | 脚本与文档已交付，本地静态检查通过（`bash -n`、ESLint 0 error）；**Linux 实机验收待做** ⚠️（清单见 [linux-deploy.md](docs/linux-deploy.md) §10，`deploy/verify-linux.sh` 可自动跑） |
 
 ### 6.3 已知的时序 / 环境相关用例
 
@@ -1147,6 +1202,25 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
   | `verify:e2e`      | **不支持环境变量**（口令硬编码在脚本里），需先确认本机种子口令或用临时副本（见 AGENTS.md §7 第 51 条）    |
 
 ## 7. 打包与交付
+
+### 体积与性能（2026-10-05 优化后实测）
+
+| 产物 / 指标                         | 优化前               | 优化后       | 做了什么                                                                                                                                  |
+| ----------------------------------- | -------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 客户端渲染产物 `dist/renderer`      | 3.2MB                | **2.1MB**    | 成绩页图表从 echarts 全量（1.12MB，占 35%）换成内置 HTML/SVG 组件；Element Plus 图标从全量注册 293 个改为按需 42/33 个                    |
+| 客户端主进程产物体积                | 242KB                | 242KB        | 未变（冒烟代码拆分会重复 `island`/`config` 单例，esbuild 的 CJS 打包无法代码分割，故保留）                                                |
+| 客户端 `win-unpacked`               | 372MB                | **323MB**    | `electronLanguages: [zh-CN]`，只留中文语言包（其余 54 个 `locales/*.pak` 共 48MB）                                                        |
+| 客户端 `setup.exe` / `portable.exe` | 107MB                | **98MB**     | 同上。**安装包有硬底**：`班级小助手.exe`（electron.exe）压缩后本身就有 85~90MB，60MB 不可达                                               |
+| 服务端 `dist`                       | 3.8MB                | **0.6MB**    | `tsconfig.build.json` 关掉 `declaration`/`declarationMap`/`sourceMap`（占原体积 82%）                                                     |
+| 服务端免安装目录                    | 436MB                | **335MB**    | 打包末尾的运行时裁剪：删掉 Prisma 为 postgresql/cockroachdb/sqlserver 准备的查询编译器副本、`*.map`、文档与测试夹具（共 2329 项 / 101MB） |
+| 服务端安装程序                      | 71MB                 | **62MB**     | 同上                                                                                                                                      |
+| Web 端前端产物                      | 3.3MB                | **2.1MB**    | 同样是 echarts → 内置 SVG/CSS 图表 + 图标按需                                                                                             |
+| 灵动岛主进程常驻开销                | 每 60ms 2 次系统调用 | 每 60ms 1 次 | 光标位置每跳只读一次（命中判定与"跟随鼠标屏幕"共用）；窗口不可见时整跳                                                                    |
+
+> 没有做的事，以及为什么：Element Plus 仍全量引入（按需引入要改所有视图的样式引入方式与 locale 配置，
+> 收益约 200 到 350KB JS，风险不成比例）；服务端静态资源不做预压缩；客户端不再删 GPU 回退组件
+> （dxcompiler / swiftshader / d3dcompiler，共约 37MB 未压缩，教室老显卡与虚拟机靠它们）。
+> 详见 [AGENTS.md](AGENTS.md) 的 §5 第 53 至 56 条与 §7 第 23 条。
 
 ### 客户端（Windows EXE）
 
@@ -1179,10 +1253,10 @@ pnpm dist:win     # nsis 安装包 + portable 单文件（需联网下载 NSIS �
 
 | 产物                                   | 大小   | 冒烟结果                                                             |
 | -------------------------------------- | ------ | -------------------------------------------------------------------- |
-| 服务端安装程序（内置 Node + Web 端）   | ~71MB  | ✅ 静默安装（升级保留 `.env` 与数据库）→ 自动建库建号 → 服务就绪     |
+| 服务端安装程序（内置 Node + Web 端）   | ~62MB  | ✅ 静默安装（升级保留 `.env` 与数据库）→ 自动建库建号 → 服务就绪     |
 | `release/win-unpacked/班级小助手.exe`  | ~235MB | ✅ 打包版冒烟全绿，`packaged: true`，退出码 0                        |
-| `release/…-x64-portable.exe`（单文件） | ~107MB | ✅ 打包后冒烟全绿，`packaged: true`，退出码 0                        |
-| `release/…-x64-setup.exe`（客户端）    | ~107MB | ✅ 构建成功，已嵌入自定义图标                                        |
+| `release/…-x64-portable.exe`（单文件） | ~98MB  | ✅ 打包后冒烟全绿，`packaged: true`，退出码 0                        |
+| `release/…-x64-setup.exe`（客户端）    | ~98MB  | ✅ 构建成功，已嵌入自定义图标                                        |
 | `releases/classisland-plugin/….cipx`   | ~88KB  | ✅ 全量编译通过（1 警告 0 错误），包内 DLL 哈希与 `bin/Release` 一致 |
 
 ### ClassIsland 插件

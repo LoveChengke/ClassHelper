@@ -85,11 +85,20 @@ export function loginRateLimiter(): RequestHandler {
   });
 }
 
-/** 请求耗时日志（生产 info，开发 debug） */
+/**
+ * 请求耗时日志（生产 info，开发 debug）。
+ *
+ * 静态构建产物（`/assets/*`，带内容哈希、长缓存）**成功的请求不打点**：
+ * Web 管理端首屏一次就有十几个资源请求，逐条刷 info 会把真正有用的接口日志淹掉，
+ * 而且每条都要走一次 stdout 写入。失败的静态请求（404 / 500）照常记录 ——
+ * 那种情况恰恰是最需要看见的（产物缺失、路径不对）。
+ */
 export function requestLogger(): RequestHandler {
   return (req, res, next) => {
+    const isStaticAsset = req.path.startsWith('/assets/');
     const startedAt = process.hrtime.bigint();
     res.on('finish', () => {
+      if (isStaticAsset && res.statusCode < 400) return;
       const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
       const message = `${req.method} ${req.originalUrl} ${res.statusCode} ${durationMs.toFixed(1)}ms`;
       if (res.statusCode >= 500) logger.error(message);

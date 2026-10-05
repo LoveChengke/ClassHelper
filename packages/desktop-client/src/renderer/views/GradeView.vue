@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import * as echarts from 'echarts';
 import {
   SOCKET_EVENTS,
   averageOf,
@@ -11,6 +10,7 @@ import {
 } from '@classhelper/shared';
 import { gradeApi } from '../api/index.js';
 import { fetchWithCache } from '../cache/index.js';
+import ScoreBarChart from '../components/ScoreBarChart.vue';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useRealtimeStore } from '../stores/realtime.js';
@@ -24,8 +24,6 @@ const loading = ref(false);
 const grades = ref<GradeDto[]>([]);
 const fromCache = ref(false);
 const updatedAt = ref<number | null>(null);
-const chartRef = ref<HTMLDivElement>();
-let chart: ReturnType<typeof echarts.init> | null = null;
 
 const averagePercent = computed(() =>
   grades.value.length === 0
@@ -53,6 +51,21 @@ const levelCounts = computed(() => {
   return levels;
 });
 
+/**
+ * 按考试聚合平均得分率（最近 8 次考试），交给 ScoreBarChart 渲染。
+ * 这里原先调的是 `echarts.setOption(...)`；改用纯 CSS 柱状图是为了去掉
+ * echarts（渲染产物里最大的一块，1.1MB）。聚合口径与之前完全一致。
+ */
+const examAverages = computed(() => {
+  const byExam = new Map<string, number[]>();
+  for (const item of grades.value) {
+    const bucket = byExam.get(item.examName) ?? [];
+    bucket.push(gradePercent(item.score, item.totalScore));
+    byExam.set(item.examName, bucket);
+  }
+  return [...byExam.entries()].slice(-8).map(([label, percents]) => ({ label, value: averageOf(percents) }));
+});
+
 async function loadGrades(): Promise<void> {
   loading.value = true;
   try {
@@ -61,48 +74,9 @@ async function loadGrades(): Promise<void> {
     fromCache.value = result.fromCache;
     updatedAt.value = result.updatedAt;
     if (!result.fromCache) appStore.markSynced();
-    renderChart();
   } finally {
     loading.value = false;
   }
-}
-
-function renderChart(): void {
-  if (!chartRef.value) return;
-  chart ??= echarts.init(chartRef.value);
-
-  // 按考试聚合平均得分率（最近 8 次考试）
-  const byExam = new Map<string, number[]>();
-  for (const item of grades.value) {
-    const bucket = byExam.get(item.examName) ?? [];
-    bucket.push(gradePercent(item.score, item.totalScore));
-    byExam.set(item.examName, bucket);
-  }
-  const exams = [...byExam.entries()].slice(-8);
-
-  chart.setOption({
-    tooltip: { trigger: 'axis' },
-    grid: { left: 44, right: 18, top: 30, bottom: 34 },
-    xAxis: {
-      type: 'category',
-      data: exams.map(([name]) => name),
-      axisLabel: { interval: 0, rotate: exams.length > 4 ? 20 : 0, fontSize: 11 },
-    },
-    yAxis: { type: 'value', max: 100, name: '得分率%' },
-    series: [
-      {
-        type: 'bar',
-        barMaxWidth: 46,
-        itemStyle: { color: '#409eff', borderRadius: [4, 4, 0, 0] },
-        label: { show: true, position: 'top', formatter: '{c}%', fontSize: 11 },
-        data: exams.map(([, percents]) => averageOf(percents)),
-      },
-    ],
-  });
-}
-
-function handleResize(): void {
-  chart?.resize();
 }
 
 function onGradeEvent(): void {
@@ -115,15 +89,11 @@ function onRecovered(): void {
 
 onMounted(async () => {
   await loadGrades();
-  window.addEventListener('resize', handleResize);
   realtime.on(SOCKET_EVENTS.gradeUpdated, onGradeEvent);
   appStore.onServerRecovered(onRecovered);
 });
 
 onUnmounted(() => {
-  window.removeEventListener('resize', handleResize);
-  chart?.dispose();
-  chart = null;
   realtime.off(SOCKET_EVENTS.gradeUpdated, onGradeEvent);
   appStore.offServerRecovered(onRecovered);
 });
@@ -172,7 +142,7 @@ onUnmounted(() => {
       <el-col :xs="24" :md="16">
         <el-card v-loading="loading" shadow="never">
           <template #header><span>各次考试平均得分率</span></template>
-          <div ref="chartRef" class="chart"></div>
+          <ScoreBarChart :items="examAverages" />
         </el-card>
       </el-col>
     </el-row>
@@ -254,10 +224,5 @@ onUnmounted(() => {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
-}
-
-.chart {
-  width: 100%;
-  height: 300px;
 }
 </style>

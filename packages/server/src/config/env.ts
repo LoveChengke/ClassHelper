@@ -156,7 +156,6 @@ export const env = {
           .map((item) => item.trim())
           .filter(Boolean),
   bcryptRounds: raw.BCRYPT_ROUNDS,
-  /** 新增学生时未指定密码时的初始密码 */
   /** 新建班级时的默认班级密码（班级账号登录） */
   defaultClassPassword: raw.DEFAULT_CLASS_PASSWORD,
   /** 新建/重置教师账号时的初始密码 */

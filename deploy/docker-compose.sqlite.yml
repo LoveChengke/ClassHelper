@@ -23,7 +23,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
       target: runtime
-    image: classhelper-server:${APP_VERSION:-1.0.0}
+    image: classhelper-server:${APP_VERSION:-1.1.0}
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -44,7 +44,7 @@ services:
       TERM_START_DATE: ${TERM_START_DATE:-}
       INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-admin}
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-admin123}
-      DEFAULT_STUDENT_PASSWORD: ${DEFAULT_STUDENT_PASSWORD:-123456}
+
       DEFAULT_CLASS_PASSWORD: ${DEFAULT_CLASS_PASSWORD:-123456}
       DEFAULT_TEACHER_PASSWORD: ${DEFAULT_TEACHER_PASSWORD:-123456}
     ports:

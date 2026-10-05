@@ -1,0 +1,19 @@
+# ---------------------------------------------------------------------------
+# 班级小助手 · 定时备份（触发器）
+# 由 `classhelper backup schedule daily|weekly` 安装；OnCalendar 行由命令按选择替换
+# ---------------------------------------------------------------------------
+
+[Unit]
+Description=ClassHelper 定时备份触发器
+Documentation=https://github.com/LoveChengke/ClassHelper
+
+[Timer]
+OnCalendar=__ONCALENDAR__
+# 错开整点：避免所有装了本服务的机器在同一秒打盘
+RandomizedDelaySec=30m
+# 机器关机期间错过的备份在开机后补一次
+Persistent=true
+Unit=classhelper-backup.service
+
+[Install]
+WantedBy=timers.target

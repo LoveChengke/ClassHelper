@@ -1,24 +1,33 @@
 # ---------------------------------------------------------------------------
 # 班级小助手 · 服务端 systemd 单元（Linux）
 #
-# 这是**模板**：deploy/install-linux.sh 会把 __NODE__ / __DIR__ / __USER__ 替换成真实值后
-# 安装到 /etc/systemd/system/classhelper.service。手动部署时直接改这三处即可：
+# 这是**模板**：`deploy/install.sh` 会把占位符替换成真实值后安装到
+# /etc/systemd/system/classhelper.service。手动部署时照着替换这四处即可：
 #
-#   sudo sed -e 's#__NODE__#/usr/bin/node#' \
+#   __NODE__       Node 可执行文件的绝对路径（内置运行时：<安装目录>/runtime/node/bin/node）
+#   __DIR__        安装目录（默认 /opt/classhelper）
+#   __USER__       运行服务的系统用户（默认 classhelper）
+#   __CONFIG__     环境变量文件（默认 /etc/classhelper/config.env）
+#   __CONFIGDIR__  __CONFIG__ 所在目录（需要写权限，见下面的 ReadWritePaths）
+#
+#   sudo sed -e 's#__NODE__#/opt/classhelper/runtime/node/bin/node#' \
 #            -e 's#__DIR__#/opt/classhelper#' \
 #            -e 's#__USER__#classhelper#' \
-#            deploy/classhelper.service | sudo tee /etc/systemd/system/classhelper.service
+#            -e 's#__CONFIGDIR__#/etc/classhelper#' \
+#            -e 's#__CONFIG__#/etc/classhelper/config.env#' \
+#            deploy/classhelper.service > /tmp/classhelper.service
+#   sudo install -m 644 /tmp/classhelper.service /etc/systemd/system/classhelper.service
 #   sudo systemctl daemon-reload && sudo systemctl enable --now classhelper
 #
-# 常用命令：
+# 常用命令（也有对应的 classhelper 封装）：
+#   classhelper status / start / stop / restart / logs -f
 #   systemctl status classhelper
-#   journalctl -u classhelper -f          # 实时日志
-#   systemctl restart classhelper         # 重启（改完 .env 需要）
+#   journalctl -u classhelper -f
 # ---------------------------------------------------------------------------
 
 [Unit]
 Description=ClassHelper Server (班级小助手服务端)
-Documentation=file://__DIR__/README.txt
+Documentation=https://github.com/LoveChengke/ClassHelper
 After=network-online.target
 Wants=network-online.target
 
@@ -27,15 +36,18 @@ Type=simple
 User=__USER__
 Group=__USER__
 WorkingDirectory=__DIR__
-# .env 由服务端自己从 WorkingDirectory 加载（工作目录即安装根目录）
+
+# 配置从这里注入（唯一的配置真身；安装目录里的 .env 是指向它的软链，见 docs/linux-deploy.md）。
+# systemd 会剥掉值两侧的引号，所以同一份文件给 dotenv / shell source / systemd 三种读法都能用。
+# 前面不加 "-"：文件被删掉时直接启动失败，比拿着一份假配置跑起来更容易发现。
+EnvironmentFile=__CONFIG__
 ExecStart=__NODE__ server/dist/index.js
-Environment=NODE_ENV=production
 
 Restart=always
 RestartSec=3
 # Socket.IO 长连接较多：提高文件描述符上限
 LimitNOFILE=65535
-# 优雅退出：给在途请求与 websocket 收尾时间
+# 优雅退出：给在途请求与 websocket 收尾时间（index.ts 处理 SIGTERM/SIGINT）
 KillSignal=SIGTERM
 TimeoutStopSec=20
 
@@ -44,12 +56,26 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=classhelper
 
-# 基础加固（服务只需要读程序、写 data/logs）
-NoNewPrivileges=true
-PrivateTmp=true
+# ---------------------------------------------------------------- 加固
+# 为什么 ReadWritePaths 要给整个 __DIR__ 与配置目录，而不是只给 data/logs：
+#   1) Web 端「数据库管理 → 一键切换」会在运行中改写 server/prisma/schema.prisma，
+#      并把重新生成的 Prisma Client 编译进 server/dist/generated —— 那两处都在 __DIR__ 里；
+#   2) 同一功能切换成功后要改写 __CONFIG__（DATABASE_PROVIDER / DATABASE_URL 两行）。
+#   ProtectSystem=full 默认把 /etc 与 /usr 设成只读，ReadWritePaths 是官方的"打洞"方式。
+#   服务本来就以 __USER__ 身份运行，这里给的写权限没有超出它的既有边界。
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=__DIR__/data __DIR__/logs
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=__DIR__ __CONFIGDIR__
+
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# 需要 AF_NETLINK：glibc 解析主机名（MySQL 主机 / GitHub API）时会用到
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target

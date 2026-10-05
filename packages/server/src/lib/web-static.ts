@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import express, { type Express, type RequestHandler } from 'express';
+import express, { type Express } from 'express';
 import { env } from '../config/env.js';
 import { logger } from './logger.js';
 
@@ -100,9 +100,3 @@ export function mountWebAdmin(app: Express): string | null {
   logger.info(`Web 管理端已挂载：${distDir}`);
   return distDir;
 }
-
-/** 静态资源请求判断（用于日志降噪等场景） */
-export const staticAssetMatcher: RequestHandler = (req, _res, next) => {
-  req.headers['x-classhelper-static'] = req.path.startsWith('/assets/') ? '1' : '0';
-  next();
-};

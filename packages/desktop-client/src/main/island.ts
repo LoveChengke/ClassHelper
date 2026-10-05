@@ -958,9 +958,9 @@ class IslandController {
   }
 
   /** 当前应该把岛放在哪块屏上：跟随鼠标时用光标所在屏，否则用主屏 */
-  private targetDisplay(): Electron.Display {
+  private targetDisplay(cursor?: { x: number; y: number } | null): Electron.Display {
     return this.appearance.followCursorDisplay
-      ? screen.getDisplayNearestPoint(this.cursorOverride ?? screen.getCursorScreenPoint())
+      ? screen.getDisplayNearestPoint(cursor ?? this.cursorOverride ?? screen.getCursorScreenPoint())
       : screen.getPrimaryDisplay();
   }
 
@@ -970,10 +970,13 @@ class IslandController {
    * 原先锚点只在 `setAppearance()` 里算一次，于是"跟随鼠标屏幕"实际上**只在改设置的那一瞬间**
    * 生效：讲台从投影切回来之后，岛还留在原来那块屏上，直到用户再动一次外观设置。
    * 这里挂在已有的 60ms 命中轮询上（不新增定时器），并且只在目标屏幕真的变了、且窗口可见时才动窗口。
+   *
+   * 不需要额外监听 `screen` 的 display-* 事件：目标屏是由**当前光标位置**或主屏推出来的，
+   * 插拔/切主屏之后下一轮 tick 自然会算出不同的 id，一样能触发重排。
    */
-  private syncAnchorDisplay(): void {
+  private syncAnchorDisplay(cursor?: { x: number; y: number } | null): void {
     if (!this.win || this.win.isDestroyed()) return;
-    const displayId = this.targetDisplay().id;
+    const displayId = this.targetDisplay(cursor).id;
     if (this.anchorDisplayId === displayId) return;
     this.anchorDisplayId = displayId;
     // 换屏了：可用高度（工作区）也跟着换，列表"能放几行"要重算
@@ -1409,11 +1412,14 @@ class IslandController {
   /**
    * 光标相对窗口左上角的本地坐标（CSS px / DIP，与渲染进程上报的岛体矩形同一坐标系）。
    * 冒烟里用 `setHitTestCursor` 注入，真实场景读系统光标。
+   *
+   * `cursor`：调用方在本轮 tick 里已经读过的光标位置（见 `startHitPoll`）。
+   * 传进来就复用它，避免同一个 tick 里重复调 `screen.getCursorScreenPoint()`。
    */
-  private cursorLocal(): { x: number; y: number } | null {
+  private cursorLocal(cursor?: { x: number; y: number } | null): { x: number; y: number } | null {
     if (!this.win || this.win.isDestroyed()) return null;
     const bounds = this.win.getBounds();
-    const point = this.cursorOverride ?? screen.getCursorScreenPoint();
+    const point = cursor ?? this.cursorOverride ?? screen.getCursorScreenPoint();
     return { x: point.x - bounds.x, y: point.y - bounds.y };
   }
 
@@ -1494,7 +1500,7 @@ class IslandController {
   }
 
   /** 按光标位置校正命中（不依赖渲染进程是否收到 mousemove） */
-  private syncHitFromCursor(): void {
+  private syncHitFromCursor(cursor?: { x: number; y: number } | null): void {
     if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) {
       this.setInteractive(false, '窗口不可见');
       return;
@@ -1505,18 +1511,34 @@ class IslandController {
       this.setInteractive(false, '隐藏态');
       return;
     }
-    this.setInteractive(this.isInsideHitRect(this.cursorLocal()), '光标轮询');
+    this.setInteractive(this.isInsideHitRect(this.cursorLocal(cursor)), '光标轮询');
   }
 
   private startHitPoll(): void {
     if (this.hitTimer) return;
     // 60ms：渲染进程的 mousemove 转发在 Windows 上并不可靠，这里是命中的**权威来源**，
     // 间隔必须足够小，否则"指针移上胶囊后立刻点击"会因窗口还没接收鼠标而点空（用户反馈过）。
+    //
+    // 每一跳的成本要压到最低（这个定时器从岛初始化一直跑到进程退出）：
+    // 1) 光标位置**每跳只读一次**，命中判定与"跟随鼠标屏幕"共用 —— 原先 cursorLocal() 与
+    //    targetDisplay() 各读一次，等于每跳两次 `screen.getCursorScreenPoint()`；
+    // 2) 窗口不可见时直接返回：此时命中判定与心跳检查本来就各自早退（窗口不可见 ⇒ 无命中可言），
+    //    留着那两次系统调用纯属白跑。
     this.hitTimer = setInterval(() => {
+      if (!this.win || this.win.isDestroyed()) return;
+      const visible = this.win.isVisible();
+      // 不可见、且不跟随鼠标屏幕时，连读光标都可省掉（targetDisplay 会走主屏分支）
+      const cursor =
+        visible || this.appearance.followCursorDisplay
+          ? (this.cursorOverride ?? screen.getCursorScreenPoint())
+          : null;
+
       // 先按目标屏幕校正窗口位置（换屏/插拔显示器），再算命中与心跳：
       // 顺序不能反，否则命中判定会用上一块屏的窗口坐标
-      this.syncAnchorDisplay();
-      this.syncHitFromCursor();
+      this.syncAnchorDisplay(cursor);
+      if (!visible) return;
+
+      this.syncHitFromCursor(cursor);
       this.checkRendererAlive();
     }, 60);
     // 定时器不应拖住进程退出
@@ -1748,12 +1770,12 @@ const MIN_CARD_HEIGHT = 120;
 
 
 /**
- * 渲染进程心跳（渲染进程每 5s 上报一次）：超过这个时间没上报就认为它已经卡死/不响应。
+ * 渲染进程心跳（渲染进程每 5s 上报一次，间隔写死在 `src/island/IslandApp.vue`）：
+ * 超过这个时间没上报就认为它已经卡死/不响应。
  * 岛是"无边框透明置顶窗口"，渲染进程一旦挂掉，Windows 会把**最后一帧留在屏幕上**
  * 形成"幽灵胶囊"：窗口还在、看着正常，但怎么点都没反应（实测复现：崩掉渲染进程后
  * 点击完全不产生任何动作）。所以必须有心跳 + 重建来兜底。
  */
-const RENDERER_ALIVE_INTERVAL_MS = 5_000;
 const RENDERER_ALIVE_TIMEOUT_MS = 20_000;
 /** 窗口重建限流：一段时间内最多重建几次，避免持续崩坏时无限重建 */
 const RECOVER_MAX_TIMES = 3;

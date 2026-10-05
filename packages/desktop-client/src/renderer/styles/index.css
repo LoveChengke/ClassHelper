@@ -53,6 +53,16 @@
   --ch-shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.08);
   --ch-shadow-card: 0 2px 4px rgba(0, 0, 0, 0.04);
 
+  /*
+   * 侧栏收放动画。组件（ClientLayout 的 .aside/.brand/.brand-logo/.aside-footer）
+   * 与全局的菜单导轨规则（下面的 .ch-nav.is-collapsed …）共用这一份参数，
+   * 改时长/缓动只改这里，两边不会漂。
+   */
+  --nav-dur: 260ms;
+  --nav-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  /* 图标与文字的间距（折叠时收到 0） */
+  --nav-gap: 8px;
+
   /* 兼容旧变量名 */
   --ch-sidebar: #ffffff;
 
@@ -389,56 +399,91 @@ textarea {
   background: var(--ch-accent);
 }
 
-/* 折叠态：图标居中（el-menu collapse 自带收窄，这里压掉分组缩进） */
-.ch-nav .el-menu--collapse .el-menu-item,
-.ch-nav .el-menu--collapse .el-sub-menu__title {
-  margin: 2px 8px;
-  padding: 0 !important;
-}
-
-/*
- * 折叠态：把菜单文字**彻底不渲染**，只留图标槽。
+/* ---------------------------------------------------------------- 折叠态：图标导轨
  *
- * Element Plus 自己的隐藏方式是"把 span 的宽高压成 0 + overflow"，一旦外层样式
- * （缩进、margin、transition）稍有干扰，文字就会以 0 宽溢出的形式留在画面上 ——
- * 表现为折叠后菜单里残留"半截字"。这里直接 display:none，从根上消除残影。
- * 图标槽（.menu-icon-slot）必须保留（它同时承载未读红点）。
+ * 折叠**不再用** el-menu 的 `:collapse`：那会把每个分组的子项卸载进浮层（一次结构切换），
+ * 并让整条菜单重排一遍 —— 既做不出连续动画，也是"点汉堡卡一下"的渲染侧来源。
+ * 现在改成纯粹的 CSS 收拢：栏宽、文字宽度、图标位置全是可过渡属性，全程没有结构变化，
+ * 折叠后就是一条图标导轨（分组标题与子项都以图标列出）。
+ *
+ * 几何（64px 栏、菜单项左右各 8px margin）：
+ *   展开  一级项 padding-left 20px、二级项 40px（Element Plus 自带）→ 图标中心 40 / 60px
+ *   折叠  所有项 padding-left / padding-right 都是 12px → 图标中心 8 + 12 + 12 = 32px，
+ *         正好与顶部汉堡按钮的居中位置同列（冒烟断言中心差 ≤ 2px）。
+ * 图标槽（.menu-icon-slot）与分组标题里的裸图标都是 Element Plus 给的 24px 宽。
  */
-.ch-nav .el-menu--collapse .el-menu-item > span:not(.menu-icon-slot),
-.ch-nav .el-menu--collapse .el-sub-menu__title > span:not(.menu-icon-slot) {
-  display: none !important;
+
+/* 图标与文字的间距改由文字的 margin-left 负责：Element Plus 给图标挂了 margin-right:5px，
+   那会让图标在 24px 的槽里偏左 2.5px（折叠时肉眼可见地不居中）。 */
+.ch-nav .el-menu-item [class^='el-icon'],
+.ch-nav .el-sub-menu__title > [class^='el-icon'] {
+  margin-right: 0;
 }
 
-/* 折叠态：图标在 64px 栏内严格水平居中，且与顶部的汉堡按钮同一竖列（中心都在 32px） */
-.ch-nav .el-menu--collapse .el-menu-item,
-.ch-nav .el-menu--collapse .el-sub-menu__title {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.ch-nav .el-menu-item,
+.ch-nav .el-sub-menu__title {
+  transition:
+    padding-left var(--nav-dur) var(--nav-ease),
+    padding-right var(--nav-dur) var(--nav-ease),
+    border-color var(--el-transition-duration),
+    background-color var(--el-transition-duration),
+    color var(--el-transition-duration);
 }
 
 /*
- * 折叠态点分组图标会弹出子菜单浮层 —— 它被 teleport 到 body 下，
- * 不受 .ch-nav 作用域影响，所以这些规则写在全局；不写的话深色主题下会是浅色浮层。
+ * 文字：**不给它单独设动画终点**，宽度靠 flex 被压缩 —— `min-width:0` 让这个 flex 子项
+ * 能被压到 0（默认的 `min-width:auto` 会撑住内容宽度），多出来的字由 `overflow:hidden` 裁掉。
+ * 于是文字宽度天然跟着栏宽连续变化，不需要写什么魔法 max-width；再叠一层 opacity 淡出，
+ * 避免中间帧留下"半截字"（`display:none` 没法过渡，用不了）。
  */
-.el-menu--popup {
-  background: var(--ch-layer-solid);
-  border: 1px solid var(--ch-border);
-  border-radius: var(--ch-radius-card);
-  box-shadow: var(--ch-shadow-flyout);
+.ch-nav .el-menu-item > span:not(.menu-icon-slot),
+.ch-nav .el-sub-menu__title > span:not(.menu-icon-slot) {
+  min-width: 0;
+  margin-left: var(--nav-gap);
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    margin-left var(--nav-dur) var(--nav-ease),
+    opacity calc(var(--nav-dur) * 0.6) var(--nav-ease);
 }
 
-.el-menu--popup .el-menu-item {
-  color: var(--ch-text);
+/* 分组标题右侧的折叠箭头：导轨里没有它的位置 */
+.ch-nav .el-sub-menu__icon-arrow {
+  transition: opacity calc(var(--nav-dur) * 0.5) var(--nav-ease);
 }
 
-.el-menu--popup .el-menu-item:hover {
-  background: var(--ch-hover-soft);
+.ch-nav.is-collapsed .el-menu-item > span:not(.menu-icon-slot),
+.ch-nav.is-collapsed .el-sub-menu__title > span:not(.menu-icon-slot) {
+  margin-left: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.el-menu--popup .el-menu-item.is-active {
-  background: var(--ch-accent-soft);
-  color: var(--ch-text);
+.ch-nav.is-collapsed .el-sub-menu__icon-arrow {
+  opacity: 0;
+}
+
+/*
+ * 折叠后的内边距。
+ *
+ * 这三条选择器形状都是**照抄 Element Plus 的**，不是冗余 —— 它按层级用三个不同的选择器算缩进
+ * （一级项 20px、分组标题 20px、分组内子项 40px），特异度分别是 0-4-0 / 0-4-0 / 0-5-0：
+ *   `.el-menu--vertical:not(.el-menu--collapse):not(.el-menu--popup-container) .el-menu-item`
+ *   `.el-menu--vertical:not(.el-menu--collapse):not(.el-menu--popup-container) .el-sub-menu__title`
+ *   `.el-menu--vertical:not(.el-menu--collapse):not(.el-menu--popup-container) .el-sub-menu .el-menu-item`
+ * 写成 `.ch-nav.is-collapsed .el-sub-menu__title` 这种（0-3-0）压不住任何一条 —— 实测踩过两次：
+ * 第一版漏了分组标题（偏 8.0px），把「学习」拆成一级项后又漏了一级项（同样偏 8.0px）。
+ * 下面两条（0-5-0 / 0-6-0）把它们全覆盖，且不用 !important。
+ */
+.ch-nav.is-collapsed .el-menu--vertical:not(.el-menu--collapse) .el-menu-item,
+.ch-nav.is-collapsed .el-menu--vertical:not(.el-menu--collapse) .el-sub-menu__title {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.ch-nav.is-collapsed .el-menu--vertical:not(.el-menu--collapse) .el-sub-menu .el-menu-item {
+  padding-left: 12px;
+  padding-right: 12px;
 }
 
 /* ---------------------------------------------------------------- 课表时间轴 */

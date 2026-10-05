@@ -1,0 +1,19 @@
+# ---------------------------------------------------------------------------
+# 班级小助手 · 日志轮转
+# 由 deploy/install.sh 安装到 /etc/logrotate.d/classhelper
+#
+# copytruncate 而不是 create+信号：安装器与 classhelper 都是"追加写完就关"
+# （`>>` 打开、写完立即关闭），没有常驻 fd 可通知，copytruncate 是这里唯一正确的做法。
+# ---------------------------------------------------------------------------
+
+/var/log/classhelper/*.log {
+    weekly
+    rotate 8
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    create 0600 root root
+    su root root
+}

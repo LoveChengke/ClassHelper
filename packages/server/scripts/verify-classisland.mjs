@@ -105,6 +105,34 @@ async function loginWithCandidates(username, passwords) {
   return null;
 }
 
+/**
+ * 反复「拉取待提醒 → 逐条确认」，直到该设备视角下没有积压。
+ *
+ * 为什么验证脚本要做这件事：`GET /integrations/classisland/pending` 是
+ * 「本班全部未确认且未过期的提醒，按时间升序取前 20 条」。而 `verify:desktop` /
+ * `verify:web` 等冒烟会**真的往演示班发通知**（AGENTS.md §5 第 38 条），
+ * 那些条如果没被确认就会一直堆着 —— 攒够 20 条之后，本脚本刚发的提醒会被挤到窗口之外，
+ * 表现为「待提醒里找不到刚发的那条」，与代码对不对完全无关（2026-10-05 实测踩过：
+ * 库里积了 45 条历次冒烟残条，本脚本从 42/42 掉到 35/40）。
+ *
+ * 这里做的事情与真实插件重连后的行为完全一致（补弹积压并逐条确认），
+ * 因此不会掩盖任何产品侧问题。可见范围也一致：只处理 `deviceId` 为空的班级广播
+ * 与本设备自己的推送，别的设备的目标推送取不到、也确认不了。
+ */
+async function drainPending(deviceToken) {
+  let total = 0;
+  for (let round = 0; round < 20; round += 1) {
+    const pending = await api('/integrations/classisland/pending', { deviceToken });
+    const items = pending.payload?.data?.notifications ?? [];
+    if (items.length === 0) break;
+    for (const item of items) {
+      await api('/integrations/classisland/ack', { method: 'POST', deviceToken, body: { id: item.id } });
+      total += 1;
+    }
+  }
+  return total;
+}
+
 async function main() {
   console.log(`\n=== ClassIsland 联动验证（${BASE_URL}）===\n`);
 
@@ -182,7 +210,7 @@ async function main() {
 
   // ---------------------------------------------------------------- 3. 上报（状态 + 课表 + 节次）
   const reportBody = {
-    pluginVersion: '1.0.0.0',
+    pluginVersion: '1.1.0.0',
     classIslandVersion: '2.1.0.0',
     state: {
       inClass: true,
@@ -237,6 +265,13 @@ async function main() {
   );
 
   // ---------------------------------------------------------------- 4. 下发提醒
+  // 先确认掉本班的历史积压（历次冒烟留下的未确认提醒），否则 /pending 的前 20 条窗口
+  // 会被它们占满，下面「插件拉取到待提醒」等用例会拿不到刚发的这条（理由见 drainPending）
+  const drained = await drainPending(deviceToken);
+  if (drained > 0) {
+    console.log(`（已确认本班 ${drained} 条历史积压提醒，避免挤占待提醒窗口）\n`);
+  }
+
   const notify = await api('/integrations/classisland/notify', {
     method: 'POST',
     token: teacherToken,

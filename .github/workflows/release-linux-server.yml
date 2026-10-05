@@ -1,0 +1,116 @@
+name: 发布 Linux 服务端安装包
+
+# 为什么单独有这个 workflow：
+#   Linux 包的依赖（@libsql/linux-x64-gnu、@prisma/adapter-libsql 等）是平台相关的，
+#   在 Windows 开发机上 npm install 出来的 node_modules 装到 Linux 跑不起来，
+#   所以 Linux 包必须在 Linux 上构建。这个 workflow 用 ubuntu runner 产出
+#   classhelper-server-linux-x64-<版本>.tar.gz 并挂到 GitHub Release 上，
+#   服务器上的 `classhelper upgrade` 就是从这里下载 + 校验 sha256 的。
+#
+# 用法：
+#   1. 先在本地按惯例打出 Windows 包并发 Release（vX.Y.Z）；
+#   2. 到 Actions 页面手动运行本 workflow，填 tag（例如 v1.1.0）；
+#   3. 跑完 Release 里会多出 Linux 包与更新后的 SHA256SUMS-<版本>.txt。
+#
+# 也可以只跑构建不挂 Release（attach=false），产物在 workflow 的 Artifacts 里。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要构建并挂载的 Release tag（例如 v1.1.0）'
+        required: true
+        type: string
+      attach:
+        description: '构建后上传到该 Release'
+        required: false
+        default: true
+        type: boolean
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux-package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+
+    steps:
+      - name: 确定 tag
+        id: ref
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "attach=${{ inputs.attach }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "attach=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.tag }}
+
+      - name: 安装 Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.8.0
+          run_install: false
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建 Linux 安装包
+        run: pnpm dist:server:linux
+
+      - name: 展示产物
+        run: ls -la release-server/
+
+      - name: 上传构建产物（Artifacts）
+        uses: actions/upload-artifact@v4
+        with:
+          name: classhelper-server-linux-x64
+          path: |
+            release-server/classhelper-server-linux-x64-*.tar.gz
+            release-server/classhelper-server-linux-x64-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 挂到 Release 并更新 SHA256SUMS
+        if: steps.ref.outputs.attach == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ref.outputs.tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          TARBALL="release-server/classhelper-server-linux-x64-${VERSION}.tar.gz"
+          SUMS="release-server/SHA256SUMS-${VERSION}.txt"
+
+          if [ ! -f "$TARBALL" ]; then
+            echo "::error::没有找到 $TARBALL（tag 与 package.json 的版本号对得上吗？）"
+            exit 1
+          fi
+
+          # 取回已有的校验清单（Windows 包那几行），把本次的 Linux 包追加/替换进去
+          gh release download "$TAG" --pattern "SHA256SUMS-*.txt" --dir release-server --clobber || true
+          DOWNLOADED="$(ls release-server/SHA256SUMS-*.txt 2>/dev/null | head -n 1 || true)"
+          if [ -n "$DOWNLOADED" ] && [ "$DOWNLOADED" != "$SUMS" ]; then mv "$DOWNLOADED" "$SUMS"; fi
+          grep -v "classhelper-server-linux-x64-${VERSION}.tar.gz" "$SUMS" 2>/dev/null > "${SUMS}.tmp" || true
+          cat "${SUMS}.tmp" > "$SUMS" 2>/dev/null || true
+          rm -f "${SUMS}.tmp"
+          sha256sum "$TARBALL" | awk '{print $1"  "$2}' | sed "s#release-server/##" >> "$SUMS"
+          sort -u -k2 "$SUMS" -o "$SUMS"
+
+          gh release upload "$TAG" "$TARBALL" "$SUMS" --clobber
+          echo "已上传："
+          cat "$SUMS"

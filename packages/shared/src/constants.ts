@@ -27,6 +27,8 @@ export const API_PATHS = {
   integrations: '/integrations',
   /** 数据库管理（仅管理员）：状态/备份/导入导出/一键切换 */
   database: '/database',
+  /** 更新检查：Web 端经服务端转发查 GitHub 上的最新 Release（浏览器受 CSP 限制不能直连） */
+  update: '/update',
   dashboard: '/dashboard/summary',
 } as const;
 
@@ -496,3 +498,29 @@ export const MAX_PAGE_SIZE = 200;
 
 /** 教师与管理员角色集合，便于 RBAC 判断 */
 export const STAFF_ROLES: readonly UserRole[] = ['ADMIN', 'TEACHER'];
+
+/* ------------------------------------------------------------------ 更新检查 */
+
+/**
+ * 更新来源：本项目用 **GitHub Releases** 分发交付物（服务端 / 客户端安装包、便携版、插件 .cipx），
+ * 因此"有没有新版本"就是问 GitHub 上最新的那个 Release。
+ *
+ * 仓库是**公开**的，匿名调用即可（不需要 token）；但匿名限流是 60 次/小时/IP，
+ * 所以服务端与客户端都把结果缓存 `UPDATE_CHECK_CACHE_TTL_MS`，不要每次开页面都打一次。
+ */
+export const GITHUB_REPO = { owner: 'LoveChengke', repo: 'ClassHelper' } as const;
+
+/** 最新 Release 的 API 地址（GitHub 保证它不含草稿与预发布版） */
+export const GITHUB_RELEASES_LATEST_API = `https://api.github.com/repos/${GITHUB_REPO.owner}/${GITHUB_REPO.repo}/releases/latest`;
+
+/** 给人看的 Release 列表页（「前往下载」按钮打开它） */
+export const GITHUB_RELEASES_PAGE = `https://github.com/${GITHUB_REPO.owner}/${GITHUB_REPO.repo}/releases`;
+
+/** GitHub API 强制要求 User-Agent，不带会直接 403 */
+export const UPDATE_CHECK_USER_AGENT = 'ClassHelper-UpdateCheck';
+
+/** 检查结果缓存时长（30 分钟）：既避开匿名限流，也不至于让用户等太久才知道有新版本 */
+export const UPDATE_CHECK_CACHE_TTL_MS = 30 * 60 * 1000;
+
+/** 单次检查的超时：教室机 / 机房的网络常常很慢，但也不能把界面卡住 */
+export const UPDATE_CHECK_TIMEOUT_MS = 8_000;

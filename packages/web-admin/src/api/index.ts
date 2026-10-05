@@ -42,6 +42,7 @@ import {
   type TimeLayoutParsePreview,
   type UpdateClassAccountRequest,
   type UpdateClassRequest,
+  type UpdateInfo,
   type UpdateIntegrationDeviceRequest,
   type UserDto,
 } from '@classhelper/shared';
@@ -126,12 +127,8 @@ export const homeworkApi = {
     date?: string;
   }): Promise<HomeworkDto[]> => api.get(API_PATHS.homeworks, params),
   /** 哪些天有作业（日期选择器高亮） */
-  days: (params: {
-    classId?: string;
-    from?: string;
-    to?: string;
-    days?: number;
-  }): Promise<HomeworkDaysDto> => api.get(`${API_PATHS.homeworks}/days`, params),
+  days: (params: { classId?: string; from?: string; to?: string; days?: number }): Promise<HomeworkDaysDto> =>
+    api.get(`${API_PATHS.homeworks}/days`, params),
   detail: (id: string): Promise<HomeworkDto> => api.get(`${API_PATHS.homeworks}/${id}`),
   create: (payload: CreateHomeworkRequest): Promise<HomeworkDto> => api.post(API_PATHS.homeworks, payload),
   update: (id: string, payload: Partial<CreateHomeworkRequest>): Promise<HomeworkDto> =>
@@ -344,8 +341,10 @@ export const integrationApi = {
  */
 export const databaseApi = {
   status: (): Promise<DatabaseStatusDto> => api.get(`${API_PATHS.database}/status`),
-  testConnection: (payload: { provider: 'sqlite' | 'mysql'; url: string }): Promise<DatabaseConnectionTestDto> =>
-    api.post(`${API_PATHS.database}/test-connection`, payload),
+  testConnection: (payload: {
+    provider: 'sqlite' | 'mysql';
+    url: string;
+  }): Promise<DatabaseConnectionTestDto> => api.post(`${API_PATHS.database}/test-connection`, payload),
   listBackups: (): Promise<DatabaseBackupMetaDto[]> => api.get(`${API_PATHS.database}/backups`),
   createBackup: (): Promise<DatabaseBackupMetaDto> => api.post(`${API_PATHS.database}/backups`, {}),
   restoreBackup: (name: string): Promise<{ counts: Record<string, number> }> =>
@@ -365,4 +364,19 @@ export const databaseApi = {
     api.post(`${API_PATHS.database}/switch`, payload),
   getSwitchJob: (jobId: string): Promise<DatabaseSwitchJobDto | null> =>
     api.get(`${API_PATHS.database}/switch/jobs/${encodeURIComponent(jobId)}`),
+};
+
+/**
+ * 更新检查：问服务端 GitHub 上有没有比本机新的版本。
+ *
+ * **Web 端不直连 GitHub** —— 服务端下发的 CSP `connect-src` 只放行 `'self'` 与 WebSocket
+ * （见 `middleware/security.ts`），浏览器直连 `api.github.com` 会被拦掉；
+ * 走服务端转发还顺带让所有管理员共享同一份缓存（匿名限流 60 次/小时/IP）。
+ *
+ * `ok:false` 是正常结果（机房没外网 / GitHub 限流），不是异常。
+ */
+export const updateApi = {
+  /** @param force 绕过服务端缓存；仅管理员生效 */
+  check: (force = false): Promise<UpdateInfo> =>
+    api.get(`${API_PATHS.update}/check${force ? '?force=1' : ''}`),
 };

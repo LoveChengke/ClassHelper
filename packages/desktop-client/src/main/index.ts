@@ -1,12 +1,13 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BrowserWindow, app, shell } from 'electron';
-import { getConfig } from './config.js';
+import { flushConfigSync, getConfig } from './config.js';
 import { registerIpcHandlers } from './ipc.js';
 import { island, registerIslandIpc } from './island.js';
 import { logger } from './logger.js';
 import { runSmokeTest } from './smoke.js';
 import { createTray, destroyTray, isTrayReady } from './tray.js';
+import { scheduleStartupUpdateCheck } from './update.js';
 
 // 主进程由 esbuild 打包为 CommonJS，因此这里可以直接使用 __dirname
 // （dist/main/index.js -> dist/preload/index.js 与 dist/renderer/index.html）
@@ -163,6 +164,9 @@ if (!gotLock) {
       logger.warn(`系统托盘初始化失败（不影响主功能）：${error instanceof Error ? error.message : error}`);
     }
 
+    // 启动后自动查一次更新（延迟几秒，不跟首屏抢带宽）；冒烟模式下自动跳过，见 main/update.ts
+    scheduleStartupUpdateCheck(() => mainWindow);
+
     if (isSmokeTest) {
       try {
         await runSmokeTest(mainWindow);
@@ -190,6 +194,11 @@ if (!gotLock) {
    */
   function shutdownResources(): string {
     const done: string[] = [];
+    // 配置是**异步合并写**的（见 main/config.ts）：退出前必须同步落地一次，
+    // 否则"刚改完设置就退出"这一类操作会丢掉最后一次改动。
+    // 放在最前面：后面会销毁窗口与灵动岛，先落盘不依赖任何窗口是否还在。
+    flushConfigSync();
+    done.push('配置已落盘');
     if (isTrayReady()) {
       destroyTray();
       done.push('托盘已销毁');

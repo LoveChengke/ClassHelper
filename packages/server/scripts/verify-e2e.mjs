@@ -67,6 +67,17 @@ async function main() {
   }
   console.log(`  已挂载模块：${(health.payload?.data?.modules ?? []).join(', ')}\n`);
 
+  // 版本号不再硬编码（见 lib/version.ts）：健康检查必须暴露一个像样的版本，
+  // 更新检查要靠它判断"本机是不是旧版"；同时确认 update 模块已进注册表。
+  const healthData = health.payload?.data ?? {};
+  record(
+    '健康检查暴露版本号与模块清单（含 update 模块）',
+    typeof healthData.version === 'string' &&
+      /^\d+\.\d+\.\d+/.test(healthData.version) &&
+      (healthData.modules ?? []).includes('update'),
+    `版本=${healthData.version} 模块数=${(healthData.modules ?? []).length}`,
+  );
+
   // ---------------------------------------------------------------- 1. 登录
   const teacherLogin = await api('/auth/login', {
     method: 'POST',
@@ -2503,7 +2514,10 @@ async function main() {
     body: { classId, title: '数据库roundtrip自检2', content: '备份恢复后应消失' },
   });
   const dbRoundtripNotice2Id = dbRoundtripNotice2.payload?.data?.id;
-  const dbRestore = await api(`/database/backups/${backupName}/restore`, { method: 'POST', token: adminToken });
+  const dbRestore = await api(`/database/backups/${backupName}/restore`, {
+    method: 'POST',
+    token: adminToken,
+  });
   const afterRestore = await api(`/notifications?classId=${classId}`, { token: adminToken });
   const restoreNoticeGone = !(afterRestore.payload?.data ?? []).some(
     (item) => item.id === dbRoundtripNotice2Id,
@@ -2521,7 +2535,10 @@ async function main() {
   }
 
   const dbBackupList = await api('/database/backups', { token: adminToken });
-  const dbBackupDelete = await api(`/database/backups/${backupName}`, { method: 'DELETE', token: adminToken });
+  const dbBackupDelete = await api(`/database/backups/${backupName}`, {
+    method: 'DELETE',
+    token: adminToken,
+  });
   const dbBackupListAfter = await api('/database/backups', { token: adminToken });
   record(
     '备份列表与删除（创建后可见，删除后消失）',
@@ -2610,6 +2627,42 @@ async function main() {
         .map((item) => item.username)
         .join(',') || '无'
     } 残留班级=${leftoverClasses.map((item) => item.name).join(',') || '无'}`,
+  );
+
+  // ---------------------------------------------------------------- 更新检查
+  // 验的是"结构完整 + 权限 + 可降级"，**刻意不断言"一定有新版本"** ——
+  // 那会把用例绑死在外网可达上，而学校机房/内网服务器查不到 GitHub 是常态
+  // （`ok:false` 是设计内的结果，不是失败）。真实联网取值在交付前人工验一次。
+  const updateAnon = await api('/update/check');
+  record('更新检查未登录 401', updateAnon.status === 401, `status=${updateAnon.status}`);
+
+  const updateRes = await api('/update/check', { token: adminToken });
+  const updateData = updateRes.payload?.data ?? {};
+  const isVersionLike = (value) => typeof value === 'string' && /^\d/.test(value);
+  record(
+    '更新检查（管理员）：结构完整，本机版本取自 package.json',
+    updateRes.status === 200 &&
+      isVersionLike(updateData.currentVersion) &&
+      typeof updateData.ok === 'boolean' &&
+      typeof updateData.hasUpdate === 'boolean' &&
+      (updateData.ok
+        ? isVersionLike(updateData.latestVersion) &&
+          Array.isArray(updateData.assets) &&
+          /^https:\/\//.test(updateData.releaseUrl ?? '') &&
+          updateData.error === null
+        : typeof updateData.error === 'string' && updateData.error.length > 0),
+    `ok=${updateData.ok} 本机=${updateData.currentVersion} 最新=${updateData.latestVersion ?? '-'} ` +
+      `有新版本=${updateData.hasUpdate} 附件=${(updateData.assets ?? []).length}` +
+      `${updateData.error ? ` 原因=${updateData.error}` : ''}`,
+  );
+
+  // force 只对管理员生效：教师带 force=1 也必须命中缓存（否则任意登录用户都能刷爆匿名限流）
+  const updateTeacherForced = await api('/update/check?force=1', { token: teacherToken });
+  record(
+    '更新检查：教师可查（公开信息），但 force 仅管理员生效',
+    updateTeacherForced.status === 200 &&
+      updateTeacherForced.payload?.data?.checkedAt === updateData.checkedAt,
+    `status=${updateTeacherForced.status} 命中缓存=${updateTeacherForced.payload?.data?.checkedAt === updateData.checkedAt}`,
   );
 
   socket.close();

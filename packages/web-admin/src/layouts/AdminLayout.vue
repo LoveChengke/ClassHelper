@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import { STORAGE_KEYS } from '@classhelper/shared';
 import { authApi } from '@/api';
+import UpdateCheckDialog from '@/components/UpdateCheckDialog.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useResponsive } from '@/composables/useResponsive';
@@ -106,6 +107,10 @@ async function handleLogout(): Promise<void> {
   ElMessage.success('已退出登录');
   void router.push({ name: 'login' });
 }
+
+/* ------------------------------------------------------------ 检查更新 */
+/** 顶栏用户菜单「检查更新」弹窗 */
+const updateVisible = ref(false);
 
 /* ------------------------------------------------------------ 修改密码 */
 const passwordVisible = ref(false);
@@ -295,6 +300,10 @@ const tourSteps = computed(() => [
                   <el-icon><Guide /></el-icon>
                   使用引导
                 </el-dropdown-item>
+                <el-dropdown-item divided data-test="update-check-entry" @click="updateVisible = true">
+                  <el-icon><Refresh /></el-icon>
+                  检查更新
+                </el-dropdown-item>
                 <el-dropdown-item divided @click="handleLogout">
                   <el-icon><SwitchButton /></el-icon>
                   退出登录
@@ -351,6 +360,9 @@ const tourSteps = computed(() => [
         <el-button type="primary" @click="submitPassword">确认修改</el-button>
       </template>
     </el-dialog>
+
+    <!-- 检查更新：问服务端最新 Release（浏览器受 CSP 限制不能直连 GitHub），见组件内说明 -->
+    <UpdateCheckDialog v-model="updateVisible" />
 
     <!--
       新手引导：首次登录自动弹出（见 script 的 onMounted），头像菜单「使用引导」可重看。

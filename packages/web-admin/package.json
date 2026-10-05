@@ -1,12 +1,12 @@
 {
   "name": "@classhelper/web-admin",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "班级小助手 Web 管理端（Vue 3 + Vite + Element Plus）",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit -p tsconfig.json && vite build",
+    "build": "node ../../scripts/check-icons.mjs && vue-tsc --noEmit -p tsconfig.json && vite build",
     "build:only": "vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json"
@@ -15,7 +15,6 @@
     "@classhelper/shared": "workspace:*",
     "@element-plus/icons-vue": "^2.3.2",
     "axios": "^1.20.0",
-    "echarts": "^6.1.0",
     "element-plus": "^2.14.5",
     "pinia": "^4.0.3",
     "socket.io-client": "^4.8.3",

@@ -55,11 +55,18 @@ scripts/
   dist-server.mjs            服务端 + Web 管理端打包（产物落在 release-server/）
   nsis/server-installer.nsi  服务端 NSIS 安装脚本
   verify-packaged.mjs        对**打包后/已安装**的客户端 EXE 复跑冒烟
+  check-icons.mjs            图标注册表静态门禁（漏注册会静默渲染空白，见 §5 第 53 条）
   ui-smoke/{run,main.cjs,live-probe.mjs}  Web 管理端真实点击回归（Electron 驱动）
   lib/{electron-env,node-runtime}.mjs     启动 Electron / 定位真实 node.exe
-deploy/                      Dockerfile / docker-compose{,.sqlite}.yml / nginx.conf / install-linux.sh
-                             classhelper.service / package.runtime.json / .env{,.sqlite}.example
-docs/                        production.md（生产部署）/ mysql.md（MySQL 切换）/ winisland-design-tokens.md
+deploy/                      Dockerfile / docker-compose{,.sqlite}.yml / nginx.conf / package.runtime.json
+                             install.sh（Linux 一键安装器，TUI）/ install-linux.sh（转发壳）
+                             classhelper（运维命令本体）/ verify-linux.sh（Linux 验收，自统计 N/N）
+                             tools/admin-cli.mjs（离线改密 / SQLite 一致性快照）
+                             profile.d/ logrotate.d/ systemd/（装到 /etc 的模板）
+                             Dockerfile.linux-package（安装包内那份，--mode docker 用）
+                             classhelper.service（systemd 模板，5 个占位符）/ .env{,.sqlite}.example
+docs/                        production.md（生产部署）/ linux-deploy.md（Linux 部署与运维）
+                             mysql.md（MySQL 切换）/ winisland-design-tokens.md
                              screenshots/{island,client,web-mobile,classisland}/
 packages/shared/src/         types.ts / constants.ts / permissions.ts / utils.ts / index.ts
 packages/server/
@@ -69,27 +76,27 @@ packages/server/
                              homework_assign_date / push_kind / schedule_source）
   prisma/seed.ts             种子数据（会清空业务表后重建演示数据）
   prisma.config.ts           Prisma 7 配置：schema / migrations / seed / 连接串
-  scripts/verify-e2e.mjs     后端端到端验收（条数由脚本统计，实测 173 项）
+  scripts/verify-e2e.mjs     后端端到端验收（条数由脚本统计，2026-10-05 实测 190 项）
   scripts/verify-classisland.mjs        联动链路验收（实测 42 项）
   scripts/apply-column-migrations.cjs  旧库补列（手工覆盖 dist 部署时用）
   src/app.ts                 Express 装配（探针 → 限流 → 模块挂载 → 静态托管 → 兜底）
   src/index.ts               启动入口（自检 + HTTP + Socket.IO + 优雅退出）
   src/config/env.ts          zod 环境变量校验 + 生产自检
   src/lib/                   access(RBAC) class-account db db-bootstrap http jwt logger mappers
-                             password schemas session term web-static
+                             password schemas session term version(读 package.json) web-static
   src/middleware/            auth validate error security
   src/realtime/              socket.ts（房间）+ bus.ts（事件总线）
-  src/modules/               13 个功能模块 + registry.ts + module.types.ts
-packages/web-admin/src/      api stores router layouts views(11) components(4) composables styles config.ts
+  src/modules/               15 个功能模块 + registry.ts + module.types.ts
+packages/web-admin/src/      api stores router layouts views(12) components(5) composables styles config.ts
 packages/desktop-client/
-  src/main/                  主进程：index / config（含作业短语与看板偏好）/ ipc / island / tray / logger / smoke
+  src/main/                  主进程：index / config（含作业短语与看板偏好）/ ipc / island / tray / update / logger / smoke
   src/preload/               contextBridge 白名单桥（index.ts + island.ts，**不暴露 ipcRenderer 本体**）
   src/island/                灵动岛渲染进程：IslandApp.vue / spring.ts / squircle.ts / main.ts
   src/renderer/              学生端渲染进程：api / cache(IndexedDB) / stores / views / island / router
   src/types/desktop.d.ts     主进程 ↔ 渲染进程契约
   scripts/                   build-main / dev / smoke / dist-win
 packages/classisland-plugin/ .NET 8 插件（独立于 pnpm workspace，不参与 pnpm install）
-  manifest.yml               清单：id=classhelper.classisland.bridge / apiVersion=2.0.0.0 / version=1.0.0.0
+  manifest.yml               清单：id=classhelper.classisland.bridge / apiVersion=2.0.0.0 / version=1.1.0.0
   ClassHelper.ClassIslandPlugin.csproj（TargetFramework=net8.0）
   src/Plugin.cs              入口：读配置 → 注册提醒提供方 / 设置页 / BridgeService
   src/Models/PluginSettings.cs
@@ -174,6 +181,7 @@ pnpm build:classisland-plugin
 | `pnpm dist:classisland-plugin`                            | 打包插件为 `.cipx` 并归集到 `releases/classisland-plugin/`                                            |
 | `pnpm typecheck`                                          | 全仓库类型检查（含 `vue-tsc`）                                                                        |
 | `pnpm lint` / `pnpm lint:fix`                             | ESLint                                                                                                |
+| `pnpm check:icons`                                        | 图标注册表门禁（两端 build 已内联，这里可单独跑；见 §5 第 53 条）                                     |
 | `pnpm format` / `pnpm format:check`                       | Prettier（`format:check` 在 master 基线上本就失败，见 §7 第 21 条）                                   |
 | `pnpm db:generate`                                        | 生成 Prisma Client                                                                                    |
 | `pnpm db:migrate`                                         | `prisma migrate dev`（本机不可靠，别用；见 §7）                                                       |
@@ -181,13 +189,14 @@ pnpm build:classisland-plugin
 | `pnpm db:seed` / `pnpm db:reset`                          | 写种子 / 重置并重播种子                                                                               |
 | `pnpm db:studio`                                          | Prisma Studio                                                                                         |
 | `pnpm db:switch:mysql` / `db:switch:sqlite`               | 改写 `schema.prisma` 的 provider（配合 `docs/mysql.md`）                                              |
-| `pnpm verify:e2e`                                         | 后端端到端验收（**需后端已启动**；2026-09-30 实测 173 项全过）                                        |
+| `pnpm verify:e2e`                                         | 后端端到端验收（**需后端已启动**；2026-10-05 实测 190 项全过）                                        |
 | `pnpm verify:web`                                         | Web 管理端真实点击回归（Electron 驱动，需后端已启动且 Web 产物已构建）                                |
 | `pnpm verify:desktop`                                     | 客户端冒烟（Electron，无人工点击）                                                                    |
 | `pnpm verify:packaged`                                    | 对**打包后/已安装**的客户端 EXE 跑同一套冒烟（`--exe` 指定路径）                                      |
 | `pnpm verify:classisland`                                 | ClassIsland 联动链路（设备令牌 / 上报 / 提醒下发与回执 / 镜像契约 / 幽灵行清理；实测 42 项）          |
 | `pnpm verify:classisland-plugin`                          | 插件静态契约校验（清单一致性 / 注册完整性 / C# DTO ↔ 服务端 zod 与路由 / 已修复坑的护栏；实测 68 项） |
 | `pnpm dist:server` / `dist:win` / `dist:dir` / `dist:all` | 打包服务端安装程序 / 客户端安装包 / 免安装目录 / 全部                                                 |
+| `pnpm dist:server:linux`                                  | 打包 **Linux 服务端安装包**（`classhelper-server-linux-x64-<版本>.tar.gz` + `.sha256`）—— 见 §5 第 59 条 |
 | `pnpm icons`                                              | 生成应用图标（Electron 渲染 SVG → PNG/ICO）                                                           |
 
 ### 端口
@@ -204,6 +213,7 @@ pnpm build:classisland-plugin
 
 ```
 release-server/                      pnpm dist:server 的输出（免安装目录 + NSIS 安装程序）
+                                     pnpm dist:server:linux 的输出（classhelper-server-linux-x64-<版本>.tar.gz + .sha256）
 packages/desktop-client/release/     pnpm dist:win / dist:dir 的输出（win-unpacked + setup.exe + portable.exe）
 releases/                            本仓库约定的归集处（把上面的产物拷进 client/ server/ classisland-plugin/）
 ```
@@ -214,6 +224,7 @@ node packages/desktop-client/scripts/dist-win.mjs -c.directories.output=<绝对�
 
 # 服务端：输出路径写死在 release-server/，打完自行移进 releases/server/
 pnpm dist:server          # 首次会跑一次 npm install；重试可加 --reuse-deps 跳过
+pnpm dist:server:linux    # Linux 安装包（**必须在 Linux 上跑**，见 §5 第 59 条 ④）
 
 # ClassIsland 插件：构建脚本自己归集到 releases/classisland-plugin/
 pnpm dist:classisland-plugin
@@ -224,8 +235,9 @@ pnpm dist:classisland-plugin
 ## 5. 架构硬约定（改代码前必须知道）
 
 1. **模块注册表是唯一入口。** 服务端每个功能是 `src/modules/<name>/`（`*.module.ts` 路由、
-   `*.schemas.ts` zod 校验、`*.service.ts` 业务）。当前 13 个：`auth / classes / courses / schedules /
-homeworks / notifications / calls / imports / integrations / grades / students / teachers / dashboard`。
+   `*.schemas.ts` zod 校验、`*.service.ts` 业务）。当前 15 个：`auth / classes / courses / schedules /
+homeworks / notifications / calls / imports / integrations / grades / students / teachers / dashboard /
+database / update`。
    新增/下线功能**只改 `src/modules/registry.ts`**（加一行 / 改 `enabled: false`），不要动 `app.ts`。
 2. **统一响应与校验。** 用 `src/lib/http.ts` 的 `sendOk / sendCreated / …` 返回，用
    `middleware/validate.ts` 挂 zod schema；错误交给 `middleware/error.ts`，不要各写一套。
@@ -360,7 +372,10 @@ homeworks / notifications / calls / imports / integrations / grades / students /
     主进程把窗口**贴合岛体**（`windowBox` = 当前形态 + 2×阴影留白）并**始终接收输入**
     （`setInteractive` 在触摸模式下把入参强制为 true）。三条护栏别动：
 
-- **变小要等岛真的收小**（`cardFitsFormSize` + 渲染进程上报的岛体矩形）—— 立刻缩小会把形变中的卡片裁掉；
+- **窗口可见期间只增不减**：`syncTouchLayout()` 里 `if (shrinking && this.win.isVisible()) return;`
+  —— 需要变小一律等窗口隐藏之后再做（`syncWindow()` 的"不可见时对齐包围盒"那条）。立刻缩小既会裁掉
+  形变中的卡片，又会因为 DWM 还没重画桌面而留下上一帧（用户拍照反馈过"收回一瞬间闪一下"）；
+  （注：`cardFitsFormSize()` 这个"按岛体矩形判断能不能缩"的旧判据**已无调用**，别再照它理解现状。）
 - `expectedHitRect` 必须按**窗口实际尺寸**算偏移（触摸模式下窗口不再是固定包围盒）；
 - 失焦宽限期用 `BLUR_GRACE_TOUCH_MS`（1200ms）：触摸没有光标，`isCursorOnIsland()` 恒为 false，
   而实测假失焦出现在 70~520ms（跨过 500ms 边界 ⇒ 会把刚展开的岛缩回胶囊）。
@@ -427,16 +442,17 @@ homeworks / notifications / calls / imports / integrations / grades / students /
     回执拿到 id 后再补记一次，投递前用 id / 指纹双重判定。改作业录入入口时别忘了在请求前调
     `markHomeworkCreatedLocally()`。回归用例：「本机录入的作业不再上灵动岛」。
 
-36. **触摸模式下收回动画期间，窗口必须一动不动**（`syncTouchLayout()` 开头 `if (this.closing) return;`）。
+36. **触摸模式下收回动画期间，窗口必须一动不动**（窗口可见期间一律不缩窗口，见 `syncTouchLayout()`）。
     触摸模式窗口是"贴合岛体"的，而收回时卡片正在缩小：若跟着缩窗口，**中心停靠下窗口 x 还要右移**，
     "让出去"的那块区域会留着上一帧（DWM 还没重画桌面）——同一帧里能看到"旧展开卡的左半截 + 新胶囊"
     两份画面（用户拍照反馈的"收回一瞬间闪一下"）。窗口尺寸一律等**隐藏之后**再对齐
     （`syncWindow` 里"不可见时对齐包围盒"那条，不可见时改尺寸不会有残影）。
     回归用例：「触摸模式收回：动画期间窗口不动」逐帧采样窗口矩形（只在"窗口可见 / 正在收回"时追究，
     收完隐藏后对齐尺寸是正常的）；「收回动画期间卡片不被窗口裁切」。
-    另：`cardFitsFormSize()` 的判据里**不能**再塞 `closing` —— 那条早退已经把收回整个排除了，
-    早先漏掉这一条时窗口会在卡片还很大时就缩成胶囊尺寸，卡片底部被平切（"上半剩圆角、下半截断"）；
-    而"隐藏态改边距不生效"那条修法仍要保留：`this.win.isVisible() && (mode !== 'hidden' || idleSliver)`。
+    另：**别再去代码里找 `closing` 或 `cardFitsFormSize()`** —— 自研的那层"收回快照"（§5 第 34 条已说明
+    整体删除）与"按岛体矩形判断能否缩小"这个旧判据都已不在调用链上，最终判据只有上面那条
+    `shrinking && isVisible` 早退。"隐藏态改边距不生效"则是由 `setAppearance()` 无条件 `relayout()`
+    加 `applyWindowLayout()` 的"矩形没变就不调 setBounds"守卫保证的，同样不需要额外的可见性判断。
 
 37. **开合时胶囊内容禁止跟着卡片重排/横移。** 卡片在 268 ⇄ 424 之间变宽变窄，中心停靠下左右边都在动；
     胶囊内容若按卡片宽度布局，就会出现"文字先按宽卡片铺开、再随卡片收窄被省略号收回"
@@ -537,16 +553,44 @@ homeworks / notifications / calls / imports / integrations / grades / students /
     **`minHeight` 必须 ≤ 582**（否则窗口达不到目标高度，用户会看到"设置不了那个大小"）。
     冒烟断言：「初始窗口尺寸与 ClassIsland 对齐（1242x582）」（`win.getSize()`），改尺寸即红。
 
-49. **侧栏（分组折叠菜单）的三条硬要求**，都是用户报过的问题固化的：
-    ① **折叠态文字必须 `display: none`** —— Element Plus 自己的隐藏方式是"把 span 的宽高压成 0 +
-    overflow"，外层只要有缩进/margin/transition 干扰，文字就会以"0 宽溢出"留在画面上
-    （用户截图里的半截字）。规则写在 `styles/index.css` 的 `.ch-nav .el-menu--collapse ... > span:not(.menu-icon-slot)`。
-    ② **折叠态图标必须与顶部汉堡按钮同一竖列**（冒烟断言中心差 ≤ 2px）—— 一个居中、一个偏左就会
-    看起来"没对齐"。汉堡在 `.brand` 里也是居中的，两边都在 64/2 = 32px。
-    ③ **菜单区必须 `min-height: 0` + `overflow-y: auto`** —— 否则菜单项多时会把底部
-    「第 N 周 / 最近同步」挤出窗口（窗口 582px 高、两组全展开时必然发生）。footer 是 aside 的
-    兄弟 flex 子项，菜单区滚动后它恒定可见（冒烟断言「侧栏底部可见」）。
-    另：分组**默认只展开当前路由所在分组**（ClassIsland 同款，也让小窗口侧栏不溢出）；
+49. **侧栏是"一级项 + 一个设置分组"，折叠后是图标导轨 —— 五条硬要求**，都是用户报过的问题固化的：
+    ① **菜单结构**：课表 / 作业 / 通知 / 成绩是**一级 `el-menu-item`**（2026-10-05 按用户要求把原来的
+    「学习」分组拆掉：分组标题白占一行、还得多点一次展开，折叠成导轨时尤其明显）；只有「设置」
+    保留 `el-sub-menu`（6 个子项平铺太长）。`layoutNavigationSelfTest` 里有断言盯着
+    "一级项不能还挂在任何 `.el-sub-menu` 里"。
+    ② **折叠是 CSS 收拢动画，不用 `el-menu` 的 `:collapse`** —— 那个 prop 会把每个分组的子项
+    卸载进浮层（一次结构切换）并让整条菜单重排一遍：既做不出连续形变，也是"点汉堡卡一下"的渲染侧来源。
+    现在折叠只做三件事：栏宽（`.aside` 的 `width` 过渡）、文字（`min-width:0` 让 flex 压得动 +
+    `overflow:hidden` 裁切 + `opacity` 淡出）、图标位置（`padding-left` 过渡）。**全程没有结构变化、
+    没有 `v-if` 增删**，导轨里分组标题与子项都以图标列出（**不再有悬停浮层**）。
+    时长/缓动/图标-文字间距统一在 `styles/index.css` 的 `--nav-dur` / `--nav-ease` / `--nav-gap`。
+    ③ **折叠态图标必须与顶部汉堡按钮同一竖列**（冒烟断言中心差 ≤ 2px，实测 11 个图标全 0.0px）。
+    几何：64px 栏、菜单项左右各 8px margin、折叠后 padding 左右各 12px ⇒ 图标中心 = 8+12+12 = 32px
+    = 64/2；汉堡靠 `padding-left: 18px` 位移到位（**不能用 `justify-content: center`**，它不可过渡）。
+    ④ **导轨必须"一眼看全"，不许出现滚动**（用户要求"不要用滚轮、删掉滚动条"）：
+    - 折叠态页脚要**把高度也收掉**（`.is-collapsed .aside-footer` 的 `max-height: 0` +
+      **`min-height: 0`** —— flex 子项默认 `min-height: auto`，而 CSS 里 min-height 优先于 max-height，
+      不显式归零就压不下去）。留着那 ~70px 的话，11 行图标（462px）在 540px 的最小窗口里放不下。
+    - 导轨里用 `.is-collapsed .menu { scrollbar-width: none }` 隐藏滚动条；展开态**不隐藏** ——
+      那一栏确实会超（设置组展开约 606px > 582px），滚动条是"下面还有内容"的唯一提示。
+    - 冒烟断言「导轨无溢出」（先展开设置组造出 11 行的最坏情况，再断言 `scrollHeight ≤ clientHeight`）。
+      ⑤ **折叠态文字不能"看得见"** —— 判据已从"没被布局"（老的 `display:none`）改成"看得见"
+      （有宽度且未透明）：现在靠 `overflow:hidden` 裁切，文字仍参与布局。冒烟断言「文字残影=无」。
+      （另：菜单区仍要 `min-height: 0` + `overflow-y: auto`，footer 是 aside 的兄弟 flex 子项，
+      菜单区滚动后它恒定可见 —— 冒烟断言「侧栏底部可见」。）
+
+    改折叠相关样式时的两个坑：
+    - **压 Element Plus 的层级缩进必须照抄它的选择器形状**：EP 用**三个不同选择器**分别算
+      「一级项 20px / 分组标题 20px / 分组内子项 40px」（特异度 0-4-0 / 0-4-0 / 0-5-0）：
+      `.el-menu--vertical:not(.el-menu--collapse):not(.el-menu--popup-container) .el-menu-item`
+      （把 `…__title`、以及多加一层 `.el-sub-menu` 的变体都算上）。写成
+      `.ch-nav.is-collapsed .el-sub-menu__title` 这种 0-3-0 的一条都压不住 —— **踩过两次**：
+      第一版漏了分组标题（偏 8.0px），把「学习」拆成一级项后又漏了一级项（同样偏 8.0px）。
+      现在 `index.css` 里那两条（0-5-0 / 0-6-0）把三种形状全覆盖。
+    - 图标与文字的间距放在**文字的 `margin-left`** 上，别用 EP 给图标挂的 `margin-right: 5px`
+      （那会让图标在 24px 的槽里偏左 2.5px）。
+
+    另：分组**默认只展开当前路由所在分组**（落在四个一级项上时一个都不展开）；
     `el-sub-menu__title` 的点击是 **toggle**，自动化里要先判"子项是否可见"再决定点不点标题
     （盲点会把已展开的组收起来，后续点不到子项）。
 
@@ -563,6 +607,165 @@ homeworks / notifications / calls / imports / integrations / grades / students /
     处理方式是用环境变量传实际凭据（脚本原生支持，**不要去改数据**）：
     `set "ELECTRON_SMOKE_USER=teacher1" && set "ELECTRON_SMOKE_PASSWORD=123456" && pnpm verify:desktop`。
 
+    **注意两个演示账号的口令不一定一起漂**（2026-10-04 实测）：本机 `teacher1 = 123456`、
+    `teacher2` **仍是 `teacher123`**。因此 `verify:e2e`（口令硬编码、不支持环境变量）不能简单地
+    全局替换 `teacher123` —— 那样 teacher2 会 401，直接挂掉 9 条科任老师用例。
+    正确做法是**只替换 teacher1 那一行**的临时副本，跑完即删：
+
+    ```bash
+    sed "/username: 'teacher1'/s/'teacher123'/'123456'/" packages/server/scripts/verify-e2e.mjs \
+      > packages/server/scripts/.verify-e2e-local.tmp.mjs
+    node packages/server/scripts/.verify-e2e-local.tmp.mjs   # 副本必须放在 scripts/ 内
+    rm packages/server/scripts/.verify-e2e-local.tmp.mjs
+    ```
+
+    副本**必须放在 `packages/server/scripts/` 里**（不能放 `.cache/`）：脚本要 `import 'socket.io-client'`，
+    换个目录就 `ERR_MODULE_NOT_FOUND`。
+
+52. **更新检查：三端共用一套版本口径，但检查路径与"失败即正常"是硬约束。**
+    ① **版本号单一来源**：服务端版本由 `lib/version.ts` 读 package.json 得到
+    （打包后读的是运行时清单，即 `dist-server.mjs` 用根 package.json 写的那个），
+    `app.ts` 里**不要再写字面量版本号**（原先有三处 `'1.0.0'`，而仓库里有 5 份 package.json，必漂）。
+    比较逻辑放 `@classhelper/shared` 的 `compareVersions` / `isNewerVersion`，三端共用。
+    ② **检查路径不对称是 CSP 逼的，不是随手选的**：Web 端**不能**直连 GitHub
+    （`securityHeaders()` 的 `connect-src` 只有 `'self'` / ws / CORS_ORIGIN），必须走
+    `GET /api/update/check`；客户端在主进程直连 GitHub（渲染进程的 CSP 与导航防线不要为这个开洞）。
+    ③ **`ok:false` 是设计内的结果**：机房与教室机器常常只有内网，离线/超时/限流一律收敛成
+    `ok:false` + 一句人话，**失败结果同样进缓存**（否则断网点一次按钮就白等一个超时）。
+    ④ **自动化里绝不查外网**：冒烟跳过启动自动检查，`verify:*` 的断言只验"结构完整 + 能降级"，
+    断言"一定有新版本"会把用例绑死在外网可达上。`?force=1` 绕过缓存**只对管理员生效**，
+    否则任意登录用户都能刷爆 GitHub 匿名限流（60 次/小时/IP）。
+
+53. **Element Plus 图标按需注册，漏注册有构建门禁。** 两端都不再 `import * as ElementPlusIconsVue`
+    全量注册 293 个图标（实测全量打包 minified 203KB，实际只用 22 / 33 个），而是各有一份
+    `packages/web-admin/src/icons.ts` 与 `packages/desktop-client/src/renderer/icons.ts` 显式列名单。
+    **不能改成"模板里逐个 import"**：本项目的图标是按**字符串名**引用的（菜单/路由配置里的
+    `icon: 'Odometer'`、`:icon="'Search'"`、`<component :is="item.icon">`），Element Plus 会用
+    `<component :is="'Odometer'">` 去解析**全局组件名**，图标必须以全局组件存在。
+    漏注册的后果是**界面静默渲染成空白**（只在控制台一条 warning），所以在构建前加了静态门禁
+    `scripts/check-icons.mjs`（已挂进两端 `build` 脚本，根上也可 `pnpm check:icons`）：
+    它对比"源码里用到的图标 ∪"与"注册表里的名单"，有遗漏即 exit 1 并指出出现位置。
+    新增视图时直接用图标名即可，忘了加进注册表会在构建阶段被拦下。
+
+54. **服务端 dist 是运行产物，不带声明与 sourcemap。** `packages/server/tsconfig.build.json` 与
+    `tsconfig.generate.json` 都显式关掉 `declaration / declarationMap / sourceMap` 并开 `removeComments`
+    —— 根 `tsconfig.base.json` 默认是给"库"用的（三个都开），照搬到服务端会让 dist 从约 0.7MB
+    膨胀到 3.8MB（其中 `.d.ts` 1.5MB + `.d.ts.map` 1.1MB + `.js.map` 0.5MB，全是运行时用不到的）。
+    需要 sourcemap 调试时用 `tsconfig.json`（`noEmit`）即可。
+    **`tsconfig.generate.json` 还必须是自包含的（不 extends 任何配置）**：它随包发布到安装目录的
+    `server/` 一层，而 `tsconfig.json` / `tsconfig.base.json` 两级基配置都不在包里 —— 一旦 extends
+    就会在打包形态下报 `TS5083 Cannot read file .../server/tsconfig.json`，数据库「一键切换」
+    走到"编译新客户端"这一步直接失败（2026-10-05 实测踩到并修掉）。
+
+55. **服务端安装包的体积靠"运行时裁剪"压，规则写在 `scripts/dist-server.mjs` 的 `pruneRuntime()`。**
+    打包顺序是 `installDependencies() → buildRuntime() → pruneRuntime() → buildInstaller()`，
+    裁剪在最后一份文件就位、打包之前做。当前四条规则与收益（实测删 2329 项 / 省 101MB）：
+
+    | 规则                                                             | 省     | 依据（改之前先看这里）                                                                                                                |
+    | ---------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+    | `@prisma/client/runtime` 白名单，只留 sqlite/mysql 的 ESM 方言包 | 61.4MB | 生成的客户端按 **provider 写死**动态 import（`internal/class.ts`），换库重新 generate 只会指向对应方言；`_small_bg` 与 CJS 版永不加载 |
+    | `node_modules/**/*.map`                                          | 19.0MB | Node 没开 `--enable-source-maps`                                                                                                      |
+    | `prisma/build/` 只留 sqlite/mysql 查询编译器                     | 15.0MB | 部署形态里 CLI 只被用于 `generate` 与 `db push`                                                                                       |
+    | 文档（保留 LICENSE/NOTICE）与测试/示例目录                       | 5.2MB  | 不会被 require                                                                                                                        |
+
+    **两条硬护栏（都踩过）**：① 整棵 `@types/**` 不参与裁剪 —— 类型包里的 `test/`、`docs/` 是真实声明
+    文件（`@types/node/test/reporters.d.ts` 被 `test.d.ts` 引用），按"测试目录"删掉会让数据库切换的
+    `tsc` 报 TS6053；② 名字命中 `DROP_DIRS` 的目录，只要里面含 `*.d.ts` 就跳过。
+    改完必须按下面的清单复验（尤其数据库管理模块，它是唯一会调 Prisma CLI 的地方）。
+
+56. **`verify:classisland` 开头会先"抽干"本班的历史积压提醒。** `/integrations/classisland/pending`
+    是「本班全部未确认提醒，按时间升序取**前 20 条**」，而 `verify:desktop` / `verify:web` 等冒烟会
+    **真的往演示班发通知**（见 §5 第 38 条）——那些条没被确认就会一直堆着，攒够 20 条之后
+    本脚本刚发的提醒会被挤出窗口，表现为「待提醒里找不到刚发的那条」，跟代码对不对毫无关系
+    （2026-10-05 实测：库里积了 45 条历次冒烟残条，本脚本从 42/42 掉到 35/40）。
+    现在脚本用 `drainPending()` 按**真实插件重连后的行为**（补弹并逐条确认）先清空，再开始断言，
+    可见范围与插件一致（只看 `deviceId` 为空的本班广播 + 本设备自己的推送）。
+    **别把这个 drain 删掉**，否则这个门禁会重新变成"跑几次就红"的随机失败。
+
+57. **桌面端配置（`config.json`）是"常驻内存 + 异步合并落盘"，别再当成同步写。**
+    `main/config.ts` 里配置**只读一次盘**（懒初始化），`getConfig()` / `saveConfig()` 之后一律走内存缓存
+    （连已解密的 token 一起缓存，不再每次过一遍 DPAPI）；落盘改成"记下待写 → 120ms 合并窗口 →
+    `fs.promises.writeFile`"，同一拍内的多次改动只写最后一次，多次写入之间串行、不会互相覆盖；
+    退出前由 `flushConfigSync()`（挂在 `main/index.ts` 的 `shutdownResources()` 里）同步兜底写一次。
+
+    **为什么必须这样**：侧栏折叠、主题切换、通知渠道、作业看板偏好、登录/登出**全都走 `saveConfig`**，
+    而它原先一次调用要在**主进程主线程**上做「`readFileSync` + `JSON.parse` + 8 个 normalize」**两遍**
+    （开头读一遍、结尾 `getConfig()` 又读一遍）+ `writeFileSync` + DPAPI 解密一遍 —— 主进程是 Electron 的
+    消息泵进程，被它摁住的那一拍渲染进程也跟着掉帧。用户反馈的「点侧栏汉堡展开/收回时卡一下」
+    就是这一拍（2026-10-05 定位并修掉；当时先误查到灵动岛，那块与它无关）。
+
+    三条硬约束：
+    ① **缓存必须懒初始化**：`main/index.ts` 会先 `app.setPath('userData', smokeProfile)` 再读配置，
+    在模块顶层立即读盘会读错文件；
+    ② **`saveConfig()` 返回时数据可能还没落盘**（最多晚 120ms）。要"读回刚存的值"一律用 `getConfig()`
+    （读的就是缓存里的最新值），别去读文件；正常退出（托盘 → 退出）会 flush，只有进程被强杀才会丢
+    最后 120ms 内的改动；
+    ③ 别把落盘写成"每次保存挂一个 promise 链"—— 拖滑块/连点会排队几十次写。`clearConfig()`（退出登录）
+    走 `immediate` 分支，不参与合并窗口。
+
+58. **顶栏右侧（主题切换按钮 + 用户名下拉）必须是 flex 容器。** Element Plus 给 `.el-button` 的是
+    `vertical-align: middle`、给 `.el-dropdown` 的是 `vertical-align: top` —— 两个 inline-level
+    子元素放在普通 block 容器里会各按各的垂直对齐规则落位，错开几像素（用户反馈的"**深色模式没对齐**"，
+    其实两种主题下都偏，只是深色下更显眼）。`.header-right` 必须写
+    `display:flex; align-items:center; gap`，与 Web 管理端 `AdminLayout` 的同名容器同一套写法
+    （那边一开始就是对的，桌面端当初漏了这条规则）。回归断言在 `layoutChromeSelfTest` 里：
+    量主题按钮与 `.user-chip` 的**中线差**，要求 ≤ 1.5px（实测 0.0px）。
+
+59. **Linux 交付链有六条硬约定**（`deploy/install.sh`、`deploy/classhelper`、`scripts/dist-server.mjs`
+    的 `--platform linux`、`deploy/verify-linux.sh`）。改这条链路前先读这一节，每条都对应一个踩过的坑：
+
+    ① **配置真身在 `/etc/classhelper/config.env`，安装目录里的 `.env` 必须是指向它的软链。**
+    Web 端「数据库管理 → 一键切换」在运行中改写的是 **`<安装目录>/.env`**（`database.service.ts`），
+    而 systemd 是通过 `EnvironmentFile=` 注入同一份配置的；dotenv 不覆盖已存在的环境变量，
+    所以两处一旦不是同一个文件，切换就会**看起来成功、重启后又连回旧库**（极难排查）。
+    权限同时满足"配置文件 600 / 配置目录 700"与服务进程可读写（属主给 `classhelper`）。
+    `classhelper doctor` 里有专门一条断言盯着这条软链。
+
+    ② **systemd 单元的 `ReadWritePaths` 必须同时包含安装目录与配置目录。**
+    服务端不是只写 `data/`：一键切库会改写 `server/prisma/schema.prisma`、把新客户端编译进
+    `server/dist/generated`，并改写 `config.env`。`ProtectSystem=full` 下不显式放行就会失败。
+    占位符有 5 个：`__NODE__ __DIR__ __USER__ __CONFIG__ __CONFIGDIR__`（少替换一个，
+    systemd 会拿字面量当路径）。
+
+    ③ **升级/回滚替换程序文件必须用"改名 + 就位"，不能 `rm -rf` 再 `cp`。**
+    升级时正在运行的就是 `bin/classhelper` 自己：先 `mv bin bin.old-…` 再放新目录，
+    运行中的进程继续读旧 inode；直接删掉同名文件会让 bash 读到半个脚本（报莫名其妙的语法错误）。
+
+    ④ **Linux 包只能在 Linux 上构建，产物名固定。** `@libsql/linux-x64-gnu`、`@prisma/adapter-libsql`
+    是平台相关依赖，Windows 上装的 `node_modules` 拷过去跑不起来 ⇒ 由
+    `.github/workflows/release-linux-server.yml`（ubuntu runner）出包。命名约定
+    `classhelper-server-linux-<arch>-<版本>.tar.gz` + 同名 `.sha256`（旁边那份、以及 Release 里的
+    `SHA256SUMS-<版本>.txt`），`classhelper upgrade` 按这个名字拼下载地址，**改名即断升级链路**。
+    非 Linux 上 `--platform linux` 也能跑（会加 npm 的 `--os=linux --cpu=x64` 按目标平台解析依赖），
+    但那是**应急**，已在 2026-10-05 实测核对过包内容：`@libsql/linux-x64-gnu`/`-musl` 就位、无 win32 残留、
+    服务端与全部运维命令可用；**只有 Web 端「一键切换数据库」存疑** —— 那条链路要 prisma CLI 的原生
+    schema engine，CLI 运行期按平台扫 `@prisma/engines/schema-engine-debian-openssl-3.0.x` 这类路径，
+    而交叉包里只有 `schema-engine-windows.exe`。交叉构建会写入 `.cross-built` 标记，
+    `classhelper doctor` 据此提示（别改成静默），`upgrade` 替换程序文件时会按新包有无该标记来增删。
+    正式产物仍走 CI。
+
+    ⑤ **密码永远走 stdin，命令行一律不接受密码；调用服务端模块的工具必须压掉它的 stdout 噪声。**
+    `classhelper password` 用 `read -s` 优先读 `/dev/tty`、无 tty 回退 stdin（这样既能交互，
+    也能被验收脚本用管道喂 —— 都不进 history/ps）。输入循环**必须有界**：stdin 结束时 `read`
+    返回非 0，不看这个标记就会在 EOF 上死循环（`verify-linux.sh` 里有一条"不合规时不卡死"的回归）。
+    写配置（`config set`）同理：值经临时文件传给 `awk`，不进 argv；敏感键强制交互输入，
+    `key rotate` 自己生成的密钥走内部写函数。另外 `tools/admin-cli.mjs` 复用了服务端的
+    `config/env.ts` 与 `lib/logger.ts`，**这两个模块会往 stdout 打日志**（dotenv 的
+    `◇ injected env …` 提示、Prisma 初始化一行）—— 调它时必须带上
+    `LOG_LEVEL=error DOTENV_CONFIG_QUIET=true`，否则 `dump-hash` 写出的"原哈希备份"里会多一行日志，
+    变成非法 JSON，**改密失败自动回滚整条链路静默失效**（dotenv 不覆盖已有环境变量，所以这两个
+    变量能生效，已实测）。
+
+    ⑥ **内置 Node 要按 glibc 选构建。** Node 官方 linux-x64 二进制要求 glibc ≥ 2.28，
+    CentOS 7 是 2.17 —— 装上去的表现为"服务起来就退出、日志什么都没有"。安装器检测 glibc，
+    低于 2.28 时自动改用 unofficial-builds 的 `-glibc-217` 变体。CentOS 7 仍属尽力而为。
+
+    两条写这类脚本时的通用坑（本仓库踩过）：**`set -e` 下 `[ cond ] && 可能失败的命令` 会
+    在条件为假时……其实不会退出**（bash 对 `&&` 列表里非最后一条失败是豁免的），但
+    `A && B` 里 B 失败、以及**用 `$(函数)` 捕获输出时把日志一起捕获**（所以安装器用全局
+    `STAGE_DIR` 而不是 `echo` 返回路径）这两类是实打实的 bug；`die` 要先 `trap - ERR` 再退出，
+    免得 ERR 钩子再补一句误导的"第 N 行执行失败"。
+
 ---
 
 ## 6. 代码风格
@@ -578,6 +781,14 @@ homeworks / notifications / calls / imports / integrations / grades / students /
 - **提交信息**：Conventional Commits + 模块 scope，描述用中文，可多 scope，例如
   `fix(island): 胶囊"点不动"的根因——窗口必须始终可激活`、
   `feat(teachers,classes,schedules,web): 教师录入（仅管理员）`。
+- **图表不引第三方库。** 全项目只有三张图（桌面端成绩页 1 张柱状图；Web 端成绩页柱状 + 折线各 1 张），
+  历史上用 echarts 全量引入，占了桌面端渲染产物 1.12MB（35%）与 Web 端 1.13MB。现在换成
+  自包含的轻量组件：`packages/desktop-client/src/renderer/components/ScoreBarChart.vue`、
+  `packages/web-admin/src/components/{ScoreBarChart,ScoreLineChart}.vue` ——
+  柱状图是纯 HTML/CSS（柱高走百分比、刻度与网格线用**零高度 flex 行 + space-between** 对齐），
+  折线图是 `viewBox="0 0 100 100" + preserveAspectRatio="none"` 的 SVG（数据点用 HTML 绝对定位，
+  免得非等比拉伸把圆点压成椭圆）。两者都是响应式的，**不要给它们加重算尺寸的 resize 监听**。
+  新增图表请沿用这个做法，不要重新引入图表库。
 - **改动交付形态 / 新增功能后**，同步更新 `README.md`（它兼作产品说明书与验收对照表）。
 
 ---
@@ -730,6 +941,24 @@ homeworks / notifications / calls / imports / integrations / grades / students /
     同理，断言岛体尺寸别写死"胶囊尺寸 + 留白"：那一刻是胶囊还是卡片取决于前面用例留下的状态，
     应改成**与形态无关的不变量**（如"窗口 = 卡片实测尺寸 + 2×阴影留白"）。
 
+23. **客户端安装包有硬底：`班级小助手.exe` 单独压缩后就有 85~90MB，"压到 60MB"做不到 —— 别再为这个反复折腾。**
+    实测（2026-10-05，Electron 44.3.0）：`win-unpacked` 372MB，其中 `班级小助手.exe`（就是 electron.exe，
+    rcedit 只加了 74KB）**234.7MB**；brotli-9 抽样压缩后估算它单独就有 85~90MB。也就是说把渲染产物
+    从 3.2MB 压到 2.1MB、把图标从 293 个减到 42 个，对安装包只影响约 1MB。
+    剩下能动的只有这些（合计约 12MB，风险不成比例，**当前一律不做**）：
+    `dxcompiler.dll + dxil.dll` 26MB（D3D12 着色器编译）、`vk_swiftshader + vulkan-1` 6.2MB、
+    `d3dcompiler_47.dll` 4.5MB（D3D11 回退）、`chrome_200_percent.pak` 1.2MB（高 DPI）、`ffmpeg.dll` 3MB。
+    教室机器多是老显卡 / 希沃一体机 / 虚拟机，删掉这些就是拿渲染可靠性换体积。
+    **唯一做的一条**是语言包：`electron-builder.yml` 的 `electronLanguages: [zh-CN]`
+    （官方选项，`app-builder-lib` 的 `removeUnusedLanguagesIfNeeded()` 会精确删掉其余 54 个
+    `locales/*.pak`）。实测 `win-unpacked` 372MB → **323MB**、`setup.exe`/`portable.exe`
+    107.2MB → **98.7MB / 98.4MB**（表中口径均为 MiB，与本机 `ls -la` / `du` 一致）。
+
+    要真正做到 60MB 只能换渲染运行时（WebView2 / Tauri，安装包可到 5~15MB），代价是把
+    `src/main/island.ts`（1840 行）里全部原生窗口行为重写一遍 —— 逐像素透明、鼠标穿透、
+    窗口贴合岛体、触摸模式、多屏/DPI，全是 §5 第 10/16/21/22/30/32/36/37 条踩过坑的地方，
+    且 `verify:desktop` / `verify:packaged` 的整套回归要重做。属于独立立项，不是顺手优化。
+
 ### 已知脆弱用例（不是环境问题，别去"修环境"）
 
 | 用例                                          | 触发条件                                                                                                                                                                                                                                                        |
@@ -748,7 +977,7 @@ pnpm lint                # ESLint（0 error 为底线）
 pnpm typecheck           # 全仓库类型检查
 
 pnpm dev:server          # 另开终端
-pnpm verify:e2e          # 后端端到端（2026-09-30 实测 173 项全过）
+pnpm verify:e2e          # 后端端到端（2026-10-05 实测 190 项全过）
 pnpm verify:classisland  # ClassIsland 联动链路（实测 42 项）
 pnpm verify:classisland-plugin          # 插件静态契约（不需要后端，实测 68 项）
 pnpm build:desktop && pnpm verify:desktop   # 客户端冒烟（AI 会话可跑，先看 §7 第 7 条）
@@ -757,6 +986,25 @@ pnpm build && pnpm verify:web               # Web 端真实点击回归（同上
 
 条目数由脚本自行统计并打印（`=== 结果：N/N 项通过 ===`、`ClassIsland 联动插件静态校验：N/N 项通过`），
 文档不要写死容易过期的总数。
+
+改动到 **Linux 交付链**（`deploy/install.sh`、`deploy/classhelper`、`deploy/tools/`、
+`scripts/dist-server.mjs` 的 linux 分支、systemd/profile.d/logrotate 模板）时：
+
+```bash
+bash -n deploy/install.sh deploy/classhelper deploy/verify-linux.sh deploy/install-linux.sh   # 语法（Windows 上就能跑）
+pnpm dist:server:linux      # 只能在 Linux 上跑；开发机是 Windows 时到服务器/CI 上验证
+
+# 真机（任意一台能 SSH 的 Linux，容器也行但 systemd 用例会跳过）
+scp release-server/classhelper-server-linux-x64-*.tar.gz deploy/{install.sh,verify-linux.sh} root@<主机>:/tmp/
+ssh root@<主机> 'bash /tmp/install.sh --check'
+ssh root@<主机> "printf '%s\n' '<密码>' | bash /tmp/install.sh --yes --admin-password-stdin --package /tmp/classhelper-server-linux-x64-*.tar.gz"
+ssh root@<主机> "bash /tmp/verify-linux.sh --admin-password-stdin" < <(printf '%s\n' '<密码>')
+```
+
+`verify-linux.sh` 会**真的**改一次管理员密码再回滚、真的发一条备份，跑完机器仍是可用状态；
+升级/回滚链路要加 `--full --package <新版本包>`（会真的替换一次程序文件）。
+**改过这条链路就要在真机上跑一遍**——脚本写在 Windows 上跑不出问题，`set -e` 的坑、
+systemd 的 `EnvironmentFile` 解析、glibc 差异都只有在 Linux 上才暴露。
 
 改动到 ClassIsland 插件时，额外跑 `pnpm dist:classisland-plugin` 确认能打出 `.cipx`；
 本机已装 ClassIsland 2.1.0.1（`D:\Classisland`）与 .NET 8 SDK（8.0.425），因此**真机验证是可行的**
@@ -776,5 +1024,29 @@ Start-Process D:\Classisland\ClassIsland.exe -WorkingDirectory D:\Classisland
 改动涉及打包/交付形态时，额外跑 `pnpm dist:all`（或 `dist:server` + `dist:win`），
 并用 `pnpm verify:packaged --exe "<客户端路径>"` 对**打包后的副本**复验 ——
 开发产物通过不等于用户机器上的副本通过。
+
+**改过 `pruneRuntime()`（§5 第 55 条）时，还要对免安装目录本身跑一遍**（开发形态跑通不代表裁剪后跑通）。
+从 `release-server/classhelper-server/` 起，用**自带的 node.exe**：
+
+```bash
+# ① 起服务：探针通 + 能真实查表（AUTO_MIGRATE 会建库；PORT 用环境变量避开开发端口）
+cd release-server/classhelper-server && PORT=4100 ./node.exe server/dist/index.js
+curl.exe -s --noproxy '*' http://127.0.0.1:4100/healthz
+curl.exe -s --noproxy '*' -X POST http://127.0.0.1:4100/api/auth/login \
+  -H "content-type: application/json" -d '{"username":"admin","password":"admin123"}'
+
+# ② 数据库「一键切换」的三步子进程链路（唯一会调用 Prisma CLI 的地方）
+cd server
+DATABASE_PROVIDER=sqlite DATABASE_URL="file:./prune-test.db" \
+  ../node.exe ../node_modules/prisma/build/index.js generate
+../node.exe ../node_modules/typescript/lib/tsc.js -p tsconfig.generate.json
+DATABASE_PROVIDER=sqlite DATABASE_URL="file:./prune-test.db" \
+  ../node.exe ../node_modules/prisma/build/index.js db push --accept-data-loss
+```
+
+跑完把这几个测试残留删掉，别带进交付目录：`server/src`、`server/prune-test.db`，
+并把 `data/`、`logs/` 清空。
+（`prisma db push` 是破坏性命令，Prisma 7.10 的 AI 代理护栏会要求显式同意；
+这里的目标是脚本刚建出来的空临时库，不是真实数据。）
 
 自测本地接口记得绕过代理（见 §7 第 1 条）。

@@ -12,6 +12,7 @@ import { notificationsModule } from './notifications/notifications.module.js';
 import { schedulesModule } from './schedules/schedules.module.js';
 import { studentsModule } from './students/students.module.js';
 import { teachersModule } from './teachers/teachers.module.js';
+import { updateModule } from './update/update.module.js';
 import type { ApiModule } from './module.types.js';
 
 /**
@@ -36,4 +37,5 @@ export const apiModules: ApiModule[] = [
   teachersModule,
   dashboardModule,
   databaseModule,
+  updateModule,
 ].filter((module) => module.enabled !== false);

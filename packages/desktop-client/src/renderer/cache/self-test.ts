@@ -103,9 +103,14 @@ const EXPECTED_MENU: Array<{ label: string; path: string }> = [
   { label: '通用', path: '/settings/general' },
 ];
 
-/** 分组标题（el-sub-menu）与应包含的子项，点击分组展开后再点子项 */
+/**
+ * 一级菜单项：2026-10-05 起「学习」分组已拆掉，课表/作业/通知/成绩**直接铺在侧栏一级**。
+ * 下面的结构自检会确认它们真的不在任何 `el-sub-menu` 里。
+ */
+const PRIMARY_MENU_ITEMS = ['课表', '作业', '通知', '成绩'];
+
+/** 分组标题（el-sub-menu）与应包含的子项，点击分组展开后再点子项。设置组自成一类，保留分组 */
 const MENU_GROUPS: Array<{ title: string; labels: string[] }> = [
-  { title: '学习', labels: ['课表', '作业', '通知', '成绩'] },
   { title: '设置', labels: ['通用', '外观', '灵动岛', '提醒', '账号', '关于'] },
 ];
 
@@ -122,16 +127,18 @@ export async function layoutNavigationSelfTest(): Promise<SmokeCheckResult> {
   // 用 startsWith 匹配就会误报"菜单项缺失"（历史失败原因）。
   const findByLabel = (selector: string, label: string): HTMLElement | undefined =>
     (Array.from(document.querySelectorAll(selector)) as HTMLElement[]).find((element) =>
-      Array.from(element.querySelectorAll('span')).some(
-        (span) => (span.textContent ?? '').trim() === label,
-      ),
+      Array.from(element.querySelectorAll('span')).some((span) => (span.textContent ?? '').trim() === label),
     );
   const findMenuItem = (label: string): HTMLElement | undefined => findByLabel('.el-menu-item', label);
   const findGroupTitle = (title: string): HTMLElement | undefined =>
     findByLabel('.el-sub-menu__title', title);
 
-  if (!findGroupTitle('学习') || !findGroupTitle('设置')) {
-    return { ok: false, detail: '侧边栏分组未渲染（当前不在主布局或未登录）' };
+  if (!findGroupTitle('设置')) {
+    return { ok: false, detail: '侧边栏「设置」分组未渲染（当前不在主布局或未登录）' };
+  }
+  const missingPrimary = PRIMARY_MENU_ITEMS.filter((label) => !findMenuItem(label));
+  if (missingPrimary.length > 0) {
+    return { ok: false, detail: `侧边栏缺少一级项：${missingPrimary.join('、')}` };
   }
 
   const visited: string[] = [];
@@ -150,7 +157,13 @@ export async function layoutNavigationSelfTest(): Promise<SmokeCheckResult> {
     }
   }
 
-  // 分组结构自检：两个分组各自应包含全部子项
+  // 结构自检：
+  //   ① 一级项必须**真的在一级** —— 不能还挂在某个 el-sub-menu 里（用户要求把"学习"拆掉）；
+  //   ② 分组各自应包含全部子项
+  for (const label of PRIMARY_MENU_ITEMS) {
+    const element = findMenuItem(label);
+    if (element?.closest('.el-sub-menu')) failures.push(`${label}(仍挂在分组里，应在一级)`);
+  }
   for (const group of MENU_GROUPS) {
     for (const label of group.labels) {
       if (!findMenuItem(label)) failures.push(`${group.title}组缺少子项 ${label}`);
@@ -874,12 +887,8 @@ export async function onboardingSelfTest(): Promise<SmokeCheckResult> {
     // 逐页「下一步」到最后一页再点「开始使用」（按钮由 data-action 标识，不依赖文案）
     const clicks: string[] = [];
     for (let attempt = 0; attempt < 12; attempt += 1) {
-      const action = document.querySelector('.onboarding-welcome [data-action="finish"]')
-        ? 'finish'
-        : 'next';
-      const button = document.querySelector<HTMLElement>(
-        `.onboarding-welcome [data-action="${action}"]`,
-      );
+      const action = document.querySelector('.onboarding-welcome [data-action="finish"]') ? 'finish' : 'next';
+      const button = document.querySelector<HTMLElement>(`.onboarding-welcome [data-action="${action}"]`);
       if (!button) break;
       clicks.push(action);
       button.click();
@@ -957,20 +966,48 @@ export async function layoutChromeSelfTest(): Promise<SmokeCheckResult> {
     const configAfterFlip = await window.desktop?.getConfig?.();
     const themePersisted = configAfterFlip?.theme === (flippedDark ? 'dark' : 'light');
 
-    // 2) 侧边栏：点汉堡折叠 → collapse 态 + 宽度收窄 → 配置落盘 → 再展开还原
+    // 1.5) 顶栏右侧必须水平对齐（用户反馈"深色模式没对齐"，两种主题其实都偏）。
+    //   Element Plus 给按钮的是 `vertical-align:middle`、给下拉容器的是 `vertical-align:top`，
+    //   容器不是 flex 的话两个 inline-level 子元素会各按各的规则落位，错开几像素。
+    const centerYOf = (element: Element | null | undefined): number | null => {
+      if (!element) return null;
+      const rect = element.getBoundingClientRect();
+      return rect.height > 0 ? rect.top + rect.height / 2 : null;
+    };
+    const themeToggleY = centerYOf(document.querySelector('[data-test="theme-toggle"]'));
+    const userChipY = centerYOf(document.querySelector('.user-chip'));
+    const headerCenterDelta =
+      themeToggleY !== null && userChipY !== null ? Math.abs(themeToggleY - userChipY) : null;
+    const headerAligned = headerCenterDelta !== null && headerCenterDelta <= 1.5;
+
+    // 2) 侧边栏：点汉堡折叠 → 图标导轨态 + 宽度收窄（是动画，要等它走完）→ 配置落盘 → 再展开还原
     const asideBefore = document.querySelector<HTMLElement>('.aside.ch-nav');
     const widthBefore = asideBefore?.offsetWidth ?? 0;
+    // 2.0) 折叠必须是**动画**而不是瞬切（用户要求"重写菜单的动画"）。
+    //      不去抓中间帧（时序敏感），直接断言侧栏上挂着 width 的过渡 —— 确定性的。
+    const asideComputed = asideBefore ? getComputedStyle(asideBefore) : null;
+    const asideTransitionProperty = asideComputed?.transitionProperty ?? '';
+    const asideTransitionSeconds = asideComputed ? Number.parseFloat(asideComputed.transitionDuration) : 0;
+    const widthAnimated =
+      asideTransitionProperty.includes('width') &&
+      Number.isFinite(asideTransitionSeconds) &&
+      asideTransitionSeconds > 0.05;
     if (!clickToggle('[data-test="sidebar-toggle"]')) return { ok: false, detail: '汉堡按钮点击失败' };
-    const collapsed = await waitUntil(() => Boolean(document.querySelector('.el-menu--collapse')), 2500);
+    const collapsed = await waitUntil(() => {
+      const aside = document.querySelector<HTMLElement>('.aside.ch-nav');
+      return Boolean(aside?.classList.contains('is-collapsed')) && (aside?.offsetWidth ?? 999) <= 80;
+    }, 4000);
     const asideAfter = document.querySelector<HTMLElement>('.aside.ch-nav');
     const widthAfter = asideAfter?.offsetWidth ?? 0;
     const configAfterCollapse = await window.desktop?.getConfig?.();
     const collapsePersisted = configAfterCollapse?.sidebarCollapsed === true;
 
     // 2.1) 折叠态的两条观感硬要求（用户反馈回归）：
-    //   a) 菜单里不允许残留任何**可见**的文字（Element Plus 靠宽度归零隐藏，一旦被外层样式
-    //      干扰就会留"半截字"）；
-    //   b) 折叠后的图标必须与顶部汉堡按钮在同一竖列（中心 x 相差 ≤ 2px），否则看起来"没对齐"。
+    //   a) 菜单里不允许残留任何**可见**的文字。折叠实现是"文字宽度被 flex 压到 0 + overflow:hidden
+    //      裁掉 + opacity 归零"（`display:none` 无法过渡，用不了），所以判据是"看得见"
+    //      —— 有宽度且未透明 —— 而不是"根本没参与布局"；
+    //   b) 折叠后的图标必须与顶部汉堡按钮在同一竖列（中心 x 相差 ≤ 2px）。
+    //      分组标题里还有个绝对定位的折叠箭头，它同样带 el-icon 类但已淡出，量它没有意义，排除。
     const centerXOf = (element: Element | null | undefined): number | null => {
       if (!element) return null;
       const rect = element.getBoundingClientRect();
@@ -983,24 +1020,48 @@ export async function layoutChromeSelfTest(): Promise<SmokeCheckResult> {
       const element = node as HTMLElement;
       if (element.classList.contains('menu-icon-slot')) continue;
       const text = (element.textContent ?? '').trim();
-      if (text && element.offsetParent !== null && element.getClientRects().length > 0) {
-        const rect = element.getBoundingClientRect();
-        // 宽高都归零但 display 不为 none 的，正是"0 宽溢出"的残影来源
-        if (rect.width < 1) leftoverText.push(`0宽:${text.slice(0, 6)}`);
-        else leftoverText.push(`可见:${text.slice(0, 6)}`);
-      }
+      if (!text || element.getClientRects().length === 0) continue;
+      const rect = element.getBoundingClientRect();
+      const opacity = Number(getComputedStyle(element).opacity || '1');
+      if (rect.width >= 1 && opacity > 0.05) leftoverText.push(`可见:${text.slice(0, 6)}`);
     }
     const toggleCenter = centerXOf(document.querySelector('[data-test="sidebar-toggle"]'));
     const iconCenters = Array.from(
-      document.querySelectorAll('.aside .el-menu--collapse .el-sub-menu__title .el-icon'),
+      document.querySelectorAll(
+        '.aside.is-collapsed .menu-icon-slot .el-icon, ' +
+          '.aside.is-collapsed .el-sub-menu__title > .el-icon:not([class*="icon-arrow"])',
+      ),
     ).map((node) => centerXOf(node));
     const iconDeltas = iconCenters
       .filter((value): value is number => value !== null && toggleCenter !== null)
       .map((value) => Math.abs(value - (toggleCenter as number)));
     const iconsAligned = iconDeltas.length > 0 && Math.max(...iconDeltas) <= 2;
 
+    // 2.2) 导轨必须"一眼看全"：先把设置组展开（11 行图标 = 最坏情况），再断言菜单区没有纵向溢出。
+    //      折叠态页脚必须把**高度**也收成 0 —— 只淡出不留高度的话，那 ~70px 会把最后两个图标
+    //      顶出可视区，用户就得上下滑动（反馈原话："菜单图标无法完全显示需要上下滑动"）。
+    const settingsItem = Array.from(
+      document.querySelectorAll<HTMLElement>('.aside .el-sub-menu .el-menu-item'),
+    ).find((element) =>
+      Array.from(element.querySelectorAll('span')).some((span) => (span.textContent ?? '').trim() === '通用'),
+    );
+    const submenuOpen = (): boolean => Boolean(settingsItem && settingsItem.offsetParent !== null);
+    if (!submenuOpen()) {
+      // el-sub-menu__title 的点击是 **toggle**：先判"子项是否可见"再点，
+      // 盲点一次会把已展开的组收起来（AGENTS §5 第 49 条）
+      document.querySelector<HTMLElement>('.aside .el-sub-menu__title')?.click();
+      await waitUntil(() => submenuOpen(), 2000);
+    }
+    const railMenu = document.querySelector<HTMLElement>('.aside .menu');
+    const railOverflowPx = railMenu ? railMenu.scrollHeight - railMenu.clientHeight : Number.NaN;
+    const railFits = Number.isFinite(railOverflowPx) && railOverflowPx <= 1;
+
     clickToggle('[data-test="sidebar-toggle"]');
-    await waitUntil(() => !document.querySelector('.el-menu--collapse'), 2500);
+    // 展开同样是动画：等宽度回到 200 再继续，否则下面量页脚时侧栏还停在中间宽度
+    const expandedBack = await waitUntil(() => {
+      const aside = document.querySelector<HTMLElement>('.aside.ch-nav');
+      return !aside?.classList.contains('is-collapsed') && (aside?.offsetWidth ?? 0) >= 190;
+    }, 4000);
 
     // 3) 侧栏不溢出：菜单区自己滚动（.menu 有 min-height:0 + overflow-y:auto），
     //    底部「第 N 周 / 最近同步」始终留在窗口内 —— 窗口默认高 582px，
@@ -1018,20 +1079,27 @@ export async function layoutChromeSelfTest(): Promise<SmokeCheckResult> {
     const ok =
       flipped &&
       themePersisted &&
+      headerAligned &&
+      widthAnimated &&
       collapsed &&
       collapsePersisted &&
       widthAfter < widthBefore &&
       widthAfter <= 80 &&
+      expandedBack &&
       leftoverText.length === 0 &&
       iconsAligned &&
+      railFits &&
       footerVisible;
     return {
       ok,
       detail:
         `主题翻转=${flipped} 落盘=${themePersisted}(${configAfterFlip?.theme ?? '-'}) ` +
-        `折叠=${collapsed} 宽度=${widthBefore}→${widthAfter} 落盘=${collapsePersisted} ` +
+        `顶栏对齐=${headerAligned}（中线差=${headerCenterDelta === null ? '-' : headerCenterDelta.toFixed(1)}px，要求 ≤1.5px） ` +
+        `宽度过渡=${widthAnimated}(${asideTransitionProperty} ${asideTransitionSeconds}s) ` +
+        `折叠=${collapsed} 宽度=${widthBefore}→${widthAfter} 展开还原=${expandedBack} 落盘=${collapsePersisted} ` +
         `文字残影=${leftoverText.length === 0 ? '无' : leftoverText.join(',')} ` +
         `图标与汉堡同列=${iconsAligned}（中心差=${iconDeltas.map((d) => d.toFixed(1)).join('/') || '-'}，要求 ≤2px） ` +
+        `导轨无溢出=${railFits}（溢出=${Number.isFinite(railOverflowPx) ? `${railOverflowPx}px` : '-'}） ` +
         `侧栏底部可见=${footerVisible}`,
     };
   } catch (error) {
@@ -1063,10 +1131,17 @@ export async function aboutPageSelfTest(): Promise<SmokeCheckResult> {
     const info = await window.desktop?.getAppInfo?.();
     const hasConfigPath = Boolean(info?.configPath);
 
+    // 检查更新入口（新功能回归）：关于页要有这一块，且按钮可点。
+    // 这里只断言"入口存在"——是否真有新版本取决于 GitHub，不该绑进冒烟（见 main/update.ts）
+    const updateBlock = document.querySelector('[data-test="update-check"]');
+    const updateButton = document.querySelector('[data-test="update-check-button"]');
+
     await router.push('/schedule');
     return {
-      ok: hasThanks && hasDiagnostics && hasConfigPath,
-      detail: `鸣谢=${hasThanks} 诊断=${hasDiagnostics} configPath=${hasConfigPath ? '有' : '无'}`,
+      ok: hasThanks && hasDiagnostics && hasConfigPath && Boolean(updateBlock) && Boolean(updateButton),
+      detail:
+        `鸣谢=${hasThanks} 诊断=${hasDiagnostics} configPath=${hasConfigPath ? '有' : '无'} ` +
+        `检查更新块=${updateBlock ? '有' : '无'} 按钮=${updateButton ? '有' : '无'}`,
     };
   } catch (error) {
     return {

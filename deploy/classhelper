@@ -1,0 +1,1580 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# 班级小助手 · 运维命令（Linux）
+#
+# 安装位置：<安装目录>/bin/classhelper，并在 /usr/local/bin/classhelper 建软链，
+#           因此任何用户在任何目录都能直接敲 `classhelper`。
+#
+# 设计原则：
+#   1. **敏感操作一律 root**：除 help / version / completion 外，全部先过 need_root。
+#   2. **密码永不经过 argv / 环境变量 / 日志**：`password` 子命令从 /dev/tty（无 tty 时 stdin）
+#      读入，经管道交给 tools/admin-cli.mjs，只写进数据库；改配置时值也不进 argv（走临时文件）。
+#   3. **配置只有一个真身**：/etc/classhelper/config.env（默认），安装目录里的 .env 是指向它的软链。
+#      —— Web 端「一键切换数据库」改写的是 <安装目录>/.env，靠软链落到同一份文件上；
+#      否则 systemd 注入的旧值会压住新值，切换看起来成功、重启后又连回旧库。详见 docs/linux-deploy.md。
+#   4. **危险动作先备份**：改配置 / 改密 / 升级 / 回滚都先落一份到 /var/backups/classhelper/。
+#   5. 关键操作写审计日志 /var/log/classhelper/audit.log（只记"谁对谁做了什么、结果如何"）。
+#   6. **替换程序文件用 mv 而不是 rm+cp**：升级时正在运行的正是本脚本（bin/classhelper），
+#      rm 掉再写同名文件会让 bash 读到半个脚本；改名后新文件就位，运行中的进程继续读旧 inode。
+#
+# 用法：classhelper help
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+# ---------------------------------------------------------------- 0. 常量
+
+SERVICE_NAME="classhelper"
+DEFAULT_INSTALL_DIR="/opt/classhelper"
+DEFAULT_CONFIG_FILE="/etc/classhelper/config.env"
+DEFAULT_LOG_DIR="/var/log/classhelper"
+DEFAULT_BACKUP_DIR="/var/backups/classhelper"
+REPO_SLUG="LoveChengke/ClassHelper"
+GITHUB_API="https://api.github.com/repos/${REPO_SLUG}"
+GITHUB_RELEASES_PAGE="https://github.com/${REPO_SLUG}/releases"
+# GitHub 对没有 User-Agent 的请求直接 403
+HTTP_UA="ClassHelper-Ops"
+CURL_OPTS=(-fsSL --max-time 20 -H "User-Agent: ${HTTP_UA}")
+CURL_OPTS_LONG=(-fsSL --max-time 600 -H "User-Agent: ${HTTP_UA}")
+
+# ---------------------------------------------------------------- 1. 输出
+
+if [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ] && [ -z "${NO_COLOR:-}" ]; then
+  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
+  C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_RED=$'\033[31m'; C_CYAN=$'\033[36m'
+else
+  C_RESET=''; C_BOLD=''; C_DIM=''; C_GREEN=''; C_YELLOW=''; C_RED=''; C_CYAN=''
+fi
+
+log()  { printf '%s[classhelper]%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+info() { printf '%s[classhelper]%s %s\n' "$C_CYAN" "$C_RESET" "$*"; }
+warn() { printf '%s[classhelper]%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
+die()  { printf '%s[classhelper]%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------- 2. 定位自身与安装元数据
+
+# 解析真实路径（软链 /usr/local/bin/classhelper -> <安装目录>/bin/classhelper）
+resolve_self() {
+  local target="${BASH_SOURCE[0]}" resolved
+  if command -v readlink >/dev/null 2>&1; then
+    resolved="$(readlink -f "$target" 2>/dev/null || true)"
+    [ -n "$resolved" ] && target="$resolved"
+  fi
+  ( cd "$(dirname "$target")" && printf '%s/%s' "$PWD" "$(basename "$target")" )
+}
+
+SELF_PATH="$(resolve_self)"
+INSTALL_DIR="$(cd "$(dirname "$SELF_PATH")/.." && pwd)"
+META_FILE="${INSTALL_DIR}/.installed.json"
+
+# 元数据缺失（例如手工拷贝的 bin 目录）：回落到默认值，尽量仍能给出状态
+if [ ! -f "$META_FILE" ] && [ -n "${CLASSHELPER_HOME:-}" ]; then
+  INSTALL_DIR="${CLASSHELPER_HOME}"
+  META_FILE="${INSTALL_DIR}/.installed.json"
+fi
+
+# 只解析扁平、单层、值全为字符串的 JSON —— 格式由安装器与 upgrade 写出、受本脚本控制，
+# 因此用 sed 比引入 json 工具更可靠（运维工具要在 Node 坏掉时照样能用）
+meta_get() {
+  local key="$1"
+  [ -f "$META_FILE" ] || return 0
+  sed -n "s/^[[:space:]]*\"${key}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*\$/\1/p" "$META_FILE" | head -n 1
+}
+
+MODE="$(meta_get mode)";                MODE="${MODE:-native}"
+DB_KIND="$(meta_get database)";         DB_KIND="${DB_KIND:-sqlite}"
+SERVICE_USER="$(meta_get serviceUser)"; SERVICE_USER="${SERVICE_USER:-classhelper}"
+CONFIG_FILE="$(meta_get configFile)";   CONFIG_FILE="${CONFIG_FILE:-$DEFAULT_CONFIG_FILE}"
+LOG_DIR="$(meta_get logDir)";           LOG_DIR="${LOG_DIR:-$DEFAULT_LOG_DIR}"
+BACKUP_DIR="$(meta_get backupDir)";     BACKUP_DIR="${BACKUP_DIR:-$DEFAULT_BACKUP_DIR}"
+COMPOSE_FILE="$(meta_get composeFile)"
+CONFIG_DIR="$(dirname "$CONFIG_FILE")"
+DATA_DIR="${INSTALL_DIR}/data"
+TOOLS_DIR="${INSTALL_DIR}/tools"
+NODE_BIN="${INSTALL_DIR}/runtime/node/bin/node"
+[ -x "$NODE_BIN" ] || NODE_BIN="$(command -v node 2>/dev/null || true)"
+SHARED_LIB="${INSTALL_DIR}/node_modules/@classhelper/shared/dist/index.js"
+
+AUDIT_LOG="${LOG_DIR}/audit.log"
+
+# 审计：只记动作与目标，**绝不记密码 / 令牌 / 密钥**。
+# 目录在这里按需创建，而不是脚本一启动就建 —— help / version / completion 不需要 root，
+# 也不该在别人的机器上顺手创建 /var/log 下的目录。
+audit() {
+  local action="$1" target="${2:--}" result="${3:-ok}"
+  mkdir -p "$LOG_DIR" 2>/dev/null || true
+  chmod 700 "$LOG_DIR" 2>/dev/null || true
+  printf '%s operator=%s action=%s target=%s result=%s\n' \
+    "$(date '+%F %T%z')" "${SUDO_USER:-$(id -un)}" "$action" "$target" "$result" >>"$AUDIT_LOG" 2>/dev/null || true
+  chmod 600 "$AUDIT_LOG" 2>/dev/null || true
+}
+
+need_root() {
+  [ "$(id -u)" = "0" ] || die "该操作需要 root 权限：sudo classhelper $*"
+}
+
+require_install() {
+  [ -d "$INSTALL_DIR" ] || die "找不到安装目录 ${INSTALL_DIR}（用 install.sh 安装，或设置 CLASSHELPER_HOME）"
+}
+
+# ---------------------------------------------------------------- 3. 配置读写
+
+# 读配置项（去掉两侧引号，与 shell source / dotenv / systemd 三种读法口径一致）
+cfg_get() {
+  local key="$1"
+  [ -f "$CONFIG_FILE" ] || return 0
+  sed -n "s/^[[:space:]]*${key}=//p" "$CONFIG_FILE" | tail -n 1 | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
+
+is_secret_key() {
+  case "$1" in
+    *SECRET*|*PASSWORD*|*TOKEN*|DATABASE_URL) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# 打码显示：只露出头 2 位与末 1 位，短值全星
+mask_value() {
+  printf '%s' "${1:-}" | awk '{ if (length($0) <= 4) print "****"; else print substr($0,1,2) "****" substr($0,length($0)-1) }'
+}
+
+# 写 .env 时的取值引号规则：含空白或 # 的值必须加引号，否则三种读法都会解析错
+quote_env_value() {
+  local value="$1"
+  case "$value" in
+    *[[:space:]]*|*'#'*|*'"'*|*"'"*|'') printf '"%s"' "$(printf '%s' "$value" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')" ;;
+    *) printf '%s' "$value" ;;
+  esac
+}
+
+current_port() {
+  local port
+  port="$(cfg_get PORT)"
+  [ -n "$port" ] || port="$(meta_get port)"
+  printf '%s' "${port:-4000}"
+}
+
+current_version() {
+  local version=""
+  if [ -f "${INSTALL_DIR}/VERSION" ]; then version="$(tr -d '[:space:]' <"${INSTALL_DIR}/VERSION")"; fi
+  [ -n "$version" ] || version="$(meta_get version)"
+  printf '%s' "${version:-未知}"
+}
+
+# ---------------------------------------------------------------- 4. 版本比较
+
+# 与 @classhelper/shared 的 isNewerVersion 同口径 —— 优先用那份实现，不制造第二套规则。
+# 只有在 Node / 共享包缺失（运维救急场景）时才退回纯 bash 比较（只比数字段，忽略预发布后缀）。
+version_gt() {
+  local current="$1" candidate="$2"
+  if [ -n "$NODE_BIN" ] && [ -f "$SHARED_LIB" ]; then
+    "$NODE_BIN" --input-type=module -e '
+      const [, lib, a, b] = process.argv;
+      const shared = await import(lib);
+      process.exit(shared.isNewerVersion(a, b) ? 0 : 1);
+    ' "$SHARED_LIB" "$current" "$candidate" 2>/dev/null && return 0
+    return 1
+  fi
+  local a="${current#v}" b="${candidate#v}"
+  a="${a%%-*}"; b="${b%%-*}"
+  local IFS='.' i x y
+  local -a xs ys
+  read -r -a xs <<<"$a"
+  read -r -a ys <<<"$b"
+  for i in 0 1 2; do
+    x="${xs[$i]:-0}"; y="${ys[$i]:-0}"
+    x="${x//[!0-9]/}"; y="${y//[!0-9]/}"
+    [ -n "$x" ] || x=0
+    [ -n "$y" ] || y=0
+    if [ "$((10#$x))" -gt "$((10#$y))" ]; then return 0; fi
+    if [ "$((10#$x))" -lt "$((10#$y))" ]; then return 1; fi
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------- 5. 服务控制
+
+compose_cmd() {
+  [ -f "$COMPOSE_FILE" ] || die "找不到 compose 文件：${COMPOSE_FILE}"
+  if docker compose version >/dev/null 2>&1; then
+    docker compose -f "$COMPOSE_FILE" --env-file "$CONFIG_FILE" "$@"
+  elif command -v docker-compose >/dev/null 2>&1; then
+    docker-compose -f "$COMPOSE_FILE" --env-file "$CONFIG_FILE" "$@"
+  else
+    die "未找到 docker compose（需要 docker compose 插件或 docker-compose）"
+  fi
+}
+
+svc_active() {
+  if [ "$MODE" = "docker" ]; then
+    [ -n "$(compose_cmd ps -q 2>/dev/null || true)" ]
+    return
+  fi
+  systemctl is-active --quiet "$SERVICE_NAME"
+}
+
+svc_enabled() {
+  if [ "$MODE" = "docker" ]; then
+    svc_active
+    return
+  fi
+  systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null
+}
+
+# Docker 形态的镜像标签用**稳定名**（compose 文件里写死它），版本另打一个 tag 便于追溯。
+# 为什么不用 classhelper-server:<版本> 直接写进 compose：升级替换完程序文件后，
+# compose 里那个版本号就过期了，`compose up -d` 会一直沿用旧镜像 —— 表现为"升级成功但行为没变"。
+DOCKER_IMAGE="classhelper-server:local"
+DOCKER_IMAGE_MARKER="${INSTALL_DIR}/.docker-image-version"
+
+docker_build_image() {
+  local ver; ver="$(current_version)"
+  if [ -f "$DOCKER_IMAGE_MARKER" ] && [ "$(cat "$DOCKER_IMAGE_MARKER" 2>/dev/null)" = "$ver" ]; then
+    return 0
+  fi
+  if [ ! -f "${INSTALL_DIR}/Dockerfile" ]; then
+    warn "安装目录里没有 Dockerfile，跳过镜像重建"
+    return 1
+  fi
+  info "构建镜像（版本 ${ver}）..."
+  if docker build -t "$DOCKER_IMAGE" -t "classhelper-server:${ver}" \
+       -f "${INSTALL_DIR}/Dockerfile" "$INSTALL_DIR" >>"${LOG_DIR}/docker-build.log" 2>&1; then
+    printf '%s' "$ver" >"$DOCKER_IMAGE_MARKER"
+    log "镜像已就绪：${DOCKER_IMAGE}（版本 ${ver}）"
+    return 0
+  fi
+  warn "镜像构建失败，详见 ${LOG_DIR}/docker-build.log"
+  return 1
+}
+
+svc_start() {
+  if [ "$MODE" = "docker" ]; then
+    docker_build_image || true
+    compose_cmd up -d
+  else
+    systemctl start "$SERVICE_NAME"
+  fi
+}
+
+svc_stop() { if [ "$MODE" = "docker" ]; then compose_cmd down; else systemctl stop "$SERVICE_NAME"; fi; }
+
+svc_restart() {
+  if [ "$MODE" = "docker" ]; then
+    docker_build_image || warn "沿用现有镜像重启容器"
+    compose_cmd up -d --force-recreate
+  else
+    systemctl restart "$SERVICE_NAME"
+  fi
+}
+
+# 就绪探针：本地请求**必须**绕开系统代理（否则拿到的是代理返回的 404，见 AGENTS.md §7 第 1 条）
+probe_ready() {
+  command -v curl >/dev/null 2>&1 || return 1
+  curl -fsS --noproxy '*' --max-time 3 -o /dev/null "http://127.0.0.1:$(current_port)/healthz" >/dev/null 2>&1
+}
+
+wait_ready() {
+  local timeout="${1:-60}" i=0
+  while [ "$i" -lt "$timeout" ]; do
+    probe_ready && return 0
+    i=$((i + 1))
+    sleep 1
+  done
+  return 1
+}
+
+print_recent_logs() {
+  printf '%s--- 最近日志 ---%s\n' "$C_DIM" "$C_RESET" >&2
+  if [ "$MODE" = "docker" ]; then
+    compose_cmd logs --tail 50 2>&1 || true
+  else
+    journalctl -u "$SERVICE_NAME" -n 50 --no-pager 2>&1 || true
+  fi
+}
+
+# ---------------------------------------------------------------- 6. 备份
+
+ensure_backup_dir() {
+  mkdir -p "$BACKUP_DIR"
+  chmod 700 "$BACKUP_DIR"
+}
+
+# 程序文件快照（回滚用）：data / logs / runtime / 配置软链都不进快照
+snapshot_program_files() {
+  local dest="$1" item
+  ensure_backup_dir
+  mkdir -p "$(dirname "$dest")"
+  local items=()
+  for item in server web node_modules tools bin systemd package.json VERSION README.txt Dockerfile .cross-built; do
+    [ -e "${INSTALL_DIR}/${item}" ] && items+=("$item")
+  done
+  [ "${#items[@]}" -gt 0 ] || die "安装目录里没有任何可打包的程序文件"
+  tar -czf "$dest" -C "$INSTALL_DIR" "${items[@]}"
+  chmod 600 "$dest"
+}
+
+# 数据快照：SQLite 用 VACUUM INTO（服务运行中也一致）；MySQL 用 mysqldump
+snapshot_database() {
+  local dest_dir="$1"
+  if [ "$DB_KIND" = "mysql" ]; then
+    local dump_bin; dump_bin="$(command -v mysqldump 2>/dev/null || true)"
+    if [ -z "$dump_bin" ]; then
+      warn "未找到 mysqldump：本次备份只含配置，数据库请自行 mysqldump 备份"
+      return 0
+    fi
+    local url host port dbname user pass
+    url="$(cfg_get DATABASE_URL)"
+    user="$(printf '%s' "$url" | sed -n 's#^mysql://\([^:@]*\).*#\1#p')"
+    pass="$(printf '%s' "$url" | sed -n 's#^mysql://[^:]*:\([^@]*\)@.*#\1#p')"
+    host="$(printf '%s' "$url" | sed -n 's#^mysql://[^@]*@\([^:/]*\).*#\1#p')"
+    port="$(printf '%s' "$url" | sed -n 's#^mysql://[^@]*@[^:]*:\([0-9]*\)/.*#\1#p')"
+    dbname="$(printf '%s' "$url" | sed -n 's#^mysql://[^/]*/\([^?]*\).*#\1#p')"
+    # 密码经环境变量交给子进程（不进 argv）；MYSQL_PWD 是 mysqldump 官方支持的传参方式
+    MYSQL_PWD="$pass" "$dump_bin" -h "${host:-127.0.0.1}" -P "${port:-3306}" -u "${user:-root}" \
+      --single-transaction --routines "$dbname" >"${dest_dir}/database.sql"
+    chmod 600 "${dest_dir}/database.sql"
+    return 0
+  fi
+
+  local db_file; db_file="$(cfg_get DATABASE_URL)"
+  db_file="${db_file#file:}"
+
+  if [ "$MODE" = "docker" ]; then
+    # Docker 形态：数据在容器卷里，宿主机看不到那个文件 —— 在容器内做一致性快照再取出来
+    if compose_cmd exec -T -e LOG_LEVEL=error -e DOTENV_CONFIG_QUIET=true server \
+         node tools/admin-cli.mjs snapshot /tmp/classhelper-snapshot.db >/dev/null 2>&1; then
+      local cid
+      cid="$(compose_cmd ps -q server 2>/dev/null | head -n 1)"
+      if [ -n "$cid" ] && docker cp "${cid}:/tmp/classhelper-snapshot.db" "${dest_dir}/classhelper.db" >/dev/null 2>&1; then
+        compose_cmd exec -T server rm -f /tmp/classhelper-snapshot.db >/dev/null 2>&1 || true
+        chmod 600 "${dest_dir}/classhelper.db"
+        return 0
+      fi
+    fi
+    warn "容器内快照失败：本次备份只含配置（可进容器手工导出数据）"
+    return 0
+  fi
+
+  case "$db_file" in
+    /*) ;;
+    *) db_file="${INSTALL_DIR}/server/${db_file}" ;;
+  esac
+  if [ ! -f "$db_file" ]; then
+    warn "找不到 SQLite 数据文件：${db_file}（本次备份只含配置）"
+    return 0
+  fi
+  if [ -x "$NODE_BIN" ] && [ -f "${TOOLS_DIR}/admin-cli.mjs" ]; then
+    if CLASSHELPER_SNAPSHOT_DB="$db_file" LOG_LEVEL=error DOTENV_CONFIG_QUIET=true \
+       "$NODE_BIN" "${TOOLS_DIR}/admin-cli.mjs" snapshot "${dest_dir}/classhelper.db" >/dev/null 2>&1; then
+      chmod 600 "${dest_dir}/classhelper.db"
+      return 0
+    fi
+    warn "VACUUM INTO 快照失败，退回整文件复制（服务运行中复制可能不一致，建议停机备份）"
+  fi
+  cp -p "$db_file" "${dest_dir}/classhelper.db"
+  chmod 600 "${dest_dir}/classhelper.db"
+}
+
+cmd_backup() {
+  local quiet=0 keep=0 note=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --quiet) quiet=1; shift ;;
+      --keep) keep="${2:-0}"; shift 2 ;;
+      --note) note="${2:-}"; shift 2 ;;
+      list) shift; cmd_backup_list; return 0 ;;
+      restore) shift; cmd_backup_restore "$@"; return 0 ;;
+      schedule) shift; cmd_backup_schedule "$@"; return 0 ;;
+      *) die "backup: 未知参数 $1（classhelper help）" ;;
+    esac
+  done
+
+  need_root "backup"
+  require_install
+  ensure_backup_dir
+  local stamp; stamp="$(date '+%Y%m%d-%H%M%S')"
+  local slug=""
+  if [ -n "$note" ]; then slug="-$(printf '%s' "$note" | tr -c 'A-Za-z0-9_.-' '-')"; fi
+  local dest="${BACKUP_DIR}/${stamp}${slug}"
+  mkdir -p "$dest"
+  chmod 700 "$dest"
+
+  [ "$quiet" = "0" ] && info "备份到 ${dest} ..."
+  if [ -f "$CONFIG_FILE" ]; then cp -p "$CONFIG_FILE" "${dest}/config.env"; chmod 600 "${dest}/config.env"; fi
+  snapshot_database "$dest"
+
+  # 元信息：只记版本与形态，**不记任何密钥**
+  cat >"${dest}/meta.json" <<EOF
+{
+  "version": "$(current_version)",
+  "mode": "${MODE}",
+  "database": "${DB_KIND}",
+  "port": "$(current_port)",
+  "installDir": "${INSTALL_DIR}",
+  "createdAt": "$(date -Iseconds)",
+  "note": "${note}",
+  "host": "$(hostname)"
+}
+EOF
+  chmod 600 "${dest}/meta.json"
+  audit backup "$dest" ok
+
+  if [ "$keep" -gt 0 ] 2>/dev/null; then
+    local index=0 dir
+    while read -r dir; do
+      [ -n "$dir" ] || continue
+      index=$((index + 1))
+      if [ "$index" -gt "$keep" ]; then
+        rm -rf "${BACKUP_DIR:?}/${dir}"
+        [ "$quiet" = "0" ] && info "已清理过期备份 ${dir}（保留最近 ${keep} 份）"
+      fi
+    done < <(ls -1 "$BACKUP_DIR" 2>/dev/null | grep -E '^[0-9]{8}-[0-9]{6}' | sort -r)
+  fi
+
+  [ "$quiet" = "0" ] && log "备份完成：${dest}"
+  return 0
+}
+
+cmd_backup_list() {
+  ensure_backup_dir
+  printf '%s备份目录：%s%s\n' "$C_BOLD" "$BACKUP_DIR" "$C_RESET"
+  local found=0 dir size
+  while read -r dir; do
+    [ -n "$dir" ] || continue
+    found=1
+    size="$(du -sh "${BACKUP_DIR}/${dir}" 2>/dev/null | awk '{print $1}')"
+    printf '  %s  %6s  %s\n' "$dir" "${size:-?}" "$([ -f "${BACKUP_DIR}/${dir}/classhelper.db" ] && echo '含数据库' || echo '仅配置')"
+  done < <(ls -1 "$BACKUP_DIR" 2>/dev/null | grep -E '^[0-9]{8}-[0-9]{6}' | sort -r)
+  [ "$found" = "1" ] || printf '  %s（还没有备份，运行 classhelper backup）%s\n' "$C_DIM" "$C_RESET"
+
+  printf '\n%s程序快照（回滚用，%s/rollback）：%s\n' "$C_BOLD" "$BACKUP_DIR" "$C_RESET"
+  found=0
+  while read -r dir; do
+    [ -n "$dir" ] || continue
+    found=1
+    size="$(du -h "${BACKUP_DIR}/rollback/${dir}" 2>/dev/null | awk '{print $1}')"
+    printf '  %s  %s\n' "$dir" "${size:-?}"
+  done < <(ls -1t "${BACKUP_DIR}/rollback" 2>/dev/null)
+  [ "$found" = "1" ] || printf '  %s（无）%s\n' "$C_DIM" "$C_RESET"
+}
+
+# 数据文件路径（SQLite）
+sqlite_file_path() {
+  local db_file; db_file="$(cfg_get DATABASE_URL)"
+  db_file="${db_file#file:}"
+  case "$db_file" in
+    /*) printf '%s' "$db_file" ;;
+    *) printf '%s' "${INSTALL_DIR}/server/${db_file}" ;;
+  esac
+}
+
+cmd_backup_restore() {
+  need_root "backup restore"
+  require_install
+  local src="${1:-}"
+  [ -n "$src" ] || die "用法：classhelper backup restore <备份目录名|路径>"
+  [ -d "$src" ] || src="${BACKUP_DIR}/${src}"
+  [ -d "$src" ] || die "找不到备份：${1}"
+
+  printf '将用 %s 覆盖当前配置' "$src"
+  [ -f "${src}/classhelper.db" ] && printf '与数据库'
+  printf '，服务会先停止。\n'
+  read -r -p "确认恢复？输入 yes 继续：" reply
+  [ "$reply" = "yes" ] || { info "已取消"; return 0; }
+
+  # 恢复前先备份现状，免得恢复错了无从退回
+  cmd_backup --quiet --note "restore-前" || true
+  svc_stop || true
+  if [ -f "${src}/config.env" ]; then
+    cp -p "${src}/config.env" "$CONFIG_FILE"
+    chmod 600 "$CONFIG_FILE"
+  fi
+  if [ -f "${src}/classhelper.db" ]; then
+    if [ "$MODE" = "docker" ]; then
+      # 数据在容器卷里，宿主机上的路径是容器内路径，直接 cp 会在宿主机建出一个假目录
+      warn "Docker 形态的数据库恢复要手工做（数据在容器卷里）："
+      printf '  %s stop\n  docker cp %s <容器>: /app/data/classhelper.db\n  %s start\n' \
+        "$SERVICE_NAME" "${src}/classhelper.db" "$SERVICE_NAME"
+    else
+      local db_file; db_file="$(sqlite_file_path)"
+      rm -f "${db_file}-wal" "${db_file}-shm"
+      cp -p "${src}/classhelper.db" "$db_file"
+      chown "${SERVICE_USER}:${SERVICE_USER}" "$db_file" 2>/dev/null || true
+    fi
+  fi
+  svc_start
+  if wait_ready 90; then
+    audit restore "$src" ok
+    log "恢复完成，服务已就绪 ✅"
+  else
+    audit restore "$src" failed
+    print_recent_logs
+    die "恢复后 90 秒内没通过探针，请检查上面的日志"
+  fi
+}
+
+cmd_backup_schedule() {
+  need_root "backup schedule"
+  require_install
+  local mode="${1:-}"
+  case "$mode" in
+    daily|weekly|off) ;;
+    *) die "用法：classhelper backup schedule daily|weekly|off" ;;
+  esac
+  if [ "$MODE" = "docker" ]; then
+    die "Docker 形态请用宿主机的 cron 调 'classhelper backup --quiet'（systemd timer 只装在直接安装形态）"
+  fi
+
+  if [ "$mode" = "off" ]; then
+    systemctl disable --now classhelper-backup.timer >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/classhelper-backup.timer
+    systemctl daemon-reload
+    audit backup-schedule off ok
+    log "已关闭定时备份"
+    return 0
+  fi
+
+  local keep=7 oncalendar='*-*-* 03:30:00'
+  if [ "$mode" = "weekly" ]; then
+    keep=4
+    oncalendar='Mon *-*-* 03:30:00'
+  fi
+  local template="${INSTALL_DIR}/systemd/classhelper-backup"
+  if [ -f "${template}.service" ] && [ -f "${template}.timer" ]; then
+    sed -e "s#__BIN__#/usr/local/bin/classhelper#g" -e "s#__KEEP__#${keep}#g" \
+      "${template}.service" >/etc/systemd/system/classhelper-backup.service
+    sed -e "s#__ONCALENDAR__#${oncalendar}#g" "${template}.timer" >/etc/systemd/system/classhelper-backup.timer
+  else
+    # 安装包里没带模板（老版本安装）时现场生成，保证功能可用
+    cat >/etc/systemd/system/classhelper-backup.service <<EOF
+[Unit]
+Description=ClassHelper 定时备份
+After=${SERVICE_NAME}.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/classhelper backup --quiet --keep ${keep}
+SyslogIdentifier=classhelper-backup
+EOF
+    cat >/etc/systemd/system/classhelper-backup.timer <<EOF
+[Unit]
+Description=ClassHelper 定时备份触发器
+
+[Timer]
+OnCalendar=${oncalendar}
+RandomizedDelaySec=30m
+Persistent=true
+Unit=classhelper-backup.service
+
+[Install]
+WantedBy=timers.target
+EOF
+  fi
+  chmod 644 /etc/systemd/system/classhelper-backup.service /etc/systemd/system/classhelper-backup.timer
+  systemctl daemon-reload
+  systemctl enable --now classhelper-backup.timer >/dev/null
+  audit backup-schedule "$mode" ok
+  log "已开启定时备份（${mode}，保留最近 ${keep} 份）"
+  systemctl list-timers classhelper-backup.timer --no-pager 2>/dev/null | head -2 || true
+}
+
+# ---------------------------------------------------------------- 7. status / doctor
+
+human_size() {
+  local bytes="${1:-0}"
+  case "$bytes" in ''|*[!0-9]*) printf '0 B'; return 0 ;; esac
+  if [ "$bytes" -ge 1073741824 ]; then printf '%s GB' "$((bytes / 1073741824))"
+  elif [ "$bytes" -ge 1048576 ]; then printf '%s MB' "$((bytes / 1048576))"
+  elif [ "$bytes" -ge 1024 ]; then printf '%s KB' "$((bytes / 1024))"
+  else printf '%s B' "$bytes"; fi
+}
+
+first_ip() {
+  local ip
+  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  printf '%s' "${ip:-127.0.0.1}"
+}
+
+listen_on_port() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | awk -v p=":${port}\$" '$4 ~ p {print $4; exit}'
+  elif command -v netstat >/dev/null 2>&1; then
+    netstat -ltn 2>/dev/null | awk -v p=":${port}\$" '$4 ~ p {print $4; exit}'
+  fi
+}
+
+cmd_status() {
+  require_install
+  local port; port="$(current_port)"
+  local active="inactive" enabled="disabled" healthy="no"
+  svc_active && active="active" || true
+  svc_enabled && enabled="enabled" || true
+  probe_ready && healthy="yes" || true
+
+  local db_desc="${DB_KIND}"
+  if [ "$DB_KIND" = "sqlite" ]; then
+    if [ "$MODE" = "docker" ]; then
+      # 数据在容器卷里，宿主机上看不到那个文件，别报成"缺失"
+      db_desc="sqlite（Docker 卷 classhelper-data 内）"
+    else
+      local db_file; db_file="$(sqlite_file_path)"
+      if [ -f "$db_file" ]; then
+        db_desc="sqlite（$(human_size "$(stat -c '%s' "$db_file" 2>/dev/null || echo 0)")）"
+      else
+        db_desc="sqlite（数据文件缺失：${db_file}）"
+      fi
+    fi
+  fi
+  local listen; listen="$(listen_on_port "$port")"
+  [ -n "$listen" ] || listen="未监听"
+
+  if [ "${1:-}" = "--json" ]; then
+    cat <<EOF
+{
+  "version": "$(current_version)",
+  "mode": "${MODE}",
+  "database": "${DB_KIND}",
+  "service": "${active}",
+  "enabled": "${enabled}",
+  "healthy": "${healthy}",
+  "port": $(printf '%s' "$port" | tr -cd '0-9' | sed 's/^$/4000/'),
+  "listen": "${listen}",
+  "installDir": "${INSTALL_DIR}",
+  "configFile": "${CONFIG_FILE}",
+  "dataDir": "${DATA_DIR}",
+  "logDir": "${LOG_DIR}",
+  "backupDir": "${BACKUP_DIR}",
+  "url": "http://$(first_ip):${port}/"
+}
+EOF
+    return 0
+  fi
+
+  printf '%s班级小助手服务端%s v%s\n\n' "$C_BOLD" "$C_RESET" "$(current_version)"
+  printf '  %-10s %s\n' "服务状态" "$([ "$active" = "active" ] && printf '%s运行中%s' "$C_GREEN" "$C_RESET" || printf '%s未运行%s' "$C_RED" "$C_RESET")（开机自启：${enabled}）"
+  printf '  %-10s %s\n' "健康探针" "$([ "$healthy" = "yes" ] && printf '%s通过%s' "$C_GREEN" "$C_RESET" || printf '%s无响应%s' "$C_RED" "$C_RESET")"
+  printf '  %-10s %s\n' "安装形态" "${MODE}"
+  printf '  %-10s %s\n' "数据库" "$db_desc"
+  printf '  %-10s %s\n' "监听端口" "${port}（${listen}）"
+  printf '  %-10s %s\n' "访问地址" "http://$(first_ip):${port}/"
+  printf '\n'
+  printf '  %-10s %s\n' "安装目录" "${INSTALL_DIR}"
+  printf '  %-10s %s\n' "配置文件" "${CONFIG_FILE}"
+  printf '  %-10s %s\n' "数据目录" "${DATA_DIR}"
+  printf '  %-10s %s\n' "日志目录" "${LOG_DIR}"
+  printf '  %-10s %s\n' "备份目录" "${BACKUP_DIR}"
+  [ "$MODE" = "native" ] && printf '  %-10s %s\n' "服务单元" "/etc/systemd/system/${SERVICE_NAME}.service"
+  printf '\n  提示：实时日志 %sclasshelper logs -f%s ｜ 完整体检 %sclasshelper doctor%s\n' "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+}
+
+DOCTOR_PASS=0
+DOCTOR_FAIL=0
+DOCTOR_TIP=()
+
+doctor_check() { # $1=名称 $2=0 通过 / 1 失败 $3=修复提示
+  if [ "$2" = "0" ]; then
+    printf '  %s✔%s %s\n' "$C_GREEN" "$C_RESET" "$1"
+    DOCTOR_PASS=$((DOCTOR_PASS + 1))
+  else
+    printf '  %s✘%s %s\n' "$C_RED" "$C_RESET" "$1"
+    DOCTOR_FAIL=$((DOCTOR_FAIL + 1))
+    [ -n "${3:-}" ] && DOCTOR_TIP+=("$3")
+    return 0
+  fi
+}
+
+cmd_doctor() {
+  require_install
+  info "体检 ${INSTALL_DIR} ..."
+  printf '\n'
+
+  doctor_check "安装目录可读" "$([ -r "$INSTALL_DIR" ] && echo 0 || echo 1)" "检查 ${INSTALL_DIR} 权限"
+  doctor_check "安装元数据 .installed.json 存在" "$([ -f "$META_FILE" ] && echo 0 || echo 1)" "重装：bash install.sh"
+  doctor_check "版本文件 VERSION 存在" "$([ -f "${INSTALL_DIR}/VERSION" ] && echo 0 || echo 1)" "重装：bash install.sh"
+  doctor_check "配置文件存在（${CONFIG_FILE}）" "$([ -f "$CONFIG_FILE" ] && echo 0 || echo 1)" "重装或从备份恢复 config.env"
+
+  local bits; bits="$(stat -c '%a' "$CONFIG_FILE" 2>/dev/null || echo 未知)"
+  doctor_check "配置文件权限为 600（实际 ${bits}）" "$([ "$bits" = "600" ] && echo 0 || echo 1)" "chmod 600 ${CONFIG_FILE}"
+  bits="$(stat -c '%a' "$CONFIG_DIR" 2>/dev/null || echo 未知)"
+  doctor_check "配置目录权限为 700（实际 ${bits}）" "$([ "$bits" = "700" ] && echo 0 || echo 1)" "chmod 700 ${CONFIG_DIR}"
+
+  if [ "$MODE" = "native" ]; then
+    local link_ok=1 link="${INSTALL_DIR}/.env"
+    if [ -L "$link" ] && [ "$(readlink "$link")" = "$CONFIG_FILE" ]; then link_ok=0; fi
+    doctor_check "安装目录 .env 是指向配置真身的软链" "$link_ok" "ln -sfn ${CONFIG_FILE} ${link}（Web 端「一键切换数据库」依赖它）"
+  fi
+
+  local node_ok=1 node_ver="未找到"
+  if [ -x "$NODE_BIN" ]; then
+    node_ver="$("$NODE_BIN" -v 2>/dev/null || echo '?')"
+    local major minor
+    major="$(printf '%s' "$node_ver" | sed 's/^v\([0-9]*\).*/\1/')"
+    minor="$(printf '%s' "$node_ver" | sed 's/^v[0-9]*\.\([0-9]*\).*/\1/')"
+    if [ "${major:-0}" -gt 20 ] || { [ "${major:-0}" -eq 20 ] && [ "${minor:-0}" -ge 19 ]; }; then node_ok=0; fi
+  fi
+  doctor_check "Node 运行时可用且 ≥20.19（${node_ver}）" "$node_ok" "重装以重新下载内置 Node：bash install.sh"
+
+  local data_ok=1
+  if [ -d "$DATA_DIR" ] && touch "${DATA_DIR}/.doctor-probe" 2>/dev/null; then
+    rm -f "${DATA_DIR}/.doctor-probe"; data_ok=0
+  fi
+  doctor_check "数据目录可写（${DATA_DIR}）" "$data_ok" "chown -R ${SERVICE_USER}:${SERVICE_USER} ${DATA_DIR}"
+
+  if [ "$MODE" = "native" ]; then
+    doctor_check "systemd 单元已安装" "$([ -f "/etc/systemd/system/${SERVICE_NAME}.service" ] && echo 0 || echo 1)" "在安装目录执行 bash install.sh"
+    doctor_check "服务正在运行" "$(svc_active && echo 0 || echo 1)" "classhelper start，然后 classhelper logs -n 80"
+    doctor_check "服务开机自启" "$(svc_enabled && echo 0 || echo 1)" "systemctl enable ${SERVICE_NAME}"
+  else
+    doctor_check "compose 文件存在（${COMPOSE_FILE}）" "$([ -f "$COMPOSE_FILE" ] && echo 0 || echo 1)" "重装 Docker 形态：bash install.sh"
+    doctor_check "容器正在运行" "$(svc_active && echo 0 || echo 1)" "classhelper start"
+  fi
+
+  doctor_check "健康探针 /healthz" "$(probe_ready && echo 0 || echo 1)" "classhelper logs -n 80"
+
+  local db_ok=1
+  if [ -f "${TOOLS_DIR}/admin-cli.mjs" ] && [ -x "$NODE_BIN" ]; then
+    if "$NODE_BIN" "${TOOLS_DIR}/admin-cli.mjs" info >/dev/null 2>&1; then db_ok=0; fi
+  fi
+  doctor_check "数据库可连通" "$db_ok" "检查 config.env 的 DATABASE_URL 与数据库服务状态"
+
+  local secret; secret="$(cfg_get JWT_SECRET)"
+  doctor_check "JWT_SECRET 长度 ≥32" "$([ "${#secret}" -ge 32 ] && echo 0 || echo 1)" "classhelper key rotate"
+
+  # 交叉构建的包（在 Windows 上打的）：能装能跑，但 prisma 的原生 schema engine 是宿主平台的，
+  # Web 端「数据库一键切换」那一步可能失败 —— 不做成静默，这里明确报出来。
+  if [ -f "${INSTALL_DIR}/.cross-built" ]; then
+    doctor_check "安装包来自 Linux 上构建的正式发布包" 1 \
+      "这是交叉构建的包（$(tr -d '\n' <"${INSTALL_DIR}/.cross-built" 2>/dev/null)）：Web 端「数据库一键切换」可能失败，其余功能正常；正式部署请用 GitHub Actions 出的包"
+  fi
+
+  local avail; avail="$(df -Pk "$INSTALL_DIR" 2>/dev/null | awk 'NR==2 {print $4}')"
+  doctor_check "磁盘剩余 ≥1GB（$(human_size "${avail:-0}")）" "$([ "${avail:-0}" -ge 1048576 ] && echo 0 || echo 1)" "清理旧备份：classhelper backup list"
+
+  local newest="" backup_ok=1
+  newest="$(ls -1t "$BACKUP_DIR" 2>/dev/null | grep -E '^[0-9]{8}-[0-9]{6}' | head -1)"
+  if [ -n "$newest" ]; then
+    local age_days
+    age_days=$(( ( $(date +%s) - $(stat -c '%Y' "${BACKUP_DIR}/${newest}" 2>/dev/null || echo 0) ) / 86400 ))
+    [ "$age_days" -le 7 ] && backup_ok=0
+  fi
+  doctor_check "最近 7 天内有备份（${newest:-无}）" "$backup_ok" "classhelper backup；长期可用 classhelper backup schedule daily"
+
+  printf '\n'
+  if [ "$DOCTOR_FAIL" = "0" ]; then
+    log "体检通过：${DOCTOR_PASS}/${DOCTOR_PASS} 项 ✅"
+  else
+    warn "体检结果：${DOCTOR_PASS} 项通过，${DOCTOR_FAIL} 项待处理"
+    printf '\n%s建议依次处理：%s\n' "$C_BOLD" "$C_RESET"
+    local tip
+    for tip in "${DOCTOR_TIP[@]}"; do printf '  · %s\n' "$tip"; done
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------- 8. password
+
+# 交互优先 /dev/tty（不受管道影响），没有 tty（自动化 / ssh 无 -t）时回退 stdin。
+# 回退的意义：验证脚本可以 `printf '%s\n' "$PW" | classhelper password admin` —— 密码既不在 argv，
+# 也不进 shell history。
+open_tty() {
+  [ "${CLASSHELPER_NO_TTY:-0}" = "1" ] && return 1
+  exec 3</dev/tty 2>/dev/null
+}
+
+read_secret() { # $1=提示语 $2=目标变量名；读到 EOF 时把 READ_SECRET_EOF 置 1
+  local prompt="$1" var="$2" value=''
+  READ_SECRET_EOF=0
+  if open_tty; then
+    printf '%s' "$prompt" >&3
+    if ! IFS= read -r -s value <&3; then READ_SECRET_EOF=1; fi
+    printf '\n' >&3
+    exec 3<&- || true
+  else
+    printf '%s' "$prompt" >&2
+    if ! IFS= read -r -s value; then READ_SECRET_EOF=1; fi
+    printf '\n' >&2
+  fi
+  printf -v "$var" '%s' "$value"
+}
+
+# 与服务端 tools/admin-cli.mjs 同一套强度规则（两处口径必须一致）
+password_problems() { # $1=密码 $2=用户名
+  local pw="$1" user="$2" kinds=0
+  local problems=()
+  [ "${#pw}" -ge 8 ] || problems+=("长度至少 8 位")
+  [ "${#pw}" -le 128 ] || problems+=("长度不要超过 128 位")
+  [[ "$pw" =~ [a-z] ]] && kinds=$((kinds + 1))
+  [[ "$pw" =~ [A-Z] ]] && kinds=$((kinds + 1))
+  [[ "$pw" =~ [0-9] ]] && kinds=$((kinds + 1))
+  [[ "$pw" =~ [^A-Za-z0-9] ]] && kinds=$((kinds + 1))
+  [ "$kinds" -ge 3 ] || problems+=("需包含小写字母 / 大写字母 / 数字 / 符号 中至少 3 类")
+  if [ -n "$user" ] && [ "$(printf '%s' "$pw" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$user" | tr 'A-Z' 'a-z')" ]; then
+    problems+=("不能与用户名相同")
+  fi
+  case "$pw" in
+    123456*|password*|admin*|classhelper*|qwerty*|111111*|abc123*)
+      [ "${#pw}" -lt 12 ] && problems+=("过于常见，请换一个") ;;
+  esac
+  printf '%s' "$(IFS='；'; printf '%s' "${problems[*]:-}")"
+}
+
+admin_cli() {
+  [ -f "${TOOLS_DIR}/admin-cli.mjs" ] || die "缺少 ${TOOLS_DIR}/admin-cli.mjs（重装可补齐）"
+  # LOG_LEVEL=error + DOTENV_CONFIG_QUIET=true 是必须的：admin-cli 复用了服务端的 env/logger
+  # 模块，那两个模块会往 **stdout** 打日志（dotenv 的 "◇ injected env..." 提示、Prisma 初始化一行），
+  # 而本命令的 stdout 是要被当数据解析的 —— dump-hash 的 JSON 直接写进回滚用的备份文件，
+  # 混进一行日志就不是合法 JSON 了（曾经会因此让"改密失败自动回滚"整条链路失效）。
+  # env.ts 用 dotenv 加载配置，而 dotenv 既不覆盖已存在的环境变量、也会读 DOTENV_CONFIG_QUIET。
+  if [ "$MODE" = "docker" ]; then
+    # 镜像里也带了同一份工具（deploy/Dockerfile.linux-package 已 COPY deploy/tools）
+    compose_cmd exec -T -e LOG_LEVEL=error -e DOTENV_CONFIG_QUIET=true server node tools/admin-cli.mjs "$@"
+  else
+    [ -x "$NODE_BIN" ] || die "缺少 Node 运行时（${NODE_BIN}）"
+    LOG_LEVEL=error DOTENV_CONFIG_QUIET=true "$NODE_BIN" "${TOOLS_DIR}/admin-cli.mjs" "$@"
+  fi
+}
+
+cmd_password() {
+  local target="" class_code="" do_list=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --list) do_list=1; shift ;;
+      --class) class_code="${2:-}"; shift 2 ;;
+      -h|--help) info "用法：classhelper password [用户名] [--list] [--class <班级码>]"; return 0 ;;
+      -*) die "password: 未知参数 $1" ;;
+      *) target="$1"; shift ;;
+    esac
+  done
+  need_root "password"
+  require_install
+
+  if [ "$do_list" = "1" ]; then
+    admin_cli list
+    return 0
+  fi
+
+  local key="${target:-admin}" label="${target:-admin}"
+  if [ -n "$class_code" ]; then
+    key="class:${class_code}"
+    label="班级 ${class_code}"
+  fi
+
+  printf '%s现在修改 %s 的密码%s\n' "$C_BOLD" "$label" "$C_RESET"
+  printf '%s提示：输入不回显；密码不会出现在命令行、进程列表或日志里。%s\n\n' "$C_DIM" "$C_RESET"
+
+  # 有界循环：每次尝试都计数，且 stdin 读完（EOF）立刻退出 ——
+  # 否则管道喂入不合规的密码时会一直重读空值，表现为"卡住不动"。
+  local pw1='' pw2='' problems='' tries=0 accepted=0
+  while [ "$tries" -lt 3 ] && [ "$accepted" = "0" ]; do
+    tries=$((tries + 1))
+    read_secret "新密码：" pw1
+    if [ -z "$pw1" ]; then
+      if [ "${READ_SECRET_EOF:-0}" = "1" ]; then
+        die "读不到输入（标准输入已结束）。自动化请用管道：printf '%s\\n%s\\n' \"\$PW\" \"\$PW\" | classhelper password ${key}"
+      fi
+      warn "密码不能为空，请重试"
+      continue
+    fi
+    problems="$(password_problems "$pw1" "${target:-admin}")"
+    if [ -n "$problems" ]; then
+      warn "密码不合规：${problems}"
+      continue
+    fi
+    read_secret "再输入一次确认：" pw2
+    if [ "$pw1" != "$pw2" ]; then
+      warn "两次输入不一致，请重来"
+      continue
+    fi
+    accepted=1
+  done
+  if [ "$accepted" != "1" ]; then
+    audit password "$key" rejected
+    die "连续 3 次输入不合规，已退出（密码未改动）"
+  fi
+
+  # 改前备份原哈希：失败或复核不过时按这份文件回滚（只含用户名 + bcrypt 哈希，权限 600）。
+  # 只取"以 { 开头的那一行" —— 即使将来日志噪声绕过 LOG_LEVEL，落盘的也仍是合法 JSON。
+  ensure_backup_dir
+  local stamp; stamp="$(date '+%Y%m%d-%H%M%S')"
+  local hash_backup="${BACKUP_DIR}/password-${stamp}.json"
+  local had_hash=1
+  if admin_cli dump-hash "$key" 2>/dev/null | grep -E '^\{' | tail -n 1 >"$hash_backup"; then
+    chmod 600 "$hash_backup"
+    had_hash=0
+    info "原密码哈希已备份到 ${hash_backup}（权限 600）"
+  else
+    rm -f "$hash_backup"
+    warn "未能读取原哈希（账号可能尚未设置密码），改后将无法自动回滚"
+  fi
+
+  local result=1
+  if printf '%s\n' "$pw1" | admin_cli set-password "$key"; then result=0; fi
+  unset pw1 pw2
+
+  if [ "$result" != "0" ]; then
+    warn "写入失败"
+    if [ "$had_hash" = "0" ]; then
+      info "正在用备份回滚原密码哈希 ..."
+      if admin_cli restore-hash "$hash_backup" >/dev/null 2>&1; then
+        log "已回滚到原密码"
+      else
+        audit password "$key" rollback-failed
+        die "回滚失败！请用 classhelper backup restore 恢复数据（备份文件：${hash_backup}）"
+      fi
+    fi
+    audit password "$key" failed
+    exit 1
+  fi
+
+  audit password "$key" ok
+  log "密码已更新：${label}"
+  printf '%s已登录的会话不受影响（JWT 仍有效）；需要让所有会话立即失效请执行 classhelper key rotate。%s\n' "$C_DIM" "$C_RESET"
+}
+
+# ---------------------------------------------------------------- 9. config / port / key
+
+# 把值写进配置项：值经临时文件传给 awk，**绝不进 argv**（argv 任何用户都能从 ps 看到）
+config_write_value() {
+  local key="$1" value="$2" tmp_value tmp_file
+  tmp_value="$(mktemp)"; tmp_file="$(mktemp)"
+  chmod 600 "$tmp_value" "$tmp_file"
+  printf '%s' "$value" >"$tmp_value"
+  awk -v k="$key" -v vf="$tmp_value" '
+    BEGIN { while ((getline line < vf) > 0) v = (v == "" ? line : v "\n" line); close(vf) }
+    $0 ~ "^[[:space:]]*" k "=" && !done { print k "=" v; done = 1; next }
+    { print }
+    END { if (!done) printf "\n%s=%s\n", k, v }
+  ' "$CONFIG_FILE" >"$tmp_file"
+  mv "$tmp_file" "$CONFIG_FILE"
+  rm -f "$tmp_value"
+  chmod 600 "$CONFIG_FILE"
+}
+
+restart_after_change() {
+  if [ "${CLASSHELPER_ASSUME_YES:-0}" = "1" ]; then
+    svc_restart || true
+    if wait_ready 90; then log "服务已重启并就绪 ✅"; else warn "服务重启后未通过探针，请 classhelper logs -n 80"; fi
+    return 0
+  fi
+  local reply=""
+  read -r -p "现在重启服务让配置生效？[y/N] " reply || true
+  case "$reply" in
+    y|Y|yes|YES)
+      svc_restart || true
+      if wait_ready 90; then log "服务已重启并就绪 ✅"; else warn "服务重启后未通过探针，请 classhelper logs -n 80"; fi
+      ;;
+    *) info "已跳过重启：配置在下次重启后生效（classhelper restart）" ;;
+  esac
+}
+
+cmd_config() {
+  local sub="${1:-show}"; shift || true
+  case "$sub" in
+    get)
+      local key="${1:-}"; [ -n "$key" ] || die "用法：classhelper config get <KEY>"
+      local value; value="$(cfg_get "$key")"
+      if is_secret_key "$key"; then mask_value "$value"; else printf '%s\n' "$value"; fi
+      ;;
+    show)
+      require_install
+      [ -f "$CONFIG_FILE" ] || die "配置文件不存在：${CONFIG_FILE}"
+      local reveal=0
+      [ "${1:-}" = "--reveal" ] && reveal=1
+      printf '%s%s%s\n' "$C_BOLD" "$CONFIG_FILE" "$C_RESET"
+      local line key value
+      while IFS= read -r line; do
+        case "$line" in
+          ''|'#'*) printf '%s\n' "$line"; continue ;;
+        esac
+        key="${line%%=*}"
+        value="${line#*=}"
+        if [ "$reveal" = "0" ] && is_secret_key "$key"; then
+          printf '%s=%s\n' "$key" "$(mask_value "$(printf '%s' "$value" | sed -e 's/^"//' -e 's/"$//')")"
+        else
+          printf '%s\n' "$line"
+        fi
+      done <"$CONFIG_FILE"
+      [ "$reveal" = "0" ] && printf '\n%s敏感值已打码；要看原文用 config show --reveal（会在终端留痕）%s\n' "$C_DIM" "$C_RESET"
+      ;;
+    edit)
+      need_root "config edit"
+      require_install
+      cmd_backup --quiet --note "config-edit-前" || true
+      "${EDITOR:-vi}" "$CONFIG_FILE"
+      chmod 600 "$CONFIG_FILE"
+      audit config-edit "$CONFIG_FILE" ok
+      log "已保存（权限已校正为 600）"
+      restart_after_change
+      ;;
+    set)
+      need_root "config set"
+      require_install
+      local key="${1:-}" value="${2:-}"
+      [ -n "$key" ] || die "用法：classhelper config set <KEY> <VALUE>（敏感项会自动改为交互输入）"
+      [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "KEY 只能是大写字母、数字与下划线"
+      if is_secret_key "$key"; then
+        # 敏感值不接受命令行传参：argv 会进 shell history，也会出现在 ps 里
+        local secret=''
+        read_secret "输入 ${key} 的新值（不回显）：" secret
+        [ -n "$secret" ] || die "值不能为空"
+        value="$secret"
+      fi
+      cmd_backup --quiet --note "config-set-前" || true
+      config_write_value "$key" "$(quote_env_value "$value")"
+      unset value secret
+      audit config-set "$key" ok
+      log "已更新 ${key}"
+      restart_after_change
+      ;;
+    *) die "用法：classhelper config get|set|show|edit" ;;
+  esac
+}
+
+cmd_port() {
+  need_root "port"
+  require_install
+  local new="${1:-}"
+  if [ -z "$new" ]; then
+    printf '当前端口：%s\n' "$(current_port)"
+    return 0
+  fi
+  [[ "$new" =~ ^[0-9]+$ ]] || die "端口必须是数字"
+  [ "$new" -ge 1 ] && [ "$new" -le 65535 ] || die "端口范围 1-65535"
+  local old; old="$(current_port)"
+  if [ "$old" = "$new" ]; then info "端口已经是 ${new}，无需修改"; return 0; fi
+  if [ -n "$(listen_on_port "$new")" ]; then
+    die "端口 ${new} 已被占用（ss -ltnp 查看）"
+  fi
+  CLASSHELPER_ASSUME_YES=1 cmd_config set PORT "$new"
+  audit port "${old}->${new}" ok
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    warn "记得放行防火墙：firewall-cmd --add-port=${new}/tcp --permanent && firewall-cmd --reload"
+  elif command -v ufw >/dev/null 2>&1; then
+    warn "记得放行防火墙：ufw allow ${new}/tcp"
+  fi
+}
+
+cmd_key() {
+  local sub="${1:-}"
+  [ "$sub" = "rotate" ] || die "用法：classhelper key rotate"
+  need_root "key rotate"
+  require_install
+  printf '%s轮换 JWT_SECRET 会让所有已登录用户立即失效（需要重新登录）。%s\n' "$C_YELLOW" "$C_RESET"
+  if [ "${CLASSHELPER_ASSUME_YES:-0}" != "1" ]; then
+    local reply=""
+    read -r -p "确认轮换？输入 yes 继续：" reply || true
+    [ "$reply" = "yes" ] || { info "已取消"; return 0; }
+  fi
+  cmd_backup --quiet --note "key-rotate-前" || true
+  local new_secret
+  if [ -x "$NODE_BIN" ]; then
+    new_secret="$("$NODE_BIN" -e 'process.stdout.write(require("node:crypto").randomBytes(48).toString("hex"))')"
+  else
+    new_secret="$(head -c 48 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  fi
+  # 直接写配置而不是走 `config set`：后者对敏感键强制交互输入（防 argv 泄漏），
+  # 而这里的值是本命令自己生成的随机串，走 config_write_value 同样不进 argv。
+  config_write_value JWT_SECRET "$(quote_env_value "$new_secret")"
+  unset new_secret
+  audit key-rotate - ok
+  log "已轮换 JWT_SECRET"
+  restart_after_change
+}
+
+# ---------------------------------------------------------------- 10. upgrade / rollback
+
+asset_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf 'x64' ;;
+    aarch64|arm64) printf 'arm64' ;;
+    *) uname -m ;;
+  esac
+}
+
+github_latest_tag() {
+  command -v curl >/dev/null 2>&1 || return 1
+  local json
+  json="$(curl "${CURL_OPTS[@]}" "${GITHUB_API}/releases/latest" 2>/dev/null)" || return 1
+  printf '%s' "$json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+}
+
+resolve_download() { # $1=版本(可空) $2=url(可空)；输出下载地址
+  local want="$1" url="$2" tag ver
+  if [ -n "$url" ]; then printf '%s' "$url"; return 0; fi
+  if [ -n "$want" ]; then tag="v${want#v}"; else tag="$(github_latest_tag)" || true; fi
+  [ -n "$tag" ] || return 1
+  ver="${tag#v}"
+  printf '%s/releases/download/%s/classhelper-server-linux-%s-%s.tar.gz' \
+    "$GITHUB_RELEASES_PAGE" "$tag" "$(asset_arch)" "$ver"
+}
+
+download_to() { # $1=url $2=目标文件
+  case "$1" in
+    file://*|/*) cp -f "${1#file://}" "$2" ;;
+    *) curl "${CURL_OPTS_LONG[@]}" -o "$2" "$1" ;;
+  esac
+}
+
+verify_sha256() { # $1=文件 $2=期望值(可空)
+  local file="$1" want="${2:-}" got
+  if [ -z "$want" ]; then
+    warn "未提供 sha256，跳过哈希校验（内网分发也建议带上 --sha256）"
+    return 0
+  fi
+  got="$(sha256sum "$file" | awk '{print $1}')"
+  [ "$got" = "$want" ] || { warn "哈希不匹配：期望 ${want}，实际 ${got}"; return 1; }
+  return 0
+}
+
+# 用解出来的新文件替换程序目录；data / logs / runtime / 配置一律不动。
+# 用「改名 + 就位」而不是 rm + cp：升级中正在运行的就是本脚本（bin/classhelper），
+# rm 掉再创建同名文件会让 bash 读到半个脚本；改名后运行中的进程继续读旧 inode，安全。
+replace_program_files() { # $1=解压出来的目录
+  local src="$1" item
+  # 清理上次中途失败留下的残留
+  for item in "${INSTALL_DIR}"/.old-*; do
+    [ -e "$item" ] && rm -rf "$item"
+  done
+  # .cross-built 是"这个包不在 Linux 上打的"标记：先删掉，新版包里没有它就不再提示
+  rm -f "${INSTALL_DIR}/.cross-built"
+  for item in server web node_modules tools bin package.json VERSION README.txt Dockerfile .cross-built; do
+    [ -e "${src}/${item}" ] || continue
+    [ -e "${INSTALL_DIR}/${item}" ] && mv "${INSTALL_DIR}/${item}" "${INSTALL_DIR}/.old-${item}"
+    mv "${src}/${item}" "${INSTALL_DIR}/${item}"
+    rm -rf "${INSTALL_DIR:?}/.old-${item}"
+  done
+  chmod +x "${INSTALL_DIR}/bin/classhelper" 2>/dev/null || true
+  # 安装目录里的 .env 必须是指向配置真身的软链（Web 端「一键切换数据库」依赖它）
+  if [ -e "${INSTALL_DIR}/.env" ] && [ ! -L "${INSTALL_DIR}/.env" ]; then rm -f "${INSTALL_DIR}/.env"; fi
+  [ -L "${INSTALL_DIR}/.env" ] || ln -sfn "$CONFIG_FILE" "${INSTALL_DIR}/.env"
+}
+
+extract_package() { # $1=tar.gz $2=目标目录
+  mkdir -p "$2"
+  tar -xzf "$1" -C "$2" --strip-components=1
+}
+
+# 与安装器写入的 .installed.json 保持同一份扁平格式（classhelper 自己用 sed 解析）
+write_meta() { # $1=版本 $2=来源 $3=sha256
+  cat >"$META_FILE" <<EOF
+{
+  "version": "$1",
+  "mode": "${MODE}",
+  "database": "${DB_KIND}",
+  "installDir": "${INSTALL_DIR}",
+  "configFile": "${CONFIG_FILE}",
+  "serviceUser": "${SERVICE_USER}",
+  "logDir": "${LOG_DIR}",
+  "backupDir": "${BACKUP_DIR}",
+  "port": "$(current_port)",
+  "installedAt": "$(date -Iseconds)",
+  "sourceUrl": "$2",
+  "sha256": "$3",
+  "nodeSource": "$(meta_get nodeSource)"
+}
+EOF
+  chmod 600 "$META_FILE"
+}
+
+cmd_upgrade() {
+  local want="" url="" sha="" check_only=0 force=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --version) want="${2:-}"; shift 2 ;;
+      --url) url="${2:-}"; shift 2 ;;
+      --sha256) sha="${2:-}"; shift 2 ;;
+      --check) check_only=1; shift ;;
+      --force) force=1; shift ;;
+      -h|--help) info "用法：classhelper upgrade [--version X] [--url <tar.gz|file://...>] [--sha256 H] [--check] [--force]"; return 0 ;;
+      *) die "upgrade: 未知参数 $1" ;;
+    esac
+  done
+  need_root "upgrade"
+  require_install
+
+  local current; current="$(current_version)"
+  local target="$want"
+
+  if [ -z "$url" ] && [ -z "$target" ]; then
+    target="$(github_latest_tag)" || true
+    if [ -z "$target" ]; then
+      warn "查不到 GitHub Release（本机可能没有外网，或匿名查询被限流）"
+      info "可手工指定：classhelper upgrade --url <安装包地址> [--sha256 <哈希>]"
+      return 0
+    fi
+    target="${target#v}"
+  fi
+
+  printf '当前版本：%s\n' "${current:-未知}"
+  [ -n "$target" ] && printf '目标版本：%s\n' "$target"
+
+  if [ "$check_only" = "1" ]; then
+    if [ -z "$url" ] && [ -n "$target" ] && [ -n "$current" ]; then
+      if version_gt "$current" "$target"; then
+        log "有新版本可用：${current} → ${target}"
+      elif [ "$current" = "$target" ]; then
+        log "已经是最新版本（${current}）"
+      else
+        info "远端版本 ${target} 不高于本机 ${current}（本机可能是自建版本）"
+      fi
+      printf '发布页：%s\n' "$GITHUB_RELEASES_PAGE"
+    fi
+    [ -n "$url" ] && printf '安装包：%s\n' "$url"
+    return 0
+  fi
+
+  if [ -z "$url" ] && [ -n "$current" ] && [ -n "$target" ] && [ "$current" = "$target" ] && [ "$force" != "1" ]; then
+    log "已经是最新版本（${current}）。要强制重装同一版本：--force"
+    return 0
+  fi
+
+  local resolved; resolved="$(resolve_download "$target" "$url")" || die "无法确定下载地址"
+  info "下载：${resolved}"
+  local tmp; tmp="$(mktemp -d)"
+  local pkg="${tmp}/classhelper-server.tar.gz"
+  download_to "$resolved" "$pkg" || { rm -rf "$tmp"; die "下载失败：${resolved}"; }
+  verify_sha256 "$pkg" "$sha" || { rm -rf "$tmp"; die "安装包校验失败，已中止（未改动任何文件）"; }
+  info "sha256 校验通过"
+
+  local stage="${tmp}/pkg"
+  extract_package "$pkg" "$stage" || { rm -rf "$tmp"; die "解压失败：安装包格式不对"; }
+  [ -f "${stage}/server/dist/index.js" ] || { rm -rf "$tmp"; die "安装包内容不对：缺少 server/dist/index.js"; }
+  local new_ver; new_ver="$(tr -d '[:space:]' <"${stage}/VERSION" 2>/dev/null || echo "$target")"
+  local pkg_sha; pkg_sha="$(sha256sum "$pkg" | awk '{print $1}')"
+
+  info "备份数据与配置 ..."
+  cmd_backup --quiet --note "upgrade-${new_ver}-前" || warn "备份未完成，继续升级"
+  ensure_backup_dir
+  local rollback_file="${BACKUP_DIR}/rollback/$(date '+%Y%m%d-%H%M%S')-${current:-unknown}.tar.gz"
+  info "快照当前程序文件：${rollback_file}"
+  snapshot_program_files "$rollback_file"
+
+  info "停止服务 ..."
+  svc_stop || warn "停止服务返回非 0（可能本来就没在运行）"
+  replace_program_files "$stage"
+
+  svc_start || true
+  if ! wait_ready 90; then
+    warn "新版本启动失败，正在自动回滚到 ${current:-上一版本} ..."
+    print_recent_logs
+    svc_stop || true
+    if extract_package "$rollback_file" "${tmp}/rollback" && replace_program_files "${tmp}/rollback"; then
+      svc_start || true
+      if wait_ready 90; then
+        audit upgrade "${current}->${new_ver}" rolled-back
+        rm -rf "$tmp"
+        die "升级失败，已回滚到 ${current}（服务已恢复）。失败原因见上面的日志"
+      fi
+    fi
+    audit upgrade "${current}->${new_ver}" rollback-failed
+    rm -rf "$tmp"
+    die "升级失败且回滚后仍未就绪，请人工介入：classhelper logs -n 100"
+  fi
+
+  write_meta "$new_ver" "$resolved" "$pkg_sha"
+  audit upgrade "${current}->${new_ver}" ok
+  rm -rf "$tmp"
+  log "升级完成：${current} → ${new_ver} ✅"
+  printf '%s注意：升级不会回滚数据库结构。若新版执行过迁移，回滚程序前请确认兼容性（必要时 classhelper backup restore）。%s\n' "$C_DIM" "$C_RESET"
+}
+
+cmd_rollback() {
+  need_root "rollback"
+  require_install
+  local to="" list=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --list) list=1; shift ;;
+      --to) to="${2:-}"; shift 2 ;;
+      *) die "rollback: 未知参数 $1" ;;
+    esac
+  done
+
+  local dir="${BACKUP_DIR}/rollback"
+  if [ "$list" = "1" ] || [ -z "$to" ]; then
+    printf '%s可回滚的程序快照（%s）：%s\n' "$C_BOLD" "$dir" "$C_RESET"
+    ls -1t "$dir" 2>/dev/null | head -20 || true
+    [ "$list" = "1" ] && return 0
+    to="$(ls -1t "$dir" 2>/dev/null | head -1)"
+    [ -n "$to" ] || die "没有可用的程序快照（执行过一次 classhelper upgrade 才会产生）"
+    info "使用最近一份：${to}"
+  fi
+
+  local file="$to"
+  [ -f "$file" ] || file="${dir}/${to}"
+  [ -f "$file" ] || die "找不到快照：${to}"
+
+  printf '%s回滚只替换程序文件，不会回滚数据库结构。%s\n' "$C_YELLOW" "$C_RESET"
+  local reply=""
+  read -r -p "确认回滚到 $(basename "$file")？输入 yes 继续：" reply || true
+  [ "$reply" = "yes" ] || { info "已取消"; return 0; }
+
+  local tmp; tmp="$(mktemp -d)"
+  extract_package "$file" "${tmp}/pkg" || { rm -rf "$tmp"; die "快照解压失败"; }
+  svc_stop || true
+  replace_program_files "${tmp}/pkg"
+  svc_start || true
+  if wait_ready 90; then
+    local now; now="$(current_version)"
+    write_meta "$now" "rollback:$(basename "$file")" ""
+    audit rollback "$(basename "$file")" ok
+    rm -rf "$tmp"
+    log "已回滚到 ${now} ✅"
+  else
+    audit rollback "$(basename "$file")" failed
+    print_recent_logs
+    rm -rf "$tmp"
+    die "回滚后服务未就绪，请人工排查"
+  fi
+}
+
+# ---------------------------------------------------------------- 11. 其它
+
+cmd_logs() {
+  local follow=0 lines=100 since="" unit="$SERVICE_NAME"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -f|--follow) follow=1; shift ;;
+      -n) lines="${2:-100}"; shift 2 ;;
+      --since) since="${2:-}"; shift 2 ;;
+      --unit) unit="${2:-}"; shift 2 ;;
+      *) die "logs: 未知参数 $1" ;;
+    esac
+  done
+  if [ "$MODE" = "docker" ]; then
+    if [ "$follow" = "1" ]; then compose_cmd logs -f --tail "$lines"
+    else compose_cmd logs --tail "$lines"; fi
+    return 0
+  fi
+  command -v journalctl >/dev/null 2>&1 || die "本机没有 journalctl（日志在 journald 里）"
+  local args=(-u "$unit" -n "$lines" --no-pager)
+  [ -n "$since" ] && args+=(--since "$since")
+  [ "$follow" = "1" ] && args+=(-f)
+  journalctl "${args[@]}"
+}
+
+# 删除目录前的护栏：安装元数据是文件里读来的，绝不能因为里面的值被改坏就把系统目录删掉
+safe_remove_dir() {
+  local dir="${1:-}"
+  case "$dir" in
+    ''|/|/etc|/usr|/var|/opt|/bin|/sbin|/lib|/lib64|/boot|/home|/root|/tmp|/srv|/data|/dev|/proc)
+      warn "拒绝删除系统目录：${dir}（请手工处理）"
+      return 1
+      ;;
+  esac
+  case "$dir" in
+    /*/*) ;;
+    *) warn "路径太浅，拒绝删除：${dir}"; return 1 ;;
+  esac
+  rm -rf "$dir"
+}
+
+cmd_uninstall() {
+  need_root "uninstall"
+  local purge=0 keep_data=1 keep_config=1 keep_backup=1 assume_yes="${CLASSHELPER_ASSUME_YES:-0}"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --purge) purge=1; shift ;;
+      --yes|-y) assume_yes=1; shift ;;
+      *) die "uninstall: 未知参数 $1" ;;
+    esac
+  done
+  if [ "$purge" = "1" ]; then keep_data=0; keep_config=0; keep_backup=0; fi
+
+  if [ "$assume_yes" != "1" ] && [ "$purge" != "1" ]; then
+    printf '%s卸载会停止服务、删除程序文件；数据与配置默认会被搬到备份目录，不会丢。%s\n\n' "$C_BOLD" "$C_RESET"
+    local a=""
+    read -r -p "保留配置 config.env？[Y/n] " a || true; case "$a" in n|N) keep_config=0 ;; esac
+    read -r -p "保留数据库与数据目录？[Y/n] " a || true; case "$a" in n|N) keep_data=0 ;; esac
+    read -r -p "保留已有备份（${BACKUP_DIR}）？[Y/n] " a || true; case "$a" in n|N) keep_backup=0 ;; esac
+    printf '\n'
+    read -r -p "确认卸载？输入 yes 继续：" a || true
+    [ "$a" = "yes" ] || { info "已取消"; return 0; }
+  fi
+
+  local rescue=""
+  if [ "$keep_config" = "1" ] || [ "$keep_data" = "1" ]; then
+    rescue="${BACKUP_DIR}/uninstall-$(date '+%Y%m%d-%H%M%S')"
+    mkdir -p "$rescue"; chmod 700 "$rescue"
+    if [ "$keep_config" = "1" ] && [ -f "$CONFIG_FILE" ]; then cp -p "$CONFIG_FILE" "${rescue}/config.env"; fi
+    if [ "$keep_data" = "1" ] && [ -d "$DATA_DIR" ]; then cp -a "$DATA_DIR" "${rescue}/data"; fi
+    info "保留内容已搬到 ${rescue}"
+  fi
+
+  info "停止并移除服务 ..."
+  if [ "$MODE" = "docker" ]; then
+    compose_cmd down --remove-orphans >/dev/null 2>&1 || true
+  else
+    systemctl disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+    systemctl disable --now classhelper-backup.timer >/dev/null 2>&1 || true
+    rm -f "/etc/systemd/system/${SERVICE_NAME}.service" \
+          /etc/systemd/system/classhelper-backup.service \
+          /etc/systemd/system/classhelper-backup.timer \
+          /etc/logrotate.d/classhelper
+    systemctl daemon-reload
+  fi
+  rm -f /etc/profile.d/classhelper.sh /usr/local/bin/classhelper /usr/share/bash-completion/completions/classhelper
+
+  if [ "$keep_backup" != "1" ] && [ -d "$BACKUP_DIR" ]; then
+    safe_remove_dir "$BACKUP_DIR" && log "备份目录已删除：${BACKUP_DIR}"
+  fi
+
+  if [ -d "$INSTALL_DIR" ]; then
+    if [ "$keep_data" = "1" ]; then
+      rm -rf "${INSTALL_DIR:?}/server" "${INSTALL_DIR:?}/web" "${INSTALL_DIR:?}/node_modules" \
+             "${INSTALL_DIR:?}/tools" "${INSTALL_DIR:?}/bin" "${INSTALL_DIR:?}/runtime" \
+             "${INSTALL_DIR:?}/systemd" "${INSTALL_DIR:?}/package.json" \
+             "${INSTALL_DIR:?}/VERSION" "${INSTALL_DIR:?}/.installed.json" "${INSTALL_DIR:?}/.env"
+      log "程序文件已删除，数据保留在 ${INSTALL_DIR}/data"
+    else
+      safe_remove_dir "$INSTALL_DIR" && log "安装目录已删除：${INSTALL_DIR}"
+    fi
+  fi
+  if [ -d "$INSTALL_DIR" ] && [ -z "$(ls -A "$INSTALL_DIR" 2>/dev/null || true)" ]; then rmdir "$INSTALL_DIR" 2>/dev/null || true; fi
+
+  # 配置目录只在明确不保留时删（--purge 或交互里回答了 n）
+  if [ "$keep_config" != "1" ] && [ -d "$CONFIG_DIR" ]; then
+    safe_remove_dir "$CONFIG_DIR" && log "配置目录已删除：${CONFIG_DIR}"
+  fi
+
+  audit uninstall "$INSTALL_DIR" ok
+  log "卸载完成${rescue:+（保留内容：${rescue}）}"
+  [ "$keep_backup" = "1" ] && info "备份仍保留在：${BACKUP_DIR}"
+}
+
+cmd_completion() {
+  case "${1:-bash}" in
+    bash)
+      cat <<'EOF'
+_classhelper_complete() {
+  local cur prev commands sub
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  commands="status doctor password backup upgrade rollback start stop restart reload logs config port key uninstall version help completion"
+  if [ "$COMP_CWORD" -eq 1 ]; then
+    COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
+    return 0
+  fi
+  case "${COMP_WORDS[1]}" in
+    backup)     COMPREPLY=( $(compgen -W "list restore schedule" -- "$cur") ) ;;
+    config)     COMPREPLY=( $(compgen -W "get set show edit" -- "$cur") ) ;;
+    key)        COMPREPLY=( $(compgen -W "rotate" -- "$cur") ) ;;
+    completion) COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") ) ;;
+    logs)       COMPREPLY=( $(compgen -W "-f -n --since --unit" -- "$cur") ) ;;
+    upgrade)    COMPREPLY=( $(compgen -W "--check --version --url --sha256 --force" -- "$cur") ) ;;
+  esac
+}
+complete -F _classhelper_complete classhelper
+EOF
+      ;;
+    zsh)
+      cat <<'EOF'
+#compdef classhelper
+_classhelper() {
+  local -a commands
+  commands=(status doctor password backup upgrade rollback start stop restart reload logs config port key uninstall version help completion)
+  _arguments '1:command:($commands)' '*::arg:->args'
+}
+_classhelper "$@"
+EOF
+      ;;
+    *) die "用法：classhelper completion bash|zsh" ;;
+  esac
+}
+
+cmd_help() {
+  cat <<EOF
+${C_BOLD}班级小助手 · 运维命令${C_RESET}
+
+用法：classhelper <子命令> [参数]
+
+${C_BOLD}查看与诊断${C_RESET}
+  status [--json]                服务状态、版本、端口、数据库、各类路径（--json 便于接监控）
+  doctor                         完整体检（权限 / Node / 服务单元 / 探针 / 数据库 / 磁盘 / 备份）
+  logs [-f] [-n N] [--since T]   查看日志（-f 实时跟随；--unit classhelper-backup 看定时备份）
+
+${C_BOLD}账号${C_RESET}
+  password [用户名]              修改密码（默认 admin）；交互输入、不回显、不进历史
+  password --list                列出可登录账号与班级账号（含是否已设密码）
+  password --class <班级码>      修改班级密码（学生端用「班级码 + 班级密码」登录）
+
+${C_BOLD}备份与恢复${C_RESET}
+  backup [--note 说明] [--keep N]    备份配置 + 数据库到 ${BACKUP_DIR}
+  backup list                        列出备份与程序快照
+  backup restore <备份目录名>        用某个备份覆盖当前配置与数据（会先停服务）
+  backup schedule daily|weekly|off   启用 / 关闭定时备份（systemd timer）
+
+${C_BOLD}升级与回滚${C_RESET}
+  upgrade --check                检查 GitHub Release 上有没有新版本
+  upgrade                        升级到最新版（下载 → 校验 sha256 → 备份 → 替换 → 探针，失败自动回滚）
+  upgrade --version 1.2.0        升级到指定版本
+  upgrade --url <tar.gz|file://路径> [--sha256 H] [--force]   内网离线分发 / 强制重装同版本
+  rollback [--list] [--to X]     回滚程序文件到某个快照
+
+${C_BOLD}服务与配置${C_RESET}
+  start | stop | restart | reload     封装 systemctl / docker compose
+  config show [--reveal]              查看配置（敏感值默认打码）
+  config get <KEY>                    读取某项（敏感项自动打码）
+  config set <KEY> <VALUE>            修改某项（敏感项改为交互输入），改完询问是否重启
+  config edit                         用 \$EDITOR 编辑配置（改前自动备份）
+  port [新端口]                       查看或修改服务端口
+  key rotate                          轮换 JWT_SECRET（所有用户需重新登录）
+
+${C_BOLD}其它${C_RESET}
+  version                            显示版本
+  help                               显示本帮助
+  completion bash|zsh                生成补全脚本（chmod +x 后 source，或装到 completions 目录）
+
+${C_DIM}敏感操作需要 root：sudo classhelper <子命令>
+审计日志：${AUDIT_LOG}${C_RESET}
+EOF
+}
+
+# ---------------------------------------------------------------- 12. 入口
+
+main() {
+  local cmd="${1:-help}"
+  shift || true
+  case "$cmd" in
+    # 不需要 root 的三个
+    help|-h|--help)       cmd_help ;;
+    version|-v|--version) printf 'classhelper %s（%s 形态）\n' "$(current_version)" "$MODE" ;;
+    completion)           cmd_completion "$@" ;;
+
+    status)   cmd_status "$@" ;;
+    doctor)   cmd_doctor "$@" ;;
+    password) cmd_password "$@" ;;
+    backup)   cmd_backup "$@" ;;
+    upgrade)  cmd_upgrade "$@" ;;
+    rollback) cmd_rollback "$@" ;;
+
+    start|stop|restart|reload)
+      need_root "$cmd"
+      require_install
+      case "$cmd" in
+        start)   svc_start ;;
+        stop)    svc_stop ;;
+        restart) svc_restart ;;
+        # 服务端没有 SIGHUP 处理，reload 与 restart 同义（保持命令面一致，并说明清楚）
+        reload)  info "服务端不支持热重载，按重启处理"; svc_restart ;;
+      esac
+      if [ "$cmd" = "stop" ]; then
+        log "已停止"
+      else
+        if wait_ready 90; then log "服务已就绪 ✅（http://$(first_ip):$(current_port)/）"
+        else print_recent_logs; die "服务在 90 秒内没有通过探针"; fi
+      fi
+      audit "$cmd" "$SERVICE_NAME" ok
+      ;;
+
+    logs)      cmd_logs "$@" ;;
+    config)    cmd_config "$@" ;;
+    port)      cmd_port "$@" ;;
+    key)       cmd_key "$@" ;;
+    uninstall) cmd_uninstall "$@" ;;
+
+    *) warn "未知子命令：${cmd}"; printf '\n'; cmd_help; exit 2 ;;
+  esac
+}
+
+main "$@"

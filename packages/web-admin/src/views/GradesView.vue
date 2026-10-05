@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import * as echarts from 'echarts';
 import {
   SOCKET_EVENTS,
   SUBJECT_CATALOG,
@@ -15,6 +14,8 @@ import {
   type StudentDto,
 } from '@classhelper/shared';
 import { classApi, courseApi, gradeApi } from '@/api';
+import ScoreBarChart from '@/components/ScoreBarChart.vue';
+import ScoreLineChart from '@/components/ScoreLineChart.vue';
 import TableImportDialog from '@/components/TableImportDialog.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
@@ -41,10 +42,15 @@ const students = ref<StudentDto[]>([]);
 const stats = ref<GradeStats | null>(null);
 const filter = reactive({ classId: '', courseId: '', examName: '' });
 
-const levelChartRef = ref<HTMLDivElement>();
-const courseChartRef = ref<HTMLDivElement>();
-const levelChart = ref<ReturnType<typeof echarts.init> | null>(null);
-const courseChart = ref<ReturnType<typeof echarts.init> | null>(null);
+/** 等级分布柱状图的数据（count 是整数，纵轴上限交给组件按数据自动取整） */
+const levelItems = computed(() =>
+  (stats.value?.distribution ?? []).map((item) => ({ label: `${item.level} 等`, value: item.count })),
+);
+
+/** 各课程平均得分率折线图的数据 */
+const courseItems = computed(() =>
+  (stats.value?.byCourse ?? []).map((item) => ({ label: item.courseName, value: item.averagePercent })),
+);
 
 const averagePercent = computed(() => {
   if (grades.value.length === 0) return 0;
@@ -79,7 +85,6 @@ async function loadGrades(): Promise<void> {
     if (requestId !== gradesRequestId) return;
     grades.value = list;
     stats.value = statistic;
-    renderCharts();
   } finally {
     if (requestId === gradesRequestId) loading.value = false;
   }
@@ -94,55 +99,15 @@ async function onClassChange(): Promise<void> {
   await loadTeacherSuggestions();
 }
 
-/* ------------------------------------------------------------ 图表 */
-
-function renderCharts(): void {
-  const statistic = stats.value;
-  if (!statistic) return;
-
-  if (levelChartRef.value) {
-    levelChart.value ??= echarts.init(levelChartRef.value);
-    levelChart.value.setOption({
-      tooltip: { trigger: 'axis' },
-      grid: { left: 40, right: 16, top: 30, bottom: 28 },
-      xAxis: { type: 'category', data: statistic.distribution.map((item) => `${item.level} 等`) },
-      yAxis: { type: 'value', minInterval: 1 },
-      series: [
-        {
-          type: 'bar',
-          barWidth: '46%',
-          itemStyle: { color: '#409eff', borderRadius: [4, 4, 0, 0] },
-          data: statistic.distribution.map((item) => item.count),
-        },
-      ],
-    });
-  }
-
-  if (courseChartRef.value) {
-    courseChart.value ??= echarts.init(courseChartRef.value);
-    courseChart.value.setOption({
-      tooltip: { trigger: 'axis' },
-      grid: { left: 40, right: 16, top: 30, bottom: 28 },
-      xAxis: { type: 'category', data: statistic.byCourse.map((item) => item.courseName) },
-      yAxis: { type: 'value', max: 100, name: '得分率%' },
-      series: [
-        {
-          type: 'line',
-          smooth: true,
-          symbolSize: 8,
-          areaStyle: { opacity: 0.12 },
-          itemStyle: { color: '#67c23a' },
-          data: statistic.byCourse.map((item) => item.averagePercent),
-        },
-      ],
-    });
-  }
-}
-
-function handleResize(): void {
-  levelChart.value?.resize();
-  courseChart.value?.resize();
-}
+/* ------------------------------------------------------------ 图表
+ *
+ * 等级分布与各课程得分率原先用 echarts 渲染（`import * as echarts from 'echarts'`
+ * 会给构建产物加 1.1MB）。现在换成两个自包含的轻量组件：
+ *   - ScoreBarChart：纯 HTML/CSS 柱状图
+ *   - ScoreLineChart：内联 SVG 折线 + HTML 数据点
+ * 两者都是响应式的（百分比布局），因此不再需要 resize 监听，
+ * 数据也直接从上面两个 computed 流过去，不需要手写 setOption。
+ */
 
 /* ------------------------------------------------------------ 统一科目
  *
@@ -299,14 +264,10 @@ watch(
 onMounted(async () => {
   await loadClasses();
   await loadGrades();
-  window.addEventListener('resize', handleResize);
   realtime.on(SOCKET_EVENTS.gradeUpdated, onGradeEvent);
 });
 
 onUnmounted(() => {
-  window.removeEventListener('resize', handleResize);
-  levelChart.value?.dispose();
-  courseChart.value?.dispose();
   realtime.off(SOCKET_EVENTS.gradeUpdated, onGradeEvent);
 });
 </script>
@@ -361,13 +322,13 @@ onUnmounted(() => {
       <el-col :xs="24" :md="9">
         <el-card shadow="never">
           <template #header><span>等级分布</span></template>
-          <div ref="levelChartRef" class="chart"></div>
+          <ScoreBarChart :items="levelItems" />
         </el-card>
       </el-col>
       <el-col :xs="24" :md="9">
         <el-card shadow="never">
           <template #header><span>各课程平均得分率</span></template>
-          <div ref="courseChartRef" class="chart"></div>
+          <ScoreLineChart :items="courseItems" :max="100" />
         </el-card>
       </el-col>
     </el-row>
@@ -503,10 +464,3 @@ onUnmounted(() => {
     />
   </div>
 </template>
-
-<style scoped>
-.chart {
-  height: 220px;
-  width: 100%;
-}
-</style>

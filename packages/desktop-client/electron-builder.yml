@@ -2,6 +2,18 @@ appId: com.classhelper.desktop
 productName: 班级小助手
 copyright: Copyright © 2026 Class Helper
 
+# 语言包：Electron 发行版自带 55 个 `locales/*.pak`（实测 48.3MB 未压缩 / 约 10MB 压缩后），
+# 而本应用界面文案只有中文，其余 54 个语言包纯属白占体积（`win-unpacked` 372MB → 约 324MB）。
+# 这是 electron-builder 的官方选项：`app-builder-lib` 的 removeUnusedLanguagesIfNeeded()
+# 会对 `locales/*.pak` 做精确匹配删除，只留 `zh-CN.pak`（0.6MB）。
+#
+# 注意：**不要**为了继续压体积去删 dxcompiler/vk_swiftshader/d3dcompiler_47 这些 GPU 回退组件，
+# 或 LICENSES.chromium.html —— 前者是教室老显卡/虚拟机上的 D3D12/D3D11/Vulkan 渲染回退，
+# 后者是 Chromium 的许可证声明，合计只能再省约 12MB，风险不成比例。
+# 另外安装包有硬底：`班级小助手.exe`（就是 electron.exe）压缩后本身就有 85~90MB，别再指望压到 60MB。
+electronLanguages:
+  - zh-CN
+
 directories:
   output: release
   buildResources: build

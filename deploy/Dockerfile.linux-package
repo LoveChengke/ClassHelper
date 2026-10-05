@@ -1,0 +1,45 @@
+# ---------------------------------------------------------------------------
+# 班级小助手服务端 · Docker 形态镜像（由 install.sh --mode docker 使用）
+#
+# 与仓库根 deploy/Dockerfile 的区别：
+#   - 那份是"从源码构建"（两阶段、需要 pnpm 与全量源码），适合开发与自己打包镜像；
+#   - 这份是"从安装包构建"：安装包里的 server/dist、web、node_modules 已经是**linux-x64 的真实目录**，
+#     所以这里只做 COPY，不需要联网装依赖、不需要构建工具，几十秒就能出镜像。
+#
+# 构建（install.sh 自动执行，也可手工）：
+#   docker build -t classhelper-server:1.1.0 -f Dockerfile .
+# 运行：
+#   docker run -d --name classhelper-server -p 4000:4000 \
+#     --env-file /etc/classhelper/config.env -v classhelper-data:/app/data \
+#     classhelper-server:1.1.0
+# ---------------------------------------------------------------------------
+FROM node:22-slim
+
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=4000
+
+WORKDIR /app
+
+# 运行时会用到的全部内容（安装包里就是这套布局）
+COPY package.json ./
+COPY node_modules ./node_modules
+COPY server ./server
+COPY web ./web
+COPY tools ./tools
+
+# 数据目录（compose 里挂成卷）
+RUN mkdir -p /app/data /app/logs
+
+# 说明：不用 `USER node`
+#   - 镜像只在本机跑，容器本身就是隔离边界；
+#   - 数据卷里的文件需要与宿主机上的 classhelper backup / restore 互通，
+#     用 root 可以避免 uid 不一致导致的权限问题。
+
+EXPOSE 4000
+
+# 健康检查用 Node 自己发请求：slim 镜像里没有 curl/wget
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "server/dist/index.js"]

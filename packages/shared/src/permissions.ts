@@ -41,7 +41,7 @@ export function canAssignTeachers(role: UserRole): boolean {
   return role === 'ADMIN';
 }
 
-/** 学生名单（增删学生、重置密码、导入名单）：仅管理员 */
+/** 学生名单（增删学生、导入名单）：仅管理员（学生没有账号，因此没有"重置密码"这一步） */
 export function canManageRoster(role: UserRole): boolean {
   return role === 'ADMIN';
 }
@@ -92,7 +92,7 @@ export const PERMISSION_MATRIX: readonly {
 }[] = [
   { action: '班级创建 / 修改 / 删除', admin: true, head: false, subject: false },
   { action: '分配班主任与科任老师', admin: true, head: false, subject: false },
-  { action: '学生名单管理（增删 / 重置密码 / 导入）', admin: true, head: false, subject: false },
+  { action: '学生名单管理（增删 / 导入）', admin: true, head: false, subject: false },
   { action: '教师录入（新建 / 导入名单 / 重置密码）', admin: true, head: false, subject: false },
   { action: '课表管理（增删改 / 时间配置导入）', admin: true, head: true, subject: false },
   { action: '布置作业', admin: true, head: true, subject: true },

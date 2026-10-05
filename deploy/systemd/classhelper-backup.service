@@ -1,0 +1,22 @@
+# ---------------------------------------------------------------------------
+# 班级小助手 · 定时备份（systemd timer）
+# 由 `classhelper backup schedule daily|weekly` 安装（占位符 __BIN__ / __KEEP__ 由命令替换）
+#
+# 手工安装：
+#   sudo sed -e 's#__BIN__#/usr/local/bin/classhelper#' -e 's#__KEEP__#7#' \
+#     deploy/systemd/classhelper-backup.service > /tmp/x.service ...
+# 然后 systemctl daemon-reload && systemctl enable --now classhelper-backup.timer
+# ---------------------------------------------------------------------------
+
+[Unit]
+Description=ClassHelper 定时备份
+Documentation=https://github.com/LoveChengke/ClassHelper
+After=classhelper.service
+
+[Service]
+Type=oneshot
+ExecStart=__BIN__ backup --quiet --keep __KEEP__
+# 备份失败时不要静默：journalctl -u classhelper-backup 里能看到退出码与原因
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=classhelper-backup
