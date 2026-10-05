@@ -125,12 +125,29 @@ log()  { printf '%s[classhelper]%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
 info() { printf '%s[classhelper]%s %s\n' "$C_CYAN" "$C_RESET" "$*"; }
 step() { printf '\n%s▶ %s%s\n' "$C_MAGENTA" "$*" "$C_RESET"; }
 warn() { printf '%s[classhelper]%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
-die()  { trap - ERR; printf '%s[classhelper]%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
+
+# 真正的 stderr 先留一份到 fd 9。main() 里会用 `exec > >(tee -a 安装日志)` 接管 stdout/stderr，
+# 而脚本退出时那个进程替换的子进程**可能来不及把最后几行写出去** —— 后果是致命错误被彻底吞掉，
+# 用户只看到脚本默默退回 shell、一条提示都没有（2026-10-05 实测踩到，排查成本很高）。
+# 所以 die / on_error 绕开 tee：直接写 fd 9 + 直接追加日志文件。
+exec 9>&2
+
+fail_print() { # $1=要同时显示到终端与日志的错误文本
+  printf '%s\n' "$1" >&9 2>/dev/null || printf '%s\n' "$1" >&2
+  # 日志目录还没建起来时（比如卡在 root 检查）不要去追加，否则 bash 会额外吐一句
+  # "install.log: No such file or directory"，把真正的原因淹掉
+  if [ -n "${LOG_FILE:-}" ] && [ -d "$(dirname "$LOG_FILE")" ]; then
+    printf '[%s] %s\n' "$(date '+%F %T')" "$1" >>"$LOG_FILE" 2>/dev/null || true
+  fi
+  return 0
+}
+
+die() { trap - ERR; fail_print "$(printf '%s[classhelper]%s %s' "$C_RED" "$C_RESET" "$*")"; exit 1; }
 
 on_error() {
   local code=$?
-  printf '\n%s[classhelper]%s 安装中断（第 %s 行，退出码 %s）\n' "$C_RED" "$C_RESET" "$1" "$code" >&2
-  if [ -f "$LOG_FILE" ]; then printf '完整日志：%s\n' "$LOG_FILE" >&2; fi
+  fail_print "$(printf '\n%s[classhelper]%s 安装中断（第 %s 行，退出码 %s）' "$C_RED" "$C_RESET" "$1" "$code")"
+  [ -f "${LOG_FILE:-}" ] && fail_print "完整日志：${LOG_FILE}"
   exit "$code"
 }
 trap 'on_error "$LINENO"' ERR
@@ -333,17 +350,24 @@ open_prompt_fd() {
   return 1
 }
 
-# $1=提示语 $2=目标变量名 $3=1 表示隐藏输入（密码）；没有可用终端时返回 1（调用方一律用默认值）
+# $1=提示语 $2=目标变量名 $3=1 表示隐藏输入（密码）
+#
+# 注意：**这个函数永远返回 0**。它一旦返回非 0，在 `set -e` 下会把整个安装脚本当场终止，
+# 而调用处（`read_prompt "…" choice`）是独立命令、不会去接这个返回值 —— 实测后果是
+# "菜单打印完就默默退回 shell，一条错误信息都没有"，极难排查。
+# 读不到终端时就把变量留空，由调用方按默认值走。
 read_prompt() {
   local prompt="$1" var="$2" hidden="${3:-0}" value=""
   printf -v "$var" ''
+  if open_prompt_fd; then
+    printf '%s' "$prompt" >&3
+    if [ "$hidden" = "1" ]; then IFS= read -r -s value <&3 || true; else IFS= read -r value <&3 || true; fi
+    printf '\n' >&3
+  fi
   # 刻意**不**退回 stdin：`curl … | bash` 时 stdin 就是脚本内容本身，
   # 从 stdin 读会把脚本的下一行当成用户输入吃掉，表现为"脚本后半段莫名其妙乱套"。
-  open_prompt_fd || return 1
-  printf '%s' "$prompt" >&3
-  if [ "$hidden" = "1" ]; then IFS= read -r -s value <&3 || true; else IFS= read -r value <&3 || true; fi
-  printf '\n' >&3
   printf -v "$var" '%s' "$value"
+  return 0
 }
 
 # 能不能问用户：--yes 不问；没有终端可读也不问（这时一律用默认值）
@@ -385,7 +409,16 @@ ask_yes_no() { # $1=提示 $2=默认 y/n；返回 0=是
 }
 
 choose_mode_interactive() {
-  if ! can_prompt; then return 0; fi
+  if [ "$ASSUME_YES" = "1" ]; then return 0; fi
+  # 交互式安装却读不到终端时**明确报错**，而不是默默按默认值装下去：
+  # 后者会让用户以为自己在选，其实一个都没问到（实测踩到过）。
+  if ! can_prompt; then
+    die "读不到终端（/dev/tty 打不开），没法交互式选择安装形态。
+   · 确实想非交互安装：加 --yes（默认 native + SQLite + ${INSTALL_DIR} + 端口 ${PORT}）
+   · 或者先把脚本存成文件，再在同一终端里执行：
+       curl -fsSL -o /tmp/install.sh <脚本地址> && sudo bash /tmp/install.sh
+   · 只想先体检（不需要终端、也不需要 root）：加 --check"
+  fi
   printf '%s请选择：%s\n' "$C_BOLD" "$C_RESET"
   printf '  1) 直接安装（systemd 服务 + 内置 Node 运行时，默认 SQLite）%s  ← 推荐%s\n' "$C_GREEN" "$C_RESET"
   printf '  2) 直接安装 + MySQL\n'
@@ -1116,7 +1149,12 @@ main() {
     exit $?
   fi
 
-  [ "$(id -u)" = "0" ] || die "请用 root 执行：sudo bash install.sh（只体检不需要 root：bash install.sh --check）"
+  if [ "$(id -u)" != "0" ]; then
+    if [ -n "$SCRIPT_PATH" ]; then
+      die "请用 root 执行：sudo bash ${SCRIPT_PATH}（只体检不需要 root：加 --check）"
+    fi
+    die "请用 root 执行：在刚才那条命令前面加 sudo（只体检不需要 root：末尾加 --check）"
+  fi
 
   banner
   mkdir -p "$LOG_DIR" && chmod 700 "$LOG_DIR"
@@ -1132,6 +1170,8 @@ main() {
 
   choose_mode_interactive
   collect_answers
+  # 把最终生效的选择打出来：非交互（--yes）或问答被跳过时，这一行是唯一能看出"到底按什么装的"地方
+  info "本次安装：形态 ${MODE}｜目录 ${INSTALL_DIR}｜端口 ${PORT}｜数据库 ${DB_KIND}｜Node ${NODE_SOURCE}"
 
   if [ "$UNINSTALL" = "1" ]; then
     do_uninstall --yes
