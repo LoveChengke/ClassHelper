@@ -11,8 +11,13 @@ import { logger } from '../lib/logger.js';
  * - style-src 需要 'unsafe-inline'：Element Plus 运行时注入行内样式
  * - connect-src 需要放行 WebSocket（同源 ws/wss）与已配置的跨域后端
  * - 桌面客户端通过 file:// 加载页面，因此不启用 COOP/COEP，资源策略设为 cross-origin
+ * - helmet 默认 CSP 自带 upgrade-insecure-requests，它会把页面**子资源**请求全部改写成
+ *   https —— 而安装器的默认形态是 http://IP:端口 直连（无 TLS），改写后的请求必然
+ *   连接失败，表现为「管理端一片空白、标签页标题正常」（2026-10-05 实测踩到）。
+ *   HSTS 在明文响应里按规范本就会被浏览器忽略，但 CSP 指令没有这层豁免，
+ *   所以这两者都只在 HTTPS 请求下下发（见 buildHelmet 的 httpsRequest 参数）。
  */
-export function securityHeaders(): RequestHandler {
+function buildHelmet(httpsRequest: boolean): RequestHandler {
   const connectSrc = new Set<string>(["'self'", 'ws:', 'wss:']);
   if (Array.isArray(env.corsOrigins)) {
     for (const origin of env.corsOrigins) connectSrc.add(origin);
@@ -32,6 +37,7 @@ export function securityHeaders(): RequestHandler {
         'base-uri': ["'self'"],
         'frame-ancestors': ["'none'"],
         'form-action': ["'self'"],
+        'upgrade-insecure-requests': httpsRequest ? [] : null,
       },
     },
     crossOriginEmbedderPolicy: false,
@@ -39,8 +45,16 @@ export function securityHeaders(): RequestHandler {
     // 允许桌面客户端等跨源场景读取静态资源与接口响应
     crossOriginResourcePolicy: { policy: 'cross-origin' },
     referrerPolicy: { policy: 'no-referrer' },
-    hsts: env.isProduction ? { maxAge: 15552000, includeSubDomains: true } : false,
+    hsts: httpsRequest && env.isProduction ? { maxAge: 15552000, includeSubDomains: true } : false,
   });
+}
+
+export function securityHeaders(): RequestHandler {
+  const secure = buildHelmet(true);
+  const plain = buildHelmet(false);
+  // req.secure：直连 TLS 时为 true；前面有反代时由 x-forwarded-proto 决定
+  // （app.ts 里 app.set('trust proxy', env.trustProxy) 已生效）
+  return (req, res, next) => (req.secure ? secure : plain)(req, res, next);
 }
 
 /** 通用接口限流：防止单 IP 高频刷接口 */
