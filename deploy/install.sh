@@ -9,7 +9,21 @@
 #   native（默认）—— 装成 systemd 服务，自带 Node 运行时，SQLite 或 MySQL
 #   docker        —— 用随包的 Dockerfile 构建镜像 + compose 起容器（需要 docker）
 #
-# 用法：
+# 用法（一行安装，推荐给最终用户）：
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/LoveChengke/ClassHelper/master/deploy/install.sh)"
+#
+#   脚本会自动从 GitHub Release 取**最新版**服务端安装包，并取发布页上同名的 .sha256 做校验，
+#   所以整条链路只需要这一行。常见变体（都加在同一行末尾）：
+#     … --version 1.1.0     装指定版本      … --yes            全部默认、不交互
+#     … --check             只体检、不安装  … --port 8080      自定义端口
+#     … --admin-password-stdin              从 stdin 读初始管理员密码（不进 argv / history）
+#
+#   为什么写 `bash -c "$(curl …)"` 而不是 `curl … | bash`：后者的 stdin 被脚本内容占用，
+#   交互问答会读不到输入（本脚本会尽量兜到 /dev/tty，但前者从根上没有这个问题）。
+#   内网/离线：先把 tar.gz 与 install.sh 拷到机器上，再
+#     sudo bash install.sh --package /path/to/classhelper-server-linux-x64-<版本>.tar.gz
+#
+# 本地已有的脚本用法：
 #   sudo bash install.sh                      # 交互式（TUI 菜单 + 问答）
 #   sudo bash install.sh --check              # 只体检（不需要 root，不改动任何东西）
 #   sudo bash install.sh --uninstall          # 卸载（会问保留什么）
@@ -83,8 +97,20 @@ INSTALL_DOCKER=0
 FORCE=0
 
 LOG_FILE="${LOG_DIR}/install.log"
-SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+
+# 脚本自身路径。两种"一行脚本安装"方式下这里会不一样，必须都能活：
+#   bash -c "$(curl -fsSL .../install.sh)"   → 没有脚本文件（BASH_SOURCE 为空）
+#   curl -fsSL .../install.sh | bash         → 脚本内容是 stdin，同样没有文件
+# SCRIPT_DIR 只用来找与脚本同目录的模板（classhelper.service / nginx.conf），
+# 从远端执行时找不到也不要紧 —— 安装包里带了同样的模板（见 place_program_files）。
+SELF_PATH="${BASH_SOURCE[0]:-}"
+if [ -n "$SELF_PATH" ] && [ -f "$SELF_PATH" ]; then
+  SCRIPT_PATH="$(cd "$(dirname "$SELF_PATH")" && pwd)/$(basename "$SELF_PATH")"
+  SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+else
+  SCRIPT_PATH=""
+  SCRIPT_DIR=""
+fi
 
 # ---------------------------------------------------------------- 输出
 
@@ -123,11 +149,39 @@ ASCII
   printf '%s  一键安装 + classhelper 运维命令（status / password / upgrade / backup …）%s\n\n' "$C_DIM" "$C_RESET"
 }
 
-# 打印文件头部注释里的用法（第一个分隔线之后、第二个分隔线之前）
+# 用法：能读到脚本文件时直接打印文件头部注释（唯一真身，不会漂）；从远端执行时没有文件可读，
+# 退化成下面这份精简参数表。
 usage() {
-  awk 'NR == 1 { next }
-       /^# -{10,}/ { seen++; if (seen == 2) exit; next }
-       seen == 1 { sub(/^# ?/, ""); print }' "$SCRIPT_PATH"
+  if [ -n "$SCRIPT_PATH" ] && [ -r "$SCRIPT_PATH" ]; then
+    awk 'NR == 1 { next }
+         /^# -{10,}/ { seen++; if (seen == 2) exit; next }
+         seen == 1 { sub(/^# ?/, ""); print }' "$SCRIPT_PATH"
+    return 0
+  fi
+  cat <<'USAGE'
+班级小助手 · 服务端 Linux 安装器
+
+（本次是从远端直接执行的，没有本地脚本文件可读，这里只列常用参数；
+  完整说明见 https://github.com/LoveChengke/ClassHelper/blob/master/docs/linux-deploy.md ）
+
+  --mode native|docker         安装形态（默认 native：systemd + 内置 Node）
+  --dir /opt/classhelper       安装目录        --port 4000        服务端口
+  --database sqlite|mysql      数据库（默认 sqlite）
+  --mysql-host/-port/-db/-user/-password-stdin                 MySQL 连接信息
+  --admin-password-stdin       从 stdin 读一行作为初始管理员密码
+  --package <url|file://路径>  服务端安装包（默认从 GitHub Release 取最新版）
+  --sha256 <哈希>              安装包校验值（不给时自动取发布页上的同名 .sha256）
+  --version <X.Y.Z>            指定安装的版本
+  --node-source bundled|system|tarball    Node 运行时来源（默认 bundled）
+  --node-mirror <url> / --node-tarball <url|路径>               Node 下载镜像 / 离线包
+  --with-nginx                 顺带放一份 Nginx 反代配置
+  --open-firewall              按检测到的防火墙放行端口
+  --install-docker             Docker 形态缺少 docker 时自动安装
+  --yes                        全部用默认值，不再交互（CI / 验收用）
+  --force                      覆盖已有配置；无 systemd 时只铺文件不装服务
+  --check                      只体检（不需要 root，不改动系统）
+  --uninstall                  卸载
+USAGE
 }
 
 # ---------------------------------------------------------------- 参数解析
@@ -181,6 +235,10 @@ parse_args() {
 
 OS_ID=""; OS_VER=""; OS_NAME=""; PKG=""
 detect_os() {
+  # /etc/os-release 里也有 VERSION（Ubuntu 是 "24.04.1 LTS (Noble Numbat)"），直接 source 会盖掉
+  # 安装包版本号：.installed.json 会记成发行版名，而且不带 --package 时 resolve_package_url
+  # 会拿它当 Release tag 去拼下载地址（必然 404）。
+  local keep_version="${VERSION:-}"
   if [ -r /etc/os-release ]; then
     # shellcheck disable=SC1091
     . /etc/os-release
@@ -190,6 +248,7 @@ detect_os() {
   else
     OS_NAME="$(uname -s) $(uname -r)"
   fi
+  VERSION="$keep_version"
   if command -v apt-get >/dev/null 2>&1; then PKG="apt"
   elif command -v dnf >/dev/null 2>&1; then PKG="dnf"
   elif command -v yum >/dev/null 2>&1; then PKG="yum"
@@ -258,16 +317,51 @@ config_value() { # $1=KEY：从已有配置里读一项（覆盖安装时沿用�
 
 # ---------------------------------------------------------------- 交互问答
 
+# 交互输入的统一出口。
+#
+# 为什么不能直接用 `read`：一行脚本安装的两种写法里，stdin 未必是终端 ——
+#   curl -fsSL .../install.sh | bash        → **stdin 就是脚本内容本身**，read 会把脚本的下一行吃掉，
+#                                            表现为"问题全被跳过 + 后续脚本乱套"
+#   bash -c "$(curl -fsSL .../install.sh)"  → stdin 仍是终端，正常
+# 所以统一优先读 /dev/tty，退回 stdin；两者都不行（CI、定时任务）才按"非交互"处理。
+PROMPT_FD=""
+
+open_prompt_fd() {
+  if [ -n "$PROMPT_FD" ]; then return 0; fi
+  if [ "${CLASSHELPER_NO_TTY:-0}" = "1" ]; then return 1; fi
+  if exec 3</dev/tty 2>/dev/null; then PROMPT_FD=3; return 0; fi
+  return 1
+}
+
+# $1=提示语 $2=目标变量名 $3=1 表示隐藏输入（密码）；没有可用终端时返回 1（调用方一律用默认值）
+read_prompt() {
+  local prompt="$1" var="$2" hidden="${3:-0}" value=""
+  printf -v "$var" ''
+  # 刻意**不**退回 stdin：`curl … | bash` 时 stdin 就是脚本内容本身，
+  # 从 stdin 读会把脚本的下一行当成用户输入吃掉，表现为"脚本后半段莫名其妙乱套"。
+  open_prompt_fd || return 1
+  printf '%s' "$prompt" >&3
+  if [ "$hidden" = "1" ]; then IFS= read -r -s value <&3 || true; else IFS= read -r value <&3 || true; fi
+  printf '\n' >&3
+  printf -v "$var" '%s' "$value"
+}
+
+# 能不能问用户：--yes 不问；没有终端可读也不问（这时一律用默认值）
+can_prompt() {
+  [ "$ASSUME_YES" = "1" ] && return 1
+  open_prompt_fd
+}
+
 ask() { # $1=提示 $2=默认值 $3=目标变量
   local prompt="$1" default="$2" var="$3" answer=""
-  if [ "$ASSUME_YES" = "1" ] || [ ! -t 0 ]; then
+  if ! can_prompt; then
     printf -v "$var" '%s' "$default"
     return 0
   fi
   if [ -n "$default" ]; then
-    read -r -p "$(printf '%s[?]%s %s [%s]: ' "$C_CYAN" "$C_RESET" "$prompt" "$default")" answer || true
+    read_prompt "$(printf '%s[?]%s %s [%s]: ' "$C_CYAN" "$C_RESET" "$prompt" "$default")" answer
   else
-    read -r -p "$(printf '%s[?]%s %s: ' "$C_CYAN" "$C_RESET" "$prompt")" answer || true
+    read_prompt "$(printf '%s[?]%s %s: ' "$C_CYAN" "$C_RESET" "$prompt")" answer
   fi
   printf -v "$var" '%s' "${answer:-$default}"
 }
@@ -275,24 +369,23 @@ ask() { # $1=提示 $2=默认值 $3=目标变量
 ask_secret() { # $1=提示 $2=目标变量（不回显）
   local prompt="$1" var="$2" value=""
   printf -v "$var" ''
-  if [ "$ASSUME_YES" = "1" ] || [ ! -t 0 ]; then return 0; fi
-  read -r -s -p "$(printf '%s[?]%s %s' "$C_CYAN" "$C_RESET" "$prompt")" value || true
-  printf '\n'
+  if ! can_prompt; then return 0; fi
+  read_prompt "$(printf '%s[?]%s %s' "$C_CYAN" "$C_RESET" "$prompt")" value 1
   printf -v "$var" '%s' "$value"
 }
 
 ask_yes_no() { # $1=提示 $2=默认 y/n；返回 0=是
   local prompt="$1" default="$2" answer=""
-  if [ "$ASSUME_YES" = "1" ] || [ ! -t 0 ]; then
+  if ! can_prompt; then
     [ "$default" = "y" ]
     return
   fi
-  read -r -p "$(printf '%s[?]%s %s [%s]: ' "$C_CYAN" "$C_RESET" "$prompt" "$default")" answer || true
+  read_prompt "$(printf '%s[?]%s %s [%s]: ' "$C_CYAN" "$C_RESET" "$prompt" "$default")" answer
   case "${answer:-$default}" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
 
 choose_mode_interactive() {
-  if [ "$ASSUME_YES" = "1" ] || [ ! -t 0 ]; then return 0; fi
+  if ! can_prompt; then return 0; fi
   printf '%s请选择：%s\n' "$C_BOLD" "$C_RESET"
   printf '  1) 直接安装（systemd 服务 + 内置 Node 运行时，默认 SQLite）%s  ← 推荐%s\n' "$C_GREEN" "$C_RESET"
   printf '  2) 直接安装 + MySQL\n'
@@ -300,7 +393,7 @@ choose_mode_interactive() {
   printf '  4) 只体检（--check，不改动系统）\n'
   printf '  5) 卸载\n'
   local choice=""
-  read -r -p "$(printf '%s[?]%s 输入序号 [1]: ' "$C_CYAN" "$C_RESET")" choice || true
+  read_prompt "$(printf '%s[?]%s 输入序号 [1]: ' "$C_CYAN" "$C_RESET")" choice
   case "${choice:-1}" in
     1) MODE="native"; DB_KIND="sqlite" ;;
     2) MODE="native"; DB_KIND="mysql" ;;
@@ -414,13 +507,30 @@ fetch_package() {
   esac
   [ -s "$pkg" ] || die "安装包为空：${url}"
 
+  # 没给 --sha256 时，把发布页上同名的 .sha256 取回来自己校验。
+  # 这一步是一行脚本安装下的**唯一**校验机会：用户不会自己去核哈希，
+  # 而少了它，"校验"就只是把算出来的哈希记进日志而已。
+  if [ -z "$PACKAGE_SHA256" ]; then
+    local sum_file="${tmp}/expected.sha256"
+    case "$url" in
+      file://*|/*|./*|../*) [ -f "${url#file://}.sha256" ] && cp -f "${url#file://}.sha256" "$sum_file" ;;
+      *) curl -fsSL --max-time 60 -H 'User-Agent: ClassHelper-Installer' -o "$sum_file" "${url}.sha256" 2>/dev/null ;;
+    esac
+    if [ -s "$sum_file" ]; then
+      PACKAGE_SHA256="$(awk '{print $1; exit}' "$sum_file")"
+      [ -n "$PACKAGE_SHA256" ] && info "已从发布页取到 sha256，安装包会做校验"
+    fi
+  fi
+
   local got; got="$(sha256sum "$pkg" | awk '{print $1}')"
   if [ -n "$PACKAGE_SHA256" ]; then
-    [ "$got" = "$PACKAGE_SHA256" ] || die "sha256 校验失败：期望 ${PACKAGE_SHA256}，实际 ${got}"
+    [ "$got" = "$PACKAGE_SHA256" ] || die "sha256 校验失败：期望 ${PACKAGE_SHA256}，实际 ${got}
+安装包可能在传输中损坏或被篡改，已中止（什么也没改）。可用 --sha256 <正确的哈希> 重试。"
     log "sha256 校验通过"
   else
     PACKAGE_SHA256="$got"
-    info "sha256（未提供校验值，仅记录）：${got}"
+    warn "取不到发布页的 .sha256，本次只记录实际哈希、不做校验：${got}"
+    warn "（内网分发时请自带 --sha256；或手工核对上面这串哈希）"
   fi
 
   STAGE_DIR="${tmp}/pkg"

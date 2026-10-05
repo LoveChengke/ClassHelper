@@ -95,6 +95,17 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 | 已有 Linux 服务器                   | **一键安装器 + `classhelper` 运维命令**（systemd / docker） | `sudo bash deploy/install.sh`（先 `--check` 体检）；运维见 `classhelper help`            |
 | 自定义 / 已有 Node 环境             | 手动部署免安装目录                                          | `pnpm dist:server` → `release-server/classhelper-server/`                                |
 
+**Linux 服务器最快路径是一行命令**：脚本会自己从 GitHub Release 取最新版服务端包、取发布页上的
+`.sha256` 校验，再装成 systemd 服务并带上 `classhelper` 运维命令。完整步骤与验收清单见
+[docs/linux-deploy.md](docs/linux-deploy.md)。
+
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/LoveChengke/ClassHelper/master/deploy/install.sh)"
+```
+
+> 用 `bash -c "$(curl …)"` 而不是 `curl … | bash`：后者的 stdin 被脚本内容占用，交互问答会读不到输入。
+> 只想先看看这台机器能不能装：把末尾换成 `--check` 并去掉 `sudo`（只读，不改动系统）。
+
 ## 3. 快速开始
 
 ```bash
