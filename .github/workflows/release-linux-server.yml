@@ -102,11 +102,17 @@ jobs:
           set -euo pipefail
           VERSION="${TAG#v}"
           TARBALL="release-server/classhelper-server-linux-x64-${VERSION}.tar.gz"
+          SHAFILE="${TARBALL}.sha256"
           SUMS="release-server/SHA256SUMS-${VERSION}.txt"
 
           if [ ! -f "$TARBALL" ]; then
             echo "::error::没有找到 $TARBALL（tag 与 package.json 的版本号对得上吗？）"
             exit 1
+          fi
+          # .sha256 必须跟着一起传：它是独立发布的资产，只更新 tar.gz 会让这个文件指向旧哈希，
+          # 拿它校验的人会得到 mismatch（classhelper upgrade 用的是 --sha256/这个文件，不是 SHA256SUMS）。
+          if [ ! -f "$SHAFILE" ]; then
+            sha256sum "$TARBALL" | sed "s#release-server/##" > "$SHAFILE"
           fi
 
           # 取回已有的校验清单（Windows 包那几行），只替换/追加本包这一行，其余内容原样保留。
@@ -119,6 +125,7 @@ jobs:
           printf '%s  %s\n' "$(sha256sum "$TARBALL" | awk '{print $1}')" "$(basename "$TARBALL")" >> "${SUMS}.new"
           mv "${SUMS}.new" "$SUMS"
 
-          gh release upload "$TAG" "$TARBALL" "$SUMS" --clobber
+          gh release upload "$TAG" "$TARBALL" "$SHAFILE" "$SUMS" --clobber
           echo "已上传："
+          cat "$SHAFILE"
           cat "$SUMS"
