@@ -69,6 +69,14 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
+      - name: 生成 Prisma Client
+        # 必须显式生成：packages/server/src/generated/prisma 是 gitignored 的，CI 上全新检出没有它。
+        # 少了这一步，`tsc` 会因为 Prisma 类型解析不到而把回调参数全推成 any，报出一大片
+        # "TS7006 Parameter 'item' implicitly has an 'any' type" / "TS2339 Property 'id' does not exist
+        # on type '{}'" —— 看着像代码写错了，实际是缺生成物（本机因为早就生成过，永远踩不到）。
+        # deploy/Dockerfile 的构建阶段有同样的步骤与注释。
+        run: pnpm --filter @classhelper/server db:generate
+
       - name: 构建 Linux 安装包
         run: pnpm dist:server:linux
 
@@ -101,15 +109,15 @@ jobs:
             exit 1
           fi
 
-          # 取回已有的校验清单（Windows 包那几行），把本次的 Linux 包追加/替换进去
+          # 取回已有的校验清单（Windows 包那几行），只替换/追加本包这一行，其余内容原样保留。
+          # 注意**不要**用 `sort -u` 去重：那份文件是人读的（表头 + 体积 + 说明），排序会把它们打散。
           gh release download "$TAG" --pattern "SHA256SUMS-*.txt" --dir release-server --clobber || true
           DOWNLOADED="$(ls release-server/SHA256SUMS-*.txt 2>/dev/null | head -n 1 || true)"
           if [ -n "$DOWNLOADED" ] && [ "$DOWNLOADED" != "$SUMS" ]; then mv "$DOWNLOADED" "$SUMS"; fi
-          grep -v "classhelper-server-linux-x64-${VERSION}.tar.gz" "$SUMS" 2>/dev/null > "${SUMS}.tmp" || true
-          cat "${SUMS}.tmp" > "$SUMS" 2>/dev/null || true
-          rm -f "${SUMS}.tmp"
-          sha256sum "$TARBALL" | awk '{print $1"  "$2}' | sed "s#release-server/##" >> "$SUMS"
-          sort -u -k2 "$SUMS" -o "$SUMS"
+          touch "$SUMS"
+          grep -v "^[0-9a-f]\{64\}  classhelper-server-linux-" "$SUMS" > "${SUMS}.new" || true
+          printf '%s  %s\n' "$(sha256sum "$TARBALL" | awk '{print $1}')" "$(basename "$TARBALL")" >> "${SUMS}.new"
+          mv "${SUMS}.new" "$SUMS"
 
           gh release upload "$TAG" "$TARBALL" "$SUMS" --clobber
           echo "已上传："
