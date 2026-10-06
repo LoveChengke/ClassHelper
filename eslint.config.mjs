@@ -34,6 +34,8 @@ export default tseslint.config(
       '**/.cache/**',
       '**/.pnpm-store/**',
       '**/.probe/**',
+      // 文档站（docfx）的构建产物：里面是 docfx 模板自带的压缩 JS 与生成的 HTML
+      '**/docs/_site/**',
       '**/*.d.ts',
     ],
   },

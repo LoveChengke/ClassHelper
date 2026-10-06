@@ -182,7 +182,7 @@ usage() {
 班级小助手 · 服务端 Linux 安装器
 
 （本次是从远端直接执行的，没有本地脚本文件可读，这里只列常用参数；
-  完整说明见 https://github.com/LoveChengke/ClassHelper/blob/master/docs/linux-deploy.md ）
+  完整说明见 https://github.com/LoveChengke/ClassHelper/blob/master/docs/management/linux-deploy.md ）
 
   --mode native|docker         安装形态（默认 native：systemd + 内置 Node）
   --dir /opt/classhelper       安装目录        --port 4000        服务端口
@@ -844,7 +844,7 @@ EOF
 
 link_env_file() {
   # Web 端「数据库管理 → 一键切换」改写的是 <安装目录>/.env，而 systemd 注入的是 config.env；
-  # 用软链把两者收成一份真身，否则切换看起来成功、重启后又连回旧库（详见 docs/linux-deploy.md）
+  # 用软链把两者收成一份真身，否则切换看起来成功、重启后又连回旧库（详见 docs/management/linux-deploy.md）
   local link="${INSTALL_DIR}/.env"
   if [ -e "$link" ] && [ ! -L "$link" ]; then
     warn "安装目录里存在真实文件 .env，已改名保留为 .env.bak.$(date +%s) 再建立软链"

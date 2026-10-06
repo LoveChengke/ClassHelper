@@ -28,6 +28,8 @@
  *   packages/desktop-client/public/tray.png             系统托盘图标（32）
  *   packages/desktop-client/public/logo.png             **界面内**的品牌标（侧栏 / 登录页，128）
  *   website/assets/icon.png                             官网（favicon / apple-touch / 页面内 brand）
+ *   docs/templates/classhelper/logo.png                 文档站顶栏的品牌标（128）
+ *   docs/templates/classhelper/favicon.png              文档站标签页图标（64）
  *
  * ## 为什么还是 Electron
  *
@@ -231,6 +233,13 @@ app.whenReady().then(async () => {
 
     // ── 官网（纯静态站，图标同样是页面里的 brand 标记） ──────────────────────
     writeIfChanged(path.join(ROOT, 'website', 'assets', 'icon.png'), pngBySize.get(512));
+
+    // ── 文档站（docfx） ─────────────────────────────────────────────────────
+    // 必须落在**模板目录**里：docfx 只拷贝各模板 `{{!include}}` 声明的文件，
+    // 直接放 docs/ 根下不会进 _site（见 docs/templates/classhelper/layout/_master.tmpl 顶部注释）。
+    const docsTemplate = path.join(ROOT, 'docs', 'templates', 'classhelper');
+    writeIfChanged(path.join(docsTemplate, 'logo.png'), pngBySize.get(128));
+    writeIfChanged(path.join(docsTemplate, 'favicon.png'), pngBySize.get(64));
 
     console.log('[icons] 全部图标生成完成');
     app.exit(0);

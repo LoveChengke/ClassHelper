@@ -1,0 +1,16 @@
+- name: 快速上手
+  href: index.md
+- name: 系统要求
+  href: requirements.md
+- name: 安装服务端
+  href: server.md
+- name: 认识 Web 管理端
+  href: web-admin.md
+- name: 建班级、排课表
+  href: setup-class.md
+- name: 装学生端
+  href: client.md
+- name: 接入 ClassIsland
+  href: classisland.md
+- name: 发布第一条内容
+  href: first-content.md

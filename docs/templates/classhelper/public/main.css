@@ -1,0 +1,630 @@
+/*
+ * 班级小助手文档站 —— docfx modern 模板的样式覆盖。
+ *
+ * docfx 按 `template` 数组的顺序合并模板，这个文件排在最后，因此覆盖掉 modern 模板自带的
+ * `public/main.css`（它本身是空的，被留作官方覆盖点）。docfx.min.css 在本文件之前加载，
+ * 所以同特异度的选择器这里写的会赢；Bootstrap 那类 0-2-0 的选择器要在下面用同等或更高的特异度压。
+ *
+ * 两条原则：
+ *   1) 只调版式与配色，不动 DOM 结构（结构改动都在 templates/classhelper/layout/_master.tmpl 里）；
+ *   2) 深色主题只覆盖**颜色**，几何与浅色完全一致 —— 切换主题时不该看到布局跳一下。
+ */
+
+/* ── 设计令牌 ─────────────────────────────────────────────────────────── */
+:root {
+  --ch-font-ui:
+    'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', -apple-system,
+    BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+  --ch-font-mono:
+    'Cascadia Mono', 'Cascadia Code', Consolas, 'JetBrains Mono', 'Sarasa Mono SC', ui-monospace,
+    SFMono-Regular, Menlo, monospace;
+  --ch-accent: #0f6cbd;
+  --ch-accent-soft: rgba(15, 108, 189, 0.08);
+  --ch-radius: 8px;
+  --ch-navbar-h: 60px;
+
+  --bs-body-bg: #ffffff;
+  --bs-body-color: #24292f;
+  --bs-secondary-color: #59636e;
+  --bs-tertiary-color: #7d8590;
+  --bs-border-color: #d8dee4;
+  --bs-link-color: var(--ch-accent);
+  --bs-link-hover-color: #115ea3;
+  --bs-link-color-rgb: 15, 108, 189;
+  --bs-code-color: #b1370f;
+  --bs-body-font-family: var(--ch-font-ui);
+  --bs-body-font-size: 16px;
+  --bs-body-line-height: 1.8;
+}
+
+[data-bs-theme='dark'] {
+  --ch-accent: #6cb8ff;
+  --ch-accent-soft: rgba(108, 184, 255, 0.12);
+
+  --bs-body-bg: #1b1f24;
+  --bs-body-color: #e6edf3;
+  --bs-secondary-color: #9198a1;
+  --bs-tertiary-color: #6e7681;
+  --bs-border-color: #30363d;
+  --bs-link-color: var(--ch-accent);
+  --bs-link-hover-color: #96ccff;
+  --bs-link-color-rgb: 108, 184, 255;
+  --bs-code-color: #ffa198;
+}
+
+/* ── 基础 ─────────────────────────────────────────────────────────────── */
+body {
+  font-family: var(--ch-font-ui);
+  font-size: 16px;
+  line-height: 1.8;
+  letter-spacing: 0.002em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body > main.container-xxl {
+  padding-top: 1.6rem;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ch-accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* ── 顶栏 ─────────────────────────────────────────────────────────────── */
+header.bg-body {
+  backdrop-filter: saturate(180%) blur(12px);
+}
+
+.navbar {
+  min-height: var(--ch-navbar-h);
+}
+
+.navbar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.navbar-brand #logo {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+/* 版本徽标：版本号由 docs/build.mjs 从根 package.json 注入，见 _master.tmpl 顶部注释 */
+.ch-version {
+  padding: 1px 7px;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 999px;
+  font-family: var(--ch-font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.6;
+  color: var(--bs-secondary-color);
+}
+
+.ch-nav-github {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--bs-secondary-color);
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.ch-nav-github:hover {
+  color: var(--bs-body-color);
+  background: var(--ch-accent-soft);
+}
+
+/* 顶栏一级导航（由 docfx.min.js 按 toc.yml 生成） */
+.navbar-collapse {
+  min-width: 0;
+}
+
+#navbar {
+  min-width: 0;
+  /* 章节有 7 个，窄屏上放不下就会换行成"首/页"这种两行标题 —— 改成横向滚动，
+     标题一律不折行（滚动条本身隐藏，触控板/滚轮照样能滚）。 */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+#navbar::-webkit-scrollbar {
+  display: none;
+}
+
+#navbar .navbar-nav {
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+
+#navbar .nav-link {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 15px;
+  white-space: nowrap;
+  color: var(--bs-body-color);
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+#navbar .nav-link:hover {
+  color: var(--ch-accent);
+  background: var(--ch-accent-soft);
+}
+
+#navbar .nav-link.active,
+#navbar .nav-item.active > .nav-link {
+  color: var(--ch-accent);
+  font-weight: 600;
+}
+
+/* 搜索框：默认是 Bootstrap 的灰底，这里做成产品里那种浅色输入框 */
+form.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+form.search > i.bi-search {
+  position: absolute;
+  left: 10px;
+  font-size: 13px;
+  color: var(--bs-tertiary-color);
+  pointer-events: none;
+}
+
+form.search .form-control {
+  min-width: 190px;
+  padding-left: 30px;
+  border-radius: 6px;
+  background: var(--bs-tertiary-bg);
+}
+
+/* ── 左栏（章节导航）与右栏（本页内容） ───────────────────────────────── */
+.toc-offcanvas {
+  flex: 0 0 264px;
+  max-width: 264px;
+  padding-right: 8px;
+  border-right: 1px solid var(--bs-border-color);
+}
+
+.toc-offcanvas .offcanvas-header {
+  display: none;
+}
+
+#toc .nav,
+#affix .nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+#toc .nav-link,
+#affix .nav-link {
+  padding: 5px 10px;
+  border-left: 2px solid transparent;
+  border-radius: 0 6px 6px 0;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--bs-secondary-color);
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+#toc .nav-link:hover,
+#affix .nav-link:hover {
+  color: var(--bs-body-color);
+  background: var(--ch-accent-soft);
+}
+
+#toc .nav-link.active,
+#affix .nav-link.active {
+  border-left-color: var(--ch-accent);
+  color: var(--ch-accent);
+  font-weight: 600;
+  background: var(--ch-accent-soft);
+}
+
+#toc .nav .nav,
+#affix .nav .nav {
+  margin-left: 10px;
+  padding-left: 6px;
+  border-left: 1px solid var(--bs-border-color);
+}
+
+#affix > .nav::before {
+  content: '本页内容';
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--bs-tertiary-color);
+}
+
+.affix .toc-filter {
+  margin-bottom: 10px;
+}
+
+/* ── 正文 ─────────────────────────────────────────────────────────────── */
+article {
+  max-width: 46rem;
+  color: var(--bs-body-color);
+}
+
+article > h1 {
+  margin: 0 0 1.2rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--bs-border-color);
+  font-size: 2rem;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+article h2 {
+  margin: 2.6rem 0 0.9rem;
+  font-size: 1.4rem;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+article h3 {
+  margin: 1.9rem 0 0.6rem;
+  font-size: 1.13rem;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+article h4 {
+  margin: 1.5rem 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+article h1,
+article h2,
+article h3,
+article h4 {
+  scroll-margin-top: calc(var(--ch-navbar-h) + 16px);
+}
+
+article p,
+article li {
+  line-height: 1.85;
+}
+
+article a {
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/* 文档里大量出现「代码 + 中文」混排，行内代码要能跟正文对齐 */
+article code {
+  padding: 0.15em 0.4em;
+  border-radius: 5px;
+  background: var(--bs-tertiary-bg);
+  font-family: var(--ch-font-mono);
+  font-size: 0.875em;
+  word-break: break-word;
+}
+
+article pre {
+  margin: 1.1rem 0;
+  padding: 14px 16px;
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--ch-radius);
+  background: var(--bs-tertiary-bg);
+  line-height: 1.65;
+  overflow-x: auto;
+}
+
+article pre code {
+  padding: 0;
+  background: none;
+  font-size: 13.5px;
+  color: inherit;
+  word-break: normal;
+}
+
+article blockquote {
+  margin: 1.2rem 0;
+  padding: 2px 0 2px 16px;
+  border-left: 3px solid var(--ch-accent);
+  color: var(--bs-secondary-color);
+}
+
+article blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+article table {
+  display: table;
+  width: 100%;
+  margin: 1.2rem 0;
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--ch-radius);
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  font-size: 14.5px;
+}
+
+article table thead th {
+  background: var(--bs-tertiary-bg);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+article table th,
+article table td {
+  padding: 9px 13px;
+  border: 0;
+  border-bottom: 1px solid var(--bs-border-color);
+  border-right: 1px solid var(--bs-border-color);
+  vertical-align: top;
+  line-height: 1.7;
+}
+
+article table tr > *:last-child {
+  border-right: 0;
+}
+
+article table tbody tr:last-child > td {
+  border-bottom: 0;
+}
+
+article table img {
+  max-width: 100%;
+}
+
+article img {
+  max-width: 100%;
+  border-radius: var(--ch-radius);
+}
+
+article hr {
+  margin: 2.4rem 0;
+  border-top: 1px solid var(--bs-border-color);
+  opacity: 1;
+}
+
+/* 标题旁自动生成的锚点：默认常显会显得很吵，只在悬停/聚焦时露出来 */
+article a.anchor,
+article h1 > a.anchor,
+article h2 > a.anchor,
+article h3 > a.anchor {
+  float: none;
+  margin-left: 8px;
+  color: var(--bs-tertiary-color);
+  opacity: 0;
+  text-decoration: none;
+  transition: opacity 0.15s ease;
+}
+
+article h1:hover > a.anchor,
+article h2:hover > a.anchor,
+article h3:hover > a.anchor,
+article a.anchor:focus-visible {
+  opacity: 1;
+}
+
+/* ── 页脚区（上一页/下一页、编辑入口、站点页脚） ─────────────────────── */
+.contribution {
+  margin-top: 2.4rem;
+}
+
+.contribution .edit-link {
+  display: inline-block;
+  padding: 5px 12px;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 6px;
+  font-size: 13.5px;
+  color: var(--bs-secondary-color);
+  text-decoration: none;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.contribution .edit-link:hover {
+  border-color: var(--ch-accent);
+  color: var(--ch-accent);
+}
+
+.next-article {
+  margin-top: 1.6rem;
+  padding-top: 1.2rem;
+}
+
+.next-article a {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  max-width: 48%;
+  font-size: 14.5px;
+}
+
+footer.border-top {
+  margin-top: 2rem;
+  padding: 20px 0;
+  font-size: 13.5px;
+}
+
+.ch-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+
+.ch-footer a {
+  color: var(--bs-secondary-color);
+  text-decoration: none;
+}
+
+.ch-footer a:hover {
+  color: var(--ch-accent);
+}
+
+.ch-footer-sep {
+  color: var(--bs-tertiary-color);
+}
+
+/* ── 首页的入口卡片 ───────────────────────────────────────────────────────
+   首页（docs/index.md）里手写的一小块 HTML。只在首页用到，所以没做成通用组件。 */
+.ch-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
+  margin: 1.6rem 0 2rem;
+}
+
+.ch-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 10px;
+  text-decoration: none;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.ch-card:hover {
+  border-color: var(--ch-accent);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.07);
+  transform: translateY(-2px);
+}
+
+.ch-card-title {
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--bs-body-color);
+}
+
+.ch-card-desc {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--bs-secondary-color);
+}
+
+.ch-tagline {
+  margin: 0 0 1.6rem;
+  font-size: 17px;
+  color: var(--bs-secondary-color);
+}
+
+/* 首页的截图墙 */
+.ch-shots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin: 1.4rem 0 2rem;
+}
+
+.ch-shots img {
+  width: 100%;
+  border: 1px solid var(--bs-border-color);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ch-card {
+    transition: border-color 0.15s ease;
+  }
+
+  .ch-card:hover {
+    transform: none;
+  }
+}
+
+/* ── 搜索结果页 ───────────────────────────────────────────────────────── */
+.search-results .search-list-item {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+/* ── 小屏 ─────────────────────────────────────────────────────────────── */
+@media only screen and (max-width: 991px) {
+  .toc-offcanvas {
+    flex: 0 0 240px;
+    max-width: 240px;
+  }
+
+  article > h1 {
+    font-size: 1.7rem;
+  }
+}
+
+/* 中屏（约 1000–1200px）：顶栏放不下 7 个章节 + 搜索框，把每项收窄一档，
+   配合上面 #navbar 的横向滚动，标题不会被折成两行。 */
+@media only screen and (max-width: 1200px) {
+  #navbar .nav-link {
+    padding: 6px 8px;
+    font-size: 14px;
+  }
+
+  form.search .form-control {
+    min-width: 150px;
+  }
+}
+
+@media only screen and (max-width: 767px) {
+  body {
+    font-size: 15.5px;
+  }
+
+  .navbar-brand {
+    font-size: 16px;
+  }
+
+  .ch-version {
+    display: none;
+  }
+
+  article table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  article > h1 {
+    font-size: 1.55rem;
+  }
+
+  .next-article a {
+    max-width: 100%;
+  }
+}
+
+/* ── 打印 ─────────────────────────────────────────────────────────────── */
+@media print {
+  .toc-offcanvas,
+  .affix,
+  header.bg-body,
+  .contribution,
+  .next-article {
+    display: none !important;
+  }
+
+  article {
+    max-width: none;
+  }
+}

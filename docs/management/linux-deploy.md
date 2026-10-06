@@ -61,7 +61,7 @@ classhelper-server-linux-x64-<版本>.tar.gz.sha256   ← 旁边那份校验值
 
 **为什么 Linux 包要单独出一个**：`@libsql/linux-x64-gnu`、`@prisma/adapter-libsql` 这些依赖是平台相关的，
 Windows 开发机上 `npm install` 出来的 `node_modules` 拷到 Linux 跑不起来，因此 Linux 包必须在 Linux 上构建。
-仓库里的 [`.github/workflows/release-linux-server.yml`](../.github/workflows/release-linux-server.yml)
+仓库里的 [`.github/workflows/release-linux-server.yml`](https://github.com/LoveChengke/classhelper/blob/master/.github/workflows/release-linux-server.yml)
 就是干这个的（拿 ubuntu runner 跑 `pnpm dist:server:linux`，再把产物挂到对应 Release 上）：
 
 1. 本地照惯例发 Windows 包的 Release（tag 形如 `v1.1.2`）；
@@ -389,7 +389,7 @@ sudo classhelper uninstall --purge    # 全删（含备份与数据），不可�
 ## 6. 环境变量文件
 
 安装器会写 `/etc/profile.d/classhelper.sh`（内容见
-[`deploy/profile.d/classhelper.sh`](../deploy/profile.d/classhelper.sh)）：
+[`deploy/profile.d/classhelper.sh`](https://github.com/LoveChengke/classhelper/blob/master/deploy/profile.d/classhelper.sh)）：
 
 ```sh
 export CLASSHELPER_HOME=/opt/classhelper

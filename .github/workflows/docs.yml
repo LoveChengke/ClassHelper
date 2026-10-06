@@ -1,0 +1,85 @@
+name: 发布文档站
+
+# 把 docs/ 用 docfx 构建成静态站点，部署到 GitHub Pages。
+#
+# 为什么单独一个 workflow：
+#   docfx 是 .NET 工具（`dotnet tool install -g docfx`），需要在 CI 里装 .NET SDK；
+#   而文档站与三个交付物的发布节奏也完全不一样 —— 改一个错别字就该上线，
+#   不该为此打个安装包、发个 Release。
+#
+# 站点地址：https://lovechengke.github.io/ClassHelper/
+# 需要在仓库 Settings → Pages 里把 Source 选成「GitHub Actions」（只需做一次）。
+#
+# 本地预览：pnpm docs:serve
+
+on:
+  push:
+    branches: [master]
+    paths:
+      # 文档内容与构建脚本
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
+      # 顶栏那个版本徽标取自根 package.json（docs/build.mjs 通过 --metadata 注入），
+      # 所以版本号变了也要重新发一次文档站
+      - 'package.json'
+  workflow_dispatch:
+
+# Pages 部署需要的三件套：读代码、写 Pages、用 OIDC 拿部署令牌
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只跑一个部署；已经在跑的那次不取消（半途取消会留下一个坏掉的站点）
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 安装 docfx
+        # docfx 是 .NET 全局工具，装完在 ~/.dotnet/tools 下；setup-dotnet 会把它加进 PATH，
+        # 这里再显式补一次，免得换 runner 镜像后找不到命令。
+        run: |
+          dotnet tool install --global docfx
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: 构建文档站
+        # --check 把 docfx 的警告当错误：最常见的警告是"某个 .md 没被任何 toc.yml 引用"，
+        # 那种页面会被构建出来但没有侧边栏 —— 属于必须修掉的疏漏，不该悄悄上线。
+        #
+        # DOCS_BASE 是给 404 页用的：项目页挂在 /<仓库名>/ 子路径下，而浏览器按**被请求的路径**
+        # 解析 404 页里的相对链接，所以要把站点根钉成 <base>。这里从仓库名算，改仓库名不用改脚本。
+        env:
+          DOCS_BASE: /${{ github.event.repository.name }}/
+        run: node docs/build.mjs --check
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传构建产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

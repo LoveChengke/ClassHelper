@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/docfx/main/schemas/docfx.schema.json",
+  "build": {
+    "content": [
+      {
+        "files": ["**/*.{md,yml}"],
+        "exclude": ["_site/**", "obj/**", "templates/**", "node_modules/**", "404.html"]
+      }
+    ],
+    "resource": [
+      {
+        "files": ["screenshots/**", "images/**"],
+        "exclude": ["**/*.md"]
+      }
+    ],
+    "output": "_site",
+    "template": ["default", "modern", "templates/classhelper"],
+    "globalMetadata": {
+      "_appName": "班级小助手",
+      "_appTitle": "班级小助手文档",
+      "_appLogoPath": "logo.png",
+      "_appLogoUrl": "",
+      "_appFaviconPath": "favicon.png",
+      "_enableSearch": true,
+      "_disableContribution": false,
+      "_gitContribute": {
+        "repo": "https://github.com/LoveChengke/classhelper",
+        "branch": "master"
+      },
+      "_appFooter": "<div class=\"ch-footer\"><span>班级小助手（Class Helper）· 文档</span><span class=\"ch-footer-sep\">·</span><a href=\"https://github.com/LoveChengke/classhelper\">GitHub 仓库</a><span class=\"ch-footer-sep\">·</span><a href=\"https://github.com/LoveChengke/classhelper/releases\">下载与更新日志</a><span class=\"ch-footer-sep\">·</span><span>构建于 docfx</span></div>"
+    },
+    "sitemap": {
+      "baseUrl": "https://lovechengke.github.io/ClassHelper/",
+      "changefreq": "weekly",
+      "priority": 0.5
+    }
+  }
+}

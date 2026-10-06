@@ -1,0 +1,147 @@
+<!doctype html>
+<!--
+  404 页 —— 不经过 docfx 模板（它只处理 .md/.yml），由 docs/build.mjs 把 {{BASE}} 换成站点根路径。
+
+  为什么要 <base>：GitHub Pages 的项目页挂在 /<仓库名>/ 子路径下，未知路径返回的是**站点根**的
+  404.html，而浏览器按**被请求的那个路径**解析页面里的相对链接。不钉住 base，访问
+  /classhelper/get-started/typo 时页面上所有链接都会指向 /classhelper/get-started/ 下面的东西。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <base href="{{BASE}}" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>页面不存在 | 班级小助手文档</title>
+    <script>
+      // 与 docfx 主题选择同一套 key（theme 存 light / dark / auto），避免两边主题不一致
+      const theme = localStorage.getItem('theme') || 'auto';
+      document.documentElement.setAttribute(
+        'data-bs-theme',
+        theme === 'auto'
+          ? window.matchMedia('(prefers-color-scheme: dark)').matches
+            ? 'dark'
+            : 'light'
+          : theme,
+      );
+    </script>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --fg: #1f2328;
+        --muted: #59636e;
+        --line: #d1d9e0;
+        --accent: #0f6cbd;
+      }
+
+      [data-bs-theme='dark'] {
+        --bg: #1b1f24;
+        --fg: #e6edf3;
+        --muted: #9198a1;
+        --line: #30363d;
+        --accent: #6cb8ff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        color-scheme: light dark;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 32px;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          'Segoe UI Variable Text',
+          'Segoe UI',
+          'Microsoft YaHei UI',
+          'Microsoft YaHei',
+          -apple-system,
+          BlinkMacSystemFont,
+          'PingFang SC',
+          'Hiragino Sans GB',
+          sans-serif;
+        line-height: 1.7;
+      }
+
+      main {
+        max-width: 34em;
+      }
+
+      .code {
+        font-size: 4.5rem;
+        font-weight: 600;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        color: var(--accent);
+      }
+
+      h1 {
+        margin: 16px 0 8px;
+        font-size: 1.5rem;
+        font-weight: 600;
+      }
+
+      p {
+        margin: 0 0 24px;
+        color: var(--muted);
+      }
+
+      .links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      a {
+        display: inline-block;
+        padding: 8px 16px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        color: var(--fg);
+        text-decoration: none;
+        transition:
+          border-color 0.15s ease,
+          color 0.15s ease;
+      }
+
+      a:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      a.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+
+      a.primary:hover {
+        color: #fff;
+        filter: brightness(1.08);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="code">404</div>
+      <h1>这里没有这一页</h1>
+      <p>链接可能过期了，或者这个页面已经被重写进了别的章节。从下面这两处开始找会快一些。</p>
+      <div class="links">
+        <a class="primary" href="index.html">回到首页</a>
+        <a href="get-started/index.html">快速上手</a>
+        <a href="app/index.html">应用帮助</a>
+        <a href="management/index.html">管理运维</a>
+        <a href="dev/index.html">开发文档</a>
+      </div>
+    </main>
+  </body>
+</html>

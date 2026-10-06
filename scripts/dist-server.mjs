@@ -298,7 +298,7 @@ const sizeMb = (target) => Math.round(dirSize(target) / 1024 / 1024);
  *
  * 为什么值得单独立一步：安装包的 node_modules 实测 380MB，而其中绝大部分是
  * Prisma 为「它支持的所有数据库方言」准备的查询编译器副本 —— 本项目的 schema
- * 只在 sqlite / mysql 之间切换（见 docs/mysql.md、`lib/db.ts` 的 DatabaseProvider），
+ * 只在 sqlite / mysql 之间切换（见 docs/management/mysql.md、`lib/db.ts` 的 DatabaseProvider），
  * 其余方言（postgresql / cockroachdb / sqlserver）的 wasm 一个字节都用不上。
  *
  * 原则：只删数据文件与文档，**不碰任何会被 require 的入口**；每一条都写明依据。
@@ -654,7 +654,7 @@ function writeReadme() {
 
 六、安全建议
   - 修改 admin / teacher 的默认密码
-  - 如需通过公网访问，请在前面加 Nginx/Caddy 反向代理并启用 HTTPS（见 docs/production.md）
+  - 如需通过公网访问，请在前面加 Nginx/Caddy 反向代理并启用 HTTPS（见 docs/management/production.md）
   - 定期备份 data 目录；更换 JWT_SECRET 会导致所有用户需要重新登录
 `;
   fs.writeFileSync(path.join(staging, 'README.txt'), content.replace(/\r?\n/g, '\r\n'), 'utf8');

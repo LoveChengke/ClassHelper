@@ -354,7 +354,7 @@ gh workflow run release-linux-server.yml -f tag=v<版本> -f attach=true
 
 **不用做任何事。** 推 master 时只要 `docs/**`、`package.json` 或 `.github/workflows/docs.yml`
 变过，`.github/workflows/docs.yml` 就会用 docfx 构建并部署到 GitHub Pages
-（`https://lovechengke.github.io/classhelper/`）。
+（`https://lovechengke.github.io/ClassHelper/`）。
 
 - 顶栏的版本徽标取自根 `package.json`（`docs/build.mjs` 用 `--metadata _chVersion=…` 注入），
   **不要在文档里再写一份版本号**；

@@ -48,3 +48,6 @@ releases/
 .zcodeignore
 packages/server/prisma/backups/
 packages/server/prisma/database-settings.json
+
+# 文档站构建产物（pnpm docs:build 生成，由 GitHub Pages 发布；见 docs/）
+docs/_site/

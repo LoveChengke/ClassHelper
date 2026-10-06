@@ -4,7 +4,7 @@
  *
  * 只做一件事：把 packages/server/prisma/schema.prisma 里的 datasource provider
  * 改成目标值（其余字段、模型定义完全不动），并打印后续必须执行的步骤。
- * 详细说明见 docs/mysql.md。
+ * 详细说明见 docs/management/mysql.md。
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -49,7 +49,7 @@ if (target === 'mysql') {
   4) 初始化数据
        pnpm db:seed
 
-详见 docs/mysql.md`);
+详见 docs/management/mysql.md`);
 } else {
   console.log(`
 后续步骤：

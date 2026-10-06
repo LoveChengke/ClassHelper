@@ -45,7 +45,7 @@ services:
     environment:
       DATABASE_PROVIDER: mysql
       DATABASE_URL: mysql://${MYSQL_USER:-classhelper}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE:-classhelper}
-      # MySQL 需要 mariadb 驱动适配器（切换数据库时按 docs/mysql.md 安装）
+      # MySQL 需要 mariadb 驱动适配器（切换数据库时按 docs/management/mysql.md 安装）
       NODE_ENV: production
     command: >
       sh -c "pnpm --filter @classhelper/server add @prisma/adapter-mariadb &&

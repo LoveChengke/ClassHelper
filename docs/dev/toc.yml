@@ -1,0 +1,22 @@
+- name: 开发文档
+  href: index.md
+- name: 架构总览
+  href: architecture.md
+- name: REST API
+  href: api.md
+- name: 实时事件（Socket.IO）
+  href: realtime.md
+- name: 数据模型
+  href: data-model.md
+- name: 角色与权限
+  href: permissions.md
+- name: 动效层与主题
+  href: motion.md
+- name: ClassIsland 插件
+  href: classisland-plugin.md
+- name: 灵动岛设计令牌
+  href: winisland-design-tokens.md
+- name: 验收与测试
+  href: testing.md
+- name: 版本迭代与发布
+  href: release.md

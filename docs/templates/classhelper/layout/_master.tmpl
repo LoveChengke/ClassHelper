@@ -1,0 +1,171 @@
+{{!班级小助手文档站的模板覆盖（只改必要的地方，其余保持 docfx modern 模板的行为）。}}
+{{!
+  覆盖的是 docfx modern 模板的 layout/_master.tmpl，改动只有四处：
+    1) lang 固定 zh-CN；loc: 开头的那些 meta 是给 docfx.min.js 用的 UI 文案（导航、目录、上一页/下一页、
+       主题菜单、复制按钮…），modern 模板只提供英文，这里全部换成中文；
+    2) 顶栏右侧补一个 GitHub 图标链接与一个版本徽标（版本号由 docs/build.mjs 通过 --metadata 传入，
+       单一来源是根 package.json，别在这里写死）；
+    3) 补 <meta name="theme-color"> 与 color-scheme，让手机浏览器地址栏跟着深浅色走；
+    4) 页脚换成项目自己的（_appFooter 在 docfx.json 里）。
+
+  下面三行 include 决定**模板目录里哪些文件会被拷进产物**：public/（本模板的 main.css）与两个图标。
+  别删 —— 删了图标与样式就进不了 _site。
+}}
+{{!include(/^public/.*/)}}
+{{!include(logo.png)}}
+{{!include(favicon.png)}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    {{#redirect_url}}
+    <meta http-equiv="refresh" content="0;URL='{{redirect_url}}'" />
+    {{/redirect_url}}
+    {{^redirect_url}}
+    <title>{{#title}}{{title}}{{/title}}{{^title}}{{>partials/title}}{{/title}} {{#_appTitle}}| {{_appTitle}} {{/_appTitle}}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="title" content="{{#title}}{{title}}{{/title}}{{^title}}{{>partials/title}}{{/title}} {{#_appTitle}}| {{_appTitle}} {{/_appTitle}}" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1b1f24" media="(prefers-color-scheme: dark)" />
+    {{#_description}}<meta name="description" content="{{_description}}" />{{/_description}}
+    {{#description}}<meta name="description" content="{{description}}" />{{/description}}
+    <link rel="icon" href="{{_rel}}{{{_appFaviconPath}}}{{^_appFaviconPath}}favicon.ico{{/_appFaviconPath}}" />
+    <link rel="stylesheet" href="{{_rel}}public/docfx.min.css" />
+    <link rel="stylesheet" href="{{_rel}}public/main.css" />
+    <meta name="docfx:navrel" content="{{_navRel}}" />
+    <meta name="docfx:tocrel" content="{{_tocRel}}" />
+    {{#_noindex}}<meta name="searchOption" content="noindex" />{{/_noindex}}
+    {{#_enableSearch}}<meta name="docfx:rel" content="{{_rel}}" />{{/_enableSearch}}
+    {{#_disableNewTab}}<meta name="docfx:disablenewtab" content="true" />{{/_disableNewTab}}
+    {{#_disableTocFilter}}<meta name="docfx:disabletocfilter" content="true" />{{/_disableTocFilter}}
+    {{#docurl}}<meta name="docfx:docurl" content="{{docurl}}" />{{/docurl}}
+    <meta name="loc:inThisArticle" content="本页内容" />
+    <meta name="loc:searchResultsCount" content="找到 {count} 条结果（{query}）" />
+    <meta name="loc:searchNoResults" content="没有找到「{query}」" />
+    <meta name="loc:tocFilter" content="按标题过滤" />
+    <meta name="loc:nextArticle" content="下一篇" />
+    <meta name="loc:prevArticle" content="上一篇" />
+    <meta name="loc:themeLight" content="浅色" />
+    <meta name="loc:themeDark" content="深色" />
+    <meta name="loc:themeAuto" content="跟随系统" />
+    <meta name="loc:changeTheme" content="切换主题" />
+    <meta name="loc:copy" content="复制" />
+    <meta name="loc:downloadPdf" content="下载 PDF" />
+
+    <script type="module" src="./{{_rel}}public/docfx.min.js"></script>
+
+    <script>
+      const theme = localStorage.getItem('theme') || 'auto';
+      document.documentElement.setAttribute(
+        'data-bs-theme',
+        theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme,
+      );
+    </script>
+
+    {{#_googleAnalyticsTagId}}
+    <script async src="https://www.googletagmanager.com/gtag/js?id={{_googleAnalyticsTagId}}"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag() {
+        dataLayer.push(arguments);
+      }
+      gtag('js', new Date());
+      gtag('config', '{{_googleAnalyticsTagId}}');
+    </script>
+    {{/_googleAnalyticsTagId}}
+    {{/redirect_url}}
+  </head>
+
+  {{^redirect_url}}
+  <body class="tex2jax_ignore" data-layout="{{_layout}}{{layout}}" data-yaml-mime="{{yamlmime}}">
+    <header class="bg-body border-bottom">
+      {{^_disableNavbar}}
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="{{_appLogoUrl}}{{^_appLogoUrl}}{{_rel}}index.html{{/_appLogoUrl}}">
+            <img id="logo" class="svg" src="{{_rel}}{{{_appLogoPath}}}{{^_appLogoPath}}logo.svg{{/_appLogoPath}}" alt="{{_appName}}" />
+            {{_appName}}
+            {{#_chVersion}}<span class="ch-version">{{_chVersion}}</span>{{/_chVersion}}
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="展开导航">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+              {{#_enableSearch}}
+              <form class="search" role="search" id="search">
+                <i class="bi bi-search"></i>
+                <input class="form-control" id="search-query" type="search" disabled placeholder="搜索" autocomplete="off" aria-label="搜索" />
+              </form>
+              {{/_enableSearch}}
+            </div>
+            <a class="ch-nav-github" href="https://github.com/LoveChengke/classhelper" target="_blank" rel="noopener noreferrer" title="GitHub 仓库" aria-label="GitHub 仓库">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+            </a>
+          </div>
+        </div>
+      </nav>
+      {{/_disableNavbar}}
+    </header>
+
+    <main class="container-xxl">
+      {{^_disableToc}}
+      <div class="toc-offcanvas">
+        <div class="offcanvas-md offcanvas-start" tabindex="-1" id="tocOffcanvas" aria-labelledby="tocOffcanvasLabel">
+          <div class="offcanvas-header">
+            <h5 class="offcanvas-title" id="tocOffcanvasLabel">本页内容</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#tocOffcanvas" aria-label="关闭"></button>
+          </div>
+          <div class="offcanvas-body">
+            <nav class="toc" id="toc"></nav>
+          </div>
+        </div>
+      </div>
+      {{/_disableToc}}
+
+      <div class="content">
+        <div class="actionbar">
+          {{^_disableToc}}
+          <button class="btn btn-lg border-0 d-md-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#tocOffcanvas" aria-controls="tocOffcanvas" aria-expanded="false" aria-label="展开本页目录">
+            <i class="bi bi-list"></i>
+          </button>
+          {{/_disableToc}} {{^_disableBreadcrumb}}
+          <nav id="breadcrumb"></nav>
+          {{/_disableBreadcrumb}}
+        </div>
+
+        <article data-uid="{{uid}}">{{!body}}</article>
+
+        {{^_disableContribution}}
+        <div class="contribution d-print-none">
+          {{#sourceurl}}
+          <a href="{{sourceurl}}" class="edit-link">在 GitHub 上编辑这一页</a>
+          {{/sourceurl}}{{^sourceurl}}{{#docurl}}
+          <a href="{{docurl}}" class="edit-link">在 GitHub 上编辑这一页</a>
+          {{/docurl}}{{/sourceurl}}
+        </div>
+        {{/_disableContribution}} {{^_disableNextArticle}}
+        <div class="next-article d-print-none border-top" id="nextArticle"></div>
+        {{/_disableNextArticle}}
+      </div>
+
+      {{^_disableAffix}}
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+      {{/_disableAffix}}
+    </main>
+
+    {{#_enableSearch}}
+    <div class="container-xxl search-results" id="search-results"></div>
+    {{/_enableSearch}}
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">{{{_appFooter}}}{{^_appFooter}}<span>班级小助手文档</span>{{/_appFooter}}</div>
+      </div>
+    </footer>
+  </body>
+  {{/redirect_url}}
+</html>

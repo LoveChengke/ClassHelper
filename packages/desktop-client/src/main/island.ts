@@ -1269,7 +1269,7 @@ class IslandController {
    *    真机实测与不加模糊的像素完全一致（卡片区域离散度都是 12.7）。
    *
    * 结论：`glass` 风格改为**纯 CSS 半透明深色卡片**（取 WinIsland 拿不到 host backdrop 时的
-   * 官方降级色 `rgba(32,32,36,0.804)`，见 `docs/winisland-design-tokens.md`），
+   * 官方降级色 `rgba(32,32,36,0.804)`，见 `docs/dev/winisland-design-tokens.md`），
    * 桌面透过率由卡片自身 alpha 决定，窗口始终保持 `transparent: true` 的逐像素透明。
    * 回归用例：「个性设置：卡片外圈透出桌面（三种风格都没有白底面板）」。
    */
