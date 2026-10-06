@@ -66,7 +66,10 @@ deploy/                      Dockerfile / docker-compose{,.sqlite}.yml / nginx.c
                              profile.d/ logrotate.d/ systemd/（装到 /etc 的模板）
                              Dockerfile.linux-package（安装包内那份，--mode docker 用）
                              classhelper.service（systemd 模板，5 个占位符）/ .env{,.sqlite}.example
-docs/                        **文档站**（docfx 项目，发布到 GitHub Pages；不进 pnpm workspace）
+docs/                        **文档站**（docfx 项目；不进 pnpm workspace）
+                             ⚠ 与官网（website/）共用**同一个** GitHub Pages 站点：官网在根、
+                               文档站在 /docs/ 下。一个仓库在 Pages 上只有一个站点，
+                               拼装由 scripts/build-pages.mjs 完成，见 §4.4「官网与文档站怎么发布」。
                              docfx.json / toc.yml（顶栏）+ 各章节自己的 toc.yml（侧栏）
                              get-started/ app/ management/ dev/（四章内容）
                              management/{production,linux-deploy,mysql}.md（部署与换库）
@@ -83,6 +86,12 @@ docs/                        **文档站**（docfx 项目，发布到 GitHub Pag
 website/                     产品官网（**纯静态、无构建步骤**，不进 pnpm workspace）
                              index.html / assets/{styles.css,motion.js,main.js,icon.png,shots/}
                              serve.mjs（本地预览）/ tools/capture-shots.mjs（实机图采集）
+                             404.html（**站点根** 404，含 {{BASE}} 占位符，由 build-pages.mjs 注入）
+                             ⚠ serve.mjs 把 ../docs/_site 挂在 /docs/ 下，为的是让本地与线上同形 ——
+                               否则页脚那几个「文档站」链接在本地全是 404。文档站得先 pnpm docs:build。
+                             ⚠ 首屏标题第二行是 .reveal-grad：**它不参与逐字揭示**
+                               （main.js 会跳过它）。拆成 per-char 的 inline-block 后每个字各自建一层合成，
+                               祖先的 background-clip: text 就穿不过去，渐变会整行失效。
                              ⚠ assets/motion.js 是动效层：曲线与弹簧 token 逐条取自 beUI
                                （beui.dev/components/motion，见 README §7「官网」）。
                                改官网动效请改 token 表，不要在组件里另写 duration / cubic-bezier。
@@ -219,11 +228,13 @@ pnpm build:classisland-plugin
 | `pnpm dist:server` / `dist:win` / `dist:dir` / `dist:all` | 打包服务端安装程序 / 客户端安装包 / 免安装目录 / 全部                                                 |
 | `pnpm dist:server:linux`                                  | 打包 **Linux 服务端安装包**（`classhelper-server-linux-x64-<版本>.tar.gz` + `.sha256`）—— 见 §5 第 59 条 |
 | `pnpm icons`                                              | 从 `build/classhelper.png` 派生全部图标（PWA / favicon / 托盘 / 安装包 / 插件 / 官网 / 文档站 / 界面内品牌标） |
-| `pnpm version:check`                                      | 逐处列出并比对 10 个落点的版本号，不一致即 exit 1（见 §4.4「版本迭代」）                              |
-| `pnpm version:bump patch\|minor\|major`                   | **改版本号的唯一入口**：一次改写全部 10 处（含插件清单与 C# 里的常量）                                |
+| `pnpm version:check`                                      | 逐处列出并比对 13 个落点的版本号，不一致即 exit 1（见 §4.4「版本迭代」）                              |
+| `pnpm version:bump patch\|minor\|major`                   | **改版本号的唯一入口**：一次改写全部 13 处（含插件清单、C# 里的常量，以及官网上手写的三处版本号）     |
 | `pnpm docs:build`                                         | 构建文档站到 `docs/_site`（需要 .NET SDK 8 + `dotnet tool install -g docfx`）                         |
 | `pnpm docs:serve`                                         | 构建文档站并起本地预览 → http://127.0.0.1:5181                                                        |
 | `pnpm docs:check`                                         | 构建文档站并把 docfx 的警告当错误（发布前用；最常见的警告是"某个 .md 没被任何 toc.yml 引用"）          |
+| `pnpm pages:build`                                        | 把官网（根）与文档站（/docs/）拼成一份 GitHub Pages 产物到 `.cache/pages`（CI 用；见 §4.4）           |
+| `pnpm dev:site`                                           | 构建文档站后起官网预览 → http://127.0.0.1:5180（文档站挂在同端口的 /docs/ 下，与线上同形）            |
 
 ### 端口
 
@@ -285,7 +296,7 @@ pnpm dist:classisland-plugin
 > 算一次发布：攒够一批功能 / 修好一个用户能感知的 bug / 要给别人一份新安装包。
 > 不算：改注释、改文档、重构、加测试。
 
-**同一个版本号写在 10 个文件里**（5 份 `package.json`、`deploy/package.runtime.json`、
+**同一个版本号写在 13 处（11 个文件）里**（5 份 `package.json`、`deploy/package.runtime.json`、
 两个 `docker-compose*.yml` 的镜像 tag、插件 `manifest.yml`、以及插件 C# 里的 `PluginVersion` 常量）。
 手工改必然漏一处，而漏掉的那处**不会报错** —— 只会在某个不常走的分支上表现为"版本号对不上"。
 所以**改版本号的唯一入口是脚本**：
@@ -350,17 +361,29 @@ gh workflow run release-linux-server.yml -f tag=v<版本> -f attach=true
 **已发布的版本号不要复用**：客户端把它记进「忽略此版本」，两端各有 30 分钟缓存 ——
 同号换内容会让「检查更新」永久失灵。要修就 `pnpm version:bump patch` 发新号。
 
-#### 文档站怎么发布
+#### 官网与文档站怎么发布
 
-**不用做任何事。** 推 master 时只要 `docs/**`、`package.json` 或 `.github/workflows/docs.yml`
-变过，`.github/workflows/docs.yml` 就会用 docfx 构建并部署到 GitHub Pages
-（`https://lovechengke.github.io/ClassHelper/`）。
+**不用做任何事。** 推 master 时只要 `website/**`、`docs/**`、`scripts/build-pages.mjs` 或
+`package.json` 变过，`.github/workflows/pages.yml` 就会构建并部署到 GitHub Pages：
+
+```
+https://lovechengke.github.io/ClassHelper/          ← 官网（website/，纯静态无构建）
+https://lovechengke.github.io/ClassHelper/docs/     ← 文档站（docfx 构建 docs/）
+```
+
+> **一个仓库在 GitHub Pages 上只有一个站点**，所以两者是拼在一起发的
+> （`scripts/build-pages.mjs` 把 `website/` 放到根、`docs/_site/` 放到 `docs/` 下）。
+> 官网在根是因为产品页的地址最短最好分享；文档站多一层路径没有代价。
+> 改这个布局要同时动三处：`scripts/build-pages.mjs`、本 workflow 里的 `DOCS_BASE`，
+> 以及文档站模板 `docs/templates/classhelper/layout/_master.tmpl` 里那个 `{{_rel}}../` 的「官网」入口。
 
 - 顶栏的版本徽标取自根 `package.json`（`docs/build.mjs` 用 `--metadata _chVersion=…` 注入），
-  **不要在文档里再写一份版本号**；
+  **不要在文档里再写一份版本号**；官网首屏那排芯片里的 `v1.1.2` 是手写的，发版时要一起改；
 - 首次启用需要在仓库 Settings → Pages 把 Source 选成「GitHub Actions」（只需一次）；
-- 404 页的 `<base>` 由 workflow 按仓库名注入 —— 项目页挂在 `/<仓库名>/` 子路径下，
-  而浏览器是按**被请求的路径**解析 404 页里的相对链接的。本地预览时 base 是 `./`。
+- 404 页的 `<base>` 由 `scripts/build-pages.mjs`（本地 `./`）与 workflow（CI 传 `/<仓库名>/`）注入 ——
+  项目页挂在 `/<仓库名>/` 子路径下，而浏览器是按**被请求的路径**解析 404 页里的相对链接的；
+- 本地预览：`pnpm dev:site`（官网在 http://127.0.0.1:5180，文档站挂在同一个端口的 `/docs/` 下，
+  与线上同形）；只想单独看文档站用 `pnpm docs:serve`。
 
 ---
 

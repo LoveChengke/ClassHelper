@@ -4,15 +4,17 @@
  *
  * ## 为什么要这个脚本
  *
- * 这个仓库里**同一个版本号写在 10 个地方**（5 份 package.json、运行时常量、两个 compose 文件、
- * 插件清单，以及插件 C# 源码里的一个 const）。手工改必然漏一处，而漏掉的那处**不会报错**，
- * 只会在某个不常走的分支上表现为"版本号对不上"：
+ * 这个仓库里**同一个版本号写在 13 处（11 个文件）**：5 份 package.json、运行时常量、两个 compose 文件、
+ * 插件清单、插件 C# 源码里的一个 const，以及官网页面上三处手写的版本号。手工改必然漏一处，
+ * 而漏掉的那处**不会报错**，只会在某个不常走的分支上表现为"版本号对不上"：
  *
  *   - `deploy/docker-compose*.yml`     镜像 tag 落后 → 服务器上跑的还是旧镜像；
  *   - `deploy/package.runtime.json`    容器 / 安装包里那份依赖清单的版本（人看，但会误导排查）；
  *   - `manifest.yml` + `BridgeService.cs`  ClassIsland 上显示的插件版本
  *     （清单里的 version 与实际上报的 PluginVersion 不一致时，
- *     Web 端「ClassIsland 联动」页显示的版本会对不上插件市场）。
+ *     Web 端「ClassIsland 联动」页显示的版本会对不上插件市场）；
+ *   - `website/index.html` 的那三处        官网是纯静态站、无构建步骤，没有哪段代码会去读
+ *     `package.json`，漏改的后果是**首页上一直挂着旧版本号** —— 那是别人看到的第一眼。
  *
  * 因此：**改版本号的唯一入口是这个脚本**。它按表逐个改写，任何一处没匹配到（或匹配到多处）
  * 就直接失败退出，不做"尽力而为"的部分改写。
@@ -71,10 +73,34 @@ const PLUGIN_TARGETS = [
   },
 ];
 
-const ALL_TARGETS = [...PRODUCT_TARGETS, ...PLUGIN_TARGETS];
+/**
+ * 官网首屏与页脚那三处手写的版本号。官网是纯静态站，没有构建步骤、也没有哪段代码会去读
+ * `package.json`，所以这三处只能靠脚本一起改 —— 漏了的话官网会一直显示旧版本号，
+ * 而它是别人看到的第一眼。
+ */
+const SITE_TARGETS = [
+  {
+    file: 'website/index.html',
+    label: '（顶栏徽标）',
+    pattern: /(<span class="brand-ver">)(\d+\.\d+\.\d+)(<\/span>)/,
+  },
+  { file: 'website/index.html', label: '（首屏芯片）', pattern: /(<li>v)(\d+\.\d+\.\d+)(<\/li>)/ },
+  {
+    file: 'website/index.html',
+    label: '（页脚）',
+    pattern: /(<p class="foot-ver">版本 )(\d+\.\d+\.\d+)( ·)/,
+  },
+];
+
+const ALL_TARGETS = [...PRODUCT_TARGETS, ...PLUGIN_TARGETS, ...SITE_TARGETS];
 
 const PRODUCT_RE = /^\d+\.\d+\.\d+$/;
 const PLUGIN_RE = /^\d+\.\d+\.\d+\.\d+$/;
+
+/** 输出用的名字：同一个文件里有多个落点时带上括号里的说明，否则三行看起来一模一样 */
+function name(target) {
+  return target.label ? `${target.file} ${target.label}` : target.file;
+}
 
 function readTarget(target) {
   const source = fs.readFileSync(path.join(root, target.file), 'utf8');
@@ -102,7 +128,7 @@ function writeVersion(target, next, { dry }) {
     const replaced = source.replace(global, (_m, prefix, _old, suffix) => `${prefix}${next}${suffix}`);
     fs.writeFileSync(path.join(root, target.file), replaced, 'utf8');
   }
-  return `${target.file}  ${hits[0][2]} → ${next}`;
+  return `${name(target)}  ${hits[0][2]} → ${next}`;
 }
 
 function bumpProduct(current, level) {
@@ -122,7 +148,7 @@ function check(product) {
   for (const target of ALL_TARGETS) {
     const version = readVersion(target);
     if (!version) {
-      console.log(`?? ${target.file.padEnd(width)}  （未匹配到版本号）`);
+      console.log(`?? ${name(target).padEnd(width)}  （未匹配到版本号）`);
       problems.push(`${target.file}：匹配不到版本号`);
       continue;
     }
@@ -131,7 +157,7 @@ function check(product) {
     const ok = PLUGIN_RE.test(version)
       ? version.split('.').slice(0, 3).join('.') === product
       : version === expected;
-    console.log(`${ok ? '  ' : '!!'} ${target.file.padEnd(width)}  ${version}`);
+    console.log(`${ok ? '  ' : '!!'} ${name(target).padEnd(width)}  ${version}`);
     if (!ok) problems.push(`${target.file}：${version} ≠ ${expected}`);
   }
 
@@ -149,6 +175,7 @@ function apply(next, { dry, product }) {
   const lines = [];
   for (const target of PRODUCT_TARGETS) lines.push(writeVersion(target, next, { dry }));
   for (const target of PLUGIN_TARGETS) lines.push(writeVersion(target, pluginNext, { dry }));
+  for (const target of SITE_TARGETS) lines.push(writeVersion(target, next, { dry }));
 
   console.log(
     `${dry ? '[dry] 将改写' : '已改写'} ${product} → ${next}（插件 ${product}.0 → ${pluginNext}）：\n`,

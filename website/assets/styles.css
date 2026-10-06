@@ -62,7 +62,12 @@
     'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
   --mono: ui-monospace, 'Cascadia Mono', 'SF Mono', Consolas, 'Microsoft YaHei UI', monospace;
 
-  --fs-display: clamp(2.1rem, 5vw, 3.6rem);
+  /* 首屏标题：比站内其它标题大一档（ClassIsland 官网也是这个量级）。
+     两个数都是量出来的：
+       上限 4rem —— 第一行 11 个汉字 × 1em ≈ 704px，得留在 .hero-intro 的列宽（46em）里；
+       下限 1.8rem —— 375px 屏上可用宽度只有 327px，再大会把「它知道现在是第几节课，」
+                     折成「它知道现在是第几」+ 三个字的孤行。 */
+  --fs-display: clamp(1.8rem, 5.7vw, 4rem);
   --fs-h2: clamp(1.7rem, 3.4vw, 2.5rem);
   --fs-h3: clamp(1.05rem, 1.5vw, 1.2rem);
   --fs-lead: clamp(1rem, 1.5vw, 1.12rem);
@@ -417,10 +422,10 @@ table {
   font-family: var(--display);
   font-weight: 400;
   font-size: var(--fs-display);
-  line-height: 1.32;
+  line-height: 1.22;
   letter-spacing: 0.01em;
   max-width: 20em;
-  margin-bottom: 30px;
+  margin-bottom: 26px;
 }
 
 /* 标题逐字上浮 —— beUI TextReveal。
@@ -649,9 +654,41 @@ strong {
 }
 
 /* 首屏文字收成左列（ClassIsland 的 .introduction-col 也是这么窄的一条）。
-   47em ≈ 750px：再窄一点，「它知道现在是第几节课，」的逗号就会掉到第二行去。 */
+   46em ≈ 736px：这一列要能装下放大的「它知道现在是第几节课，」（11 个汉字 × 4rem ），
+   同时右边还要留得下三句事实。两边的数是一起量的，改一个就得回头看另一个。 */
 .hero-intro {
-  max-width: 47em;
+  max-width: 46em;
+}
+
+/* 整行渐变填色 —— ClassIsland 官网的 .gradient-base 那个写法。
+   这一行**不拆字**（main.js 的 setupHeadlineReveal 会跳过它）：拆成 per-char 的
+   inline-block 之后每个字各自建一层合成，祖先的 `background-clip: text` 就穿不过去，
+   渐变会整行失效。所以它按「整行」入场：透明度 + 轻微上浮，比逐字稍晚一点起。 */
+.display .reveal-grad {
+  background-image: linear-gradient(135deg, var(--chalk) 6%, var(--blue) 78%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  opacity: 0;
+  transition: opacity 0.85s var(--ease-out) 0.24s;
+}
+
+html:not(.reveal-pending) .display .reveal-grad {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .display .reveal-grad {
+    transform: translateY(14%);
+    transition:
+      opacity 0.85s var(--ease-out) 0.24s,
+      transform 0.85s var(--ease-out) 0.24s;
+  }
+
+  html:not(.reveal-pending) .display .reveal-grad {
+    transform: none;
+  }
 }
 
 /* 宽屏上把三句事实挪到文字右边，填住那条空 —— ClassIsland 的首屏也是左文右块。
@@ -659,7 +696,7 @@ strong {
 @media (min-width: 1080px) {
   .hero .wrap {
     display: grid;
-    grid-template-columns: minmax(0, 47em) 1fr;
+    grid-template-columns: minmax(0, 46em) 1fr;
     grid-template-areas:
       'intro facts'
       'screen screen'
@@ -691,15 +728,47 @@ strong {
 
 .hero-sub {
   font-family: var(--display);
-  font-size: clamp(1.35rem, 2.6vw, 1.9rem);
-  line-height: 1.5;
+  font-size: clamp(1.4rem, 2.9vw, 2.1rem);
+  line-height: 1.45;
   color: var(--chalk);
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .hero-intro .lead {
   max-width: 32em;
-  margin-bottom: 26px;
+  margin-bottom: 28px;
+}
+
+/* 首屏按钮比站内其它按钮大一档 —— 它是这一页的主行动点 */
+.hero-intro .actions .btn {
+  padding: 15px 26px;
+  font-size: 0.95rem;
+}
+
+/* 平台 / 支持情况那一行小标签（对应 ClassIsland 首屏底部那句「支持在 Windows…」）。
+   做成 mono 的芯片而不是一句话：这行是要被扫一眼的，不是要被读的。 */
+.hero-badges {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.hero-badges li {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  padding: 4px 11px;
+  border: 1px solid var(--board-line);
+  border-radius: 999px;
+  color: var(--chalk-2);
+}
+
+/* 第一个是版本号：当前这一版是什么，比平台支持更需要一眼看到 */
+.hero-badges li:first-child {
+  border-color: var(--blue);
+  color: var(--chalk);
 }
 
 /* ── 首屏入场：照着 ClassIsland 的 .intro-seq 写（逐项 0.72s EASE_OUT + 错峰延迟）。

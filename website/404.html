@@ -1,0 +1,136 @@
+<!doctype html>
+<!--
+  站点根 404 页（**不经过 docfx**，放在 website/ 下，由发布流程注入 {{BASE}}）。
+
+  一个仓库在 GitHub Pages 上只有一个站点，官网在根、文档站在 /docs/ 下 —— 因此严格来说
+  整个站点只有这一份 404 生效：Pages 对任何未知路径都返回站点根的 404.html。
+  docs/404.html（docfx 那份）只在「文档站被单独托管」时才用得上，合并站点里它是备而不用的。
+  所以这一页要把两条路都给出来：回官网、去文档站。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <base href="{{BASE}}" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>页面不存在 | 班级小助手</title>
+    <style>
+      :root {
+        --board: #16231e;
+        --chalk: #eef3ef;
+        --chalk-2: #b9c7bf;
+        --chalk-3: #8a9a91;
+        --blue: #2f8fe6;
+        --line: rgba(238, 243, 239, 0.14);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        color-scheme: dark;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 32px;
+        background: var(--board);
+        color: var(--chalk);
+        font-family:
+          'Segoe UI Variable Text',
+          'Segoe UI',
+          'Microsoft YaHei UI',
+          'Microsoft YaHei',
+          -apple-system,
+          BlinkMacSystemFont,
+          'PingFang SC',
+          'Hiragino Sans GB',
+          sans-serif;
+        line-height: 1.75;
+      }
+
+      main {
+        max-width: 34em;
+      }
+
+      .code {
+        font-family: ui-monospace, Consolas, monospace;
+        font-size: 4rem;
+        font-weight: 600;
+        line-height: 1;
+        color: var(--blue);
+      }
+
+      h1 {
+        margin: 18px 0 10px;
+        font-size: 1.5rem;
+        font-weight: 600;
+      }
+
+      p {
+        margin: 0 0 26px;
+        color: var(--chalk-2);
+      }
+
+      .links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      a {
+        display: inline-block;
+        padding: 11px 20px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        color: var(--chalk);
+        text-decoration: none;
+        transition:
+          border-color 0.15s ease,
+          color 0.15s ease,
+          background-color 0.15s ease;
+      }
+
+      a:hover {
+        border-color: var(--chalk-3);
+        background: rgba(238, 243, 239, 0.06);
+      }
+
+      a.primary {
+        background: var(--blue);
+        border-color: var(--blue);
+        color: #fff;
+      }
+
+      a.primary:hover {
+        background: #1280dd;
+        border-color: #1280dd;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        a {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="code">404</div>
+      <h1>这里没有这一页</h1>
+      <p>链接可能过期了，或者这一页已经被重写进了别的章节。</p>
+      <div class="links">
+        <a class="primary" href="index.html">回到官网首页</a>
+        <a href="docs/index.html">文档站</a>
+        <a href="docs/get-started/index.html">快速上手</a>
+        <a href="docs/faq.html">常见问题</a>
+        <a href="https://github.com/LoveChengke/ClassHelper">GitHub 仓库</a>
+      </div>
+    </main>
+  </body>
+</html>

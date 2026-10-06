@@ -1,6 +1,6 @@
 /**
  * 文档站本地预览用的最小静态服务器（构建产物 docs/_site）。
- * 正式发布走 GitHub Pages（.github/workflows/docs.yml），不需要这个文件。
+ * 正式发布走 GitHub Pages（.github/workflows/pages.yml：官网在根、文档站在 /docs/），不需要这个文件。
  *
  *   node docs/build.mjs --serve     → 构建后直接预览（推荐）
  *   node docs/serve.mjs             → http://127.0.0.1:5181（要求已经构建过）

@@ -40,6 +40,8 @@
     "version:bump": "node scripts/version.mjs --bump",
     "docs:build": "node docs/build.mjs",
     "docs:serve": "node docs/build.mjs --serve",
+    "pages:build": "node scripts/build-pages.mjs",
+    "dev:site": "pnpm docs:build && node website/serve.mjs",
     "docs:check": "node docs/build.mjs --check",
     "dist:win": "pnpm --filter @classhelper/desktop-client dist:win",
     "dist:dir": "pnpm --filter @classhelper/desktop-client dist:dir",

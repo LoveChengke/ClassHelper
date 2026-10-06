@@ -19,9 +19,9 @@ description: 改版本号、跑验收、打安装包、发 GitHub Release、发�
 | 要给别人一份新安装包                    | 只在自己机器上跑             |
 | 插件单独发补丁（只动插件第 4 段版本号） | —                            |
 
-## 版本号写在哪（10 处）
+## 版本号写在哪（13 处 / 11 个文件）
 
-同一个版本号出现在 10 个文件里，**手工改必然漏一处**，而漏掉的那处不会报错：
+同一个版本号分散在 13 个落点上，**手工改必然漏一处**，而漏掉的那处不会报错：
 
 | 文件                                                             | 内容                            |
 | ---------------------------------------------------------------- | ------------------------------- |
@@ -31,6 +31,10 @@ description: 改版本号、跑验收、打安装包、发 GitHub Release、发�
 | `deploy/docker-compose.yml`、`docker-compose.sqlite.yml`         | 镜像 tag 的默认值               |
 | `packages/classisland-plugin/manifest.yml`                       | 插件清单（四段：`x.y.z.0`）     |
 | `packages/classisland-plugin/src/Services/BridgeService.cs`      | 插件上报的 `PluginVersion` 常量 |
+| `website/index.html` × 3                                         | 官网顶栏徽标 / 首屏芯片 / 页脚  |
+
+最后一行值得单独说：官网是**纯静态站、没有构建步骤**，没有哪段代码会去读 `package.json`，
+所以那三处只能靠脚本一起改 —— 漏了的话首页会一直挂着旧版本号，而那是别人看到的第一眼。
 
 所以**改版本号的唯一入口是脚本**：
 
@@ -150,13 +154,23 @@ gh release upload v1.1.3 \
 gh workflow run release-linux-server.yml -f tag=v1.1.3 -f attach=true
 ```
 
-### 8. 文档站
+### 8. 官网与文档站
 
-**不用做任何事。** 推送 master 时只要 `docs/**` 或 docs 的 workflow 变过，
-[`docs.yml`](https://github.com/LoveChengke/classhelper/blob/master/.github/workflows/docs.yml)
-会自动用 docfx 构建并部署到 GitHub Pages。
+**不用做任何事。** 推送 master 时只要 `website/**`、`docs/**`、`scripts/build-pages.mjs` 或
+`package.json` 变过，
+[`pages.yml`](https://github.com/LoveChengke/classhelper/blob/master/.github/workflows/pages.yml)
+就会把两者构建成**同一个** GitHub Pages 站点发出去：
 
-文档站顶栏的版本徽标取自根 `package.json`，所以第 1 步改完就跟着变了。
+```
+https://lovechengke.github.io/ClassHelper/          ← 官网
+https://lovechengke.github.io/ClassHelper/docs/     ← 文档站
+```
+
+（一个仓库在 Pages 上只有一个站点，所以是拼在一起发的 —— 官网在根、文档站在 `/docs/` 下。）
+
+文档站顶栏的版本徽标取自根 `package.json`，所以第 1 步改完就跟着变了；
+官网首屏那排芯片、顶栏徽标与页脚里的版本号也是**由 `pnpm version:bump` 一起改的**
+（它们是那 13 个落点里的三个）。
 
 ### 9. 检查
 

@@ -60,6 +60,11 @@
 
     const units = [];
     lines.forEach((line) => {
+      // 整行渐变填色的那一行**不拆字**，整行做一个单元（见 styles.css 的 .reveal-grad）：
+      // 拆成 per-char 的 inline-block 后，每个字各自建一层合成，祖先的
+      // `background-clip: text` 就穿不过去了，渐变会整行失效。
+      if (line.classList.contains('reveal-grad')) return;
+
       const text = line.textContent.trim();
       line.textContent = '';
       for (const char of Array.from(text)) {

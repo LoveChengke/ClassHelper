@@ -108,10 +108,29 @@ header.bg-body {
   color: var(--bs-secondary-color);
 }
 
+/* 顶栏右侧那一组（官网链接 + GitHub 图标）。
+   `margin-left: auto` 只挂在组里的**第一个**元素上 —— 挂两个各推各的会散开。 */
+.ch-nav-site {
+  margin-left: auto;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--bs-secondary-color);
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.ch-nav-site:hover {
+  color: var(--bs-body-color);
+  background: var(--ch-accent-soft);
+}
+
 .ch-nav-github {
   display: inline-flex;
   align-items: center;
-  margin-left: auto;
   padding: 6px 8px;
   border-radius: 6px;
   color: var(--bs-secondary-color);

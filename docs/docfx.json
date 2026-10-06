@@ -30,7 +30,7 @@
       "_appFooter": "<div class=\"ch-footer\"><span>班级小助手（Class Helper）· 文档</span><span class=\"ch-footer-sep\">·</span><a href=\"https://github.com/LoveChengke/classhelper\">GitHub 仓库</a><span class=\"ch-footer-sep\">·</span><a href=\"https://github.com/LoveChengke/classhelper/releases\">下载与更新日志</a><span class=\"ch-footer-sep\">·</span><span>构建于 docfx</span></div>"
     },
     "sitemap": {
-      "baseUrl": "https://lovechengke.github.io/ClassHelper/",
+      "baseUrl": "https://lovechengke.github.io/ClassHelper/docs/",
       "changefreq": "weekly",
       "priority": 0.5
     }
