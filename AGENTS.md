@@ -779,7 +779,12 @@ database / update`。
     schema engine，CLI 运行期按平台扫 `@prisma/engines/schema-engine-debian-openssl-3.0.x` 这类路径，
     而交叉包里只有 `schema-engine-windows.exe`。交叉构建会写入 `.cross-built` 标记，
     `classhelper doctor` 据此提示（别改成静默），`upgrade` 替换程序文件时会按新包有无该标记来增删。
-    正式产物仍走 CI。
+    正式产物仍走 CI。**交叉构建时 `tar` 还有两个 Windows 专有坑**（`packLinuxTarball()`）：
+    `-f F:\...tar.gz` 里的**盘符冒号**会被 GNU tar 当成 `主机:路径` 的远程归档写法，报
+    `tar (child): Cannot connect to F: resolve failed`、退出码 2 —— 现象很误导：包已经整套铺好、
+    就差最后打 tar 那一步失败。反斜杠还会被当成转义符。所以那一步把路径统一转成**正斜杠**
+    并加 `--force-local`。该选项在 Linux 上无害（本地路径本来就该走本地分支），因此无条件加上、
+    不做平台分支 —— **Linux 上路径没有盘符，这个坑在 CI 与真机上永远复现不了**，只在交叉构建时现形。
 
     ⑤ **密码永远走 stdin，命令行一律不接受密码；调用服务端模块的工具必须压掉它的 stdout 噪声。**
     `classhelper password` 用 `read -s` 优先读 `/dev/tty`、无 tty 回退 stdin（这样既能交互，

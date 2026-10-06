@@ -1251,7 +1251,7 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 | 安装程序完整生命周期（静默安装 → 启动 → 卸载）                                               | 通过 ✅（安装到 `%LOCALAPPDATA%\Programs`，卸载干净）                                        |
 | 便捷版（单文件）解包启动                                                                     | 通过 ✅（wrapper + 多个进程，主窗口正常）                                                    |
 | Docker / Nginx 部署样例                                                                      | 文件已提供；本机无 Docker 未实测 ⚠️                                                         |
-| Linux 一键安装 + `classhelper` 运维命令（`deploy/install.sh` / `deploy/classhelper` / `pnpm dist:server:linux`） | 脚本与文档已交付，本地静态检查通过（`bash -n`、ESLint 0 error）；**Linux 实机验收待做** ⚠️（清单见 [linux-deploy.md](docs/linux-deploy.md) §10，`deploy/verify-linux.sh` 可自动跑） |
+| Linux 一键安装 + `classhelper` 运维命令（`deploy/install.sh` / `deploy/classhelper` / `pnpm dist:server:linux`） | 脚本与文档已交付，本地静态检查通过（`bash -n`、ESLint 0 error）；**Linux 实机验收待做** ⚠️（清单见 [linux-deploy.md](docs/linux-deploy.md) §10，`deploy/verify-linux.sh` 可自动跑）。2026-10-06 用交叉构建出了 1.1.2 的包并核对过内容（sha256 自洽、顶层目录与 `--strip-components=1` 对得上、`.cross-built` 标记在位、包内是新图标），但**没在 Linux 上跑过** —— 正式发布仍走 CI |
 
 ### 6.3 已知的时序 / 环境相关用例
 

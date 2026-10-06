@@ -787,7 +787,15 @@ function packLinuxTarball() {
   fs.rmSync(LINUX_TARBALL, { force: true });
   const topDir = path.basename(staging); // tar 里套一层目录，安装器用 --strip-components=1 展开
   log(`打包 ${path.relative(root, LINUX_TARBALL)} ...`);
-  run('tar', ['-czf', LINUX_TARBALL, '-C', path.dirname(staging), topDir]);
+  // GNU tar 在 Windows 路径上有两个坑（Linux 上路径没有盘符、没有反斜杠，永远踩不到，
+  // 只有交叉构建会碰到）：
+  //   ① `-f F:\...tar.gz` 里的**盘符冒号**会被当成 `主机:路径` 的远程归档写法，
+  //      报 `tar (child): Cannot connect to F: resolve failed` 并以退出码 2 失败；
+  //   ② 反斜杠会被当成转义符。
+  // 因此统一转成正斜杠，并加 `--force-local` 明确"这是本地文件"。
+  // 该选项在 Linux 上无害（本地路径本来就该走本地分支），所以无条件加上，不做平台分支。
+  const toPosix = (target) => target.replace(/\\/g, '/');
+  run('tar', ['--force-local', '-czf', toPosix(LINUX_TARBALL), '-C', toPosix(path.dirname(staging)), topDir]);
 
   const digest = crypto.createHash('sha256').update(fs.readFileSync(LINUX_TARBALL)).digest('hex');
   const shaFile = `${LINUX_TARBALL}.sha256`;
