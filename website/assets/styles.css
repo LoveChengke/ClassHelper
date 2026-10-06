@@ -2088,18 +2088,26 @@ html:not(.reveal-pending) .display .reveal-grad {
 
 /* ════════════════════════════════ 下载页 ═══════════════════════════════
    download.html 专用。页面骨架与官网首页同一套（同样的色带、按钮、页脚），
-   这里只补两样只有这一页才有的东西：版本分段控件、每个交付物的文件卡。
+   这里只有三样这一页才有的东西：
 
-   两条口径和首页一致：
+     .dl-seg    分段控件 —— 版本选择与「装什么」选择共用一套（beUI Tabs 的指示器滑移）
+     .dl-card   交付物卡片 —— 图标 / 名称 / 系统要求 / 主按钮 + 变体下拉（照 ClassIsland 官网那排）
+     .dl-menu   变体下拉
+
+   两条口径与全站一致：
      蓝（--blue-deep）  产品自己的强调色 —— 这里表示「这是一份真的能下的文件」
-     卡片一律纸面（--paper-raise）——「谁装什么」是要照着一项项核对的，跟名单一样  */
+     卡片一律纸面（--paper-raise）——「谁装什么、下哪个文件」是要一项项核对的，跟名单一样  */
 
-/* ── 版本选择 ────────────────────────────────────────────────────────────
-   与首页实机截图那组分段控件同一套做法（beUI Tabs：一个指示器在选项之间滑移），
-   只是它管的是版本而不是图组，所以另起一套类名，不去动 .shots-*。 */
+/* ── 分段控件 ────────────────────────────────────────────────────────────
+   一个指示器在选项之间滑移，位置由 SPRING_LAYOUT 驱动（见 assets/download.js）。
+   版本列表与「装什么」两处都用它 —— 所以这里是通用件，不含任何"版本"的语义。 */
 
 .dl-pick {
   margin: 34px 0 30px;
+}
+
+.dl-groups {
+  margin-top: 38px;
 }
 
 .dl-pick-label {
@@ -2109,7 +2117,11 @@ html:not(.reveal-pending) .display .reveal-grad {
   margin-bottom: 10px;
 }
 
-.dl-tabs {
+.band-paper .dl-pick-label {
+  color: var(--ink-3);
+}
+
+.dl-seg {
   position: relative;
   display: inline-flex;
   gap: 4px;
@@ -2122,11 +2134,11 @@ html:not(.reveal-pending) .display .reveal-grad {
   scrollbar-width: none;
 }
 
-.dl-tabs::-webkit-scrollbar {
+.dl-seg::-webkit-scrollbar {
   display: none;
 }
 
-.dl-tab {
+.dl-seg-item {
   position: relative;
   z-index: 1;
   display: inline-flex;
@@ -2145,13 +2157,13 @@ html:not(.reveal-pending) .display .reveal-grad {
   transition: color 0.18s var(--ease-out);
 }
 
-.dl-tab:hover,
-.dl-tab[aria-selected='true'] {
+.dl-seg-item:hover,
+.dl-seg-item[aria-selected='true'] {
   color: var(--chalk);
 }
 
-/* 旗标：最新版 / 预发布。整排版本里只有它有，是这一行唯一的信息栅格 */
-.dl-tab-flag {
+/* 旗标：最新版 / 预发布。整排版本里只有它有，是那一行唯一的信息栅格 */
+.dl-seg-flag {
   font-size: 0.68rem;
   line-height: 1;
   padding: 3px 6px;
@@ -2161,13 +2173,13 @@ html:not(.reveal-pending) .display .reveal-grad {
   border: 1px solid rgba(47, 143, 230, 0.4);
 }
 
-.dl-tab-flag-quiet {
+.dl-seg-flag-quiet {
   color: var(--chalk-2);
   background: rgba(232, 238, 233, 0.07);
   border-color: var(--board-line);
 }
 
-.dl-tabs-indicator {
+.dl-seg-indicator {
   position: absolute;
   top: 4px;
   left: 0;
@@ -2178,108 +2190,204 @@ html:not(.reveal-pending) .display .reveal-grad {
   pointer-events: none;
 }
 
-/* 版本清单的来路 —— 这段话是这一页的"数据来源声明"，取不到时要在这里说清楚 */
+/* 分段控件下面那行说明 —— 这一页的"数据来源声明"与"现在选中的是什么"都写在这里 */
 .dl-pick-note {
   margin-top: 12px;
   font-size: var(--fs-xs);
   line-height: 1.85;
   color: var(--chalk-3);
-  max-width: 48em;
+  max-width: 52em;
 }
 
 .dl-pick-note a {
   color: var(--chalk-2);
 }
 
-.dl-pick-note code {
-  color: var(--chalk-2);
+.band-paper .dl-pick-note {
+  color: var(--ink-3);
 }
 
-/* ── 文件卡（纸面） ───────────────────────────────────────────────────── */
+.band-paper .dl-pick-note a {
+  color: var(--blue-deep);
+}
 
-/* 正好四张卡：宽度取 400px 起，桌面上一律两列（2×2 比 3+1 那种"落单"好读）。
-   `min(400px, 100%)` 那层是必要的：只写 400px 的话，窄屏（比 400 还窄）上轨道会硬撑到 400，
-   卡片就顶出视口右侧 —— 这是 auto-fit + minmax 的经典坑。 */
+/* ── 交付物卡片（纸面） ─────────────────────────────────────────────────── */
+
+/* 按组显示：一屏最多两张卡（服务端是 Windows + Linux）。
+   用 flex 而不是 grid 的 auto-fit：auto-fit 在只有一张卡时会把空轨道折叠掉、
+   让这张卡撑满整行；这里要的是"卡片有自己的宽度"。
+   整排**左对齐**（跟着这一节的标题走）—— 参考图那一页整体居中，但本站在每一带
+   都是左对齐的节奏（`.lead` 也只占 34em），孤零零一张卡居中会跟标题对不上。 */
 .dl-grid {
-  margin-top: 36px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr));
+  margin-top: 26px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   gap: 20px;
 }
 
 .dl-card {
+  flex: 1 1 360px;
+  min-width: 0;
+  max-width: 470px;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
   background: var(--paper-raise);
   border: 1px solid var(--paper-rule);
   border-radius: 6px;
-  padding: 22px 22px 18px;
+  padding: 30px 26px 26px;
 }
 
-/* 「谁在用」那行 —— 与首页特性块的 #标签同一个位置，用蓝色承担 */
-.dl-card-who {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--blue-deep);
+/* 平台标记。单色描边，跟着卡片的文字色走 —— 换成彩色 logo 会在纸面上显得像贴纸 */
+.dl-card-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  color: var(--ink);
+  margin-bottom: 14px;
+}
+
+.dl-card-mark svg {
+  width: 44px;
+  height: 44px;
 }
 
 .dl-card-name {
-  margin-top: 5px;
-  font-size: 1.18rem;
+  font-size: 1.22rem;
   font-weight: 700;
-  line-height: 1.45;
+  line-height: 1.4;
   color: var(--ink);
 }
 
+/* 系统要求那行 —— 参考图里「Windows 10 及更高版本」站的就是这个位置 */
+.dl-card-req {
+  margin-top: 5px;
+  font-size: var(--fs-xs);
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
 .dl-card-desc {
-  margin-top: 8px;
+  margin-top: 12px;
   font-size: var(--fs-sm);
   line-height: 1.85;
   color: var(--ink-2);
+  max-width: 30em;
 }
 
-.dl-files {
-  margin-top: 16px;
-  padding: 0;
-  list-style: none;
+/* ── 主按钮 + 变体下拉（一个整体的分裂按钮） ───────────────────────────── */
+
+.dl-cta {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* 一行 = 一个文件，整行可点（GitHub 的发布资源带 Content-Disposition，点了就下） */
-.dl-file {
-  display: block;
-  padding: 10px 12px;
-  border: 1px solid var(--paper-rule);
+  margin-top: 20px;
   border-radius: var(--radius);
-  background: var(--paper);
+  overflow: visible;
+}
+
+.dl-cta-main,
+.dl-more > summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 1;
+  padding: 14px 20px;
+  color: #fff;
+  background: var(--blue-deep);
   text-decoration: none;
-  transition:
-    border-color 0.16s var(--ease-out),
-    background-color 0.16s var(--ease-out);
+  border: 1px solid var(--blue-deep);
+  cursor: pointer;
+  transition: background-color 0.16s var(--ease-out);
 }
 
-.dl-file:hover,
-.dl-file:focus-visible {
-  border-color: var(--blue);
-  background: #eaf3fd;
+.dl-cta-main {
+  border-radius: var(--radius) 0 0 var(--radius);
+  border-right-width: 0;
+  padding-inline: 26px;
 }
 
-.dl-file-top {
+.dl-more > summary {
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding-inline: 12px;
+  border-left: 1px solid rgba(255, 255, 255, 0.28);
+  list-style: none;
+}
+
+.dl-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.dl-cta-main:hover,
+.dl-more > summary:hover,
+.dl-more[open] > summary {
+  background: #1280dd;
+}
+
+.dl-more > summary svg {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.2s var(--ease-out);
+}
+
+.dl-more[open] > summary svg {
+  transform: rotate(180deg);
+}
+
+/* 没有变体时（插件那一张）不摆一个点不开的箭头 */
+.dl-cta-single .dl-cta-main {
+  border-radius: var(--radius);
+  border-right-width: 1px;
+}
+
+.dl-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 2;
+  min-width: 260px;
+  max-width: min(360px, 88vw);
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  text-align: left;
+  background: var(--paper-raise);
+  border: 1px solid var(--paper-rule);
+  border-radius: 6px;
+  box-shadow: 0 18px 40px -22px rgba(23, 35, 31, 0.5);
+}
+
+.dl-menu a {
+  display: block;
+  padding: 9px 11px;
+  border-radius: var(--radius);
+  text-decoration: none;
+  transition: background-color 0.16s var(--ease-out);
+}
+
+.dl-menu a:hover,
+.dl-menu a:focus-visible {
+  background: var(--paper);
+}
+
+.dl-menu-top {
   display: flex;
   align-items: baseline;
   gap: 10px;
 }
 
-.dl-file-role {
+.dl-menu-role {
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--ink);
 }
 
-.dl-file-size {
+.dl-menu-size {
   margin-left: auto;
   font-size: var(--fs-xs);
   color: var(--ink-3);
@@ -2287,27 +2395,38 @@ html:not(.reveal-pending) .display .reveal-grad {
   white-space: nowrap;
 }
 
-.dl-file-name {
+.dl-menu-file {
   display: block;
-  margin-top: 4px;
+  margin-top: 3px;
   font-family: var(--mono);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   line-height: 1.6;
   color: var(--ink-2);
   overflow-wrap: anywhere;
 }
 
-.dl-file-note {
+.dl-menu-note {
   display: block;
   margin-top: 3px;
   font-size: var(--fs-xs);
   color: var(--ink-3);
 }
 
+/* 主按钮下面那行：点下去到底拿到哪个文件（自托管场景里这个要看得见） */
+.dl-card-file {
+  margin-top: 12px;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1.65;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+
 /* 这一版没打这个包（老版本里真的会缺） */
 .dl-missing {
-  margin-top: 16px;
-  padding: 12px;
+  margin-top: 18px;
+  padding: 12px 14px;
   border: 1px dashed var(--paper-rule);
   border-radius: var(--radius);
   font-size: var(--fs-xs);
@@ -2315,7 +2434,7 @@ html:not(.reveal-pending) .display .reveal-grad {
 }
 
 .dl-note {
-  margin-top: 24px;
+  margin-top: 26px;
   font-size: var(--fs-xs);
   line-height: 1.9;
   color: var(--ink-3);
@@ -2330,10 +2449,26 @@ html:not(.reveal-pending) .display .reveal-grad {
 
 @media (max-width: 560px) {
   .dl-card {
-    padding: 18px 16px 14px;
+    padding: 22px 18px 20px;
   }
 
-  .dl-file-name {
-    font-size: 0.68rem;
+  .dl-cta {
+    width: 100%;
+  }
+
+  .dl-cta-main {
+    flex: 1 1 auto;
+    padding-inline: 16px;
+  }
+
+  .dl-menu {
+    right: auto;
+    left: 0;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .dl-card-file {
+    font-size: 0.62rem;
   }
 }

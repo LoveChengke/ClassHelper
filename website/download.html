@@ -89,9 +89,9 @@
 
             <!-- 版本选择：Tab 由 assets/download.js 按发布列表建出来 -->
             <div class="dl-pick intro-seq" style="--intro-delay: 250ms">
-              <p class="dl-pick-label" id="ver-label">版本</p>
-              <div class="dl-tabs" role="tablist" aria-labelledby="ver-label" id="ver-tabs">
-                <span class="dl-tabs-indicator" id="ver-indicator" aria-hidden="true"></span>
+              <p class="sr-only" id="ver-label">选择版本</p>
+              <div class="dl-seg" role="tablist" aria-labelledby="ver-label" id="ver-tabs">
+                <span class="dl-seg-indicator" id="ver-indicator" aria-hidden="true"></span>
               </div>
               <p class="dl-pick-note" id="ver-note" role="status">正在读取版本列表……</p>
             </div>
@@ -111,7 +111,7 @@
                 href="https://github.com/LoveChengke/ClassHelper/releases/latest"
                 data-press="0.93"
               >
-                下最新版服务端
+                下载最新版客户端
               </a>
               <a
                 class="btn btn-line"
@@ -134,18 +134,28 @@
         </div>
       </section>
 
-      <!-- ═══════════════════════ 这一版里有什么 ═══════════════════════ -->
+      <!-- ═══════════════════════ 装什么、装到哪台机器 ═══════════════════════ -->
       <section class="band band-paper" id="pick">
         <div class="wrap">
-          <h2 class="h2">这一版里有这几个包</h2>
+          <h2 class="h2">装什么，挑一下</h2>
           <p class="lead narrow">
-            按「装在哪台机器上」挑：教室机器装班级端，服务器装服务端，教室大屏再给 ClassIsland 加一个插件。
-            四个包互不依赖顺序，但
+            四个交付物互不依赖安装顺序，但
             <strong>服务端要先有一台机器跑着</strong>
-            ，别的才连得上。
+            ，另外三个才连得上 —— 不确定就先切到「服务端」看一眼。
           </p>
 
-          <!-- 卡片由 assets/download.js 按当前选中的版本渲染 -->
+          <div class="dl-groups">
+            <p class="dl-pick-label" id="group-label">装什么</p>
+            <div class="dl-seg" role="tablist" aria-labelledby="group-label" id="group-tabs">
+              <span class="dl-seg-indicator" id="group-indicator" aria-hidden="true"></span>
+              <button class="dl-seg-item" type="button" role="tab" data-value="client">客户端</button>
+              <button class="dl-seg-item" type="button" role="tab" data-value="server">服务端</button>
+              <button class="dl-seg-item" type="button" role="tab" data-value="plugin">插件</button>
+            </div>
+            <p class="dl-pick-note" id="group-note" role="status"></p>
+          </div>
+
+          <!-- 卡片由 assets/download.js 按「当前版本 + 当前分组」渲染 -->
           <div class="dl-grid" id="dl-grid" role="tabpanel" tabindex="0" aria-live="polite"></div>
 
           <p class="dl-note" id="dl-note"></p>
