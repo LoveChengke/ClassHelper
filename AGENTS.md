@@ -56,6 +56,7 @@ scripts/
   nsis/server-installer.nsi  服务端 NSIS 安装脚本
   verify-packaged.mjs        对**打包后/已安装**的客户端 EXE 复跑冒烟
   check-icons.mjs            图标注册表静态门禁（漏注册会静默渲染空白，见 §5 第 53 条）
+  version.mjs                版本号单一来源的读写与一致性校验（= `pnpm version:*`，见 §4.4）
   ui-smoke/{run,main.cjs,live-probe.mjs}  Web 管理端真实点击回归（Electron 驱动）
   lib/{electron-env,node-runtime}.mjs     启动 Electron / 定位真实 node.exe
 deploy/                      Dockerfile / docker-compose{,.sqlite}.yml / nginx.conf / package.runtime.json
@@ -65,9 +66,20 @@ deploy/                      Dockerfile / docker-compose{,.sqlite}.yml / nginx.c
                              profile.d/ logrotate.d/ systemd/（装到 /etc 的模板）
                              Dockerfile.linux-package（安装包内那份，--mode docker 用）
                              classhelper.service（systemd 模板，5 个占位符）/ .env{,.sqlite}.example
-docs/                        production.md（生产部署）/ linux-deploy.md（Linux 部署与运维）
-                             mysql.md（MySQL 切换）/ winisland-design-tokens.md
-                             screenshots/{island,client,web-mobile,classisland}/
+docs/                        **文档站**（docfx 项目，发布到 GitHub Pages；不进 pnpm workspace）
+                             docfx.json / toc.yml（顶栏）+ 各章节自己的 toc.yml（侧栏）
+                             get-started/ app/ management/ dev/（四章内容）
+                             management/{production,linux-deploy,mysql}.md（部署与换库）
+                             dev/winisland-design-tokens.md / screenshots/（回归留档的截图）
+                             templates/classhelper/（模板覆盖：_master.tmpl + public/main.css + 图标）
+                             build.mjs（构建，注入版本号与 404 的 base）/ serve.mjs（本地预览 :5181）
+                             _site/（构建产物，gitignored）
+                             ⚠ 站点的顶栏版本徽标取自根 package.json（build.mjs 用 --metadata 注入），
+                               不要在文档里再写一份版本号。
+                             ⚠ 模板目录里的 logo.png / favicon.png 由 `pnpm icons` 派生（见 §5 第 62 条），
+                               别手工替换；改图标只改 build/classhelper.png 再跑 pnpm icons。
+                             ⚠ 文档站只发布 docs/ 这一棵树，页面里**不要**写指向 docs/ 之外的相对链接
+                               （如 ../AGENTS.md）—— 发布出去全是 404，要用 GitHub 的绝对 URL。
 website/                     产品官网（**纯静态、无构建步骤**，不进 pnpm workspace）
                              index.html / assets/{styles.css,motion.js,main.js,icon.png,shots/}
                              serve.mjs（本地预览）/ tools/capture-shots.mjs（实机图采集）
@@ -197,7 +209,7 @@ pnpm build:classisland-plugin
 | `pnpm --filter @classhelper/server db:deploy`             | 应用已有迁移（**本机推荐**；根 scripts 里没有 `db:deploy`）                                           |
 | `pnpm db:seed` / `pnpm db:reset`                          | 写种子 / 重置并重播种子                                                                               |
 | `pnpm db:studio`                                          | Prisma Studio                                                                                         |
-| `pnpm db:switch:mysql` / `db:switch:sqlite`               | 改写 `schema.prisma` 的 provider（配合 `docs/mysql.md`）                                              |
+| `pnpm db:switch:mysql` / `db:switch:sqlite`               | 改写 `schema.prisma` 的 provider（配合 `docs/management/mysql.md`）                                              |
 | `pnpm verify:e2e`                                         | 后端端到端验收（**需后端已启动**；2026-10-05 实测 190 项全过）                                        |
 | `pnpm verify:web`                                         | Web 管理端真实点击回归（Electron 驱动，需后端已启动且 Web 产物已构建）                                |
 | `pnpm verify:desktop`                                     | 客户端冒烟（Electron，无人工点击）                                                                    |
@@ -206,7 +218,12 @@ pnpm build:classisland-plugin
 | `pnpm verify:classisland-plugin`                          | 插件静态契约校验（清单一致性 / 注册完整性 / C# DTO ↔ 服务端 zod 与路由 / 已修复坑的护栏；实测 68 项） |
 | `pnpm dist:server` / `dist:win` / `dist:dir` / `dist:all` | 打包服务端安装程序 / 客户端安装包 / 免安装目录 / 全部                                                 |
 | `pnpm dist:server:linux`                                  | 打包 **Linux 服务端安装包**（`classhelper-server-linux-x64-<版本>.tar.gz` + `.sha256`）—— 见 §5 第 59 条 |
-| `pnpm icons`                                              | 从 `build/classhelper.png` 派生全部图标（PWA / favicon / 托盘 / 安装包 / 插件 / 官网 / 界面内品牌标）  |
+| `pnpm icons`                                              | 从 `build/classhelper.png` 派生全部图标（PWA / favicon / 托盘 / 安装包 / 插件 / 官网 / 文档站 / 界面内品牌标） |
+| `pnpm version:check`                                      | 逐处列出并比对 10 个落点的版本号，不一致即 exit 1（见 §4.4「版本迭代」）                              |
+| `pnpm version:bump patch\|minor\|major`                   | **改版本号的唯一入口**：一次改写全部 10 处（含插件清单与 C# 里的常量）                                |
+| `pnpm docs:build`                                         | 构建文档站到 `docs/_site`（需要 .NET SDK 8 + `dotnet tool install -g docfx`）                         |
+| `pnpm docs:serve`                                         | 构建文档站并起本地预览 → http://127.0.0.1:5181                                                        |
+| `pnpm docs:check`                                         | 构建文档站并把 docfx 的警告当错误（发布前用；最常见的警告是"某个 .md 没被任何 toc.yml 引用"）          |
 
 ### 端口
 
@@ -215,6 +232,8 @@ pnpm build:classisland-plugin
 | 4000 | 后端 REST + Socket.IO + （生产/构建后）Web 管理端静态托管 |
 | 5173 | Web 管理端开发服务器（`/api`、`/socket.io` 代理到 4000）  |
 | 5174 | 桌面客户端渲染进程开发服务器                              |
+| 5180 | 官网本地预览（`node website/serve.mjs`）                  |
+| 5181 | 文档站本地预览（`pnpm docs:serve`）                       |
 
 ### 交付产物归集
 
@@ -255,6 +274,93 @@ pnpm dist:classisland-plugin
 显式传 `-c.directories.output=<路径>` 时不再覆盖，整理以传入路径为准。
 **交付物的完整性标签修正（§7 第 7 条）也挂在这条收尾链路上，别把 `tidyArtifacts` 之后的
 `normalizeIntegrityLabel(destDir)` 拆掉。**
+
+### 版本迭代（每一次 releases，不是每一次提交）
+
+> **版本号按「发布」迭代，不按「提交」迭代。** 日常的 `feat` / `fix` 提交不动版本号；
+> 只有要产出一批安装包、在 GitHub 上开一个 Release 时才走一次。
+> 理由很实际：安装包名、`.cipx`、Docker 镜像 tag、文档站顶栏的版本徽标、更新检查接口
+> 全都按版本号对齐 —— 每次提交都动它，等于每天都在发版，用户那边的「检查更新」就废了。
+>
+> 算一次发布：攒够一批功能 / 修好一个用户能感知的 bug / 要给别人一份新安装包。
+> 不算：改注释、改文档、重构、加测试。
+
+**同一个版本号写在 10 个文件里**（5 份 `package.json`、`deploy/package.runtime.json`、
+两个 `docker-compose*.yml` 的镜像 tag、插件 `manifest.yml`、以及插件 C# 里的 `PluginVersion` 常量）。
+手工改必然漏一处，而漏掉的那处**不会报错** —— 只会在某个不常走的分支上表现为"版本号对不上"。
+所以**改版本号的唯一入口是脚本**：
+
+```bash
+pnpm version:check              # 逐处列出并比对，不一致 exit 1（默认就是检查模式）
+pnpm version:bump patch         # 1.1.2 → 1.1.3（另有 minor / major）
+pnpm version:check              # 再确认一次
+```
+
+`scripts/version.mjs` 按表逐个改写，**任何一处没匹配到或匹配到多处就直接失败退出**，
+不做"尽力而为"的部分改写。
+
+插件版本是**四段** `x.y.z.0`：前三段跟产品版本走，第 4 段留给"只改插件、不动产品版本"的补丁发布。
+`--bump` / `--set` 会把第 4 段归零；要单独发插件补丁就手工改清单与 `BridgeService.cs` 那两处。
+
+#### 一次完整发布的命令序列
+
+```bash
+# ① 改版本号
+pnpm version:check && pnpm version:bump patch
+
+# ② 本地体检
+pnpm lint && pnpm typecheck && pnpm check:icons && pnpm docs:check
+
+# ③ 跑验收（另开一个终端跑着 pnpm dev:server）
+pnpm verify:e2e
+pnpm verify:classisland
+pnpm verify:classisland-plugin
+pnpm build:desktop && pnpm verify:desktop
+pnpm build && pnpm verify:web
+
+# ④ 打安装包（产物落在 releases/<组件>/<版本>/）
+pnpm dist:all
+pnpm verify:packaged --exe "releases/client/<版本>/免安装/班级小助手.exe"
+
+# ⑤ 整理跨组件哈希清单 releases/SHA256SUMS-<版本>.txt（人读；Linux 那一行由 CI 合并进来）
+# ⑥ 提交并推上去
+git add -A && git commit -m "chore(release): <版本>" && git push origin master
+
+# ⑦ 开 Release（gh release create 会创建并推送 tag，从而触发 Linux 包的 CI；见下）
+gh release create v<版本> --title "v<版本>" --generate-notes
+gh release upload v<版本> \
+  releases/client/<版本>/安装包/*.exe \
+  releases/classisland-plugin/<版本>/安装包/*.cipx \
+  releases/server/<版本>/安装包/*.exe \
+  releases/SHA256SUMS-<版本>.txt --clobber
+```
+
+**第 ⑦ 步的顺序有讲究**：`.github/workflows/release-linux-server.yml` 由 tag 推送触发，
+它在**最后一步**才把自己的那一行**合并进** Release 上已有的 `SHA256SUMS-<版本>.txt`
+（`grep -v` 掉旧的 linux 行再追加，Windows / 插件那几行原样保留）。
+所以本地那份清单必须**先上传**；万一手速反了，重跑一次就能补回来：
+
+```bash
+gh workflow run release-linux-server.yml -f tag=v<版本> -f attach=true
+```
+
+**Linux 包只能在 Linux 上构建**（`@libsql/linux-x64-gnu` 这类依赖是平台相关的），
+所以 `pnpm dist:all` 里没有它，必须走 CI（见 §5 第 59 条）。
+
+**已发布的版本号不要复用**：客户端把它记进「忽略此版本」，两端各有 30 分钟缓存 ——
+同号换内容会让「检查更新」永久失灵。要修就 `pnpm version:bump patch` 发新号。
+
+#### 文档站怎么发布
+
+**不用做任何事。** 推 master 时只要 `docs/**`、`package.json` 或 `.github/workflows/docs.yml`
+变过，`.github/workflows/docs.yml` 就会用 docfx 构建并部署到 GitHub Pages
+（`https://lovechengke.github.io/classhelper/`）。
+
+- 顶栏的版本徽标取自根 `package.json`（`docs/build.mjs` 用 `--metadata _chVersion=…` 注入），
+  **不要在文档里再写一份版本号**；
+- 首次启用需要在仓库 Settings → Pages 把 Source 选成「GitHub Actions」（只需一次）；
+- 404 页的 `<base>` 由 workflow 按仓库名注入 —— 项目页挂在 `/<仓库名>/` 子路径下，
+  而浏览器是按**被请求的路径**解析 404 页里的相对链接的。本地预览时 base 是 `./`。
 
 ---
 
@@ -943,7 +1049,9 @@ database / update`。
   折线图是 `viewBox="0 0 100 100" + preserveAspectRatio="none"` 的 SVG（数据点用 HTML 绝对定位，
   免得非等比拉伸把圆点压成椭圆）。两者都是响应式的，**不要给它们加重算尺寸的 resize 监听**。
   新增图表请沿用这个做法，不要重新引入图表库。
-- **改动交付形态 / 新增功能后**，同步更新 `README.md`（它兼作产品说明书与验收对照表）。
+- **改动交付形态 / 新增功能后**，同步更新 `docs/reference.md`（完整参考 = 产品说明书 + 验收对照表）。
+  仓库根的 `README.md` 是**展示页**（门面：简介、功能清单、截图、怎么装），不承载细节。改动交付形态、
+  新增功能、或**重采了展示图**之后，两边都要看一眼 —— 不要在 README 里堆实现细节。
 
 ---
 

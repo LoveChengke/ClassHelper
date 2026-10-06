@@ -10,7 +10,7 @@
  *   teacher2 / teacher123   - 李老师（高一(2)班班主任，高二(3)班协作教师）
  *   student01..student15 / student123
  */
-import { SUBJECT_CATALOG } from '@classhelper/shared';
+import { SUBJECT_CATALOG, dayKeyLocal } from '@classhelper/shared';
 import { disconnectPrisma, prisma } from '../src/lib/db.js';
 import { logger } from '../src/lib/logger.js';
 import { hashPassword } from '../src/lib/password.js';
@@ -253,6 +253,9 @@ async function main(): Promise<void> {
           courseId: course?.id ?? null,
           title: `${seed.title}`,
           content: seed.content,
+          // 种子直接走 prisma.create，绕过了 service 里 `assignDate ?? 今天` 的兜底，
+          // 不显式写就会落成 schema 默认值空串 —— 于是「按天查看 / 日期高亮」全是空的。
+          assignDate: dayKeyLocal(new Date()),
           attachmentUrl:
             seed.courseIndex % 2 === 0 ? 'https://example.com/classhelper/homework-sample.pdf' : null,
           createdBy: targetClass.teacherId,

@@ -1,8 +1,8 @@
 /**
- * 给官网采集 **真实运行** 的实机截图。
+ * 给官网与 README 采集 **真实运行** 的实机截图。
  *
  * 复用仓库里已安装的 Electron（不需要额外依赖），真的打开 Web 管理端、真的登录、
- * 逐页截屏落到 website/assets/shots/。不是手绘的示意，也不是旧版本的残留图。
+ * 逐页截屏落到 website/assets/shots/（或 CAPTURE_OUT 指定的目录）。不是手绘的示意，也不是旧版本的残留图。
  *
  * 用法：
  *   1) 先把后端跑起来（它同时托管 Web 管理端）：pnpm dev:server
@@ -12,6 +12,7 @@
  *   CAPTURE_URL   默认 http://127.0.0.1:4000
  *   CAPTURE_USER / CAPTURE_PASS   默认 admin / admin123
  *   CAPTURE_ONLY  只截某几页（逗号分隔的 name）
+ *   CAPTURE_OUT   输出目录（逗号分隔多个，相对仓库根）；默认 website/assets/shots
  */
 
 import { spawn } from 'node:child_process';
@@ -22,7 +23,15 @@ import { resolveElectronEnv, resolveElectronExecutable } from '../../scripts/lib
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
-const outDir = path.join(root, 'website', 'assets', 'shots');
+/**
+ * 输出目录。默认只写官网那一份；`CAPTURE_OUT` 可以用逗号分隔指定多个（相对仓库根），
+ * 例如一次同时喂官网与 README 的展示图：`CAPTURE_OUT=docs/images,website/assets/shots`。
+ */
+const outDirs = (process.env.CAPTURE_OUT ?? 'website/assets/shots')
+  .split(',')
+  .map((dir) => dir.trim())
+  .filter(Boolean)
+  .map((dir) => path.resolve(root, dir));
 
 const BASE = process.env.CAPTURE_URL ?? 'http://127.0.0.1:4000';
 const USER = process.env.CAPTURE_USER ?? 'admin';
@@ -168,13 +177,17 @@ async function main(app, BrowserWindow) {
     const [contentW, contentH] = win.getContentSize();
     // 2 倍渲染 → 缩到目标宽度：文字边缘比直接 1 倍清晰一档
     const scaled = image.getSize().width > width ? image.resize({ width, quality: 'best' }) : image;
-    fs.mkdirSync(outDir, { recursive: true });
-    const file = path.join(outDir, `${name}.jpg`);
-    fs.writeFileSync(file, scaled.toJPEG(90));
-    const kb = (fs.statSync(file).size / 1024).toFixed(0);
+    const jpeg = scaled.toJPEG(90);
+    const written = [];
+    for (const dir of outDirs) {
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `${name}.jpg`);
+      fs.writeFileSync(file, jpeg);
+      written.push(`${path.relative(root, file)} ${(jpeg.length / 1024).toFixed(0)}KB`);
+    }
     console.log(
-      `  ${name.padEnd(22)} ${scaled.getSize().width}×${scaled.getSize().height}  ${kb}KB  ` +
-        `(窗口内容 ${contentW}×${contentH}, 截图 ${image.getSize().width}×${image.getSize().height})`,
+      `  ${name.padEnd(22)} ${scaled.getSize().width}×${scaled.getSize().height}  ` +
+        `${written.join(' | ')}  (窗口内容 ${contentW}×${contentH}, 截图 ${image.getSize().width}×${image.getSize().height})`,
     );
   }
 

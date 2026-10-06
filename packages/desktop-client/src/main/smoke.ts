@@ -3542,12 +3542,12 @@ async function runIslandChecks(
  * 客户端逐页留档（官网素材用）。只有设了 `ELECTRON_CLIENT_SHOTS_DIR` 才会调用。
  *
  * 页面顺序就是侧边栏的顺序，方便照着做图注；走的是 hash 路由，与真实点击菜单等价。
- * 作业页带 `?date=` 深链 —— 当天通常没有作业，空看板当素材没意义（日期取自
- * `GET /homeworks/days`，种子数据里只有 2026-09-27 有作业）。
+ * 作业页**不带** `?date=`：`pnpm db:seed` 写进去的演示作业就属于播种当天（见 seed.ts），
+ * 留档前刚播过种，默认日期即当天。早先这里硬编码过一个具体日期，种子一重播就截成空看板。
  */
 const CLIENT_PAGE_SHOTS: Array<{ name: string; hash: string }> = [
   { name: 'client-schedule', hash: '#/schedule' },
-  { name: 'client-homeworks', hash: '#/homeworks?date=2026-09-27' },
+  { name: 'client-homeworks', hash: '#/homeworks' },
   { name: 'client-notifications', hash: '#/notifications' },
   { name: 'client-grades', hash: '#/grades' },
   { name: 'client-settings-island', hash: '#/settings/island' },
