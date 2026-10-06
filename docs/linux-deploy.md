@@ -3,10 +3,33 @@
 本文覆盖服务端在 Linux 上的**一键安装**与日常运维（`classhelper` 命令）。
 适用：Ubuntu 20.04+ / Debian 11+ / CentOS 7+ / Rocky Linux / AlmaLinux 8+（自动识别 apt / yum / dnf）。
 
-不想看长文的话，最短路径是这两条命令：
+不想看长文的话，最短路径就是这**一行**（在服务器上执行）：
 
 ```bash
-sudo bash install.sh --package /path/to/classhelper-server-linux-x64-1.1.0.tar.gz
+curl -fsSL -o /tmp/classhelper-install.sh https://raw.githubusercontent.com/LoveChengke/ClassHelper/master/deploy/install.sh && sudo bash /tmp/classhelper-install.sh
+```
+
+它自己会把整套流程走完：识别发行版 → 补依赖 → 建系统用户 → **从 GitHub Release 取最新版服务端包
+并校验发布页上的 `.sha256`** → 下载内置 Node 运行时 → 建库建号 → 装成 systemd 服务。装完直接：
+
+```bash
+sudo classhelper status
+```
+
+参数接在最后即可，例如先只体检（不需要 root、不改动系统）：
+
+```bash
+curl -fsSL -o /tmp/classhelper-install.sh https://raw.githubusercontent.com/LoveChengke/ClassHelper/master/deploy/install.sh && bash /tmp/classhelper-install.sh --check
+```
+
+> **别写成 `bash -c "$(curl …)" --check`**：`bash -c '代码' 第一个参数` 里那个参数会变成 `$0`，
+> 不是 `$1` —— 脚本收不到它（实测踩到：本意是体检，结果走进了交互式安装）。
+> 先落盘再执行没这个坑，也不会因为下载中断而执行到半个脚本。
+
+以下是"已有安装包 / 内网离线"的用法：
+
+```bash
+sudo bash install.sh --package /path/to/classhelper-server-linux-x64-1.1.2.tar.gz
 sudo classhelper status
 ```
 
@@ -41,7 +64,7 @@ Windows 开发机上 `npm install` 出来的 `node_modules` 拷到 Linux 跑不�
 仓库里的 [`.github/workflows/release-linux-server.yml`](../.github/workflows/release-linux-server.yml)
 就是干这个的（拿 ubuntu runner 跑 `pnpm dist:server:linux`，再把产物挂到对应 Release 上）：
 
-1. 本地照惯例发 Windows 包的 Release（tag 形如 `v1.1.0`）；
+1. 本地照惯例发 Windows 包的 Release（tag 形如 `v1.1.2`）；
 2. GitHub → Actions → 「发布 Linux 服务端安装包」→ Run workflow → 填 tag → 运行；
 3. 跑完 Release 里会多出 Linux 包与更新后的 `SHA256SUMS-<版本>.txt`。
 
@@ -67,7 +90,7 @@ Windows 开发机上 `npm install` 出来的 `node_modules` 拷到 Linux 跑不�
 ```bash
 # 开发机（Windows 也可以）
 pnpm dist:server:linux
-# → release-server/classhelper-server-linux-x64-<版本>.tar.gz（+ .sha256）
+# → releases/server/<版本>/linux-x64/classhelper-server-linux-x64-<版本>.tar.gz（+ .sha256）
 #   重跑很快：node scripts/dist-server.mjs --platform linux --reuse-deps（复用已装的 node_modules）
 ```
 
@@ -88,17 +111,17 @@ TUI 会依次问：形态 → 安装目录 → 端口 → 数据库 → 初始�
 
 ```bash
 # 全部默认：/opt/classhelper、4000 端口、SQLite、内置 Node
-sudo bash install.sh --yes --package ./classhelper-server-linux-x64-1.1.0.tar.gz
+sudo bash install.sh --yes --package ./classhelper-server-linux-x64-1.1.2.tar.gz
 
 # 指定目录与端口，从 stdin 传初始管理员密码（不进 argv / shell history）
 printf '%s\n' 'MyStrongPass!2026' | sudo bash install.sh --yes \
   --dir /srv/classhelper --port 8080 --admin-password-stdin \
-  --package ./classhelper-server-linux-x64-1.1.0.tar.gz
+  --package ./classhelper-server-linux-x64-1.1.2.tar.gz
 
 # MySQL 形态
 sudo bash install.sh --yes --database mysql --mysql-host 10.0.0.5 --mysql-db classhelper \
   --mysql-user classhelper --mysql-password-stdin \
-  --package ./classhelper-server-linux-x64-1.1.0.tar.gz <<< 'MySQL密码'
+  --package ./classhelper-server-linux-x64-1.1.2.tar.gz <<< 'MySQL密码'
 ```
 
 完整参数见 `bash install.sh --help`。要点：
@@ -403,6 +426,7 @@ sudo cp deploy/nginx.conf /etc/nginx/conf.d/classhelper.conf
 | --- | --- |
 | 服务起不来 | `classhelper doctor` → `classhelper logs -n 100`。常见：端口被占用、MySQL 连接串错、`data/` 权限 |
 | 装完打不开页面 | `classhelper status` 看探针与监听地址；云服务器还要在**安全组**放行端口 |
+| 页面能打开但是**空白** | 1.1.0 的服务端在 HTTP 直连访问时会下发 CSP `upgrade-insecure-requests`，浏览器把所有子资源改写成 https 加载而服务器没有 TLS，于是整页空白（HTML/接口都正常）。已修复的版本按请求协议条件下发；若暂不能升级，唯一正解是上 HTTPS 反代 |
 | 改了配置没生效 | 是否重启过（`classhelper config set` 会问）；`EnvironmentFile` 的值优先于文件里的同项 |
 | Web 端切库后还是连旧库 | `classhelper doctor` 看 `.env` 软链是否被破坏（`ln -sfn /etc/classhelper/config.env <安装目录>/.env`） |
 | 升级卡住/失败 | 失败会自动回滚；看 `classhelper logs -n 100`，确认磁盘余量 ≥1GB |
@@ -447,7 +471,7 @@ Node 官方的 linux-x64 二进制要求 **glibc ≥ 2.28**，而 CentOS 7 是 2
 ```bash
 # 在开发机：做出 Linux 包（或在 Actions 里下载）
 pnpm dist:server:linux
-scp release-server/classhelper-server-linux-x64-*.tar.gz root@<服务器>:/tmp/
+scp releases/server/*/linux-x64/classhelper-server-linux-x64-*.tar.gz root@<服务器>:/tmp/
 scp deploy/install.sh deploy/verify-linux.sh root@<服务器>:/tmp/
 ```
 
@@ -464,7 +488,7 @@ bash /tmp/install.sh --check
 
 ```bash
 sudo bash /tmp/install.sh --yes \
-  --package /tmp/classhelper-server-linux-x64-1.1.0.tar.gz \
+  --package /tmp/classhelper-server-linux-x64-1.1.2.tar.gz \
   --admin-password-stdin <<< 'Verify-Pass-2026!'
 ```
 

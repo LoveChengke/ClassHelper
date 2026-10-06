@@ -1142,8 +1142,20 @@ async function runIslandChecks(
    * （他常是 top-center + 较大 marginY，验证实例是 top-center + marginY=8）—— 两个岛一高一低叠在一起，
    * 用户会以为"屏幕上出现了第二个灵动岛"，点它又"反应不对"（它归验证脚本控制，会自己展开/收起）。
    * 只改**颜色**（不动停靠位置）：命中/几何断言全部按默认位置写过，挪位置会把它们弄红（实测踩过）。
+   *
+   * 例外：采集产品留档图时这两个值可以临时换成产品默认外观 ——
+   * `ELECTRON_SMOKE_ISLAND_ACCENT` / `ELECTRON_SMOKE_ISLAND_STYLE`（见 website/tools/capture-shots.mjs）。
+   * 留档图要的是"产品长什么样"，不是"验证实例长什么样"。**日常跑验证不要设它们。**
    */
-  island.setAppearance({ accent: '#e91e8c', style: 'tinted' });
+  const shotAppearance: Parameters<typeof island.setAppearance>[0] = {
+    accent: process.env.ELECTRON_SMOKE_ISLAND_ACCENT ?? '#e91e8c',
+  };
+  if (process.env.ELECTRON_SMOKE_ISLAND_STYLE === 'black' || process.env.ELECTRON_SMOKE_ISLAND_STYLE === 'glass') {
+    shotAppearance.style = process.env.ELECTRON_SMOKE_ISLAND_STYLE;
+  } else if (!process.env.ELECTRON_SMOKE_ISLAND_STYLE) {
+    shotAppearance.style = 'tinted';
+  }
+  island.setAppearance(shotAppearance);
   /**
    * 强制关掉触摸模式：本节的命中/穿透/窗口几何断言全部是按"鼠标模式"写的（用
    * `setHitTestCursor` 注入光标位置代替挪动真实鼠标）。若跑在带触摸屏的机器上，
@@ -3526,6 +3538,94 @@ async function runIslandChecks(
  * "HTTP 发布 → Socket.IO 广播 → 渲染进程 realtime store → bridge → IPC → 灵动岛"全链路，
  * 并在灵动岛里真实点击"标为已读"，确认通知中心的未读状态同步更新。
  */
+/**
+ * 客户端逐页留档（官网素材用）。只有设了 `ELECTRON_CLIENT_SHOTS_DIR` 才会调用。
+ *
+ * 页面顺序就是侧边栏的顺序，方便照着做图注；走的是 hash 路由，与真实点击菜单等价。
+ * 作业页带 `?date=` 深链 —— 当天通常没有作业，空看板当素材没意义（日期取自
+ * `GET /homeworks/days`，种子数据里只有 2026-09-27 有作业）。
+ */
+const CLIENT_PAGE_SHOTS: Array<{ name: string; hash: string }> = [
+  { name: 'client-schedule', hash: '#/schedule' },
+  { name: 'client-homeworks', hash: '#/homeworks?date=2026-09-27' },
+  { name: 'client-notifications', hash: '#/notifications' },
+  { name: 'client-grades', hash: '#/grades' },
+  { name: 'client-settings-island', hash: '#/settings/island' },
+  { name: 'client-settings-appearance', hash: '#/settings/appearance' },
+];
+
+/** 页面里飘着的 ElMessage 提示会挡内容，截之前先收掉 */
+const STRIP_TOASTS = `document.querySelectorAll('.el-message, .el-notification').forEach((node) => node.remove()); true;`;
+
+/** 主内容区的纯文本长度（侧栏不算）：用来判断页面到底渲染出来没有 */
+const MAIN_TEXT_LENGTH = `((document.querySelector('.el-main.main') ?? document.body).innerText ?? '').trim().length`;
+
+/**
+ * 截图前把 CSS 动画与过渡停掉。
+ *
+ * 为什么必须：客户端每个页面有「错峰入场」动画（styles/index.css 的 `.page > *`），
+ * 起始帧是 `opacity: 0`。窗口被别的窗口盖住时 Chromium 会冻结 CSS 动画，
+ * 于是 DOM 里文本齐全（实测 3000 多字）、截出来却是**整片空白** —— 排查了半天。
+ * `animation: none` 之后元素回落到自己的基础样式（可见），截图也顺带变成确定性的一帧。
+ */
+const FREEZE_ANIMATIONS = `(() => {
+  const id = 'smoke-shot-freeze';
+  if (!document.getElementById(id)) {
+    const style = document.createElement('style');
+    style.id = id;
+    style.textContent = '*, *::before, *::after { animation: none !important; transition: none !important; }';
+    document.head.append(style);
+  }
+  return true;
+})()`;
+
+const UNFREEZE_ANIMATIONS = `(() => {
+  document.getElementById('smoke-shot-freeze')?.remove();
+  return true;
+})()`;
+
+async function captureClientPages(win: BrowserWindow, dir: string): Promise<void> {
+  fs.mkdirSync(dir, { recursive: true });
+  await win.webContents.executeJavaScript(FREEZE_ANIMATIONS);
+  for (const page of CLIENT_PAGE_SHOTS) {
+    try {
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        // 连点两次同样的 hash 不会触发路由，先回课表再过去，保证每次都真的重新渲染
+        await win.webContents.executeJavaScript(`location.hash = '#/schedule'; true;`);
+        await sleep(350);
+        await win.webContents.executeJavaScript(`location.hash = ${JSON.stringify(page.hash)}; true;`);
+        await sleep(1200);
+        await win.webContents.executeJavaScript(STRIP_TOASTS);
+        await sleep(200);
+
+        // 懒加载的视图偶尔会来不及挂上，量到空内容就重来一次
+        const length = await win.webContents.executeJavaScript(MAIN_TEXT_LENGTH);
+        if (typeof length === 'number' && length >= 60) break;
+        if (attempt === 3) {
+          console.warn(`[SHOTS] ${page.name} 内容区一直是空的（最后一次 ${length} 字），跳过`);
+          break;
+        }
+        await sleep(900);
+      }
+
+      const length = await win.webContents.executeJavaScript(MAIN_TEXT_LENGTH);
+      if (typeof length !== 'number' || length < 60) continue;
+
+      const image = await win.webContents.capturePage();
+      if (image.isEmpty()) {
+        console.warn(`[SHOTS] ${page.name} 截到空图，跳过`);
+        continue;
+      }
+      const file = path.join(dir, `${page.name}.png`);
+      fs.writeFileSync(file, image.toPNG());
+      console.log(`[SHOTS] ${page.name} → ${file}（内容 ${length} 字）`);
+    } catch (error) {
+      console.warn(`[SHOTS] ${page.name} 截图失败`, error);
+    }
+  }
+  await win.webContents.executeJavaScript(UNFREEZE_ANIMATIONS);
+}
+
 async function runIslandRealtimeCheck(
   win: BrowserWindow,
 ): Promise<{ delivered: boolean; deliveryDetail: string; markRead: boolean; markReadDetail: string }> {
@@ -4453,6 +4553,17 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
             `${badgeCheck?.reason ? ` 原因=${badgeCheck.reason}` : ''}`,
     );
     if (injectedId) await deleteSmokeNotification(injectedId);
+
+    /**
+     * 官网素材：逐页留档。只有设了 ELECTRON_CLIENT_SHOTS_DIR 才跑 —— 日常验证不受影响。
+     *
+     * 位置两头的约束把这里夹死了：
+     *  - 必须在**收尾清理登录态之前**，否则截出来的是登录页 + 缓存数据；
+     *  - 必须在**所有 UI 断言之后**：翻页会改变侧栏分组展开态，紧接着测「折叠后图标与汉堡同列」
+     *    就会量到过渡中间值（实测：宽度 200→77、中心差 3.2px，把那条用例弄红了）。
+     */
+    const clientShotsDir = process.env.ELECTRON_CLIENT_SHOTS_DIR ?? '';
+    if (clientShotsDir) await captureClientPages(win, clientShotsDir);
 
     const cleanup = await win.webContents.executeJavaScript(
       `(async () => {

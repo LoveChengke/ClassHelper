@@ -15,6 +15,8 @@ electronLanguages:
   - zh-CN
 
 directories:
+  # 这里的 output 只是 electron-builder 的兜底值：scripts/dist-win.mjs 会把它覆盖成
+  # releases/client/<版本>/（与服务端、插件同一约定）。直接手敲 electron-builder 才会落到这里。
   output: release
   buildResources: build
 
@@ -43,7 +45,10 @@ win:
       arch: [x64]
     - target: portable
       arch: [x64]
-  # 未提供 build/icon.ico 时使用 Electron 默认图标
+  # 应用/安装包图标。**显式指定**而不是靠 electron-builder 的默认约定（默认找 build/icon.ico）：
+  # 现在生效的是仓库根 build/classhelper.{ico,png}（设计导出、手工放入），
+  # 而 `pnpm icons` 那条 SVG 流水线只会重写 icon.*，两者不打架。
+  icon: build/classhelper.ico
   artifactName: ${productName}-${version}-${arch}.${ext}
 
 nsis:

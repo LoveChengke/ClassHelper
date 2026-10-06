@@ -3,7 +3,7 @@
  *
  * 用法：
  *   node scripts/build.mjs              # Release 构建，产物在 packages/classisland-plugin/bin/Release
- *   node scripts/build.mjs --cipx       # 追加打包 .cipx（ClassIsland 插件包）并归集到 releases/classisland-plugin/
+ *   node scripts/build.mjs --cipx       # 追加打包 .cipx 并归集到 releases/classisland-plugin/<版本>/
  *   额外参数会原样透传给 `dotnet build`（例如 `-p:ClassIslandPluginSdkVersion=2.1.1.1`）
  *
  * 为什么需要这层包装（本机踩过的坑，写在这里免得换台机器又踩一遍）：
@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 const pluginDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(pluginDir, '..', '..');
 const cacheDir = path.join(repoRoot, '.cache');
-const releasesDir = path.join(repoRoot, 'releases', 'classisland-plugin');
+const releasesRoot = path.join(repoRoot, 'releases', 'classisland-plugin');
 
 const argv = process.argv.slice(2);
 const withCipx = argv.includes('--cipx');
@@ -146,14 +146,19 @@ if (!fs.existsSync(cipxFile)) {
   throw new Error(`未生成插件包：${path.relative(pluginDir, cipxFile)}`);
 }
 
-// 归集到 releases/classisland-plugin/（与客户端、服务端交付产物同级；releases/ 不入库）
-fs.rmSync(releasesDir, { recursive: true, force: true });
-fs.mkdirSync(releasesDir, { recursive: true });
-fs.copyFileSync(cipxFile, path.join(releasesDir, path.basename(cipxFile)));
+// 归集到 releases/classisland-plugin/<版本>/（与客户端、服务端交付产物同一约定；releases/ 不入库）。
+// 只清理**当前版本**目录，历史版本原样保留 —— 原先这里是 rmSync 整个组件目录，重打一次就把
+// 上一版的留档抹掉了（插件版本是四段 <产品版本>.0，目录名取前三段与产品版本对齐）。
+const pluginVersion = manifestVersion.split('.').slice(0, 3).join('.');
+const versionDir = path.join(releasesRoot, pluginVersion);
+const installerDir = path.join(versionDir, '安装包');
+const portableDir = path.join(versionDir, '免安装', 'ClassHelper.ClassIslandPlugin');
+fs.rmSync(installerDir, { recursive: true, force: true });
+fs.rmSync(path.dirname(portableDir), { recursive: true, force: true });
+fs.mkdirSync(installerDir, { recursive: true });
+fs.mkdirSync(portableDir, { recursive: true });
 
 // 免安装目录：解压即用，直接放进 ClassIsland 的 Plugins 目录也能加载
-const portableDir = path.join(releasesDir, 'ClassHelper.ClassIslandPlugin');
-fs.mkdirSync(portableDir, { recursive: true });
 for (const name of fs.readdirSync(outputDir)) {
   const from = path.join(outputDir, name);
   if (!fs.statSync(from).isFile()) continue;
@@ -165,10 +170,11 @@ for (const name of fs.readdirSync(outputDir)) {
 }
 
 for (const file of fs.readdirSync(cipxDir)) {
-  fs.copyFileSync(path.join(cipxDir, file), path.join(releasesDir, file));
+  // .cipx 是插件包本体，校验清单跟着版本目录走
+  const to = file.toLowerCase().endsWith('.cipx') ? installerDir : versionDir;
+  fs.copyFileSync(path.join(cipxDir, file), path.join(to, file));
 }
 
-log(`插件包已归集到 ${path.relative(repoRoot, releasesDir)}`);
-for (const file of fs.readdirSync(releasesDir)) {
-  log(`  ${file}`);
-}
+log(`插件包已归集到 ${path.relative(repoRoot, versionDir)}`);
+for (const file of fs.readdirSync(installerDir)) log(`  安装包/${file}`);
+for (const file of fs.readdirSync(portableDir)) log(`  免安装/ClassHelper.ClassIslandPlugin/${file}`);

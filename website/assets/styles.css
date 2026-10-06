@@ -1,0 +1,2002 @@
+/* ============================================================================
+   班级小助手 · 官网样式
+   ----------------------------------------------------------------------------
+   两套表面，对应教室里的两样东西：
+
+     黑板（.band-board）  教室前面那块板 —— 屏幕上的事都在这里发生
+     纸张（.band-paper）  老师手里的东西 —— 名单、课表、账目都在这里读
+
+   颜色只有两个强调色，各有各的活儿：
+     蓝（--blue / --blue-deep）  产品自己的强调色。表示"这是一条真的数据"
+     红（--red）                 只用在"上课被打断"这一件事上
+   ========================================================================= */
+
+:root {
+  /* 黑板 */
+  --board: #16231e;
+  --board-deep: #0c1311;
+  --board-raise: #1d2e27;
+  --board-line: rgba(232, 238, 233, 0.13);
+  --board-line-soft: rgba(232, 238, 233, 0.07);
+  --chalk: #e8eee9;
+  --chalk-2: #97aca1;
+  --chalk-3: #6d8279;
+
+  /* 屏幕（黑板里那块亮起来的屏） */
+  --screen-line: rgba(232, 238, 233, 0.12);
+
+  /* 纸张 */
+  --paper: #f1f4f7;
+  --paper-raise: #ffffff;
+  --paper-rule: #d9e0e7;
+  --paper-rule-soft: #e9eef3;
+  --ink: #17231f;
+  --ink-2: #56655f;
+  --ink-3: #8a9893;
+
+  /* 强调色：
+     蓝 = 产品自己的强调色，表示"这是一条真的数据"（链接、进度、实时状态）
+     红 = 只用在"上课被打断"这一件事上，整页只出现一次 */
+  --blue: #2f8fe6;
+  --blue-deep: #0f6cbd;
+  --chalk-red: #f0a5a1;
+
+  /* 灵动岛用的产品原色（只在这一处出现，是复刻，不参与整站配色） */
+  --island-bg: #000000;
+  --island-border: rgba(255, 255, 255, 0.118);
+  --island-accent: #0a84ff;
+  --island-urgent: #ff453a;
+  --island-call: #ff9f0a;
+
+  /* 曲线 token —— 与 assets/motion.js 的 EASE_* 同值（beUI lib/ease.ts） */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* 字体：标题用楷体（课本、板书、作文本的那个声音），正文用产品自己那套 UI 字体 */
+  --display:
+    'LXGW WenKai Screen', 'LXGW WenKai', '霞鹜文楷', KaiTi, '楷体', STKaiti, 'Kaiti SC', 'AR PL UKai CN',
+    serif;
+  --ui:
+    'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'PingFang SC',
+    'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
+  --mono: ui-monospace, 'Cascadia Mono', 'SF Mono', Consolas, 'Microsoft YaHei UI', monospace;
+
+  --fs-display: clamp(2.1rem, 5vw, 3.6rem);
+  --fs-h2: clamp(1.7rem, 3.4vw, 2.5rem);
+  --fs-h3: clamp(1.05rem, 1.5vw, 1.2rem);
+  --fs-lead: clamp(1rem, 1.5vw, 1.12rem);
+  --fs-sm: 0.875rem;
+  --fs-xs: 0.8125rem;
+
+  --wrap: 1120px;
+  --gutter: 24px;
+  --radius: 4px;
+}
+
+/* ------------------------------------------------------------------ 基础 */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 72px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--board);
+  color: var(--chalk);
+  font-family: var(--ui);
+  font-size: 1rem;
+  line-height: 1.9;
+  font-feature-settings: 'tnum' 1;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+a {
+  color: inherit;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.875em;
+  font-variant-numeric: tabular-nums;
+}
+
+p,
+ul,
+ol,
+dl,
+figure,
+table {
+  margin: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 40;
+  background: var(--paper-raise);
+  color: var(--ink);
+  padding: 10px 16px;
+}
+
+.skip:focus {
+  left: 12px;
+  top: 12px;
+}
+
+.wrap {
+  width: 100%;
+  max-width: var(--wrap);
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+}
+
+/* ------------------------------------------------------------------ 顶栏 */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: color-mix(in srgb, var(--board-deep) 88%, transparent);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--board-line-soft);
+}
+
+.topbar-inner {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-height: 60px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.brand-mark {
+  border-radius: 8px;
+}
+
+.brand-name {
+  font-family: var(--display);
+  font-size: 1.28rem;
+  letter-spacing: 0.02em;
+}
+
+.brand-ver {
+  font-size: var(--fs-xs);
+  color: var(--chalk-3);
+  font-variant-numeric: tabular-nums;
+  padding-left: 10px;
+  border-left: 1px solid var(--board-line);
+  line-height: 1;
+}
+
+.topnav {
+  display: flex;
+  gap: 22px;
+  margin-left: auto;
+  font-size: var(--fs-sm);
+  position: relative;
+}
+
+/* 悬停胶囊：beUI SharedLayoutBg —— 一个 layoutId 在条目之间滑移，
+   显隐走 blur(6px) 的淡入淡出，位置由 SPRING_LAYOUT 驱动（见 main.js） */
+.nav-pill {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 0;
+  height: 34px;
+  margin-top: -17px;
+  border-radius: 10px;
+  background: var(--board-raise);
+  opacity: 0;
+  filter: blur(6px);
+  transition:
+    opacity 0.2s var(--ease-out),
+    filter 0.2s var(--ease-out);
+  pointer-events: none;
+}
+
+.nav-pill.is-visible {
+  opacity: 1;
+  filter: blur(0);
+}
+
+.topnav a {
+  position: relative;
+  color: var(--chalk-2);
+  text-decoration: none;
+  padding: 6px 0;
+  transition: color 0.16s var(--ease-out);
+}
+
+.topnav a:hover,
+.topnav a:focus-visible {
+  color: var(--chalk);
+}
+
+/* 阅读进度 —— beUI ScrollProgressBar：2px、origin-left、scaleX 跟着滚动走，
+   值由 SPRING_PROGRESS 缓跟（故意比 UI 弹簧松，让它追着滚动而不是贴着） */
+.scroll-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--blue);
+  transform: scaleX(0);
+  transform-origin: left center;
+  will-change: transform;
+}
+
+/* ------------------------------------------------------------------ 按钮 */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 1;
+  padding: 13px 22px;
+  border-radius: var(--radius);
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition:
+    background-color 0.16s var(--ease-out),
+    border-color 0.16s var(--ease-out),
+    color 0.16s var(--ease-out);
+  white-space: nowrap;
+}
+
+.btn-solid {
+  background: var(--blue-deep);
+  color: #fff;
+}
+
+.btn-solid:hover {
+  background: #1280dd;
+}
+
+.btn-line {
+  border-color: var(--board-line);
+  color: var(--chalk);
+}
+
+.btn-line:hover {
+  border-color: var(--chalk-3);
+  background: var(--board-raise);
+}
+
+.btn-quiet {
+  margin-left: auto;
+  border-color: var(--board-line);
+  color: var(--chalk);
+  padding: 9px 16px;
+}
+
+.btn-quiet:hover {
+  background: var(--board-raise);
+}
+
+/* ------------------------------------------------------------------ 色带 */
+
+.band {
+  padding-block: clamp(64px, 9vw, 116px);
+  border-bottom: 1px solid var(--board-line-soft);
+}
+
+.band-board {
+  background: var(--board);
+  color: var(--chalk);
+}
+
+.band-paper {
+  background: var(--paper);
+  color: var(--ink);
+  border-bottom-color: var(--paper-rule);
+}
+
+/* ── 分幕标题 ────────────────────────────────────────────────────────────────
+   照 ClassIsland 官网的分节写法：居中的一句大标题，中间一小段用渐变填色。
+   它是「这一幕讲什么」的路标，所以比下面的小节标题大一档、也更空。 */
+
+.act {
+  background: var(--board);
+  padding-block: clamp(64px, 8vw, 104px);
+  border-bottom: 1px solid var(--board-line-soft);
+}
+
+.act-title {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: clamp(1.75rem, 3.6vw, 2.6rem);
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  text-align: center;
+  color: var(--chalk);
+}
+
+/* 渐变高亮词组。深色底上从粉笔白走到品牌蓝，读起来还是「同一块黑板上的字」 */
+.act-hl {
+  background-image: linear-gradient(135deg, var(--chalk) 15%, var(--blue) 85%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ── 收尾 CTA ───────────────────────────────────────────────────────────── */
+
+.cta {
+  background: var(--board);
+  padding-block: clamp(72px, 9vw, 120px);
+  border-bottom: 0;
+}
+
+.cta-title {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: clamp(1.75rem, 3.6vw, 2.6rem);
+  line-height: 1.35;
+  text-align: center;
+  color: var(--chalk);
+}
+
+.cta-lead {
+  margin: 18px auto 0;
+  max-width: 34em;
+  text-align: center;
+  font-size: var(--fs-lead);
+  line-height: 1.95;
+  color: var(--chalk-2);
+}
+
+.cta-actions {
+  margin-top: 30px;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.band-paper code {
+  background: rgba(23, 35, 31, 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* 纸张上的分隔线换色 */
+.band-paper .lead strong {
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------------ 排版 */
+
+.display {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: var(--fs-display);
+  line-height: 1.32;
+  letter-spacing: 0.01em;
+  max-width: 20em;
+  margin-bottom: 30px;
+}
+
+/* 标题逐字上浮 —— beUI TextReveal。
+   脚本没跑起来时标题就是普通标题；跑起来了才按字拆开并藏起来等揭示。
+   `reveal-pending` 由一个 4 秒的兜底定时器摘掉，脚本坏在半路也不会把标题永久藏住。 */
+.reveal-pending .display[data-reveal] {
+  visibility: hidden;
+}
+
+/* 每行一个块级容器：换行交给浏览器，窄屏上标题才会自己折行。
+   字本身是 inline-block（beUI 的做法），所以不会在字中间断开。 */
+.reveal-line {
+  display: block;
+}
+
+.reveal-unit {
+  display: inline-block;
+  white-space: pre;
+  will-change: transform, opacity, filter;
+}
+
+.h2 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: var(--fs-h2);
+  line-height: 1.4;
+  margin-bottom: 20px;
+  max-width: 22em;
+}
+
+.h3 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: var(--fs-h3);
+  line-height: 1.5;
+  margin-bottom: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--paper-rule);
+}
+
+.lead {
+  font-size: var(--fs-lead);
+  line-height: 1.95;
+  color: var(--chalk-2);
+  max-width: 34em;
+}
+
+.narrow {
+  max-width: 34em;
+}
+
+.band-paper .lead {
+  color: var(--ink-2);
+}
+
+.lead + .lead {
+  margin-top: 18px;
+}
+
+strong {
+  font-weight: 600;
+  color: var(--chalk);
+}
+
+.band-paper strong {
+  color: var(--ink);
+}
+
+/* ════════════════════════════════ 教室那块屏幕 ════════════════════════════ */
+
+.hero {
+  padding-top: clamp(44px, 6vw, 76px);
+}
+
+.screen {
+  margin-top: clamp(40px, 5vw, 60px);
+  border: 1px solid var(--board-line);
+  border-radius: 10px;
+  /* 亮着的屏：比黑板亮一档的冷灰蓝，灵动岛那块纯黑才映得出来 */
+  background: linear-gradient(180deg, #22303f 0%, #161e28 100%);
+  overflow: hidden;
+  box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.9);
+}
+
+.screen-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  height: 38px;
+  border-bottom: 1px solid var(--screen-line);
+  font-size: var(--fs-xs);
+  color: var(--chalk-3);
+}
+
+.screen-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4ac07a;
+  box-shadow: 0 0 0 3px rgba(74, 192, 122, 0.16);
+  flex-shrink: 0;
+}
+
+.screen-title {
+  color: var(--chalk-2);
+}
+
+.screen-live {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.screen-stage {
+  position: relative;
+  padding: 0 var(--gutter) 30px;
+  --headroom: 300px;
+}
+
+.screen-body {
+  display: flex;
+  align-items: center;
+  gap: clamp(18px, 4vw, 52px);
+  flex-wrap: wrap;
+  padding-top: var(--headroom);
+}
+
+.clock-hm {
+  font-size: clamp(2.6rem, 6vw, 4rem);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.clock-s {
+  font-size: 0.32em;
+  font-weight: 500;
+  color: var(--chalk-3);
+}
+
+.clock-week {
+  margin-top: 10px;
+  font-size: var(--fs-sm);
+  color: var(--chalk-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.clock-now {
+  flex: 1 1 300px;
+  min-width: 260px;
+  max-width: 460px;
+  border-left: 2px solid var(--blue-deep);
+  padding-left: 18px;
+}
+
+.clock-current {
+  font-size: 1.06rem;
+}
+
+.clock-current b {
+  font-weight: 600;
+}
+
+.clock-sub {
+  margin-top: 4px;
+  font-size: var(--fs-xs);
+  color: var(--chalk-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.clock-bar {
+  margin-top: 12px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(232, 238, 233, 0.12);
+  overflow: hidden;
+}
+
+.clock-bar i {
+  display: block;
+  height: 100%;
+  background: var(--blue);
+  border-radius: 2px;
+}
+
+.clock-next {
+  margin-left: auto;
+  text-align: right;
+  padding-left: 18px;
+  border-left: 1px solid var(--screen-line);
+}
+
+.next-head {
+  font-size: var(--fs-xs);
+  color: var(--chalk-3);
+}
+
+.next-name {
+  font-size: 1.06rem;
+  margin-top: 4px;
+}
+
+.next-name span {
+  font-size: var(--fs-xs);
+  color: var(--chalk-3);
+  font-variant-numeric: tabular-nums;
+  margin-left: 6px;
+}
+
+.next-sub {
+  margin-top: 4px;
+  font-size: var(--fs-xs);
+  color: var(--chalk-3);
+}
+
+.hero-cap {
+  margin-top: 16px;
+  font-size: var(--fs-xs);
+  line-height: 1.85;
+  color: var(--chalk-3);
+  max-width: 40em;
+}
+
+/* 首屏文字收成左列（ClassIsland 的 .introduction-col 也是这么窄的一条）。
+   47em ≈ 750px：再窄一点，「它知道现在是第几节课，」的逗号就会掉到第二行去。 */
+.hero-intro {
+  max-width: 47em;
+}
+
+/* 宽屏上把三句事实挪到文字右边，填住那条空 —— ClassIsland 的首屏也是左文右块。
+   屏幕照旧整幅铺在下面：灵动岛是「屏幕顶部居中」的，不能只给它半幅。 */
+@media (min-width: 1080px) {
+  .hero .wrap {
+    display: grid;
+    grid-template-columns: minmax(0, 47em) 1fr;
+    grid-template-areas:
+      'intro facts'
+      'screen screen'
+      'cap cap';
+    align-items: start;
+    gap: 34px clamp(36px, 5vw, 72px);
+  }
+
+  .hero-intro {
+    grid-area: intro;
+  }
+
+  .facts {
+    grid-area: facts;
+    margin-top: 10px;
+    grid-template-columns: 1fr;
+    gap: 18px;
+    padding-top: 24px;
+  }
+
+  .screen {
+    grid-area: screen;
+  }
+
+  .hero-cap {
+    grid-area: cap;
+  }
+}
+
+.hero-sub {
+  font-family: var(--display);
+  font-size: clamp(1.35rem, 2.6vw, 1.9rem);
+  line-height: 1.5;
+  color: var(--chalk);
+  margin-bottom: 14px;
+}
+
+.hero-intro .lead {
+  max-width: 32em;
+  margin-bottom: 26px;
+}
+
+/* ── 首屏入场：照着 ClassIsland 的 .intro-seq 写（逐项 0.72s EASE_OUT + 错峰延迟）。
+     用 backwards 而不是 both：延迟期间先落在起始帧，动画结束后就回到底样式，
+     不在元素上留一个永久的 transform（那会多出一层包含块）。 */
+@media (prefers-reduced-motion: no-preference) {
+  .intro-seq {
+    animation: intro-rise 0.72s var(--ease-out) backwards;
+    animation-delay: var(--intro-delay, 0s);
+  }
+
+  .screen {
+    animation: intro-fly 0.75s var(--ease-out) 60ms backwards;
+  }
+}
+
+@keyframes intro-rise {
+  from {
+    opacity: 0;
+    transform: translateX(-42px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes intro-fly {
+  from {
+    opacity: 0;
+    transform: translateX(96px) scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.facts {
+  list-style: none;
+  padding: 28px 0 0;
+  margin-top: 44px;
+  border-top: 1px solid var(--board-line);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 20px 34px;
+}
+
+.facts li {
+  font-size: var(--fs-sm);
+  line-height: 1.85;
+  color: var(--chalk-2);
+  padding-left: 18px;
+  position: relative;
+}
+
+.facts li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.72em;
+  width: 7px;
+  height: 1px;
+  background: var(--chalk-3);
+}
+
+/* ════════════════════════════════ 灵动岛 ═════════════════════════════════
+   下面这些数值整块来自产品本身（DEFAULT_ISLAND_APPEARANCE /
+   ISLAND_SIZE_DELTA / ISLAND_TYPE_SCALE）：底色 #000、白字 alpha 分级
+   .92/.72/.58、强调色 #0a84ff、紧急 #ff453a、叫人 #ff9f0a。
+   ====================================================================== */
+
+.island-slot {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.island {
+  --island-font: 13px;
+  --state-color: var(--island-accent);
+  position: relative;
+  width: 268px;
+  height: 44px;
+  transform-origin: top center;
+  transition: opacity 0.3s var(--ease-out);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: var(--island-font);
+  line-height: 1.5;
+}
+
+.island[data-kind='urgent'] {
+  --state-color: var(--island-urgent);
+}
+
+.island[data-kind='call'] {
+  --state-color: var(--island-call);
+}
+
+.island-shape {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  display: block;
+}
+
+.island-base {
+  fill: var(--island-bg);
+  stroke: var(--island-border);
+  stroke-width: 1;
+  /* 投影常驻：给元素增删 CSS filter 会让 Chromium 重建渲染表面，开合瞬间底座闪一帧。
+     beUI 的岛也是一直挂阴影，不做展开态才有的那套。 */
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.28));
+}
+
+/* 紧急 / 叫人：描边跟着状态色走，卡片顶部有一层同色光晕 */
+.island[data-kind='urgent'] .island-base {
+  stroke: color-mix(in srgb, var(--island-urgent) 62%, rgba(255, 255, 255, 0.2));
+}
+
+.island[data-kind='call'] .island-base {
+  stroke: color-mix(in srgb, var(--island-call) 62%, rgba(255, 255, 255, 0.2));
+}
+
+.island-tint {
+  fill: none;
+  stroke: none;
+}
+
+.island[data-kind='urgent'] .island-tint {
+  fill: url(#island-tint-urgent);
+}
+
+.island[data-kind='call'] .island-tint {
+  fill: url(#island-tint-call);
+}
+
+.island-layers {
+  position: absolute;
+  inset: 0;
+  /* 壳在缩小时裁掉溢出 —— beUI 的 DynamicIsland 也是 overflow-hidden */
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+/* 胶囊层与内容槽都铺满整个壳，靠 data-shape 切换谁在场 */
+.island-pill,
+.island-slot-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.island-pill {
+  align-items: center;
+  gap: calc(var(--island-font) * 0.62);
+  padding: 0 calc(var(--island-font) * 0.78);
+  transform-origin: top center;
+  /* 退场与 beUI 的 Slot 同参数：0.08s、ease-out、先走且不带模糊 */
+  transition:
+    opacity 0.08s var(--ease-out),
+    transform 0.08s var(--ease-out);
+}
+
+.island[data-shape='card'] .island-pill {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.9);
+  pointer-events: none;
+}
+
+.pill-icon {
+  width: calc(var(--island-font) * 1.24);
+  height: calc(var(--island-font) * 1.24);
+  flex-shrink: 0;
+  color: var(--state-color);
+}
+
+.pill-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 语义化图标动效：铃铛从铰链（上边中点）上摆一下，0.28s */
+.pill-icon[data-swing='true'] svg,
+.card-icon-swing svg {
+  transform-origin: top center;
+  animation: bell-swing 0.28s var(--ease-out);
+}
+
+@keyframes bell-swing {
+  0% {
+    transform: rotate(0deg);
+  }
+  28% {
+    transform: rotate(12deg);
+  }
+  55% {
+    transform: rotate(-8deg);
+  }
+  78% {
+    transform: rotate(4deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+.pill-title,
+.pill-sub {
+  /* action-swap 的 blur 变体：0.2s、ease-in-out、scale 0.94 + 模糊 8px */
+  transition:
+    opacity 0.2s ease-in-out,
+    transform 0.2s ease-in-out,
+    filter 0.2s ease-in-out;
+}
+
+.pill-title {
+  font-size: calc(var(--island-font) * 0.92);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pill-sub {
+  margin-left: auto;
+  font-size: calc(var(--island-font) * 0.74);
+  color: rgba(255, 255, 255, 0.58);
+  white-space: nowrap;
+}
+
+/* 先摆到起点、再在下一帧去掉这个类 —— 浏览器才会把过渡跑起来 */
+.pill-title.is-swapping,
+.pill-sub.is-swapping {
+  animation: swap-in 0.2s ease-in-out;
+}
+
+@keyframes swap-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+    filter: blur(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+
+.island-slot-content {
+  flex-direction: column;
+  padding: calc(var(--island-font) * 1.4) calc(var(--island-font) * 1.6);
+  gap: calc(var(--island-font) * 0.7);
+  /* 内容从胶囊那条线向下展开，被收回时也往那里去 */
+  transform-origin: top center;
+  will-change: transform, opacity, filter;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--island-font) * 0.55);
+}
+
+.card-icon {
+  width: calc(var(--island-font) * 1.62);
+  height: calc(var(--island-font) * 1.62);
+  border-radius: calc(var(--island-font) * 0.5);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--state-color) 20%, transparent);
+  color: var(--state-color);
+}
+
+.card-icon svg {
+  width: calc(var(--island-font) * 1.05);
+  height: calc(var(--island-font) * 1.05);
+}
+
+.card-badge {
+  height: calc(var(--island-font) * 1.25);
+  display: inline-flex;
+  align-items: center;
+  padding: 0 calc(var(--island-font) * 0.5);
+  border-radius: calc(var(--island-font) * 0.36);
+  font-size: calc(var(--island-font) * 0.68);
+  font-weight: 500;
+  background: color-mix(in srgb, var(--state-color) 22%, transparent);
+  color: var(--state-color);
+  white-space: nowrap;
+}
+
+.card-meta {
+  font-size: calc(var(--island-font) * 0.68);
+  color: rgba(255, 255, 255, 0.58);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-collapse {
+  margin-left: auto;
+  width: calc(var(--island-font) * 1.5);
+  height: calc(var(--island-font) * 1.5);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.72);
+  flex-shrink: 0;
+}
+
+.card-collapse svg {
+  width: calc(var(--island-font) * 0.76);
+  height: calc(var(--island-font) * 0.76);
+}
+
+.card-title {
+  font-size: calc(var(--island-font) * 1.08);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.card-body {
+  font-size: calc(var(--island-font) * 0.95);
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.62;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.card-foot {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--island-font) * 0.5);
+  padding-top: calc(var(--island-font) * 0.9);
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.card-more {
+  font-size: calc(var(--island-font) * 0.76);
+  color: rgba(255, 255, 255, 0.58);
+  margin-right: auto;
+}
+
+.card-btn {
+  height: calc(var(--island-font) * 2.1);
+  display: inline-flex;
+  align-items: center;
+  padding: 0 calc(var(--island-font) * 0.86);
+  border-radius: calc(var(--island-font) * 0.5);
+  font-size: calc(var(--island-font) * 0.76);
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.92);
+  white-space: nowrap;
+}
+
+.card-btn-primary {
+  background: color-mix(in srgb, var(--state-color) 78%, transparent);
+  color: #fff;
+}
+
+/* ════════════════════════════════ 链路 ═════════════════════════════════ */
+
+.pipeline {
+  list-style: none;
+  padding: 0;
+  margin-top: 48px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0;
+}
+
+.pipeline li {
+  position: relative;
+  padding: 26px 18px 0 0;
+  border-top: 2px solid var(--board-line);
+}
+
+.pipeline li + li {
+  padding-left: 20px;
+}
+
+/* 头上的圆点，表示这是一条真的有先后顺序的流程 */
+.pipeline li::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--board);
+  border: 2px solid var(--board-line);
+}
+
+.pipeline li:first-child::before {
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.pipe-step {
+  font-family: var(--display);
+  font-size: 1.12rem;
+  margin-bottom: 8px;
+}
+
+.pipe-body {
+  font-size: var(--fs-sm);
+  line-height: 1.85;
+  color: var(--chalk-2);
+}
+
+.pipe-body code {
+  background: rgba(232, 238, 233, 0.08);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* ════════════════════════════════ 时间轴 ═══════════════════════════════ */
+
+.policy {
+  margin-top: 44px;
+  border: 1px solid var(--board-line);
+  border-radius: 8px;
+  padding: clamp(20px, 3vw, 34px);
+  background: var(--board-deep);
+}
+
+.policy-clock {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 26px;
+}
+
+.policy-time {
+  font-size: clamp(2rem, 4.4vw, 3rem);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.policy-state {
+  font-size: var(--fs-sm);
+  color: var(--chalk);
+  font-weight: 500;
+}
+
+.day {
+  position: relative;
+  padding-bottom: 26px;
+}
+
+.day-track {
+  position: relative;
+  height: 40px;
+  border-radius: 4px;
+  background: rgba(232, 238, 233, 0.05);
+  overflow: hidden;
+}
+
+/* 已经过去的那一段（beUI RangeSlider 的进度填充：内缩、圆角、低对比） */
+.day-fill {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: 0;
+  border-radius: 3px;
+  background: rgba(232, 238, 233, 0.07);
+  pointer-events: none;
+}
+
+.day-block {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(232, 238, 233, 0.04);
+  border-left: 1px solid var(--board-deep);
+  border-right: 1px solid var(--board-deep);
+}
+
+/* 上课的节次填实、课间留白 —— 一眼看出这段在不在课上 */
+.day-block.is-class {
+  background: rgba(232, 238, 233, 0.2);
+}
+
+.day-block-label {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-xs);
+  color: var(--chalk-3);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.day-block.is-class .day-block-label {
+  color: rgba(232, 238, 233, 0.78);
+}
+
+/* 把手 —— beUI RangeSlider 的 thumb：一根竖圆条，拖动时纵向拉伸 1.35 倍。
+   位置由 SPRING_GLIDE 驱动（跟手、临界阻尼、不会在两端回弹），拉伸由 SPRING_BOUNCY 驱动。 */
+.day-marker {
+  position: absolute;
+  top: 50%;
+  margin-top: -13px;
+  margin-left: -2px;
+  width: 4px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--chalk);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+  transform: scaleY(var(--thumb-stretch, 1));
+  transform-origin: center;
+  pointer-events: none;
+  will-change: transform, left;
+}
+
+/* 每个节次的边界一个刻度点 */
+.day-tick {
+  position: absolute;
+  bottom: 4px;
+  width: 3px;
+  height: 3px;
+  margin-left: -1.5px;
+  border-radius: 50%;
+  background: rgba(232, 238, 233, 0.34);
+  pointer-events: none;
+}
+
+.day-input {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  width: 100%;
+  height: 40px;
+  margin: 0;
+  opacity: 0;
+  cursor: ew-resize;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+
+.day-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 28px;
+  height: 40px;
+  cursor: ew-resize;
+}
+
+.day-input::-moz-range-thumb {
+  width: 28px;
+  height: 40px;
+  border: 0;
+  cursor: ew-resize;
+}
+
+/* 拖动条本身是透明的（视觉全交给轨道），所以键盘焦点要画在轨道上，否则看不见 */
+.day:focus-within .day-track {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+
+.day-scale {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-xs);
+  color: var(--chalk-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.outcomes {
+  margin-top: 30px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1px;
+  background: var(--board-line-soft);
+  border: 1px solid var(--board-line-soft);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.outcome {
+  background: var(--board-deep);
+  padding: 18px;
+}
+
+.outcome-what {
+  font-size: var(--fs-xs);
+  color: var(--chalk-3);
+}
+
+.outcome-where {
+  font-family: var(--display);
+  font-size: 1.05rem;
+  margin: 4px 0 8px;
+}
+
+.outcome-say {
+  font-size: var(--fs-sm);
+  line-height: 1.8;
+  color: var(--chalk-2);
+}
+
+.outcome-alert .outcome-say {
+  color: var(--chalk-red);
+}
+
+.policy-note {
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid var(--board-line-soft);
+  font-size: var(--fs-sm);
+  line-height: 1.9;
+  color: var(--chalk-2);
+  max-width: 62em;
+}
+
+/* ════════════════════════════════ 表格 ═════════════════════════════════ */
+
+.table-scroll {
+  margin-top: 36px;
+  overflow-x: auto;
+}
+
+.sheet {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+  background: var(--paper-raise);
+  border: 1px solid var(--paper-rule);
+  border-radius: 4px;
+}
+
+.sheet th,
+.sheet td {
+  text-align: left;
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--paper-rule-soft);
+  vertical-align: top;
+  line-height: 1.75;
+}
+
+.sheet thead th {
+  font-weight: 600;
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--paper-rule);
+  white-space: nowrap;
+}
+
+.sheet tbody th {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sheet tbody tr:last-child th,
+.sheet tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.sheet td:first-of-type {
+  color: var(--ink-2);
+}
+
+/* ════════════════════════════════ 实机截图 ═════════════════════════════ */
+
+.shots {
+  margin-top: 40px;
+}
+
+/* 分段控件 —— beUI Tabs：一个 layoutId 指示器在选项之间滑移（位置由 SPRING_LAYOUT 驱动） */
+.shots-tabs {
+  position: relative;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--board-line);
+  border-radius: 12px;
+  background: var(--board-deep);
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.shots-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.shots-tab {
+  position: relative;
+  z-index: 1;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--chalk-2);
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  padding: 8px 16px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.18s var(--ease-out);
+}
+
+.shots-tab:hover {
+  color: var(--chalk);
+}
+
+.shots-tab[aria-selected='true'] {
+  color: var(--chalk);
+}
+
+.shots-indicator {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  height: calc(100% - 8px);
+  width: 0;
+  border-radius: 9px;
+  background: var(--board-raise);
+  pointer-events: none;
+}
+
+.shots-grid {
+  margin-top: 26px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 22px;
+}
+
+.shots-grid:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 6px;
+}
+
+.shot-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: zoom-in;
+  transform-origin: center;
+}
+
+.shot-frame {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  padding: 0;
+  border: 1px solid var(--board-line);
+  border-radius: 8px;
+  background: #0d1512;
+  overflow: hidden;
+  transition: border-color 0.18s var(--ease-out);
+}
+
+.shot-card:hover .shot-frame {
+  border-color: var(--chalk-3);
+}
+
+.shot-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+}
+
+/* 灵动岛的图是贴着岛体裁下来的小图，原尺寸居中摆，不放大也不裁 */
+.shot-card[data-kind='island'] .shot-frame {
+  aspect-ratio: 16 / 9;
+  padding: 16px;
+}
+
+.shot-card[data-kind='island'] .shot-frame img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* 手机端是竖图，给个竖版的框 */
+.shot-card[data-kind='phone'] .shot-frame {
+  aspect-ratio: 4 / 5;
+  padding: 12px;
+}
+
+.shot-card[data-kind='phone'] .shot-frame img {
+  width: auto;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.shot-cap {
+  font-size: var(--fs-xs);
+  line-height: 1.75;
+  color: var(--chalk-2);
+}
+
+.shots-hint {
+  margin-top: 22px;
+  font-size: var(--fs-xs);
+  color: var(--chalk-3);
+}
+
+/* ════════════════════════════ 大图浮层 ════════════════════════════
+   从被点的那张缩略图原地长到大图（beUI 的 morphing lightbox 是共享 layoutId，
+   这里用 FLIP 做等价的事：面板先摆到缩略图矩形，再用弹簧走到目标矩形）。 */
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+
+.lightbox[hidden] {
+  display: none;
+}
+
+.lightbox-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 10, 9, 0.88);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+}
+
+.lightbox-panel {
+  position: fixed;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #0d1512;
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.8);
+  will-change: transform, width, height;
+}
+
+.lightbox-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+.lightbox-cap {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  max-width: min(720px, 88vw);
+  text-align: center;
+  font-size: var(--fs-xs);
+  line-height: 1.7;
+  color: var(--chalk-2);
+  opacity: 0;
+}
+
+.lightbox-close {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--board-line);
+  background: rgba(232, 238, 233, 0.06);
+  color: var(--chalk);
+  cursor: pointer;
+  opacity: 0;
+  transition: background-color 0.18s var(--ease-out);
+}
+
+.lightbox-close:hover {
+  background: rgba(232, 238, 233, 0.14);
+}
+
+.lightbox-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ════════════════════════════════ 功能清单 ═════════════════════════════ */
+
+.feature-groups {
+  margin-top: 40px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: clamp(32px, 5vw, 64px);
+}
+
+/* ── 特性块 ──────────────────────────────────────────────────────────────────
+   照 ClassIsland 官网的特性写法：#彩色标签 → 粗体短标题 → 一句说明。
+   「#」那行是它的招牌，先用蓝色承担（这一页的蓝只表示「这是产品里真有的东西」）。 */
+
+.feature-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  margin-top: 4px;
+}
+
+.feature-tag {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--blue-deep);
+  margin-bottom: 2px;
+}
+
+.feature-title {
+  font-size: clamp(1.1rem, 1.9vw, 1.4rem);
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.feature-body {
+  font-size: var(--fs-sm);
+  line-height: 1.85;
+  color: var(--ink-2);
+  opacity: 0.85;
+  max-width: 34em;
+}
+
+/* ════════════════════════════════ 命令块 ═══════════════════════════════ */
+
+.snippet {
+  margin-top: 40px;
+  border: 1px solid rgba(232, 238, 233, 0.12);
+  border-radius: 6px;
+  background: var(--board-deep);
+  overflow: hidden;
+}
+
+.snippet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(232, 238, 233, 0.08);
+}
+
+.snippet-label {
+  font-size: var(--fs-xs);
+  color: var(--chalk-2);
+}
+
+.copy {
+  font: inherit;
+  font-size: var(--fs-xs);
+  color: var(--chalk-2);
+  background: transparent;
+  border: 1px solid var(--board-line);
+  border-radius: 3px;
+  padding: 5px 12px;
+  cursor: pointer;
+  overflow: hidden;
+  transition:
+    color 0.16s var(--ease-out),
+    border-color 0.16s var(--ease-out);
+}
+
+/* action-swap 的 roll 变体：文案整块从下方滚上来，容器裁掉溢出 */
+.copy-label {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform, opacity, filter;
+}
+
+.copy:hover {
+  color: var(--chalk);
+  border-color: var(--chalk-3);
+}
+
+.copy[data-done='1'] {
+  color: #4ac07a;
+  border-color: rgba(74, 192, 122, 0.4);
+}
+
+.snippet pre {
+  margin: 0;
+  padding: 18px 16px;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.85;
+  color: var(--chalk);
+  tab-size: 2;
+  /* 折行而不是横向滚动：这条命令是要被抄走的，看全比保持一行更重要 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.snippet code {
+  font-size: inherit;
+  background: none;
+  padding: 0;
+}
+
+.band-paper .snippet {
+  border-color: #1d2e27;
+}
+
+/* ════════════════════════════════ 验收账目 ═════════════════════════════ */
+
+.ledger {
+  margin-top: 44px;
+  border-top: 1px solid var(--board-line);
+}
+
+.ledger-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) 1fr auto;
+  align-items: baseline;
+  gap: 20px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--board-line-soft);
+}
+
+.ledger-cmd {
+  font-size: 0.85rem;
+  color: var(--chalk);
+  background: rgba(232, 238, 233, 0.06);
+  padding: 3px 8px;
+  border-radius: 3px;
+  justify-self: start;
+  white-space: nowrap;
+}
+
+.ledger-what {
+  font-size: var(--fs-sm);
+  line-height: 1.8;
+  color: var(--chalk-2);
+}
+
+.ledger-num {
+  font-size: 1.25rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--chalk);
+}
+
+.ledger-num::after {
+  content: ' 项';
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--chalk-3);
+}
+
+/* 数字滚动 —— beUI NumberTicker：每一位是一列 0–9 的竖排，靠 translateY 滚到目标位，
+   进场时逐位错开（0.04s），滚动本身 0.9s EASE_OUT，滚动期间带一点模糊。
+   静息位置 = 目标位，所以没轮到滚动时显示的也是正确的数字。 */
+.ticker {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ticker-digit {
+  position: relative;
+  display: inline-block;
+  width: 1ch;
+  height: 1.1em;
+  overflow: hidden;
+}
+
+.ticker-roll {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  filter: blur(0);
+  transform: translateY(var(--roll-to, 0em));
+  transition:
+    transform 0.9s var(--ease-out) var(--roll-delay, 0s),
+    filter 0.32s var(--ease-out) var(--roll-delay, 0s);
+  will-change: transform, filter;
+}
+
+.ticker-roll > span {
+  display: flex;
+  height: 1.1em;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.ticker-digit.is-arming .ticker-roll {
+  transform: translateY(0);
+  filter: blur(10px);
+  transition: none;
+}
+
+.ledger-foot {
+  margin-top: 20px;
+  font-size: var(--fs-xs);
+  line-height: 1.85;
+  color: var(--chalk-3);
+  max-width: 44em;
+}
+
+/* ════════════════════════════════ 页脚 ═════════════════════════════════ */
+
+.foot {
+  background: var(--board-deep);
+  padding-block: 46px;
+}
+
+.foot-inner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 32px;
+  flex-wrap: wrap;
+}
+
+.foot-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.foot-brand img {
+  border-radius: 9px;
+}
+
+.foot-name {
+  font-family: var(--display);
+  font-size: 1.2rem;
+}
+
+.foot-name span {
+  font-size: 0.8rem;
+  color: var(--chalk-3);
+  margin-left: 6px;
+}
+
+.foot-ver {
+  font-size: var(--fs-xs);
+  color: var(--chalk-3);
+  margin-top: 2px;
+}
+
+.foot-nav {
+  display: flex;
+  gap: 26px;
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+}
+
+.foot-nav a {
+  color: var(--chalk-2);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  padding-bottom: 2px;
+}
+
+.foot-nav a:hover {
+  color: var(--chalk);
+  border-bottom-color: var(--chalk-3);
+}
+
+/* ════════════════════════════════ 窄屏 ═════════════════════════════════ */
+
+@media (max-width: 1000px) {
+  .pipeline {
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 26px 0;
+  }
+
+  .pipeline li {
+    padding-right: 24px;
+  }
+}
+
+@media (max-width: 860px) {
+  .topnav {
+    display: none;
+  }
+
+  .btn-quiet {
+    margin-left: auto;
+  }
+
+  .hero-foot {
+    align-items: flex-start;
+  }
+
+  .ledger-row {
+    grid-template-columns: 1fr auto;
+    gap: 8px 16px;
+  }
+
+  .ledger-cmd {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 560px) {
+  :root {
+    --gutter: 18px;
+  }
+
+  /* 窄屏上让标题自己折行，硬换行会留下一个孤零零的字 */
+  .display br {
+    display: none;
+  }
+
+  .brand-ver {
+    display: none;
+  }
+
+  .screen-stage {
+    padding-bottom: 22px;
+  }
+
+  .screen-body {
+    gap: 18px;
+  }
+
+  .clock-now {
+    border-left-width: 2px;
+    padding-left: 14px;
+  }
+
+  .clock-next {
+    margin-left: 0;
+    text-align: left;
+    padding-left: 14px;
+  }
+
+  .actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .policy {
+    padding: 18px 14px;
+  }
+
+  .outcomes {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ════════════════════════════════ 少动效 ═══════════════════════════════
+   beUI motion guide 的口径：少动效是一个设计过的状态，不是把动效全删掉 ——
+   保留透明度与颜色反馈（有信息量），去掉位移、缩放、模糊与回弹。 */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-property: opacity, color, background-color, border-color !important;
+    transition-duration: 0.2s !important;
+    transition-delay: 0s !important;
+  }
+}

@@ -9,7 +9,7 @@ name: 发布 Linux 服务端安装包
 #
 # 用法：
 #   1. 先在本地按惯例打出 Windows 包并发 Release（vX.Y.Z）；
-#   2. 到 Actions 页面手动运行本 workflow，填 tag（例如 v1.1.0）；
+#   2. 到 Actions 页面手动运行本 workflow，填 tag（例如 v1.1.2）；
 #   3. 跑完 Release 里会多出 Linux 包与更新后的 SHA256SUMS-<版本>.txt。
 #
 # 也可以只跑构建不挂 Release（attach=false），产物在 workflow 的 Artifacts 里。
@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '要构建并挂载的 Release tag（例如 v1.1.0）'
+        description: '要构建并挂载的 Release tag（例如 v1.1.2）'
         required: true
         type: string
       attach:
@@ -81,15 +81,15 @@ jobs:
         run: pnpm dist:server:linux
 
       - name: 展示产物
-        run: ls -la release-server/
+        run: ls -la releases/server/*/linux-x64/
 
       - name: 上传构建产物（Artifacts）
         uses: actions/upload-artifact@v4
         with:
           name: classhelper-server-linux-x64
           path: |
-            release-server/classhelper-server-linux-x64-*.tar.gz
-            release-server/classhelper-server-linux-x64-*.tar.gz.sha256
+            releases/server/*/linux-x64/classhelper-server-linux-x64-*.tar.gz
+            releases/server/*/linux-x64/classhelper-server-linux-x64-*.tar.gz.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -101,9 +101,10 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
-          TARBALL="release-server/classhelper-server-linux-x64-${VERSION}.tar.gz"
+          ARTIFACT_DIR="releases/server/${VERSION}/linux-x64"
+          TARBALL="${ARTIFACT_DIR}/classhelper-server-linux-x64-${VERSION}.tar.gz"
           SHAFILE="${TARBALL}.sha256"
-          SUMS="release-server/SHA256SUMS-${VERSION}.txt"
+          SUMS="releases/SHA256SUMS-${VERSION}.txt"
 
           if [ ! -f "$TARBALL" ]; then
             echo "::error::没有找到 $TARBALL（tag 与 package.json 的版本号对得上吗？）"
@@ -112,13 +113,13 @@ jobs:
           # .sha256 必须跟着一起传：它是独立发布的资产，只更新 tar.gz 会让这个文件指向旧哈希，
           # 拿它校验的人会得到 mismatch（classhelper upgrade 用的是 --sha256/这个文件，不是 SHA256SUMS）。
           if [ ! -f "$SHAFILE" ]; then
-            sha256sum "$TARBALL" | sed "s#release-server/##" > "$SHAFILE"
+            sha256sum "$TARBALL" | sed "s#${ARTIFACT_DIR}/##" > "$SHAFILE"
           fi
 
           # 取回已有的校验清单（Windows 包那几行），只替换/追加本包这一行，其余内容原样保留。
           # 注意**不要**用 `sort -u` 去重：那份文件是人读的（表头 + 体积 + 说明），排序会把它们打散。
-          gh release download "$TAG" --pattern "SHA256SUMS-*.txt" --dir release-server --clobber || true
-          DOWNLOADED="$(ls release-server/SHA256SUMS-*.txt 2>/dev/null | head -n 1 || true)"
+          gh release download "$TAG" --pattern "SHA256SUMS-*.txt" --dir releases --clobber || true
+          DOWNLOADED="$(ls releases/SHA256SUMS-*.txt 2>/dev/null | head -n 1 || true)"
           if [ -n "$DOWNLOADED" ] && [ "$DOWNLOADED" != "$SUMS" ]; then mv "$DOWNLOADED" "$SUMS"; fi
           touch "$SUMS"
           grep -v "^[0-9a-f]\{64\}  classhelper-server-linux-" "$SUMS" > "${SUMS}.new" || true

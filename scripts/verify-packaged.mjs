@@ -26,9 +26,11 @@ const argOf = (name) => {
   return index >= 0 ? argv[index + 1] : undefined;
 };
 
-const exe = path.resolve(
-  argOf('--exe') ?? path.join(repoRoot, 'packages/desktop-client/release/win-unpacked/班级小助手.exe'),
-);
+// 默认取 releases/client/<版本>/免安装/（dist-win 的产物落点，见 AGENTS.md §4）
+const clientVersion = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version;
+const defaultExe = path.join(repoRoot, 'releases', 'client', clientVersion, '免安装', '班级小助手.exe');
+
+const exe = path.resolve(argOf('--exe') ?? defaultExe);
 const classCode = argOf('--code') ?? process.env.ELECTRON_SMOKE_CLASS_CODE ?? 'G101';
 const classPassword = argOf('--password') ?? process.env.ELECTRON_SMOKE_CLASS_PASSWORD ?? '123456';
 const forceOffline = argv.includes('--offline');

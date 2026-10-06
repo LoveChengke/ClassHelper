@@ -181,12 +181,14 @@ if [ -n "$TOKEN" ]; then
   check "审计日志里没有新密码明文" "$(grep -q -- "$GENERATED" "${LOG_DIR}/audit.log" 2>/dev/null && echo 1 || echo 0)"
   check "审计日志里没有原密码明文" "$(grep -q -- "$ADMIN_PASSWORD" "${LOG_DIR}/audit.log" 2>/dev/null && echo 1 || echo 0)"
 
-  check "弱密码被拒绝（长度/种数不足）" \
-    "$(printf 'abc\nabc\n' | "$CLASSHELPER" password "$ADMIN_USER" 2>&1 | grep -q '不合规' && echo 0 || echo 1)"
+  # 先把输出收进变量再 grep：`外部命令 | grep -q` 在 `set -o pipefail` 下，grep 命中即退出会让
+  # 写端收到 SIGPIPE（退出码 141），于是"匹配到了"被算成失败
+  weak_out="$(printf 'abc\nabc\n' | "$CLASSHELPER" password "$ADMIN_USER" 2>&1 || true)"
+  check "弱密码被拒绝（长度/种数不足）" "$(printf '%s' "$weak_out" | grep -q '不合规' && echo 0 || echo 1)"
   check "密码不合规时不会卡死（stdin 结束即退出）" \
     "$(printf 'abc\n' | timeout 20 "$CLASSHELPER" password "$ADMIN_USER" >/dev/null 2>&1; [ $? -ne 124 ] && echo 0 || echo 1)"
-  check "password --list 能列出账号" \
-    "$("$CLASSHELPER" password --list 2>&1 | grep -q "$ADMIN_USER" && echo 0 || echo 1)"
+  list_out="$("$CLASSHELPER" password --list 2>&1 || true)"
+  check "password --list 能列出账号" "$(printf '%s' "$list_out" | grep -q "$ADMIN_USER" && echo 0 || echo 1)"
 
   # 用改密前保存的哈希把账号恢复原样：比再改一次密码更可靠
   # （原密码若是 admin123 这类弱口令，改回去会被强度校验挡下 —— 那是产品的正确行为）
@@ -223,7 +225,8 @@ if [ -n "$latest" ]; then
   fi
   check "备份目录权限 700" "$([ "$(stat -c '%a' "${latest%/}" 2>/dev/null)" = "700" ] && echo 0 || echo 1)"
 fi
-check "backup list 能列出备份" "$("$CLASSHELPER" backup list 2>&1 | grep -qE '^  [0-9]{8}-' && echo 0 || echo 1)"
+backup_list_out="$("$CLASSHELPER" backup list 2>&1 || true)"
+check "backup list 能列出备份" "$(printf '%s' "$backup_list_out" | grep -qE '^  [0-9]{8}-' && echo 0 || echo 1)"
 
 # ---------------------------------------------------------------- 6. 配置
 
@@ -248,8 +251,10 @@ if [ -n "$TOKEN" ]; then
     note "按环境变量跳过"
   else
     old_secret="$(read_cfg JWT_SECRET)"
-    # key rotate 会问一次确认；无 tty 时从 stdin 读，因此用管道喂 yes
-    printf 'yes\n' | CLASSHELPER_NO_TTY=1 "$CLASSHELPER" key rotate >/dev/null 2>&1 || true
+    # key rotate 无 tty 时会问两次（确认轮换、是否现在重启）；只喂一个 yes 的话第二次读到 EOF，
+    # 重启被跳过 —— 新密钥不生效，下面「旧 token 已失效」必然失败。
+    # 用 CLASSHELPER_ASSUME_YES=1 跳过问答并强制重启，语义才是"轮换后旧会话立即失效"。
+    CLASSHELPER_NO_TTY=1 CLASSHELPER_ASSUME_YES=1 "$CLASSHELPER" key rotate >/dev/null 2>&1 || true
     new_secret="$(read_cfg JWT_SECRET)"
     check "key rotate 改变了 JWT_SECRET" "$([ -n "$new_secret" ] && [ "$new_secret" != "$old_secret" ] && echo 0 || echo 1)"
     check "新密钥长度 ≥32" "$([ "${#new_secret}" -ge 32 ] && echo 0 || echo 1)"

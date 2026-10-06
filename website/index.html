@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>班级小助手 Class Helper — 知道现在是第几节课的班级信息系统</title>
+    <meta
+      name="description"
+      content="班级小助手是一套自托管的班级信息管理系统：课表、作业、通知、成绩、叫人合在一个后端，教室大屏与每台学生机实时收到，上课时段自动不打扰课堂。支持 Windows 单机、Linux 服务器与 Docker 部署。"
+    />
+    <meta name="theme-color" content="#16231e" />
+    <meta property="og:title" content="班级小助手 Class Helper" />
+    <meta
+      property="og:description"
+      content="课表、作业、通知、成绩、叫人合在一个后端，教室大屏与每台学生机实时收到，上课时段自动不打扰课堂。"
+    />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="assets/icon.png" />
+    <link rel="apple-touch-icon" href="assets/icon.png" />
+
+    <!-- 标题与引文用的楷体（霞鹜文楷 Screen）。加载失败时自动回落到系统的楷体 / 衬线 -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-screen-webfont@1.7.0/style.css"
+      media="print"
+      onload="this.media = 'all'"
+    />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <!-- 脚本在，先把标题藏起来准备逐字上浮；4 秒兜底，脚本坏在半路也不会把标题永久藏住 -->
+    <script>
+      document.documentElement.classList.add('reveal-pending');
+      setTimeout(function () {
+        document.documentElement.classList.remove('reveal-pending');
+      }, 4000);
+    </script>
+  </head>
+
+  <body>
+    <a class="skip" href="#main">跳到正文</a>
+
+    <header class="topbar">
+      <div class="wrap topbar-inner">
+        <a class="brand" href="#top" data-press="0.96">
+          <img class="brand-mark" src="assets/icon.png" alt="" width="32" height="32" />
+          <span class="brand-name">班级小助手</span>
+          <span class="brand-ver">1.1.2</span>
+        </a>
+        <nav class="topnav" aria-label="页内导航">
+          <span class="nav-pill" aria-hidden="true"></span>
+          <a href="#journey">一条通知的旅程</a>
+          <a href="#policy">上课时段策略</a>
+          <a href="#parts">组成部分</a>
+          <a href="#shots">实机</a>
+          <a href="#deploy">部署</a>
+          <a href="#verify">验收</a>
+        </nav>
+        <a class="btn btn-quiet" href="#deploy" data-press="0.95">取安装包</a>
+      </div>
+      <!-- 阅读进度：beUI ScrollProgressBar（2px，origin-left，弹簧缓跟） -->
+      <div class="scroll-progress" aria-hidden="true"></div>
+    </header>
+
+    <main id="main">
+      <!-- ═══════════════════════ 黑板：教室那台机器 ═══════════════════════ -->
+      <section class="band band-board hero" id="top">
+        <div class="wrap">
+          <div class="hero-intro">
+            <h1 class="display" data-reveal>
+              <span class="reveal-line">它知道现在是第几节课，</span>
+              <span class="reveal-line">所以不会在课上打扰学生。</span>
+            </h1>
+
+            <p class="hero-sub intro-seq" style="--intro-delay: 150ms">课表、作业、通知、成绩、叫人</p>
+
+            <p class="lead intro-seq" style="--intro-delay: 200ms">
+              一个后端全管，老师在电脑或手机上发布，教室大屏和每台学生机同时收到；
+              断网时用本地缓存接着看，网络恢复自动补齐。
+            </p>
+
+            <div class="actions intro-seq" style="--intro-delay: 250ms">
+              <a class="btn btn-solid" href="#deploy" data-press="0.93">下载与部署</a>
+              <a class="btn btn-line" href="#journey" data-press="0.93">先看它怎么工作</a>
+            </div>
+          </div>
+
+          <div
+            class="screen"
+            role="img"
+            aria-label="教室机器上的界面示意：屏幕顶部中央浮着一个黑色灵动岛，正在展开老师发来的通知；下面是大时钟、正在上的数学课与下一节语文。"
+          >
+            <div class="screen-bar">
+              <span class="screen-dot" aria-hidden="true"></span>
+              <span class="screen-title">教室机器 · 高一(1)班</span>
+              <span class="screen-live">实时连接正常</span>
+            </div>
+
+            <div class="screen-stage" id="stage">
+              <div class="island-slot">
+                <div class="island" id="island" data-kind="pill">
+                  <svg class="island-shape" id="island-shape" width="268" height="44" aria-hidden="true">
+                    <defs>
+                      <!-- 紧急/叫人卡片顶部那层呼吸光晕。真实产品用的是卡片内部的 inset 阴影，
+                           这里用同一个 path 做一层渐变，效果一致且不会被窗口裁掉 -->
+                      <radialGradient id="island-tint-urgent" cx="50%" cy="0" r="120%">
+                        <stop offset="0" stop-color="#ff453a" stop-opacity="0.28" />
+                        <stop offset="0.68" stop-color="#ff453a" stop-opacity="0" />
+                      </radialGradient>
+                      <radialGradient id="island-tint-call" cx="50%" cy="0" r="120%">
+                        <stop offset="0" stop-color="#ff9f0a" stop-opacity="0.26" />
+                        <stop offset="0.68" stop-color="#ff9f0a" stop-opacity="0" />
+                      </radialGradient>
+                    </defs>
+                    <path class="island-base" id="island-path" d="" />
+                    <path class="island-tint" id="island-tint" d="" />
+                  </svg>
+                  <div class="island-layers">
+                    <div class="island-pill" id="island-pill">
+                      <span class="pill-icon" id="pill-icon"></span>
+                      <span class="pill-title" id="pill-title">新消息</span>
+                      <span class="pill-sub" id="pill-sub">张老师 · 点击查看</span>
+                    </div>
+                    <!-- 卡片内容由 main.js 按 beUI DynamicIsland 的 Slot 机制挂进来 -->
+                  </div>
+                </div>
+              </div>
+
+              <div class="screen-body">
+                <div class="clock">
+                  <p class="clock-hm">
+                    08:42
+                    <span class="clock-s">07</span>
+                  </p>
+                  <p class="clock-week">第 6 教学周 · 单周 · 周二</p>
+                </div>
+                <div class="clock-now">
+                  <p class="clock-current">
+                    正在上
+                    <b>数学</b>
+                  </p>
+                  <p class="clock-sub">08:00–08:45 · 教学楼 A301 · 距下课 3 分钟</p>
+                  <div class="clock-bar"><i style="width: 88%"></i></div>
+                </div>
+                <div class="clock-next">
+                  <p class="next-head">下一节</p>
+                  <p class="next-name">
+                    语文
+                    <span>08:55–09:40</span>
+                  </p>
+                  <p class="next-sub">教学楼 A302 · 还有 13 分钟</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p class="hero-cap">
+            上面这个灵动岛不是截图 —— 圆角路径与尺寸都是产品的（胶囊 268×44、展开 424×230、连续圆角 4.2
+            次方）， 形变用的是 beUI 的 Dynamic Island 那套弹簧：壳 0.8 秒、回弹 0.2，内容层回弹 0.35。
+          </p>
+
+          <ul class="facts">
+            <li>装着 SQLite 就能跑，需要时一键换到 MySQL —— 数据也跟着搬过去。</li>
+            <li>课表由教室的 ClassIsland 上报，不用在小助手这边再排一遍。</li>
+            <li>教室把通知交给哪个端，由教室那台机器自己选：客户端、大屏，或者两边都弹。</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- 分幕标题：居中大标题 + 中间一段渐变高亮（照 ClassIsland 官网的分节写法） -->
+      <section class="band act" aria-label="第一部分：它是怎么工作的">
+        <div class="wrap">
+          <!-- prettier-ignore -->
+          <h2 class="act-title">它是<span class="act-hl">怎么工作</span>的</h2>
+        </div>
+      </section>
+
+      <section class="band band-board" id="journey">
+        <div class="wrap">
+          <h2 class="h2">从按下「发布」到教室屏幕上弹出来</h2>
+          <p class="lead narrow">
+            中间只隔着一条 WebSocket 广播。实测从老师提交到教室机器收到，是 30 到 50 毫秒 —— 这个数字由
+            <code>pnpm verify:e2e</code>
+            每次跑的时候重新量，不是写在文档里的估计值。
+          </p>
+
+          <ol class="pipeline">
+            <li>
+              <p class="pipe-step">老师发布</p>
+              <p class="pipe-body">Web 管理端或手机浏览器。通知、作业、叫人、成绩都在这里录。</p>
+            </li>
+            <li>
+              <p class="pipe-step">后端落库</p>
+              <p class="pipe-body">Express 5 + Prisma 7 写进库，再按班级房间广播一条事件。</p>
+            </li>
+            <li>
+              <p class="pipe-step">教室收到</p>
+              <p class="pipe-body">
+                Socket.IO 推到
+                <code>class:班级</code>
+                房间 —— 教室机器、学生机、大屏同时收到。
+              </p>
+            </li>
+            <li>
+              <p class="pipe-step">判一次时间</p>
+              <p class="pipe-body">课表服务回答「现在上不上课」，当场弹还是先收着，这一步就定下来了。</p>
+            </li>
+            <li>
+              <p class="pipe-step">两端弹出</p>
+              <p class="pipe-body">灵动岛展开成卡片，ClassIsland 同时全屏提醒，可以语音朗读。</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════ 上课时段策略 ═══════════════════════ -->
+      <section class="band band-board" id="policy">
+        <div class="wrap">
+          <h2 class="h2">上课的时候，通知会先排队</h2>
+          <p class="lead narrow">
+            判定来自课表本身，不是按时钟拍脑袋。把下面这条时间轴拨一下，看看同样的通知在课上和课间分别会怎样。
+          </p>
+
+          <div class="policy" id="policy-widget">
+            <div class="policy-clock">
+              <p class="policy-time" id="policy-time">09:20</p>
+              <p class="policy-state" id="policy-state">正在上 第三节 · 数学</p>
+            </div>
+
+            <div class="day">
+              <div class="day-track" id="day-track" aria-hidden="true"></div>
+              <div class="day-marker" id="day-marker" aria-hidden="true"></div>
+              <input
+                class="day-input"
+                id="day-input"
+                type="range"
+                min="420"
+                max="1030"
+                step="1"
+                value="560"
+                aria-label="拖动选择一天中的时刻，查看通知在两个端上的表现"
+              />
+              <div class="day-scale" aria-hidden="true">
+                <span>07:00</span>
+                <span>10:00</span>
+                <span>13:00</span>
+                <span>16:00</span>
+                <span>17:10</span>
+              </div>
+            </div>
+
+            <div class="outcomes">
+              <div class="outcome">
+                <p class="outcome-what">普通通知</p>
+                <p class="outcome-where">学生机 · 灵动岛</p>
+                <p class="outcome-say" id="o-normal-client">先收着，打下课铃自动弹出来</p>
+              </div>
+              <div class="outcome">
+                <p class="outcome-what">普通通知</p>
+                <p class="outcome-where">教室大屏 · ClassIsland</p>
+                <p class="outcome-say" id="o-normal-screen">先收着，下课补弹</p>
+              </div>
+              <div class="outcome outcome-alert">
+                <p class="outcome-what">紧急通知 / 叫人</p>
+                <p class="outcome-where">教室大屏 · ClassIsland</p>
+                <p class="outcome-say" id="o-urgent-screen">立刻全屏弹出，不打断也拦不住</p>
+              </div>
+              <div class="outcome">
+                <p class="outcome-what">不管什么时候</p>
+                <p class="outcome-where">通知中心</p>
+                <p class="outcome-say">照常记一条，未读红点随时可查，不会被吞掉</p>
+              </div>
+            </div>
+
+            <p class="policy-note">
+              普通叫人（默认级别）上课时只进队列，下课后自动弹出详情；标成紧急的才当场打断课堂 ——
+              那是老师正在等学生。老师在 Web 端发紧急通知时会先撞上全屏二次确认，确认按钮带 3 秒倒计时，
+              防止手滑。这一层拦在服务端，绕过界面直接调接口也一样会被拒。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 分幕标题：居中大标题 + 中间一段渐变高亮（照 ClassIsland 官网的分节写法） -->
+      <section class="band act" aria-label="第二部分：它是怎么构成的">
+        <div class="wrap">
+          <!-- prettier-ignore -->
+          <h2 class="act-title">它是<span class="act-hl">怎么构成</span>的</h2>
+        </div>
+      </section>
+
+      <section class="band band-paper" id="parts">
+        <div class="wrap">
+          <h2 class="h2">一份代码，四个交付物</h2>
+          <p class="lead narrow">
+            一个 pnpm monorepo。三端共用同一份类型与权限矩阵，所以不会出现「Web 端说有、客户端说没有」。
+          </p>
+
+          <div class="table-scroll">
+            <table class="sheet">
+              <caption class="sr-only">四个交付物、它们的形态与使用者</caption>
+              <thead>
+                <tr>
+                  <th scope="col">交付物</th>
+                  <th scope="col">形态</th>
+                  <th scope="col">谁在用</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">后端服务</th>
+                  <td>
+                    Express 5 + Prisma 7 + Socket.IO，接口前缀
+                    <code>/api</code>
+                  </td>
+                  <td>其它三端</td>
+                </tr>
+                <tr>
+                  <th scope="row">Web 管理端</th>
+                  <td>Vue 3 + Element Plus，手机可用，可在浏览器里装成应用</td>
+                  <td>老师、管理员</td>
+                </tr>
+                <tr>
+                  <th scope="row">桌面客户端</th>
+                  <td>Electron + Vue 3，带灵动岛与系统托盘，断网可用</td>
+                  <td>教室机器、学生机</td>
+                </tr>
+                <tr>
+                  <th scope="row">ClassIsland 联动插件</th>
+                  <td>.NET 8 插件，装进教室已有的 ClassIsland 里</td>
+                  <td>教室大屏</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════ 实机截图 ═══════════════════════ -->
+      <section class="band band-board" id="shots">
+        <div class="wrap">
+          <h2 class="h2">每个界面都是跑起来截的</h2>
+          <p class="lead narrow">
+            下面没有一张是画的示意。这些图是脚本真的把后端、Web 管理端、教室客户端和灵动岛跑起来之后
+            一屏一屏截下来的 —— 数据也是库里真实的数据。
+          </p>
+
+          <div class="shots" id="shots-widget">
+            <div class="shots-tabs" role="tablist" aria-label="按端筛选截图">
+              <span class="shots-indicator" data-tabs-indicator aria-hidden="true"></span>
+            </div>
+            <div class="shots-grid" id="shots-grid" role="tabpanel" tabindex="0"></div>
+          </div>
+
+          <p class="shots-hint">点任意一张看大图。</p>
+        </div>
+      </section>
+
+      <!-- 大图浮层：从被点的那张缩略图原地展开（beUI 的 morphing lightbox 用共享 layoutId，这里用 FLIP 等价实现） -->
+      <div class="lightbox" id="lightbox" hidden>
+        <div class="lightbox-backdrop" id="lightbox-backdrop"></div>
+        <div class="lightbox-panel" id="lightbox-panel">
+          <img class="lightbox-img" id="lightbox-img" alt="" />
+        </div>
+        <p class="lightbox-cap" id="lightbox-cap"></p>
+        <button class="lightbox-close" id="lightbox-close" type="button" aria-label="关闭大图">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- ═══════════════════════ 纸张：功能 ═══════════════════════ -->
+      <section class="band band-paper" id="features">
+        <div class="wrap">
+          <h2 class="h2">老师那边，教室这边</h2>
+
+          <div class="feature-groups">
+            <div class="feature-group">
+              <h3 class="h3">老师与管理员</h3>
+              <div class="feature-blocks">
+                <div class="feature-block">
+                  <p class="feature-tag">#班级人员</p>
+                  <h4 class="feature-title">建班、换班主任、录学生</h4>
+                  <p class="feature-body">
+                    名单可以直接导入表格。教师录入与重置密码只对管理员开放，班主任也不行。
+                  </p>
+                </div>
+                <div class="feature-block">
+                  <p class="feature-tag">#课表</p>
+                  <h4 class="feature-title">按周排课，支持单双周</h4>
+                  <p class="feature-body">
+                    也可以直接导入 ClassIsland 的档案 JSON —— 节次时间跟着课表一起进来，不用排两遍。
+                  </p>
+                </div>
+                <div class="feature-block">
+                  <p class="feature-tag">#作业</p>
+                  <h4 class="feature-title">按「所属日期」归类</h4>
+                  <p class="feature-body">
+                    晚上八点留的作业算今天。教室机器也能录；未交名单勾一下，其余同学自动标成已完成。
+                  </p>
+                </div>
+                <div class="feature-block">
+                  <p class="feature-tag">#通知与叫人</p>
+                  <h4 class="feature-title">分优先级发布，点名分两档</h4>
+                  <p class="feature-body">
+                    普通叫人上课时先收着，紧急的才当场打断课堂 —— 那是老师正在等学生。
+                  </p>
+                </div>
+                <div class="feature-block">
+                  <p class="feature-tag">#成绩</p>
+                  <h4 class="feature-title">单条、批量，或者整张表导进来</h4>
+                  <p class="feature-body">
+                    重复判定按「同班 + 同学生 + 同考试 + 同课程」，导入报错精确到 Excel 行号，改完再导。
+                  </p>
+                </div>
+                <div class="feature-block">
+                  <p class="feature-tag">#数据库</p>
+                  <h4 class="feature-title">备份、导入导出、一键换库</h4>
+                  <p class="feature-body">
+                    SQLite 与 MySQL 互相搬数据，中途失败会自动回滚 —— 现有的库不会被动到。
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="feature-group">
+              <h3 class="h3">教室机器与学生机</h3>
+              <div class="feature-blocks">
+                <div class="feature-block">
+                  <p class="feature-tag">#课表时间轴</p>
+                  <h4 class="feature-title">大时钟、正在上的课、距下课倒计时</h4>
+                  <p class="feature-body">已结束的置灰，正在上的带进度条，下一节还有多久开始 —— 一眼看完。</p>
+                </div>
+                <div class="feature-block">
+                  <p class="feature-tag">#作业看板</p>
+                  <h4 class="feature-title">按科目分卡，整屏缩放到刚好放下</h4>
+                  <p class="feature-body">
+                    标题和要求全文不截断，也不用上下翻页；全屏看板会自己算最合适的列数。
+                  </p>
+                </div>
+                <div class="feature-block">
+                  <p class="feature-tag">#灵动岛</p>
+                  <h4 class="feature-title">消息到达的第一现场</h4>
+                  <p class="feature-body">
+                    无边框透明置顶的小窗，通知、作业、叫人在里面展开成卡片；鼠标穿透，不占任务栏。
+                  </p>
+                </div>
+                <div class="feature-block">
+                  <p class="feature-tag">#离线缓存</p>
+                  <h4 class="feature-title">断网的时候接着看</h4>
+                  <p class="feature-body">
+                    课表、作业、通知、成绩先落本地，断网顶部提示离线、照旧显示，网络恢复自己刷新。
+                  </p>
+                </div>
+                <div class="feature-block">
+                  <p class="feature-tag">#外观</p>
+                  <h4 class="feature-title">深浅两套，岛也能整</h4>
+                  <p class="feature-body">
+                    高度、宽度、圆角、字号、停靠位置、视觉风格都能调；越界的值在主进程统一夹紧。
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 分幕标题：居中大标题 + 中间一段渐变高亮（照 ClassIsland 官网的分节写法） -->
+      <section class="band act" aria-label="第三部分：它是怎么到你手里的">
+        <div class="wrap">
+          <!-- prettier-ignore -->
+          <h2 class="act-title">它是<span class="act-hl">怎么到你手里</span>的</h2>
+        </div>
+      </section>
+
+      <section class="band band-paper" id="deploy">
+        <div class="wrap">
+          <h2 class="h2">四种装法，按场景挑</h2>
+
+          <div class="table-scroll">
+            <table class="sheet">
+              <caption class="sr-only">四种部署形态与各自入口</caption>
+              <thead>
+                <tr>
+                  <th scope="col">场景</th>
+                  <th scope="col">形态</th>
+                  <th scope="col">入口</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">教师电脑、学校机房单机</th>
+                  <td>Windows 服务端安装程序，内置 Node 运行时</td>
+                  <td>双击安装，自动建库建号、开机自启</td>
+                </tr>
+                <tr>
+                  <th scope="row">云服务器、多终端共享</th>
+                  <td>Docker Compose，MySQL 与 SQLite 两种编排都在仓库里</td>
+                  <td><code>deploy/docker-compose.yml</code></td>
+                </tr>
+                <tr>
+                  <th scope="row">已有 Linux 服务器</th>
+                  <td>
+                    一行命令装成 systemd 服务，附带
+                    <code>classhelper</code>
+                    运维命令
+                  </td>
+                  <td>见下面的命令</td>
+                </tr>
+                <tr>
+                  <th scope="row">已有 Node 环境</th>
+                  <td>免安装目录，自带 node.exe</td>
+                  <td>
+                    <code>pnpm dist:server</code>
+                    的产物
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="snippet">
+            <div class="snippet-head">
+              <span class="snippet-label">Linux 服务器上跑这一条</span>
+              <button
+                class="copy"
+                type="button"
+                data-press="0.97"
+                data-copy="#cmd-linux"
+                data-copy-done="已复制"
+              >
+                <span class="copy-label">复制</span>
+              </button>
+            </div>
+            <pre
+              id="cmd-linux"
+            ><code>curl -fsSL -o /tmp/classhelper-install.sh https://raw.githubusercontent.com/LoveChengke/ClassHelper/master/deploy/install.sh &amp;&amp; sudo bash /tmp/classhelper-install.sh</code></pre>
+          </div>
+
+          <p class="lead narrow">
+            脚本自己从 GitHub Release 取最新版、核对发布页上的
+            <code>.sha256</code>
+            ，再装成 systemd 服务。 想先不改动系统，把末尾换成
+            <code>--check</code>
+            就只体检。装完之后，
+            <code>classhelper upgrade</code>
+            、
+            <code>backup</code>
+            、
+            <code>doctor</code>
+            、
+            <code>password</code>
+            这些命令都在
+            <code>/usr/local/bin</code>
+            里等着。
+          </p>
+
+          <p class="lead narrow">
+            学生机这边是安装包和单文件版两种：安装包走 NSIS，单文件版不用装、放 U 盘里就能分发。
+            两个都不写死服务器地址 —— 第一次打开时填教室的地址和班级码就行。
+          </p>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════ 验收 ═══════════════════════ -->
+      <section class="band band-board" id="verify">
+        <div class="wrap">
+          <h2 class="h2">每个功能都配了一条能复跑的用例</h2>
+          <p class="lead narrow">
+            仓库里带着这几套脚本，跑到哪儿、过了几条由脚本自己数，不是文档里写死的数字。 交付前它们必须全绿 ——
+            包括对
+            <strong>已经打包装好</strong>
+            的那份客户端再跑一遍。
+          </p>
+
+          <div class="ledger">
+            <div class="ledger-row">
+              <code class="ledger-cmd">pnpm verify:e2e</code>
+              <span class="ledger-what">
+                接口、实时推送、权限越权、上课时段、表格导入、班级账号、数据库管理、更新检查
+              </span>
+              <span class="ledger-num"><span data-ticker="190">190</span></span>
+            </div>
+            <div class="ledger-row">
+              <code class="ledger-cmd">pnpm verify:desktop</code>
+              <span class="ledger-what">客户端冒烟：登录、离线回退、灵动岛开合与命中、设置页真实点击</span>
+              <span class="ledger-num"><span data-ticker="105">105</span></span>
+            </div>
+            <div class="ledger-row">
+              <code class="ledger-cmd">pnpm verify:packaged</code>
+              <span class="ledger-what">对打包后 / 已安装的那份 EXE 复跑同一套冒烟</span>
+              <span class="ledger-num"><span data-ticker="105">105</span></span>
+            </div>
+            <div class="ledger-row">
+              <code class="ledger-cmd">pnpm verify:classisland</code>
+              <span class="ledger-what">设备令牌、课表上报、提醒下发与回执、镜像契约、幽灵行清理</span>
+              <span class="ledger-num"><span data-ticker="42">42</span></span>
+            </div>
+            <div class="ledger-row">
+              <code class="ledger-cmd">pnpm verify:classisland-plugin</code>
+              <span class="ledger-what">插件清单、注册完整性、C# DTO 与服务端校验逐字段对齐</span>
+              <span class="ledger-num"><span data-ticker="68">68</span></span>
+            </div>
+          </div>
+
+          <p class="ledger-foot">
+            上面是 2026-10-05 那一次的结果。这几套脚本每天都在跑，数字会变；跑到多少条，以脚本自己打印的为准。
+          </p>
+        </div>
+      </section>
+
+      <!-- 收尾 CTA：和 ClassIsland 官网一样，末尾放一整块「下一步做什么」 -->
+      <section class="band cta" aria-label="开始使用">
+        <div class="wrap">
+          <!-- prettier-ignore -->
+          <h2 class="cta-title">剩下的，<span class="act-hl">留给你自己试</span></h2>
+          <p class="cta-lead">
+            一台机器装完就能跑起来，学生机和教室大屏接上同一个地址就行。装好之后还有什么， 都在界面里 ——
+            不用先读一遍文档。
+          </p>
+          <div class="cta-actions">
+            <a class="btn btn-solid" href="#deploy" data-press="0.93">取安装包</a>
+            <a
+              class="btn btn-line"
+              href="https://github.com/LoveChengke/ClassHelper"
+              target="_blank"
+              rel="noreferrer"
+              data-press="0.93"
+            >
+              看源码
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ═══════════════════════ 页脚 ═══════════════════════ -->
+    <footer class="foot">
+      <div class="wrap foot-inner">
+        <div class="foot-brand">
+          <img src="assets/icon.png" alt="" width="36" height="36" />
+          <div>
+            <p class="foot-name">
+              班级小助手
+              <span>Class Helper</span>
+            </p>
+            <p class="foot-ver">版本 1.1.2 · 源码公开 · 装在你自己的机器上</p>
+          </div>
+        </div>
+        <nav class="foot-nav" aria-label="相关链接">
+          <a href="https://github.com/LoveChengke/ClassHelper" target="_blank" rel="noreferrer">源码仓库</a>
+          <a
+            href="https://github.com/LoveChengke/ClassHelper/blob/master/docs/production.md"
+            target="_blank"
+            rel="noreferrer"
+          >
+            生产部署
+          </a>
+          <a
+            href="https://github.com/LoveChengke/ClassHelper/blob/master/docs/linux-deploy.md"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Linux 运维
+          </a>
+          <a
+            href="https://github.com/LoveChengke/ClassHelper/blob/master/docs/mysql.md"
+            target="_blank"
+            rel="noreferrer"
+          >
+            切换 MySQL
+          </a>
+          <a href="https://classisland.tech" target="_blank" rel="noreferrer">ClassIsland</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="assets/motion.js" defer></script>
+    <script src="assets/main.js" defer></script>
+  </body>
+</html>

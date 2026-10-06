@@ -1,13 +1,17 @@
 /**
  * 服务端 + Web 管理端 生产打包脚本：pnpm dist:server
  *
+ * 交付产物统一落到 releases/server/<版本>/（releases/ 不入库，与客户端/插件同级）：
+ *
  * 产出（Windows）：
- *   release-server/classhelper-server/            可直接运行的免安装目录
- *   release-server/班级小助手服务端-<版本>-x64-setup.exe   Windows 安装程序（NSIS）
+ *   releases/server/<版本>/免安装/                                    可直接运行的免安装目录
+ *   releases/server/<版本>/安装包/班级小助手服务端-<版本>-x64-setup.exe  Windows 安装程序（NSIS）
+ *   releases/server/<版本>/构建中间/server-installer.generated.nsi      NSIS 生成脚本（可重新生成）
  *
  * 产出（Linux，加 --platform linux，即 pnpm dist:server:linux）：
- *   release-server/classhelper-server-linux-x64-<版本>.tar.gz   Linux 一键安装器的输入
- *   release-server/classhelper-server-linux-x64-<版本>.tar.gz.sha256
+ *   releases/server/<版本>/linux-x64/classhelper-server-linux-x64-<版本>.tar.gz   Linux 一键安装器的输入
+ *   releases/server/<版本>/linux-x64/classhelper-server-linux-x64-<版本>.tar.gz.sha256
+ *   releases/server/<版本>/linux-x64/classhelper-server-linux-x64/                tar 的解包目录（同内容留档）
  *
  * 为什么 Linux 包要在 Linux 上构建：`@libsql/linux-x64-gnu`、`@prisma/adapter-libsql` 都是
  * 平台相关依赖，在 Windows 上 npm install 出来的 node_modules 装到 Linux 跑不起来。
@@ -32,7 +36,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const serverDir = path.join(root, 'packages', 'server');
 const webDir = path.join(root, 'packages', 'web-admin');
 const deployDir = path.join(root, 'deploy');
-const outRoot = path.join(root, 'release-server');
+
+const VERSION = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+const PRODUCT = '班级小助手服务端';
+const PORT = '4000';
+const LINUX_ARCH = 'x64';
+
+// 产物根：releases/server/<版本>/（releases/ 不入库，见 AGENTS.md §4）
+const outRoot = path.join(root, 'releases', 'server', VERSION);
+const INSTALLER_DIR = path.join(outRoot, '安装包');
+const GENERATED_DIR = path.join(outRoot, '构建中间');
 
 /** win = 免安装目录 + NSIS 安装程序；linux = 带运维工具的 tar.gz（给 deploy/install.sh 用） */
 const PLATFORM = (() => {
@@ -43,13 +56,17 @@ const PLATFORM = (() => {
 })();
 const isLinux = PLATFORM === 'linux';
 
-const staging = path.join(outRoot, isLinux ? 'classhelper-server-linux-x64' : 'classhelper-server');
+// Linux 侧 staging 的目录名会原样成为 tar 里的顶层目录（deploy/install.sh 用 --strip-components=1
+// 展开），保持 ASCII 不动；Windows 侧目录名只影响本地留档，直接用中文分类名。
+const staging = isLinux
+  ? path.join(outRoot, 'linux-x64', 'classhelper-server-linux-x64')
+  : path.join(outRoot, '免安装');
 
-const VERSION = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
-const PRODUCT = '班级小助手服务端';
-const PORT = '4000';
-const LINUX_ARCH = 'x64';
-const LINUX_TARBALL = path.join(outRoot, `classhelper-server-linux-${LINUX_ARCH}-${VERSION}.tar.gz`);
+const LINUX_TARBALL = path.join(
+  outRoot,
+  'linux-x64',
+  `classhelper-server-linux-${LINUX_ARCH}-${VERSION}.tar.gz`,
+);
 
 const log = (message) => console.log(`[dist:server] ${message}`);
 
@@ -802,7 +819,10 @@ function buildInstaller() {
     return null;
   }
 
-  const outFile = path.join(outRoot, `${PRODUCT}-${VERSION}-x64-setup.exe`);
+  fs.mkdirSync(INSTALLER_DIR, { recursive: true });
+  fs.mkdirSync(GENERATED_DIR, { recursive: true });
+
+  const outFile = path.join(INSTALLER_DIR, `${PRODUCT}-${VERSION}-x64-setup.exe`);
   const templatePath = path.join(root, 'scripts', 'nsis', 'server-installer.nsi');
   const script = fs
     .readFileSync(templatePath, 'utf8')
@@ -810,10 +830,12 @@ function buildInstaller() {
     .replaceAll('@VERSION@', VERSION)
     .replaceAll('@STAGING@', staging)
     .replaceAll('@OUTFILE@', outFile)
-    .replaceAll('@ICON@', path.join(root, 'build', 'icon.ico'))
+    // 安装程序图标：用设计导出的 build/classhelper.ico（与客户端同一份）；
+    // 旧的 build/icon.ico 是 `pnpm icons` 从 SVG 渲染出来的那一套，已不参与交付。
+    .replaceAll('@ICON@', path.join(root, 'build', 'classhelper.ico'))
     .replaceAll('@PORT@', PORT);
 
-  const generatedScript = path.join(outRoot, 'server-installer.generated.nsi');
+  const generatedScript = path.join(GENERATED_DIR, 'server-installer.generated.nsi');
   // NSIS 通过 BOM 识别 UTF-8，脚本含中文必须写入 BOM，否则报 "Bad text encoding"
   fs.writeFileSync(generatedScript, `\uFEFF${script}`, 'utf8');
 
