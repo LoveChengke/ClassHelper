@@ -47,12 +47,12 @@ pnpm-workspace.yaml          workspace + allowBuilds（pnpm 11 依赖构建白�
 tsconfig.base.json           共享 TS 基础配置（ESM + NodeNext + strict）
 eslint.config.mjs            ESLint 扁平配置（TS + Vue）；ignores 含 releases/ / release-server/ / src/generated/
 .prettierrc.json             单引号 / printWidth 110 / trailingComma all / LF / 2 空格
-build/icon.{ico,png}         应用图标（由 pnpm icons 生成）
+build/classhelper.{png,ico}   图标源（**设计导出、手工放入**；`pnpm icons` 从它派生其余全部图标，见 §5 第 62 条）
 scripts/
   use-database.mjs           SQLite ⇄ MySQL 切换（**改写 schema.prisma 里的 provider**，没有第二份 schema）
-  generate-icons.mjs         Electron 渲染 SVG → PNG/ICO
-  icons/render.cjs           图标渲染（CommonJS）
-  dist-server.mjs            服务端 + Web 管理端打包（产物落在 release-server/）
+  generate-icons.mjs         启动 Electron 跑 icons/render.cjs（= `pnpm icons`）
+  icons/render.cjs           把 classhelper.png 重采样成各端图标（CommonJS，见 §5 第 62 条）
+  dist-server.mjs            服务端 + Web 管理端打包（产物落在 releases/server/<版本>/）
   nsis/server-installer.nsi  服务端 NSIS 安装脚本
   verify-packaged.mjs        对**打包后/已安装**的客户端 EXE 复跑冒烟
   check-icons.mjs            图标注册表静态门禁（漏注册会静默渲染空白，见 §5 第 53 条）
@@ -68,6 +68,15 @@ deploy/                      Dockerfile / docker-compose{,.sqlite}.yml / nginx.c
 docs/                        production.md（生产部署）/ linux-deploy.md（Linux 部署与运维）
                              mysql.md（MySQL 切换）/ winisland-design-tokens.md
                              screenshots/{island,client,web-mobile,classisland}/
+website/                     产品官网（**纯静态、无构建步骤**，不进 pnpm workspace）
+                             index.html / assets/{styles.css,motion.js,main.js,icon.png,shots/}
+                             serve.mjs（本地预览）/ tools/capture-shots.mjs（实机图采集）
+                             ⚠ assets/motion.js 是动效层：曲线与弹簧 token 逐条取自 beUI
+                               （beui.dev/components/motion，见 README §7「官网」）。
+                               改官网动效请改 token 表，不要在组件里另写 duration / cubic-bezier。
+                             ⚠ assets/shots/ 里全是**跑起来截的**实机图，重采集步骤见 README
+                               §7「采集实机图」；客户端那两张要配合冒烟的
+                               ELECTRON_CLIENT_SHOTS_DIR / ELECTRON_SMOKE_ISLAND_* 开关。
 packages/shared/src/         types.ts / constants.ts / permissions.ts / utils.ts / index.ts
 packages/server/
   prisma/schema.prisma       数据模型（14 个 model，无 enum、无 @db.*；连接串在 prisma.config.ts）
@@ -96,7 +105,7 @@ packages/desktop-client/
   src/types/desktop.d.ts     主进程 ↔ 渲染进程契约
   scripts/                   build-main / dev / smoke / dist-win
 packages/classisland-plugin/ .NET 8 插件（独立于 pnpm workspace，不参与 pnpm install）
-  manifest.yml               清单：id=classhelper.classisland.bridge / apiVersion=2.0.0.0 / version=1.1.0.0
+  manifest.yml               清单：id=classhelper.classisland.bridge / apiVersion=2.0.0.0 / version=1.1.2.0
   ClassHelper.ClassIslandPlugin.csproj（TargetFramework=net8.0）
   src/Plugin.cs              入口：读配置 → 注册提醒提供方 / 设置页 / BridgeService
   src/Models/PluginSettings.cs
@@ -178,7 +187,7 @@ pnpm build:classisland-plugin
 | `pnpm build:shared`                                       | 只构建 shared（改完 `packages/shared` 必须跑）                                                        |
 | `pnpm build:desktop`                                      | 只构建客户端（esbuild 主进程/preload + Vite 渲染进程）                                                |
 | `pnpm build:classisland-plugin`                           | 构建 ClassIsland 联动插件（.NET 8；缓存/临时目录自动指到 `.cache/`）                                  |
-| `pnpm dist:classisland-plugin`                            | 打包插件为 `.cipx` 并归集到 `releases/classisland-plugin/`                                            |
+| `pnpm dist:classisland-plugin`                            | 打包插件为 `.cipx` 并归集到 `releases/classisland-plugin/<版本>/`                                     |
 | `pnpm typecheck`                                          | 全仓库类型检查（含 `vue-tsc`）                                                                        |
 | `pnpm lint` / `pnpm lint:fix`                             | ESLint                                                                                                |
 | `pnpm check:icons`                                        | 图标注册表门禁（两端 build 已内联，这里可单独跑；见 §5 第 53 条）                                     |
@@ -197,7 +206,7 @@ pnpm build:classisland-plugin
 | `pnpm verify:classisland-plugin`                          | 插件静态契约校验（清单一致性 / 注册完整性 / C# DTO ↔ 服务端 zod 与路由 / 已修复坑的护栏；实测 68 项） |
 | `pnpm dist:server` / `dist:win` / `dist:dir` / `dist:all` | 打包服务端安装程序 / 客户端安装包 / 免安装目录 / 全部                                                 |
 | `pnpm dist:server:linux`                                  | 打包 **Linux 服务端安装包**（`classhelper-server-linux-x64-<版本>.tar.gz` + `.sha256`）—— 见 §5 第 59 条 |
-| `pnpm icons`                                              | 生成应用图标（Electron 渲染 SVG → PNG/ICO）                                                           |
+| `pnpm icons`                                              | 从 `build/classhelper.png` 派生全部图标（PWA / favicon / 托盘 / 安装包 / 插件 / 官网 / 界面内品牌标）  |
 
 ### 端口
 
@@ -209,26 +218,43 @@ pnpm build:classisland-plugin
 
 ### 交付产物归集
 
-打包脚本各自输出到固定目录，**归集到仓库根 `releases/` 是本仓库的人工约定**（该目录 gitignore + eslint ignore）：
+**三个打包脚本都直接输出到仓库根 `releases/<组件>/<版本>/`，没有中间输出目录**
+（该目录 gitignore + eslint ignore），人工归集这一步已经取消：
 
 ```
-release-server/                      pnpm dist:server 的输出（免安装目录 + NSIS 安装程序）
-                                     pnpm dist:server:linux 的输出（classhelper-server-linux-x64-<版本>.tar.gz + .sha256）
-packages/desktop-client/release/     pnpm dist:win / dist:dir 的输出（win-unpacked + setup.exe + portable.exe）
-releases/                            本仓库约定的归集处（把上面的产物拷进 client/ server/ classisland-plugin/）
+releases/
+  client/<版本>/
+    安装包/      班级小助手-<版本>-x64-setup.exe / -portable.exe（+ .blockmap）
+    免安装/      electron-builder 的 win-unpacked 内容
+    构建中间/    builder-*.yml、*.nsis.7z
+  server/<版本>/
+    安装包/      班级小助手服务端-<版本>-x64-setup.exe
+    免安装/      classhelper-server 免安装目录（含 .env、node.exe、data/、logs/）
+    linux-x64/   classhelper-server-linux-x64-<版本>.tar.gz + .sha256 + 同内容解包目录
+    构建中间/    server-installer.generated.nsi
+  classisland-plugin/<版本>/
+    安装包/      ClassHelper.ClassIslandPlugin.cipx
+    免安装/      ClassHelper.ClassIslandPlugin/（解压即用，丢进 Plugins 目录即可加载）
+    checksums.md
+  SHA256SUMS-<版本>.txt    跨组件哈希清单（人读，由发布流程维护）
 ```
+
+版本号取自根 `package.json`（插件用 `manifest.yml` 的前三段，与产品版本对齐）；
+重新打包只清**当前版本目录**里的产物，历史版本原样保留 —— 所以同版本多次构建留下的
+不同产物要自己改名归档（例如 `1.0.0-重构建20261005/`），别把上一次的覆盖掉。
 
 ```bash
-# 客户端：electron-builder 支持指定输出目录（dist-win.mjs 会把额外参数透传）
-node packages/desktop-client/scripts/dist-win.mjs -c.directories.output=<绝对路径>\releases\client
-
-# 服务端：输出路径写死在 release-server/，打完自行移进 releases/server/
-pnpm dist:server          # 首次会跑一次 npm install；重试可加 --reuse-deps 跳过
+pnpm dist:server          # 服务端 Windows（首次会跑一次 npm install；重试可加 --reuse-deps 跳过）
 pnpm dist:server:linux    # Linux 安装包（**必须在 Linux 上跑**，见 §5 第 59 条 ④）
-
-# ClassIsland 插件：构建脚本自己归集到 releases/classisland-plugin/
+pnpm dist:win             # 客户端：安装包 + 免安装目录；dist:dir 只出免安装目录
 pnpm dist:classisland-plugin
 ```
+
+`dist-win.mjs` 用 `--config.directories.output` 覆盖 electron-builder 自己的输出目录，打包成功后
+再把原始布局整理成上面的分层（`win-unpacked/` → `免安装/`、`*.exe` → `安装包/`、`*.yml` → `构建中间/`）；
+显式传 `-c.directories.output=<路径>` 时不再覆盖，整理以传入路径为准。
+**交付物的完整性标签修正（§7 第 7 条）也挂在这条收尾链路上，别把 `tidyArtifacts` 之后的
+`normalizeIntegrityLabel(destDir)` 拆掉。**
 
 ---
 
@@ -528,6 +554,17 @@ database / update`。
     主题状态在 `stores/ui.ts`（持久化到主进程配置 `theme`），主窗口 `backgroundColor` 也按主题设置
     （深色下若仍用浅色底会"先白后黑"闪一下）。
 
+    **两端都有深色主题，机制一致**（Web 管理端 2026-10-06 补齐）：`html.dark` + element-plus 的
+    `dark/css-vars.css` + 两端各自的 `stores/ui.ts`。语义色令牌是
+    `--ch-surface` / `--ch-surface-alt` / `--ch-surface-sunken` / `--ch-surface-hover` 与
+    `--ch-text` / `-secondary` / `-muted` / `-placeholder`；**`html.dark` 只覆盖颜色，
+    绝不覆盖圆角与动效令牌** —— 两套主题的几何必须完全一致，否则切换时会看到布局跳一下。
+    Web 端还要一并同步 `<meta name="theme-color">` 与 `color-scheme`（后者管原生控件：
+    滚动条、日期选择器弹层 —— 只改 CSS 变量的话它们仍是浅色）。
+    默认**跟随系统**（`prefers-color-scheme`，系统改了就跟着变）；用户手动点过之后以用户为准。
+    切换入口两端都在顶栏，都走 `useThemeReveal()`（见第 61 条）。
+    改令牌时只改值 —— **不要对样式表跑批量 sed**，理由见第 61 条末尾。
+
 47. **数据库管理模块（`/api/database/*`，仅 ADMIN）——改它之前必须知道的四件事**：
     ① **一切都建立在 `lib/snapshot.ts` 的 JSON 快照上**（备份 / 导入导出 / 跨库迁移共用一种格式，
     14 张表按拓扑序导出、恢复时临时关外键检查、分批 `createMany`）。恢复时**必须**先关外键检查：
@@ -766,6 +803,118 @@ database / update`。
     `STAGE_DIR` 而不是 `echo` 返回路径）这两类是实打实的 bug；`die` 要先 `trap - ERR` 再退出，
     免得 ERR 钩子再补一句误导的"第 N 行执行失败"。
 
+60. **安全响应头里的 `upgrade-insecure-requests` 与 HSTS 只能在 HTTPS 请求下下发**（`middleware/security.ts`
+    的 `buildHelmet(httpsRequest)`，按 `req.secure` 二选一；TRUST_PROXY 开启时 `req.secure` 已含
+    `x-forwarded-proto` 判断）。helmet 的默认 CSP **自带 `upgrade-insecure-requests`**，而安装器的
+    默认形态是 `http://IP:端口` 直连（无 TLS）：这条指令会把页面**子资源**请求全部改写成 https 发出去，
+    服务器没有 TLS 监听，全部连接失败 —— 表现为「管理端一片空白、标签页标题正常」
+    （2026-10-05 用户在 98.142.241.144 实测踩到；`/healthz`、登录 API 都正常，纯浏览器侧的资产全灭）。
+    HSTS 在明文响应里按规范会被浏览器忽略，但 CSP 指令没有这层豁免，所以两者都要跟着 https 走。
+    开发时一直用 localhost（浏览器视为安全上下文、不做改写），所以这个坑在本地永远不复现，
+    只有真机 http 直连部署才炸 —— 别因为"本地好好的"就把条件判断摘掉。
+
+61. **动效层：令牌在 `packages/shared/src/motion.ts`，两端各一份组合式函数。**
+    移植自 [beUI](https://beui.dev) 的 `lib/ease.ts`（它的组件是 React，用不了；动效语言与框架无关）。
+    三组缓动 + 六组具名弹簧（`SPRING_PRESS/SWAP/PANEL/LAYOUT/MOUSE/GLIDE`）。
+
+    - **令牌必须是纯常量**：`packages/shared` 被后端一起消费，它的 tsconfig 是 `lib: ["ES2023"]`
+      （不含 DOM），所以 `motion.ts` 里不碰 `document` / `window` / vue。DOM 注入与 Vue 组合式函数
+      在两端各自的 `composables/motion.ts`（两端各一份，与 `ScoreBarChart.vue` 同一做法）。
+    - **CSS 变量在 `app.mount()` 之前由 JS 注入 `:root`**（两端 `main.ts` 调 `applyMotionTokens()`）。
+      CSS 里只引用 `var(--ch-spring-*)`，**不要抄数值** —— 抄了必漂。
+    - **弹簧靠数值积分生成 CSS `linear()`**，于是弹簧可以纯 CSS 驱动，不需要每组件一个 rAF 循环。
+      算落定时间**不能用包络公式 `6/(ζ·ω0)`**：它只对欠阻尼成立，过阻尼要用较慢的实极点
+      `ω0(ζ−√(ζ²−1))`，否则曲线会被截断在 0.87/0.95 上、元素永远差一截没到位（实测踩过）。
+    - **`--ch-spring-X` 与 `--ch-spring-X-dur` 必须成对用**：`linear()` 是把 [0,1] 进度重映射，
+      时长给短了等于把整条曲线等比压缩 —— 形状还在，但已经不是那组参数的手感了。
+    - `linear()` 的进度值可以 >1（过冲）：只能用在不越界无害的属性上。**别用在 `opacity`**。
+
+    **四条硬约束（都对应实测过的坑）**：
+
+    - **路由层不要包 `<transition>`，尤其不要 `mode="out-in"`。** 它把"旧组件卸载、新组件挂载"推迟到
+      退场动画结束（90ms 起），后果有两个：① 点菜单后有一小段时间页面上还是上一页，`ui-smoke` 的多条
+      用例（"pathname 一变就找新页面的元素"）会整片判红 —— 实测一次掉 9 项；② 退场判定依赖
+      `animationend`，**窗口被遮挡时 Chromium 冻结 CSS 动画**（实测 `document.timeline` 1.2 秒推进 0ms），
+      事件永不触发 ⇒ 新页面永远不挂载，整个应用卡死在第一页。页面切换的动效改用 `.page > *` 错峰入场，
+      那是随组件挂载**同步**触发的。
+    - **Vue 的 `<transition>` 一律显式给 `:duration`。** 同上，靠 `animationend` 判断的写法在窗口不可见时
+      会永远停住（`UrgentClassWarning` 那块铺满全屏的遮罩尤其致命：不卸载就再也点不动）。
+    - **`position: fixed` 的整屏层、以及"自己量几何再据此设尺寸"的元素，不要叠位移类动画。**
+      `.page > *` 错峰入场排除了 `.el-overlay`（Element Plus 的 `el-dialog` 默认 `append-to-body=false`，
+      声明在视图里的弹窗其遮罩就是 `.page` 的直接子元素）、`.el-loading-mask`、`.board-host`
+      （客户端的作业看板按"刚好铺满"算 `transform: scale()`，下移 6px 就溢出屏幕）。
+      判定方法是 `getBoundingClientRect()` **包含** transform，而 `clientHeight` / `offsetHeight` 不含。
+    - **弹窗面板的动画要挂在 `.el-dialog` 上，不要挂在 `.el-overlay-dialog`（居中容器）上。**
+      Element Plus 的 `@opened` 按**根元素**（`.el-overlay`，只有 200ms 淡入）的动画结束触发，
+      而外层容器上的弹簧要跑 463ms —— 任何在 `@opened` 里量容器尺寸做自适应的弹窗都会量到
+      "还带着 `scale(0.97)` 的缩小版"，被 `minScale` 兜住后反而超出屏幕（作业看板实测 +7px）。
+      挂 `.el-dialog` 还有个好处：全屏弹窗能用 `is-fullscreen` 精确豁免（全屏表面本来也不该缩放入场）。
+
+    **两条容易踩的实现细节**：
+    - 客户端的 `--nav-ease` **刻意保留** Material 的 `cubic-bezier(.4, 0, .2, 1)`，没有统一成 EASE_OUT。
+      EASE_OUT 起步极快，宽度掉到 80px 以下时动画才走了约 35%，而 `layoutChromeSelfTest` 一到读宽度
+      判据就往下走、立刻量图标中心，此刻内边距还在动 ⇒ 6 个分组子项偏 2.3px 判红。想换曲线得连那条断言
+      一起重新商量。（该断言的宽度判据已从 `≤80` 收紧到 `≤65`，即"真正收拢到稳态"再量 —— 折叠目标宽度是 64px。）
+    - **Vue 的 scoped `<style>` 可以引用全局 `@keyframes`**（只有同一个 scoped 块里**定义**的才会被改名）。
+      实测：`.login-card` 的 `animation: ch-panel-in …` 原样输出且生效。但 `mode="out-in"` 之类的
+      transition 类名仍在 scoped 块里写、元素也带 `data-v`，能正常命中。
+    - `el-aside` / `el-menu` 这些是**组件**不是原生标签：模板 ref 拿到的是组件实例，
+      `.querySelector` 不是函数（会被 `app.config.errorHandler` 吞成一行中文异常，界面看着毫无异样）。
+      用 `$el`，或直接 `document.querySelector`（客户端的主侧栏只有一个，后者更直白）。
+    - 降低动态效果：两端 `styles/index.css` 各有一个 `@media (prefers-reduced-motion: reduce)` 全局块，
+      把动画压到 1ms（不是删掉，`transition: none` 会让依赖 transitionend 的逻辑失灵）。
+      **加载指示旋要豁免**（改为放慢而非停）—— 停掉会让界面看起来像卡死。
+
+    **灵动岛：只移植曲线，不移植弹簧。**
+    岛的形变由主进程缓动窗口尺寸（`src/main/island.ts`），而冒烟断言「展开过程不震动」
+    「收回过程不抖动」**逐帧采样岛体几何**并要求单调 —— 任何带过冲的弹簧都会直接判红。
+    所以岛用 `--ch-ease-out` 这类单调曲线，壳的物理仍归它自己的 `island/spring.ts`（WinIsland 移植），
+    不要拿 beUI 的 `SPRING_*` 去换。
+    `IslandApp.vue` 是**另一个渲染进程**，不共享主窗口的 `:root`：令牌要在
+    `src/island/main.ts` 里**再注入一次**（`applyMotionTokens()`）。漏了的话 `var(--ch-ease-out)`
+    解析为空、**整条 `transition` 简写作废**，反而比改造前更差（完全没有过渡）。
+    另外岛的 `:hover` 规则必须关在 `@media (hover: hover) and (pointer: fine)` 里 ——
+    教室触摸屏的"幽灵 hover"会让点过「知道了」的按钮永远高亮。
+
+    **深色主题的语义色令牌：只改值，不要对样式表跑批量 sed。**
+    `--ch-text: #303133` 被"把 #303133 换成 var(--ch-text)"的批量替换一过，就变成
+    `--ch-text: var(--ch-text)` —— **自引用**会让整条自定义属性失效，`getPropertyValue` 返回空串，
+    全站文字颜色静默回落成继承色（浅色下看着"还行"，深色下就露馅）。实测踩过。
+
+62. **图标：全项目只有一个图形源 `build/classhelper.{png,ico}`，其余一律由 `pnpm icons` 派生。**
+    这两个文件是**设计导出、手工放入**的，`pnpm icons` 只读不写 —— 要换图标就换这两个文件，
+    别去改脚本。派生清单写在 `scripts/icons/render.cjs` 顶部的注释里，覆盖：Web 端 PWA 三件套
+    （`icon-192` / `icon-512` / `apple-touch-icon`）、`favicon`（png + svg 各一份）、
+    ClassIsland 插件 `icon.png`、客户端 `build/{classhelper,icon}.{png,ico}`、
+    托盘 `public/tray.png`、官网 `assets/icon.png`，以及**两端界面内的品牌标** `public/logo.png`。
+
+    **四条硬约束（都对应实测踩过的坑）**：
+
+    - **ICO 原样透传，不要重新生成。** `classhelper.ico` 里 9 个尺寸
+      （16/24/32/48/64/72/96/128/256）是设计工具**逐尺寸栅格化**的，比把那张 345×339 的位图
+      缩下去干净得多；脚本只解析它的目录项做日志与校验，然后把整份复制给客户端与 electron-builder。
+    - **`packages/desktop-client/build/icon.{png,ico}` 别删。** 它们是与 `classhelper.*` 同步的副本，
+      而名字是 **electron-builder 的兜底约定**：`convertIcon()` 的候选表是
+      `['<win.icon>', 'icon.ico', 'icons', 'icon', 'icon.png', 'icon.svg', 'icon.icns']`，
+      依次在 `[buildResources, projectDir]` 两个根下 stat，**第一个命中的就赢**。
+      `win.icon` 现在显式写着 `build/classhelper.ico`（实测 `isFallback = false`，
+      解析到 `packages/desktop-client/build/classhelper.ico`），但那条配置一旦被拿掉，
+      就会**静默**回落到 `icon.ico` —— 副本同步着，回落也还是新图标。
+    - **界面内的品牌标用 `<img>`，且两端 URL 的写法必须不同。** Web 端写根绝对路径 `/logo.png`
+      （永远从源站根提供服务；前端是 history 路由，相对路径在 `/classes/1` 这类嵌套路由下会解析错）。
+      客户端**必须经 `BRAND_LOGO_URL`（`src/renderer/config.ts`）绑定给 `:src`** ——
+      字面量的相对 `src` 会被 Vite 当成模块导入去解析
+      （`Rolldown failed to resolve import "logo.png" from "LoginView.vue"`，构建直接失败），
+      而根绝对路径在 `file://` 加载的打包形态下会解析到**盘符根目录**。
+    - **`School` 字形在两端 `icons.ts` 里的注册不要删**：它仍是「班级管理」菜单项与
+      「班级码」输入框前缀的字段图标，只是不再是品牌标。品牌标换成真图标后，
+      `.brand-logo` 的 `background` / `color` / `border-radius` / `overflow` 都要撤掉 ——
+      圆角与透明边角本来就在图里，再叠一层会出现双重圆角。
+
+    跑完 `pnpm icons` 记得把**生成出来的那些图**一起提交（脚本会比对内容，没变动的不会重写）。
+    源图 345×339 不是正方形，脚本按等比缩放居中补透明（补边约 1.7%，肉眼不可见）；
+    512 那两档是**放大**，会略软 —— 那是源图分辨率的上限，要更清晰只能换更大的设计导出。
+
 ---
 
 ## 6. 代码风格
@@ -885,10 +1034,12 @@ database / update`。
     （`packages/classisland-plugin/.gitignore` 是本仓库里唯一能正常编辑的 .gitignore。）
 11. **`releases/`（复数）必须在 ESLint 忽略列表里**：本地跑过 `pnpm dist:*` 之后，
     这个目录里是构建后的压缩 JS，不忽略的话 `pnpm lint` 会报出几千条与源码无关的 error
-    （`eslint.config.mjs` 里已补 `**/releases/**`，别再删掉；`release-server/` 同理）。
+    （`eslint.config.mjs` 里已补 `**/releases/**`，别再删掉；旧的 `release-server/` 条目留作兜底）。
     **它一度只在 ESLint 里被忽略、`.gitignore` 里漏了**（后者只有单数的 `release/` 和 `release-server/`）：
     归集一次客户端产物就有 225MB 的 EXE 变成未跟踪文件，`git add -A` 会直接把安装包提交入库。
     2026-09-30 已在 `.gitignore` 末尾补上 `releases/`。
+    （2026-10-05 起 `release-server/`、`packages/desktop-client/release/` 这两个中间输出目录已取消，
+    三个打包脚本都直接输出到 `releases/`，见 §4；那两条 ignore 保留作兜底。）
 12. **ClassIsland 的数据根是 `D:\Classisland\data`**（**不是**旧文档写的 `F:\data`，F 盘已不存在）：
     - 插件 DLL 覆盖到 `D:\Classisland\data\Plugins\classhelper.classisland.bridge\`（**ClassIsland 运行时会锁住
       DLL，必须先退出它再覆盖**：`Get-Process ClassIsland.Desktop | Stop-Process -Force`）；
@@ -913,7 +1064,8 @@ database / update`。
     - `pnpm dist:win` 报 `!tempfile: Unable to create temporary file!` / `Error in macro _Switch`：**不是空间不足**，
       而是 Git Bash 里 `TEMP=TMP=/tmp` —— makensis 是原生程序，把 `/tmp` 当成「当前盘根下的 tmp」解析成
       `D:\tmp`，该目录不存在。`/c` 有 79G、`/d` 有 124G 也会照样失败（2026-09-30 实测）。
-      `win-unpacked` 与 `release/*.nsis.7z` 此时都已生成，**只需重跑 electron-builder，不必重建前端**：
+      `win-unpacked` 与 `*.nsis.7z` 此时都已生成（整理进 `安装包/`、`免安装/` 的那一步在打包
+      成功之后才跑，失败时还没执行），**只需重跑，不必重建前端**：
 
       ```bash
       mkdir -p .cache/tmp
@@ -966,6 +1118,7 @@ database / update`。
 | `verify:e2e`「上课状态接口（at=周一 08:10）」 | 种子把「周一第 1 节」限制在第 1 周，且用例把 `2026-09-07` 当第 1 周。`TERM_START_DATE` 对齐到 `2026-09-07` 即全绿（本机 `.env` 已这样配；`.env.example` 仍是 `2026-02-23`，重置 `.env` 时记得改回来）                                                           |
 | `verify:desktop`「课表今天时间轴」            | 凌晨约 00:00–03:00 时「已结束」探针被夹紧成 0 长度而被过滤，`已结束=false` 判定失败                                                                                                                                                                             |
 | `verify:web`「课表科目为全校统一目录」        | 种子给每个班建满了全部科目，下拉里没有可自动建课的「统一科目」分组                                                                                                                                                                                              |
+| `verify:desktop`「作业看板全屏自适应」        | 演示数据里某天有 6 条长作业、而冒烟窗口只有 ~543px 高时，`computeScale` 算出的缩放低于下限 0.45 被 `Math.max(minScale, …)` **钳住**，于是必然溢出（实测 565 > 543）。判据用的是 `host.clientHeight` / `inner.offsetHeight`，**这两个是布局属性、transform 不影响**，所以与动效层无关；数据在冒烟里建了又删，每次跑出来的高度还会差几十像素 |
 | 岛交互 / 岛动画 / 岛截图留档这几个用例        | **AI 会话里会间歇性失败**：同一份产物连跑两次，失败项会在「点击展开 / 紧急展开动画 / 各状态截图留档」之间跳（2026-09-30 实测三轮结果各不相同）。根因是置顶透明小窗的 rAF 被限流、形变采样抓不到帧，属时序敏感；**先原样重跑一次再动手改代码**，别把偶发当成回归 |
 
 ---
@@ -995,7 +1148,7 @@ bash -n deploy/install.sh deploy/classhelper deploy/verify-linux.sh deploy/insta
 pnpm dist:server:linux      # 只能在 Linux 上跑；开发机是 Windows 时到服务器/CI 上验证
 
 # 真机（任意一台能 SSH 的 Linux，容器也行但 systemd 用例会跳过）
-scp release-server/classhelper-server-linux-x64-*.tar.gz deploy/{install.sh,verify-linux.sh} root@<主机>:/tmp/
+scp releases/server/<版本>/linux-x64/classhelper-server-linux-x64-*.tar.gz deploy/{install.sh,verify-linux.sh} root@<主机>:/tmp/
 ssh root@<主机> 'bash /tmp/install.sh --check'
 ssh root@<主机> "printf '%s\n' '<密码>' | bash /tmp/install.sh --yes --admin-password-stdin --package /tmp/classhelper-server-linux-x64-*.tar.gz"
 ssh root@<主机> "bash /tmp/verify-linux.sh --admin-password-stdin" < <(printf '%s\n' '<密码>')
@@ -1026,11 +1179,11 @@ Start-Process D:\Classisland\ClassIsland.exe -WorkingDirectory D:\Classisland
 开发产物通过不等于用户机器上的副本通过。
 
 **改过 `pruneRuntime()`（§5 第 55 条）时，还要对免安装目录本身跑一遍**（开发形态跑通不代表裁剪后跑通）。
-从 `release-server/classhelper-server/` 起，用**自带的 node.exe**：
+从 `releases/server/<版本>/免安装/` 起，用**自带的 node.exe**：
 
 ```bash
 # ① 起服务：探针通 + 能真实查表（AUTO_MIGRATE 会建库；PORT 用环境变量避开开发端口）
-cd release-server/classhelper-server && PORT=4100 ./node.exe server/dist/index.js
+cd releases/server/<版本>/免安装 && PORT=4100 ./node.exe server/dist/index.js
 curl.exe -s --noproxy '*' http://127.0.0.1:4100/healthz
 curl.exe -s --noproxy '*' -X POST http://127.0.0.1:4100/api/auth/login \
   -H "content-type: application/json" -d '{"username":"admin","password":"admin123"}'

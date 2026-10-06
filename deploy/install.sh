@@ -17,7 +17,7 @@
 #   脚本会自动从 GitHub Release 取**最新版**服务端安装包，并取发布页上同名的 .sha256 做校验，
 #   所以整条链路只需要这一行。要加参数就接在最后：`sudo bash /tmp/classhelper-install.sh --check`
 #     --check             只体检、不安装（不需要 root）      --yes            全部默认、不交互
-#     --version 1.1.1     装指定版本                         --port 8080      自定义端口
+#     --version 1.1.2     装指定版本                         --port 8080      自定义端口
 #     --admin-password-stdin                                从 stdin 读初始管理员密码
 #
 #   ⚠ 别写成 `bash -c "$(curl …)" --check`：`bash -c '代码' 第一个参数` 里那个参数会变成 **$0**、
@@ -529,7 +529,7 @@ resolve_package_url() {
     tag="$(github_latest_tag)" || true
     if [ -z "$tag" ]; then
       die "取不到 GitHub 最新版本（本机可能没有外网）。请用 --package 指定安装包，例如：
-    sudo bash install.sh --package /tmp/classhelper-server-linux-x64-1.1.1.tar.gz"
+    sudo bash install.sh --package /tmp/classhelper-server-linux-x64-1.1.2.tar.gz"
     fi
   fi
   ver="${tag#v}"

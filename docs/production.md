@@ -35,7 +35,7 @@ pnpm dist:server -- --reuse-deps   # 迭代打包：复用已安装依赖，跳�
 双击安装程序即可，**无需管理员权限**（当前用户级安装）：
 
 - 安装目录：`%LOCALAPPDATA%\Programs\ClassHelperServer`
-- 静默安装：`"班级小助手服务端-1.1.1-x64-setup.exe" /S`
+- 静默安装：`"班级小助手服务端-1.1.2-x64-setup.exe" /S`
 - 开始菜单：启动服务 / 停止服务 / 重启服务 / 打开管理端 / 使用说明 / 卸载
 - 桌面：`班级小助手服务端.lnk`（打开管理端）
 - 自动加入当前用户开机自启（`HKCU\...\CurrentVersion\Run`）
@@ -176,7 +176,7 @@ sudo bash /tmp/install.sh               # 交互式：选形态 → 选目录 �
 ```bash
 printf '%s\n' 'StrongPass!2026' | sudo bash /tmp/install.sh --yes \
   --dir /srv/classhelper --port 8080 --admin-password-stdin \
-  --package /tmp/classhelper-server-linux-x64-1.1.1.tar.gz
+  --package /tmp/classhelper-server-linux-x64-1.1.2.tar.gz
 ```
 
 安装器做的事：识别发行版与包管理器补依赖 → 建系统用户 `classhelper` → 下载包并校验 sha256 →
@@ -221,7 +221,7 @@ printf '%s\n' 'StrongPass!2026' | sudo bash /tmp/install.sh --yes \
 没有 systemd 的容器里可以用安装器的"只铺文件"模式，再自己托管进程：
 
 ```bash
-sudo bash /tmp/install.sh --yes --force --package /tmp/classhelper-server-linux-x64-1.1.1.tar.gz
+sudo bash /tmp/install.sh --yes --force --package /tmp/classhelper-server-linux-x64-1.1.2.tar.gz
 sudo -u classhelper /opt/classhelper/runtime/node/bin/node /opt/classhelper/server/dist/index.js
 ```
 

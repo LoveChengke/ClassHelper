@@ -137,7 +137,17 @@ onUnmounted(() => {
   <div v-if="booting" class="boot-screen">
     <el-icon :size="30" class="is-loading" color="#409eff"><Loading /></el-icon>
     <p class="boot-title">班级小助手</p>
-    <p class="boot-text">{{ bootText }}</p>
+    <!--
+      启动文案会依次经过「读取本地配置 → 恢复登录状态」，直接换字是一下"啪"的跳变。
+      交叉淡入（旧的上移淡出、新的从下方淡入）把两次状态读成**同一行字在更新**，
+      而不是"屏幕闪了一下"。
+
+      `:duration` 是必需的（理由同 ClientLayout 的页面过渡）：靠 `animationend` 判断的话，
+      窗口不可见时动画被冻结、事件不触发，文案会一直停在第一句。
+    -->
+    <transition name="boot-text" mode="out-in" :duration="{ enter: 200, leave: 90 }">
+      <p class="boot-text" :key="bootText">{{ bootText }}</p>
+    </transition>
   </div>
   <router-view v-else />
   <!-- 初次启动引导：常驻挂载，由 onboarding store 控制显隐（登录页/主界面/设置页都能唤起） -->
@@ -160,11 +170,54 @@ onUnmounted(() => {
   margin: 6px 0 0;
   font-size: 20px;
   font-weight: 600;
+  /* 启动页是"整个应用的第一帧"，给标题一点入场分量是值得的 */
+  animation: boot-title-in var(--ch-spring-panel-dur) var(--ch-spring-panel) both;
+}
+
+@keyframes boot-title-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .boot-text {
   margin: 0;
   font-size: 13px;
   color: rgba(255, 255, 255, 0.75);
+}
+
+@keyframes boot-text-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes boot-text-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.boot-text-enter-active {
+  animation: boot-text-in var(--ch-dur-base) var(--ch-ease-out) both;
+}
+
+.boot-text-leave-active {
+  animation: boot-text-out var(--ch-dur-instant) var(--ch-ease-out) both;
 }
 </style>

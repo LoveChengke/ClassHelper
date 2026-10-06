@@ -316,7 +316,7 @@ function parityLabel(item: ClassPlanEntryDto): string {
   flex-wrap: wrap;
   gap: 16px;
   margin-top: 10px;
-  color: #606266;
+  color: var(--ch-text-secondary);
   font-size: 13px;
 }
 .mb-8 {

@@ -993,9 +993,17 @@ export async function layoutChromeSelfTest(): Promise<SmokeCheckResult> {
       Number.isFinite(asideTransitionSeconds) &&
       asideTransitionSeconds > 0.05;
     if (!clickToggle('[data-test="sidebar-toggle"]')) return { ok: false, detail: '汉堡按钮点击失败' };
+    /*
+     * 判据是「宽度收拢到**稳态**」而不是「宽度小于 80」。
+     *
+     * 折叠的目标宽度是 64px（ClientLayout 的 `:width="ui.sidebarCollapsed ? '64px' : '200px'"`），
+     * 而宽度与菜单项内边距是同一条过渡在驱动 —— 只等「≤80」会在动画还剩几十毫秒时就往下走，
+     * 下面量图标中心时内边距仍在变化，量到的是中间帧而非稳态（实测出现过 0.5px 与 2.3px 两个值，
+     * 全看当时机器有多忙）。等它真正到位之后再量，这条断言才是它想表达的"折叠后同列"。
+     */
     const collapsed = await waitUntil(() => {
       const aside = document.querySelector<HTMLElement>('.aside.ch-nav');
-      return Boolean(aside?.classList.contains('is-collapsed')) && (aside?.offsetWidth ?? 999) <= 80;
+      return Boolean(aside?.classList.contains('is-collapsed')) && (aside?.offsetWidth ?? 999) <= 65;
     }, 4000);
     const asideAfter = document.querySelector<HTMLElement>('.aside.ch-nav');
     const widthAfter = asideAfter?.offsetWidth ?? 0;

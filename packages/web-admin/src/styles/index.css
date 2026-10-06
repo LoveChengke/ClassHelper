@@ -14,10 +14,58 @@
   --ch-header-height: 56px;
   --ch-aside-width: 210px;
 
+  /*
+   * 语义色 —— 组件里**一律引用这些，不要写死颜色**（深色主题靠 html.dark 覆盖这里）。
+   * 侧栏是刻意固定的深色区（见文件末尾 .ch-sidebar），它自己那套白字不参与主题切换。
+   *
+   * ⚠️ 改这些**只改值**。别对这个文件跑"把 #303133 全量替换成 var(--ch-text)"这类批量替换 ——
+   * 它会把下面几行**定义本身**也换掉（`--ch-text: #303133` → `--ch-text: var(--ch-text)`），
+   * 自定义属性一旦自引用就整条失效，`--ch-text` 会解析成空串，全站文字颜色静默回落成继承色。
+   * 实测踩过：批量替换之后 `getPropertyValue('--ch-text')` 返回空，页面看着"还行"，
+   * 但深色主题下文字全变成不合规的继承色。
+   */
+  --ch-surface: #ffffff; /* 卡片 / 弹窗 / 顶栏底 */
+  --ch-surface-alt: #f7f9fc; /* 表头 / 次级底 */
+  --ch-surface-sunken: #f2f3f5; /* 内嵌块（代码段、只读预览） */
+  --ch-surface-hover: #e6e8eb; /* 悬停态底（比 sunken 再深一档） */
+  --ch-text: #303133;
+  --ch-text-secondary: #606266;
+  --ch-text-muted: #909399;
+  --ch-text-placeholder: #c0c4cc;
+
   /* Element Plus 圆角令牌对齐（组件库内部都引用这些变量，改这里即可全局生效） */
   --el-border-radius-base: var(--ch-radius-sm);
   --el-border-radius-small: 8px;
   --el-border-radius-round: var(--ch-radius-pill);
+  --el-box-shadow-light: var(--ch-shadow-sm);
+}
+
+/*
+ * ---------------------------------------------------------------- 深色主题
+ *
+ * 与客户端同一套机制：`<html>` 挂 `.dark` 类（见 stores/ui.ts），
+ * Element Plus 的 `dark/css-vars.css`（main.ts 引入）提供 --el-* 的深色默认，
+ * 这里再覆盖品牌侧的中性色与圆角令牌。
+ *
+ * 只覆盖**语义色**，不动圆角/间距/动效令牌 —— 两套主题的几何必须完全一致，
+ * 否则切换主题会看到布局跳一下。
+ *
+ * 刻意**不随主题**的区域（见 AGENTS.md §5 第 46 条）：登录页的深色渐变底、
+ * 侧栏（本来就是深色）、以及深色底上的白色文字。
+ */
+html.dark {
+  --ch-bg: #14161a;
+  --ch-surface: #1c1f26;
+  --ch-surface-alt: #23262e;
+  --ch-surface-sunken: #191c22;
+  --ch-surface-hover: #2a2e37;
+  --ch-border: #2e323c;
+  --ch-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.32);
+  --ch-shadow-md: 0 6px 24px rgba(0, 0, 0, 0.5);
+  --ch-text: #e5e7eb;
+  --ch-text-secondary: #b6bcc8;
+  --ch-text-muted: #8b93a3;
+  --ch-text-placeholder: #6b7280;
   --el-box-shadow-light: var(--ch-shadow-sm);
 }
 
@@ -200,7 +248,7 @@
 }
 
 .el-table th.el-table__cell {
-  background: #f7f9fc;
+  background: var(--ch-surface-alt);
 }
 
 .el-table__inner-wrapper::before {
@@ -251,7 +299,7 @@ body,
 body {
   font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
   background: var(--ch-bg);
-  color: #303133;
+  color: var(--ch-text);
   /* 小屏上禁止整页横向滚动（内容用卡片内滚动承载） */
   overflow-x: hidden;
 }
@@ -276,7 +324,7 @@ body {
 }
 
 .page-subtitle {
-  color: #909399;
+  color: var(--ch-text-muted);
   font-size: 13px;
   margin: 4px 0 0;
 }
@@ -295,23 +343,29 @@ body {
 }
 
 .stat-card {
-  background: #fff;
+  background: var(--ch-surface);
   border-radius: var(--ch-radius-lg);
   padding: 18px;
   border: none;
   box-shadow: var(--ch-shadow-sm);
   transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease;
+    transform var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    box-shadow var(--ch-dur-base) var(--ch-ease-out);
 }
 
-.stat-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--ch-shadow-md);
+/*
+ * 抬升效果关在 `@media (hover: hover)` 里：老师会用平板（以及教室的希沃触摸屏）打开
+ * 管理端，触摸点按会产生"幽灵 hover"并一直粘着，不加这层的话点过的卡片就永远浮着。
+ */
+@media (hover: hover) and (pointer: fine) {
+  .stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--ch-shadow-md);
+  }
 }
 
 .stat-label {
-  color: #909399;
+  color: var(--ch-text-muted);
   font-size: 13px;
 }
 
@@ -322,13 +376,13 @@ body {
 }
 
 .stat-hint {
-  color: #c0c4cc;
+  color: var(--ch-text-placeholder);
   font-size: 12px;
   margin-top: 4px;
 }
 
 .text-muted {
-  color: #909399;
+  color: var(--ch-text-muted);
 }
 
 .mt-12 {
@@ -349,7 +403,7 @@ body {
 
 .timetable-meta {
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-text-muted);
 }
 
 .unread-dot {
@@ -508,4 +562,378 @@ body {
     min-width: 0;
     width: calc(100vw - 32px);
   }
+}
+
+/* ============================================================================
+ * 动效层 —— beUI 的动效语言
+ *
+ * 令牌（缓动曲线、六组弹簧、时长）在 `packages/shared/src/motion.ts`，
+ * 由 `main.ts` 在 mount 之前写进 `:root`；这里只负责**用**它们。
+ * 两端的动效词汇表完全一致（桌面客户端有一份对应的 styles/index.css 段落）。
+ *
+ * 分三层，越往下越"重"：
+ *   ① 变量调音 —— 改写 Element Plus 自己的过渡变量，一次性改掉全站所有组件库过渡；
+ *   ② 弹簧覆盖 —— 弹窗 / 抽屉 / 浮层这几个"看得见"的地方换成真正的物理曲线；
+ *   ③ 自有动效 —— 页面过渡、列表错峰入场、按钮按压，这些组件库不管的部分。
+ * ========================================================================== */
+
+/* ------------------------------------------------- ① 变量调音（覆盖组件库）
+ *
+ * Element Plus 的每一个过渡都引用这几个变量（`--el-transition-all` / `-fade` /
+ * `-md-fade` 都是由它们拼出来的），所以调这里等于一次性调完全站 ——
+ * 比逐个覆盖 `.dialog-fade-*` 之类的类名安全得多（那些类名随组件库版本会变）。
+ *
+ * 时长从 300/200ms 收到 200/140ms：原值在密集操作的管理端偏拖沓。
+ * 缓动换成 beUI 的 EASE_OUT —— 原值是 `cubic-bezier(.23, 1, .32, 1)`，
+ * 同为"快出慢收"但尾巴更短，收得干脆。
+ */
+:root {
+  --el-transition-duration: 200ms;
+  --el-transition-duration-fast: 140ms;
+  --el-transition-function-ease-in-out-bezier: cubic-bezier(0.16, 1, 0.3, 1);
+  --el-transition-function-fast-bezier: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ------------------------------------------------------------ ② 弹簧覆盖 */
+
+/*
+ * 弹窗（el-dialog）。Element Plus 把入场做在 `.el-overlay-dialog`（承载 .el-dialog 的
+ * 居中容器）上的两条 keyframes 动画里，遮罩淡入则在 `.dialog-fade-enter-active` 自己身上。
+ * 两条都要换，否则遮罩先到位、弹窗还在动，看起来是"背景已经变暗了但框还没出来"。
+ *
+ * 弹簧 PARAM 的观感说明：总时长 463ms 看着偏长，但它 95% 的行程在 262ms 就走完了，
+ * 剩下的是极慢的收尾 —— 观感上就是"200ms 到位、再轻轻落定一下"，不是"等了半秒"。
+ */
+@keyframes ch-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ch-panel-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+}
+
+/*
+ * 位移与缩放挂在 `.el-dialog` **自己**身上，不挂在 `.el-overlay-dialog`（居中容器）上。
+ *
+ * 挂外层容器有个隐蔽的坑：Element Plus 的「打开完成」回调（@opened）按**根元素**
+ * （`.el-overlay`，只有 200ms 的淡入）的动画结束触发，而外层容器上的弹簧要跑 463ms ——
+ * 于是任何在 @opened 里量容器尺寸做自适应的弹窗，都会量到"还带着 scale(0.97) 的缩小版"。
+ * 客户端作业看板正是这么算 scale 的，实测因此超出屏幕 7px（冒烟断言逮到）。
+ * 挂到 `.el-dialog` 上还有个好处：全屏弹窗能靠 `is-fullscreen` 精确豁免（见下）。
+ */
+.dialog-fade-enter-active .el-overlay-dialog,
+.dialog-fade-leave-active .el-overlay-dialog {
+  /* 抵消 Element Plus 自带的那两条（它们同样带 translateY，会与下面这两条叠起来） */
+  animation: none;
+}
+
+.dialog-fade-enter-active .el-dialog {
+  animation: ch-panel-in var(--ch-spring-panel-dur) var(--ch-spring-panel) both;
+}
+
+.dialog-fade-leave-active .el-dialog {
+  animation: ch-panel-out var(--ch-dur-fast) var(--ch-ease-out) both;
+}
+
+/*
+ * 全屏弹窗（`is-fullscreen`，如客户端的作业看板）**不做位移缩放**。
+ * 它本来就是铺满整屏的表面，"从略小处落下来"既看不出效果，又会让内部的自适应布局
+ * 在 @opened 那一刻量到被 scale 过的容器 —— 测小了会被最小缩放兜住，结果反而超出屏幕。
+ * 只留淡入。
+ */
+.dialog-fade-enter-active .el-dialog.is-fullscreen {
+  animation: ch-fade-in var(--ch-dur-base) var(--ch-ease-out) both;
+}
+
+.dialog-fade-leave-active .el-dialog.is-fullscreen {
+  animation: ch-fade-out var(--ch-dur-fast) var(--ch-ease-out) both;
+}
+
+/*
+ * 确认框（ElMessageBox）。这条沿用了"动画挂在遮罩层上"的做法：
+ * 它内部没有任何按容器尺寸做自适应的内容，不存在上面那个 @opened 测量的坑，
+ * 而且 Element Plus 本来就是这么写的（`.el-overlay-message-box` 自带一条 animation）。
+ */
+.el-overlay-message-box {
+  animation: ch-panel-in var(--ch-spring-panel-dur) var(--ch-spring-panel) both;
+}
+
+.dialog-fade-enter-active {
+  animation: ch-fade-in var(--ch-dur-base) var(--ch-ease-out) both;
+}
+
+.dialog-fade-leave-active {
+  animation: ch-fade-out var(--ch-dur-fast) var(--ch-ease-out) both;
+}
+
+@keyframes ch-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ch-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/*
+ * 抽屉（el-drawer）。和弹窗不同，抽屉的位移由 `.el-drawer` **自身**的
+ * `transition: all var(--el-transition-duration)` 承载（`.el-drawer-fade-*` 那组类
+ * 只管遮罩与 overflow）。所以弹簧要挂在 `.el-drawer` 上，且显式列出属性 ——
+ * 跟它的 `all` 不同，我们不想让背景色的变化也走弹簧曲线。
+ */
+.el-drawer {
+  transition:
+    transform var(--ch-spring-panel-dur) var(--ch-spring-panel),
+    opacity var(--ch-dur-base) var(--ch-ease-out);
+}
+
+/*
+ * 浮层（下拉菜单 / 选择器 / 气泡提示）。Element Plus 用 `el-zoom-in-*` 系列，
+ * 从触发点那一侧展开（`transform-origin` 已经由组件库按 placement 设好）。
+ * 这里换成 SWAP 弹簧：它比 PANEL 短（263ms vs 463ms），因为这类浮层是**高频**出现的，
+ * 每次点下拉都等半秒会烦。原生的 `scaleY(0)` 起手太"扁"，改成轻微缩放 + 位移。
+ */
+.el-zoom-in-top-enter-active,
+.el-zoom-in-top-leave-active,
+.el-zoom-in-bottom-enter-active,
+.el-zoom-in-bottom-leave-active,
+.el-zoom-in-center-enter-active,
+.el-zoom-in-center-leave-active,
+.el-zoom-in-left-enter-active,
+.el-zoom-in-left-leave-active {
+  transition:
+    transform var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    opacity var(--ch-dur-fast) var(--ch-ease-out);
+}
+
+.el-zoom-in-top-enter-from,
+.el-zoom-in-bottom-enter-from,
+.el-zoom-in-center-enter-from,
+.el-zoom-in-left-enter-from {
+  opacity: 0;
+  transform: scale(0.95);
+}
+
+.el-zoom-in-top-leave-active,
+.el-zoom-in-bottom-leave-active,
+.el-zoom-in-center-leave-active,
+.el-zoom-in-left-leave-active {
+  opacity: 0;
+  transform: scale(0.97);
+}
+
+/*
+ * 消息条与通知。Element Plus 给的是 `opacity .3s, transform .4s` ——
+ * 0.4s 的位移在"连续弹三条提示"时明显拖沓。换成 240ms 的弹簧位移 + 140ms 淡出。
+ */
+.el-message {
+  transition:
+    opacity var(--ch-dur-fast) var(--ch-ease-out),
+    transform var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    top var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    bottom var(--ch-spring-swap-dur) var(--ch-spring-swap);
+}
+
+.el-notification {
+  transition:
+    opacity var(--ch-dur-fast) var(--ch-ease-out),
+    transform var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    left var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    right var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    top var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    bottom var(--ch-spring-swap-dur) var(--ch-spring-swap);
+}
+
+/* ------------------------------------------------------------ ③ 自有动效 */
+
+/*
+ * 按钮按压。Element Plus 的按钮只有颜色过渡，没有"按下去"的物理反馈。
+ *
+ * 上行/下行用**不同的缓动**，这是这里唯一需要技巧的地方：
+ *   - 按下（`:active` 生效时）：140ms 直落，要"跟手"，慢了就是延迟；
+ *   - 抬起（`:active` 撤销后回到基础规则）：走 PRESS 弹簧，轻轻弹回原位。
+ * CSS 的规则是"进入某状态用该状态的 transition、离开用目标状态的 transition"，
+ * 所以把弹簧写在基础规则、把快落写在 `:active` 里，正好得到想要的一对。
+ */
+.el-button {
+  transition:
+    transform var(--ch-spring-press-dur) var(--ch-spring-press),
+    color var(--el-transition-duration-fast) var(--ch-ease-out),
+    border-color var(--el-transition-duration-fast) var(--ch-ease-out),
+    background-color var(--el-transition-duration-fast) var(--ch-ease-out),
+    box-shadow var(--el-transition-duration-fast) var(--ch-ease-out);
+}
+
+.el-button:not(.is-disabled):active {
+  transform: scale(var(--ch-press-scale));
+  transition-duration: var(--ch-dur-instant);
+  transition-timing-function: var(--ch-ease-out);
+}
+
+/*
+ * 列表错峰入场。配合 `composables/motion.ts` 的 `useStaggerIn()` 使用 ——
+ * 那个函数按索引下发 `--ch-reveal-delay`，延迟在 CSS 里生效。
+ * `both` 是必需的：否则带延迟的元素会在延迟期间先按终态渲染一下（闪一帧）。
+ */
+@keyframes ch-reveal-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ch-reveal {
+  animation: ch-reveal-in var(--ch-dur-slow) var(--ch-ease-out) both;
+  animation-delay: var(--ch-reveal-delay, 0ms);
+}
+
+/*
+ * 页面切换**没有**容器级的过渡 —— 这里曾经有一对 `.ch-page-enter-active` /
+ * `-leave-active`（配 `<transition mode="out-in">`），已经去掉，原因写在
+ * AdminLayout.vue 的 router-view 注释里（延期换页 + 窗口被遮挡时卡死）。
+ * 页面切换的动效全部由下面的 `.page > *` 错峰入场承担。
+ */
+
+/*
+ * 页面内容的错峰入场。
+ *
+ * 挂在 `.page > *` 上而不是逐个视图去写类名：所有视图的根容器都叫 `.page`
+ * （这条约定由 `.page-header` / `.page-title` / `.toolbar` 等共享类名一起维持），
+ * 于是一条规则覆盖全部 12 个页面，新增视图自动享有，也不会有人忘记加。
+ *
+ * 延迟按**块**递进（30ms 一档、封顶 180ms）：一屏通常是"页头 + 两三块内容",
+ * 这个节奏读起来是依次浮现；给更多块继续累加就变成排队了，所以第 7 块起不再递增。
+ */
+@keyframes ch-page-block-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.page > * {
+  animation: ch-page-block-in var(--ch-dur-slow) var(--ch-ease-out) both;
+}
+
+.page > *:nth-child(2) {
+  animation-delay: 30ms;
+}
+
+.page > *:nth-child(3) {
+  animation-delay: 60ms;
+}
+
+.page > *:nth-child(4) {
+  animation-delay: 90ms;
+}
+
+.page > *:nth-child(5) {
+  animation-delay: 120ms;
+}
+
+.page > *:nth-child(6) {
+  animation-delay: 150ms;
+}
+
+.page > *:nth-child(n + 7) {
+  animation-delay: 180ms;
+}
+
+/*
+ * 三处例外，都是"再动一遍就成了两层动画"或"动了会破坏别人的测量"：
+ *   ① `v-loading` 的遮罩是插在 `.page` 里的直接子元素，让它跟着淡入会闪；
+ *   ② 仪表盘的统计网格内部每张卡片自带 `.ch-reveal`（错峰由卡片承担，
+ *      才能看到七张卡依次浮现），网格本身再动一遍就叠了；
+ *   ③ **弹窗遮罩**（`.el-overlay`）。Element Plus 的 `el-dialog` 默认 `append-to-body=false`，
+ *      声明在视图里的弹窗，其遮罩是 `.page` 的直接子元素；而它是 `position: fixed; inset: 0`
+ *      的全屏层，下移 6px 会把刚好贴边的自适应内容顶出屏幕。全屏层本来也不该参与
+ *      "内容块依次浮现" —— 它一出现就该盖住整屏。
+ */
+.page > .el-loading-mask,
+.page > .el-overlay,
+.page > .stat-grid {
+  animation: none;
+}
+
+/* ------------------------------------------------------- 降低动态效果偏好
+ *
+ * 系统开了「减少动态效果」时，把全站的动画压到 1ms —— 不是删掉，
+ * 而是让它在同一帧内完成（`transition: none` 会让依赖 transitionend 的逻辑失灵）。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /*
+   * 例外：加载指示旋的是"状态"不是"装饰"。把它一起停掉会让界面看起来像卡死了
+   * （用户会去重复点击），所以这里改为**放慢**而不是停。
+   */
+  .el-icon.is-loading,
+  .el-loading-spinner .circular,
+  .el-loading-spinner svg,
+  .is-loading {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/* ------------------------------------------------- 整页换肤（View Transition）
+ *
+ * `useThemeReveal()`（composables/motion.ts，与桌面客户端共用同一份实现）用
+ * View Transition API 做"从点击位置扩散的圆"。浏览器默认会给新旧两帧做一次交叉淡入 ——
+ * 这里把它关掉，改由 JS 用 WAAPI 驱动 `::view-transition-new(root)` 的 clip-path。
+ * 不关掉的话两套动画会叠在一起，观感是"圆在扩散的同时整页又在闪"。
+ *
+ * 层级：老帧在下（z-index 1）、新帧在上（z-index 2），新帧的圆从无到有地盖住老帧。
+ * 不支持这个 API 的浏览器不会渲染这些伪元素，规则自然失效（JS 侧也有守卫）。
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 2;
 }

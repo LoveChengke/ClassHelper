@@ -1,7 +1,7 @@
 # 班级小助手（Class Helper）
 
 班级信息管理系统。一个 pnpm monorepo，一份代码产出四个交付物：**后端服务**、**Web 管理端**（教师 / 管理员）、
-**桌面客户端**（学生端 / 教室机器）与 **ClassIsland 联动插件**（装在教室的 ClassIsland 上）。**当前版本 1.1.1**。
+**桌面客户端**（学生端 / 教室机器）与 **ClassIsland 联动插件**（装在教室的 ClassIsland 上）。**当前版本 1.1.2**。
 
 核心链路：
 
@@ -63,6 +63,7 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 | 桌面客户端           | `packages/desktop-client`     | Electron + Vue 3，含「灵动岛」浮窗、托盘、离线缓存                   | 学生端 / 教室机器                 |
 | 共享契约             | `packages/shared`             | 三端共用的类型 / 常量 / 权限矩阵 / 工具函数                          | 上面三个 + 插件                   |
 | ClassIsland 联动插件 | `packages/classisland-plugin` | .NET 8 / C#，装在教室的 ClassIsland 上（上报课表与上课状态、弹提醒） | 教室机器（独立于 pnpm workspace） |
+| 官网                 | `website/`                    | 纯 HTML / CSS / JS 的静态页面，**没有构建步骤**                              | 展示与说明（`node website/serve.mjs` 本地预览） |
 
 **设计取舍（与原始提示词的两处偏差，已与用户确认）**：
 
@@ -202,7 +203,7 @@ pnpm verify:desktop
 | `pnpm build:desktop`                          | 只构建客户端（esbuild 主进程 / preload + Vite 渲染进程，末尾跑产物凭据门禁）        |
 | `pnpm build:classisland-plugin`               | 构建 ClassIsland 联动插件（.NET 8）                                                 |
 | `pnpm dist:classisland-plugin`                | 打包插件为 `.cipx` 并归集到 `releases/classisland-plugin/<版本>/`                  |
-| `pnpm icons`                                  | 生成应用图标（Electron 渲染 SVG → PNG/ICO）                                         |
+| `pnpm icons`                                  | 从 `build/classhelper.png` 派生全部图标（PWA / favicon / 托盘 / 安装包 / 插件 / 官网 / 界面内品牌标） |
 | `pnpm dist:server`                            | 打包服务端 + Web 管理端（免安装目录 + NSIS 安装程序，内置 Node）                    |
 | `pnpm dist:dir`                               | 打包客户端免安装目录 `release/win-unpacked`（最快）                                 |
 | `pnpm dist:win`                               | 打包客户端 nsis 安装包 + portable 单文件 EXE                                        |
@@ -822,11 +823,11 @@ class-helper/
 ├── eslint.config.mjs            # ESLint 扁平配置（TS + Vue）
 ├── .prettierrc.json             # 单引号 / 110 列 / LF / 尾逗号
 ├── .dockerignore                # 容器构建上下文排除项
-├── build/icon.{ico,png}         # 应用图标（由 pnpm icons 生成）
+├── build/classhelper.{png,ico}  # **图标源**（设计导出、手工放入）；pnpm icons 从它派生其余全部图标
 ├── scripts/
 │   ├── use-database.mjs         # SQLite ⇄ MySQL provider 切换助手（改写 schema.prisma 的 provider）
-│   ├── generate-icons.mjs       # 用 Electron 渲染 SVG 生成 PNG/ICO 图标
-│   ├── icons/render.cjs         # 图标渲染脚本（CommonJS）
+│   ├── generate-icons.mjs       # 启动 Electron 跑 icons/render.cjs（= pnpm icons）
+│   ├── icons/render.cjs         # 把 classhelper.png 重采样成各端图标（CommonJS）
 │   ├── dist-server.mjs          # 服务端 + Web 管理端 打包（免安装目录 + NSIS 安装程序）
 │   ├── verify-packaged.mjs      # 对打包后 / 已安装的客户端 EXE 复跑冒烟
 │   ├── lib/electron-env.mjs     # 启动 Electron 的公共处理（清理 RUN_AS_NODE + 定位可执行文件）
@@ -850,6 +851,9 @@ class-helper/
 │   ├── mysql.md                 # MySQL 切换指南
 │   ├── winisland-design-tokens.md  # 灵动岛照 WinIsland 提取的设计 token
 │   └── screenshots/             # 回归测试自动留档的截图（island / client / web-mobile / classisland）
+├── website/                     # 产品官网（纯静态，无构建；node serve.mjs 本地预览）
+│   ├── index.html
+│   └── assets/{styles.css,motion.js,main.js,icon.png,shots/}   # motion.js = beUI 动效 token 与弹簧引擎
 └── packages/
     ├── shared/                  # 三端共享：类型契约、常量、权限矩阵、工具函数
     │   └── src/{types,constants,permissions,utils,index}.ts
@@ -888,11 +892,11 @@ class-helper/
     │   ├── src/Interop/ClassHelperClient.cs                 # 后端 HTTP 客户端 + 对齐服务端 zod 的 DTO
     │   └── scripts/{build,verify}.mjs   # 构建打包（.cipx）与静态契约校验
     ├── web-admin/               # Web 管理端（Vue 3 + Vite + Element Plus + PWA）
-    │   ├── public/                      # manifest.webmanifest / sw.js / 图标（由 pnpm icons 生成）
+    │   ├── public/                      # manifest.webmanifest / sw.js / 图标与界面品牌标（由 pnpm icons 生成）
     │   └── src/{api,stores,router,layouts,views,components,composables,styles}
     └── desktop-client/          # 桌面客户端（Electron + Vue 3）
         ├── electron-builder.yml         # 打包配置（nsis 安装包 + portable 单文件）
-        ├── build/icon.ico               # 应用图标（electron-builder 自动使用）
+        ├── build/classhelper.ico         # 应用 / 安装包图标（electron-builder 的 win.icon 显式指向它）
         ├── vite.config.mts              # 渲染进程构建（base: './'，hash 路由）
         ├── scripts/{build-main,dev,smoke,dist-win,check-bundle-secrets}.mjs
         └── src/
@@ -1123,6 +1127,62 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 因此新增表无需用户手动执行 `prisma migrate deploy`；已是最新则不做任何写操作。日志会明确写出
 「全新安装 / 升级安装」、应用了几个迁移、跳过了几个已存在对象。
 
+### 5.8 动效层
+
+两端的动画与过渡统一走一套自研的动效语言，**移植自 [beUI](https://beui.dev) 的 `lib/ease.ts`**
+（beUI 的组件本身是 React，无法直接用于本项目的 Vue 两端，但它的动效语言与框架无关）。
+
+- **令牌单一来源**：`packages/shared/src/motion.ts`。三组缓动曲线（`EASE_OUT` / `EASE_IN_OUT` /
+  `EASE_DRAWER`）与六组具名弹簧（`SPRING_PRESS` / `SWAP` / `PANEL` / `LAYOUT` / `MOUSE` / `GLIDE`）。
+  弹簧由**数值积分**求出落定时间，再生成 CSS `linear()` 缓动字面量 —— 于是弹簧可以纯 CSS 驱动，
+  不必给每个组件挂一个 rAF 循环去逐帧改样式。
+- **运行时注入**：两端的 `main.ts` 在 `app.mount()` **之前**把令牌写进 `:root` 的自定义属性
+  （`--ch-ease-*` / `--ch-spring-*` / `--ch-dur-*`）。CSS 里只引用变量，不抄数值 —— 抄了必漂。
+- **两端各一份组合式函数**：`packages/{web-admin/src,desktop-client/src/renderer}/composables/motion.ts`
+  （`useReducedMotion` / `useHoverCapable` / `useCountUp` / `useStaggerIn`）。与 `ScoreBarChart.vue`
+  一样，两端各一份是仓库既有做法。
+
+落地到界面上的动效：
+
+| 位置 | 动效 |
+| ---- | ---- |
+| Element Plus 全站过渡 | 时长 300/200ms → 200/140ms，缓动换成 `EASE_OUT`（改写 `--el-transition-*` 变量，不动组件源码） |
+| 弹窗 / 抽屉 / 浮层 / 消息条 | 面板走 `SPRING_PANEL` / `SPRING_SWAP` 弹簧；**退出一律比入场快**（用户已经决定关掉它了） |
+| 按钮 | 按下 90ms 直落（跟手）、抬起走 `SPRING_PRESS` 弹回 |
+| 侧栏激活项 | 单个"底片"在菜单项之间**滑过去**（`SPRING_LAYOUT`），取代"每项各画一块底色" |
+| 页面内容 | `.page > *` 按块错峰浮现（30ms 一档，封顶 180ms） |
+| 统计数字 | 0 → 实际值滚动（`useCountUp`） |
+| 主题切换（两端） | View Transition API：从点击位置扩散的圆整页换肤 |
+| 灵动岛 | **刻意只有单调缓动**（曲线取自同一套令牌，但不用弹簧）：岛的形变由主进程缓动窗口尺寸，任何过冲都会让"开合"看起来在震动（冒烟逐帧断言）。悬停微交互关在 `@media (hover: hover)` 里，避免触摸屏上"幽灵 hover"粘住按钮 |
+| 降低动态效果 | 全站 `prefers-reduced-motion` 降级（**加载指示旋除外** —— 停掉会让界面看着像卡死） |
+
+三条**别踩**的约定（都对应实测过的坑，详见 [AGENTS.md](AGENTS.md) §5 第 61 条）：
+路由层**不要**包 `<transition mode="out-in">`；Vue 的 `<transition>` 一律显式给 `:duration`；
+`position: fixed` 的整屏层与"自己量尺寸"的元素不要叠位移类动画。
+
+### 5.9 主题（浅色 / 深色）
+
+**两端都有深色主题，机制完全一致**：在 `<html>` 上挂 `.dark` 类，由各自 `styles/index.css` 的
+`html.dark` 块覆盖**语义色令牌**，Element Plus 的 `theme-chalk/dark/css-vars.css` 提供 `--el-*` 的深色默认。
+两端的 `main.ts` 都在 `app.mount()` **之前**落主题，深色用户首帧才不会看到"先白后黑"闪一下。
+
+- **语义色令牌**：`--ch-surface` / `--ch-surface-alt` / `--ch-surface-sunken` / `--ch-surface-hover` /
+  `--ch-text` / `--ch-text-secondary` / `--ch-text-muted` / `--ch-text-placeholder`。
+  组件里**一律引用这些，不要写死颜色**；`html.dark` 只覆盖颜色，**不动圆角与动效令牌** ——
+  两套主题的几何必须完全一致，否则切换时会看到布局跳一下。
+- **默认跟随系统**（`prefers-color-scheme`，且系统改了就跟着变）；用户一旦手动点过切换按钮，
+  就以用户的选择为准（系统的偏好是默认值，不是命令）。
+- **切换入口**：客户端在顶栏（`[data-test="theme-toggle"]`），Web 管理端同样在顶栏。
+  两边都走 `useThemeReveal()`（见 [5.8](#58-动效层)）——**从点击位置扩散的圆整页换肤**。
+- **刻意不随主题的区域**：登录页的深色渐变底、桌面端的启动过渡页与全屏作业看板、
+  灵动岛自身、Web 管理端的侧栏（本来就是深色）、以及深色底上的白色文字。
+- Web 端还会同步 `<meta name="theme-color">`，并设 `color-scheme` 让**原生控件**
+  （滚动条、日期选择器弹层、自动填充底色）也跟着走 —— 只改 CSS 变量的话它们会仍是刺眼的浅色。
+
+> ⚠️ 改令牌时**只改值**。别对样式表跑"把 `#303133` 全量替换成 `var(--ch-text)`"这类批量替换 ——
+> 它会把令牌**定义本身**也换掉（`--ch-text: #303133` → `--ch-text: var(--ch-text)`），
+> 自定义属性一旦自引用就整条失效、解析成空串，全站文字颜色静默回落成继承色（实测踩过）。
+
 ## 6. 验收
 
 ### 6.1 验收标准对照
@@ -1177,8 +1237,8 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 | 验证                                                                                         | 结果                                                                                         |
 | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `pnpm verify:e2e`（后端 + 实时 + RBAC + 上课时段 + 导入 + 班级账号 + 数据库管理 + 更新检查） | **190/190** ✅（2026-10-05 实测）                                                            |
-| `pnpm verify:desktop`（客户端冒烟，不弹窗）                                                  | **105/105** ✅（在线轮）+ **89/89** ✅（二次启动轮），0 失败（2026-10-05 实测）              |
-| `pnpm verify:web`（Web 管理端真实点击回归）                                                  | **32/33**（2026-10-05 实测；未过的 1 项是既有脆弱用例「课表科目为全校统一目录」，见下）      |
+| `pnpm verify:desktop`（客户端冒烟，不弹窗）                                                  | **107/107** ✅ + **89/89** ✅（2026-10-06 实测，0 失败）                                     |
+| `pnpm verify:web`（Web 管理端真实点击回归）                                                  | **32/33**（2026-10-06 实测；未过的 1 项是既有脆弱用例「课表科目为全校统一目录」，见下）      |
 | `pnpm verify:classisland`（设备令牌 / 上报 / 提醒下发与回执 / 镜像契约）                     | **42/42** ✅（2026-10-05 实测）                                                              |
 | `pnpm verify:classisland-plugin`（插件静态契约）                                             | **68/68** ✅                                                                                 |
 | `pnpm typecheck` / `pnpm lint` / `pnpm check:icons`                                          | 全过 ✅（lint 0 error **0 warning**）                                                        |
@@ -1199,7 +1259,8 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 
 - **`verify:desktop` 的「真实通知链路」「灵动岛标为已读」等 3 项**：要求**当前不在上课时段**。
   若种子课表恰有课正在进行，客户端会**正确地**把普通通知暂存到下课（见 [4.6](#46-上课时段策略)），
-  这三项就会红（日志里会写 `客户端判定上课中=true` / `正在上 XXX`）。2026-10-02 那次 99/102 即为此因。
+  这三项就会红（日志里会写 `客户端判定上课中=true` / `正在上 XXX`）。2026-10-02 那次 99/102 即为此因，
+  2026-10-06 09:27（种子里的「政治 08:55–09:40」正在上）那次 104/107 同因。
 - **`verify:e2e` 的「上课状态接口（at=周一 08:10）」**：种子把周一第 1 节限制在第 1 周，且用例把 `2026-09-07`
   当第 1 周 —— `.env` 的 `TERM_START_DATE` 对齐到 `2026-09-07` 即全绿。
 - **`verify:web` 的「课表科目为全校统一目录」**：种子给每个班建满了全部科目，下拉里没有可自动建课的「统一科目」分组。
@@ -1287,6 +1348,84 @@ pnpm verify:classisland-plugin   # 静态契约校验（不需要 .NET，不需�
 `AVLN3001`**（设置页只有 DI 构造函数、无公开无参构造）—— 本插件走编译期 XAML + ClassIsland DI 实例化，
 别为了消警告加无参构造函数。部署到教室机器（先退出 ClassIsland 再覆盖 DLL，别覆盖 `Settings.json`）的步骤
 见 [AGENTS.md](AGENTS.md) §7 第 12 条与 §8。
+
+### 官网（`website/`）
+
+产品介绍页，纯静态、**没有构建步骤**，也不进 pnpm workspace：
+
+```bash
+node website/serve.mjs        # http://127.0.0.1:5180，只是本地预览用
+```
+
+发布时把 `website/` 整个目录丢给任意静态托管 / Nginx 即可（`index.html` 是唯一入口，无路由）。
+
+**动效层（`assets/motion.js`）的参数逐条取自 [beUI](https://beui.dev/components/motion) 的开源 token**——
+曲线（`EASE_OUT` = `cubic-bezier(0.16, 1, 0.3, 1)` 等）、弹簧（`SPRING_PRESS` 500/30/0.6、`SPRING_LAYOUT` 360/32/0.6、
+`SPRING_GLIDE` 700/50/0.5 ……）、时长口径，以及各个组件源码里的具体写法。没有引 React 那套依赖，
+是自己写的一个小引擎（`Spring` 类 + 一个自续 rAF 循环 + `duration/bounce` 反解刚度的求解器）。
+
+| 页面上的动效 | 对着 beUI 的哪个组件写的 |
+| --- | --- |
+| 标题逐字上浮（位移用弹簧、透明度 0.7s、去模糊 0.9s、逐字 0.03s 错开） | `motion/text-animation` 的 `TextReveal` |
+| 首屏那个**灵动岛** | `blocks/dynamic-island` |
+| 胶囊文案交换（scale 0.94 + 模糊 8px，0.2s） | `motion/action-swap` 的 blur 变体 |
+| 铃铛从铰链上摆一下 | motion guide「Semantic icon motion」 |
+| 顶栏悬停胶囊滑移 | `motion/shared-layout-bg` |
+| 顶部 2px 阅读进度条 | `motion/scroll-animation` 的 `ScrollProgressBar` |
+| 按钮按压 0.93 / 悬停 1.02 | `motion/button` |
+| 验收数字滚动（0–9 竖排滚轮） | `motion/number` 的 `NumberTicker` |
+| 上课时段滑块的把手 | `motion/range-slider` |
+| 复制按钮文案滚上来 | `motion/action-swap` 的 roll 变体 |
+| 实机图库的分段控件（指示器滑移） | `motion/tabs` 的 `layoutId` 指示器 |
+| 切分组换图（旧的走得比新的快，±4px） | motion guide「Content swap」 |
+| 点缩略图放大（从原位置长成大图） | `motion/image-viewer` 的 `morphing-lightbox` |
+
+灵动岛保持**产品的几何**（连续圆角 squircle、真实尺寸 胶囊 268×44 / 展开 424×230 / 叫人 456×262），
+换成 beUI 的**动效语言**：壳用 Apple 的 `duration 0.8s + bounce 0.2`、内容层 `bounce 0.35`，
+圆角是常数 24（由 `min(圆角, w/2, h/2)` 钳制，胶囊态自动成为满圆角），内容进出带 scale + 位移 + 模糊。
+少动效下只保留透明度：位移、缩放、模糊、回弹全部去掉。
+
+**版式照 [ClassIsland 官网](https://www.classisland.tech/) 写**（它是教室大屏那套东西，读者是同一批人，
+两边看起来像一套更省事）：
+
+| 版式 | 来自 ClassIsland 的哪一处 |
+| --- | --- |
+| 分幕标题（居中大标题 + 中间一段渐变填色） | `.headline-feature` + `.gradient-base` |
+| 特性单元：`#彩色标签` → 粗体短标题 → 一句说明 | `#主界面` / `#提醒` … 那一组 |
+| 首屏左文右块、文字收成一条窄列 | `.introduction-col`（`flex-basis: 480px`） |
+| 首屏逐项错峰入场（`.72s` EASE_OUT、延迟 150/200/250ms） | `.intro-seq` + `--intro-delay` |
+| 末尾一整块收尾 CTA | 「更多功能留给您自行探索！」那一屏 |
+
+> 有意思的是 ClassIsland 用的曲线 `cubic-bezier(.16, 1, .3, 1)` 和 beUI 的 `EASE_OUT` **是同一条**，
+> 所以两套参考并不打架。
+
+> 标题与引文用的是楷体（优先加载霞鹜文楷 Screen，失败回落到系统 `KaiTi` / `STKaiti`），
+> 正文用产品自己那套 UI 字体。字体是 CDN 引入的，**断网时会自动回落，不影响阅读**。
+
+#### 采集实机图（`website/assets/shots/`）
+
+官网上那一栏实机截图**不是画的示意**，是脚本真的把程序跑起来截的。要重新采集：
+
+```bash
+pnpm dev:server                                    # 后端（同时托管 Web 管理端）
+node website/tools/capture-shots.mjs               # → web-*.jpg / mobile-*.jpg
+
+# 客户端页面 + 灵动岛各形态（跑一遍客户端冒烟，顺便留档）
+ISLAND_SHOTS_DIR=F:/ClassHelper/.cache/island-shots \
+ELECTRON_CLIENT_SHOTS_DIR=F:/ClassHelper/.cache/client-shots \
+ELECTRON_SMOKE_ISLAND_ACCENT='#0a84ff' ELECTRON_SMOKE_ISLAND_STYLE=black \
+ELECTRON_SMOKE_USER=teacher1 ELECTRON_SMOKE_PASSWORD=123456 \
+  node packages/desktop-client/scripts/smoke.mjs
+```
+
+两个环境变量在 `smoke.ts` 里是**默认值为洋红**的开关：冒烟平时故意用洋红主题色把验证实例的岛
+和用户自己的岛区分开（见 AGENTS.md §5 第 38 条），采集留档图时才换成产品默认外观。
+指向 `website/assets/shots/` 的那两个目录变量不在 `website/`，要自己拷过去。
+
+> 采集脚本会把窗口**真的弹在屏幕上**（和 `verify:web` / `verify:desktop` 一样），跑的时候别动键鼠。
+> 客户端留档会**临时停掉 CSS 动画**再截图：窗口被遮挡时 Chromium 冻结动画，页面入场动画的起始帧是
+> `opacity: 0`，不停掉的话截出来是**整片空白**（DOM 里文本齐全，只有图是空的）。
+> `capture-shots.mjs` 自带 `UnknownVizError` 重试与空内容跳过，偶发失败不会毁掉整轮。
 
 ## 8. 常见问题
 

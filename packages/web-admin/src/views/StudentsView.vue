@@ -352,7 +352,7 @@ async function submitCall(): Promise<void> {
 
 .call-label {
   font-size: 13px;
-  color: #606266;
+  color: var(--ch-text-secondary);
   margin-bottom: 8px;
 }
 

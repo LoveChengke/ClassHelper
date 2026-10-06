@@ -1,6 +1,11 @@
 /**
  * 图标生成启动器：pnpm icons
- * 复用 desktop-client 的 Electron 运行时渲染 SVG 并导出 PNG/ICO。
+ *
+ * 真正的活儿在 `scripts/icons/render.cjs`（跑在 Electron 里，用 Chromium 的 canvas
+ * 把 `build/classhelper.png` 重采样成各端要的尺寸）。这里只负责把 Electron 拉起来。
+ *
+ * 图形源是**手工放入的设计导出**，不从任何 SVG 渲染 —— 改图标请换
+ * `build/classhelper.{png,ico}` 这两个文件，别改这个脚本。
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -16,6 +21,14 @@ if (!fs.existsSync(electronDir)) {
   process.exit(2);
 }
 
+for (const source of ['classhelper.png', 'classhelper.ico']) {
+  const file = path.join(root, 'build', source);
+  if (!fs.existsSync(file)) {
+    console.error(`[icons] 缺少图形源 build/${source}（设计导出，需手工放入）`);
+    process.exit(2);
+  }
+}
+
 const executable = resolveElectronExecutable(electronDir);
 
 const child = spawn(executable, [path.join(root, 'scripts', 'icons', 'render.cjs')], {
@@ -25,17 +38,5 @@ const child = spawn(executable, [path.join(root, 'scripts', 'icons', 'render.cjs
 });
 
 child.on('exit', (code) => {
-  if (code === 0) {
-    // 托盘图标需要一张 PNG 随 renderer 一起打包（Vite 会把 public/ 复制到 dist/renderer）
-    try {
-      const source = path.join(root, 'packages', 'desktop-client', 'build', 'icon.png');
-      const targetDir = path.join(root, 'packages', 'desktop-client', 'public');
-      fs.mkdirSync(targetDir, { recursive: true });
-      fs.copyFileSync(source, path.join(targetDir, 'tray.png'));
-      console.log('[icons] 托盘图标已同步：packages/desktop-client/public/tray.png');
-    } catch (error) {
-      console.warn('[icons] 同步托盘图标失败（不影响构建）', error);
-    }
-  }
   process.exit(code ?? 1);
 });

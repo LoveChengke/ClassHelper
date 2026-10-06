@@ -7,7 +7,7 @@ import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useOnboardingStore } from '../stores/onboarding.js';
 import { useRealtimeStore } from '../stores/realtime.js';
-import { DEFAULT_SERVER, normalizeServerUrl } from '../config.js';
+import { DEFAULT_SERVER, BRAND_LOGO_URL, normalizeServerUrl } from '../config.js';
 
 const router = useRouter();
 const appStore = useAppStore();
@@ -93,7 +93,7 @@ async function enterOffline(): Promise<void> {
   <div class="login-page">
     <div class="login-card">
       <div class="login-head">
-        <el-icon :size="30" color="#409eff"><School /></el-icon>
+        <img class="login-logo" :src="BRAND_LOGO_URL" alt="" width="44" height="44" />
         <div>
           <h1 class="login-title">班级小助手</h1>
           <p class="login-sub">班级客户端 · 以班级账号登录，实时接收课表、作业、通知与成绩</p>
@@ -198,6 +198,16 @@ async function enterOffline(): Promise<void> {
   align-items: center;
   gap: 12px;
   margin-bottom: 18px;
+}
+
+/*
+ * 品牌标：与应用图标同一份图（`public/logo.png`）。
+ * 图自带圆角与透明边角，不要再加 border-radius；`src` 走 `BRAND_LOGO_URL` 的理由同 ClientLayout。
+ * （表单里「班级码」输入框的前缀仍用 School 字形 —— 那是字段语义图标，不是品牌标。）
+ */
+.login-logo {
+  flex: none;
+  display: block;
 }
 
 .login-title {

@@ -57,6 +57,17 @@
    * 侧栏收放动画。组件（ClientLayout 的 .aside/.brand/.brand-logo/.aside-footer）
    * 与全局的菜单导轨规则（下面的 .ch-nav.is-collapsed …）共用这一份参数，
    * 改时长/缓动只改这里，两边不会漂。
+   *
+   * ⚠️ 缓动**刻意保留 Material 的 cubic-bezier(.4, 0, .2, 1)**，没有换成全站统一的
+   * beUI EASE_OUT。试过的后果：EASE_OUT 起步极快，宽度掉到 80px 以下时动画才走了约 35%，
+   * 而冒烟自检 layoutChromeSelfTest 一旦读到"宽度 ≤ 80"就立刻量图标中心 ——
+   * 此刻内边距还在动，量出来 6 个分组子项偏 2.3px（要求 ≤2px），直接判红。
+   * 原曲线的 0.882 进度点落在 74% 处，剩下的时间足够动画跑完，量到的是稳态。
+   * 换句话说：**这条断言是按"收完之后的几何"写的，而它采样的时机取决于缓动的形状**，
+   * 想换曲线就得连那条断言一起重新商量。
+   *
+   * ⚠️ 时长**不要**改到 0.05s 以下：同一条自检断言"折叠必须真的是动画"
+   * （读 getComputedStyle 的 transitionDuration，要求 > 0.05）。
    */
   --nav-dur: 260ms;
   --nav-ease: cubic-bezier(0.4, 0, 0.2, 1);
@@ -381,22 +392,20 @@ textarea {
   background: transparent;
 }
 
-/* 选中项：强调色淡底 + 左侧强调条（WinUI 经典样式） */
-.ch-nav .el-menu-item.is-active {
-  background: var(--ch-accent-soft);
-  color: var(--ch-text);
+/*
+ * 选中项：强调色淡底 + 左侧强调条（WinUI 经典样式）。
+ *
+ * 底色与强调条**都改由滑动指示器承担**（见 ClientLayout.vue 的 `.nav-indicator`）——
+ * 原先每个激活项各画一块，切换时是"旧的瞬间消失、新的瞬间出现"，看不出两者之间的关系；
+ * 现在由同一个底片滑过去。指示器是 z-index:0 的绝对定位元素，菜单项抬到 1 层，
+ * 文字才不会被它盖住（`.ch-nav .el-menu-item` 上面已有 `position: relative`）。
+ */
+.ch-nav .el-menu-item {
+  z-index: 1;
 }
 
-.ch-nav .el-menu-item.is-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 16px;
-  border-radius: 2px;
-  background: var(--ch-accent);
+.ch-nav .el-menu-item.is-active {
+  color: var(--ch-text);
 }
 
 /* ---------------------------------------------------------------- 折叠态：图标导轨
@@ -531,4 +540,409 @@ textarea {
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* ============================================================================
+ * 动效层 —— beUI 的动效语言
+ *
+ * 令牌（缓动曲线、六组弹簧、时长）在 `packages/shared/src/motion.ts`，
+ * 由 `main.ts` 在 mount 之前写进 `:root`；这里只负责**用**它们。
+ * 与 Web 管理端（packages/web-admin/src/styles/index.css）是同一套词汇表。
+ *
+ * ⚠️ 灵动岛**不在**这套体系里：它是另一个渲染进程，用自研的 WinIsland 弹簧物理
+ * （src/island/spring.ts），刻意保持独立，不要往那边接这里的变量。
+ *
+ * 分三层，越往下越"重"：
+ *   ① 变量调音 —— 改写 Element Plus 自己的过渡变量，一次性改掉全站组件库过渡；
+ *   ② 弹簧覆盖 —— 弹窗 / 抽屉 / 浮层换成真正的物理曲线；
+ *   ③ 自有动效 —— 页面过渡、列表错峰入场、按钮按压、卡片抬升。
+ * ========================================================================== */
+
+/* ------------------------------------------------- ① 变量调音（覆盖组件库）
+ *
+ * Element Plus 的每个过渡都由这几个变量拼出来（`--el-transition-all` / `-fade` /
+ * `-md-fade`），调这里等于一次性调完全站，比逐个覆盖类名安全。
+ *
+ * Fluent/ClassIsland 观感本来就偏"轻快"，原来 300/200ms 的默认值在这套界面里更显拖沓，
+ * 收到 200/140ms；缓动换成 beUI 的 EASE_OUT。
+ *
+ * 只改时长与缓动、不改颜色，所以不需要在 html.dark 里再写一份。
+ * 侧栏的 `--nav-ease` 也在文件开头的 :root 里改成了同一条曲线（与折叠几何放在一起，
+ * 免得"改侧栏动画要翻两个地方"）。
+ */
+:root {
+  --el-transition-duration: 200ms;
+  --el-transition-duration-fast: 140ms;
+  --el-transition-function-ease-in-out-bezier: cubic-bezier(0.16, 1, 0.3, 1);
+  --el-transition-function-fast-bezier: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ------------------------------------------------------------ ② 弹簧覆盖 */
+
+/*
+ * 弹窗（el-dialog）。Element Plus 的入场做在 `.el-overlay-dialog`（居中容器）上，
+ * 遮罩淡入在 `.dialog-fade-enter-active` 自己身上，两条都要换 ——
+ * 否则遮罩先到位、弹窗还在动，看起来是"背景已经变暗了但框还没出来"。
+ *
+ * 弹簧 PANEL 总时长 463ms 看着偏长，但它 95% 的行程在 262ms 就走完了，
+ * 剩下的是极慢的收尾 —— 观感上就是"200ms 到位、再轻轻落定一下"。
+ */
+@keyframes ch-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ch-panel-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.985);
+  }
+}
+
+/*
+ * 位移与缩放挂在 `.el-dialog` **自己**身上，不挂在 `.el-overlay-dialog`（居中容器）上。
+ *
+ * 挂外层容器有个隐蔽的坑：Element Plus 的「打开完成」回调（@opened）按**根元素**
+ * （`.el-overlay`，只有 200ms 的淡入）的动画结束触发，而外层容器上的弹簧要跑 463ms ——
+ * 于是任何在 @opened 里量容器尺寸做自适应的弹窗，都会量到"还带着 scale(0.97) 的缩小版"。
+ * **本客户端的作业看板正是这么算 scale 的**：测小了会被最小缩放兜住，反而超出屏幕 7px
+ * （冒烟断言「作业看板全屏自适应（铺满屏幕、内容不溢出）」实测逮到，两次跑出来都是 550 > 543）。
+ * 挂到 `.el-dialog` 上还有个好处：全屏弹窗能靠 `is-fullscreen` 精确豁免（见下）。
+ */
+.dialog-fade-enter-active .el-overlay-dialog,
+.dialog-fade-leave-active .el-overlay-dialog {
+  /* 抵消 Element Plus 自带的那两条（它们同样带 translateY，会与下面这两条叠起来） */
+  animation: none;
+}
+
+.dialog-fade-enter-active .el-dialog {
+  animation: ch-panel-in var(--ch-spring-panel-dur) var(--ch-spring-panel) both;
+}
+
+/*
+ * 退出**刻意比入场快得多**：用户已经决定关掉它了，这时候再让他等一段"有分量"的动画
+ * 只会显得卡。而且冒烟里多处断言"窗口/弹窗已消失"，退出越快越稳。
+ */
+.dialog-fade-leave-active .el-dialog {
+  animation: ch-panel-out var(--ch-dur-fast) var(--ch-ease-out) both;
+}
+
+/*
+ * 全屏弹窗（`is-fullscreen`，就是作业看板）**不做位移缩放**。
+ * 它本来就是铺满整屏的表面，"从略小处落下来"既看不出效果，又会让内部的
+ * fitBoard / fitFullscreen 在 @opened 那一刻量到被 scale 过的容器 —— 测小了会被
+ * 最小缩放兜住，结果反而超出屏幕。只留淡入。
+ */
+.dialog-fade-enter-active .el-dialog.is-fullscreen {
+  animation: ch-fade-in var(--ch-dur-base) var(--ch-ease-out) both;
+}
+
+.dialog-fade-leave-active .el-dialog.is-fullscreen {
+  animation: ch-fade-out var(--ch-dur-fast) var(--ch-ease-out) both;
+}
+
+/*
+ * 确认框（ElMessageBox）。这条沿用了"动画挂在遮罩层上"的做法：
+ * 它内部没有任何按容器尺寸做自适应的内容，不存在上面那个 @opened 测量的坑。
+ */
+.el-overlay-message-box {
+  animation: ch-panel-in var(--ch-spring-panel-dur) var(--ch-spring-panel) both;
+}
+
+.dialog-fade-enter-active {
+  animation: ch-fade-in var(--ch-dur-base) var(--ch-ease-out) both;
+}
+
+.dialog-fade-leave-active {
+  animation: ch-fade-out var(--ch-dur-fast) var(--ch-ease-out) both;
+}
+
+@keyframes ch-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ch-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/*
+ * 抽屉。位移由 `.el-drawer` **自身**的 `transition: all` 承载
+ * （`.el-drawer-fade-*` 那组类只管遮罩与 overflow），所以弹簧挂在 `.el-drawer` 上，
+ * 且显式列出属性 —— 不想让背景色的变化也走弹簧曲线。
+ */
+.el-drawer {
+  transition:
+    transform var(--ch-spring-panel-dur) var(--ch-spring-panel),
+    opacity var(--ch-dur-base) var(--ch-ease-out);
+}
+
+/*
+ * 浮层（下拉菜单 / 选择器 / 气泡）。Element Plus 用 `el-zoom-in-*` 系列，
+ * transform-origin 已按 placement 设好。换成 SWAP 弹簧（263ms，比 PANEL 短）：
+ * 这类浮层是高频出现的，每次点下拉都等半秒会烦。
+ */
+.el-zoom-in-top-enter-active,
+.el-zoom-in-top-leave-active,
+.el-zoom-in-bottom-enter-active,
+.el-zoom-in-bottom-leave-active,
+.el-zoom-in-center-enter-active,
+.el-zoom-in-center-leave-active,
+.el-zoom-in-left-enter-active,
+.el-zoom-in-left-leave-active {
+  transition:
+    transform var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    opacity var(--ch-dur-fast) var(--ch-ease-out);
+}
+
+.el-zoom-in-top-enter-from,
+.el-zoom-in-bottom-enter-from,
+.el-zoom-in-center-enter-from,
+.el-zoom-in-left-enter-from {
+  opacity: 0;
+  transform: scale(0.95);
+}
+
+.el-zoom-in-top-leave-active,
+.el-zoom-in-bottom-leave-active,
+.el-zoom-in-center-leave-active,
+.el-zoom-in-left-leave-active {
+  opacity: 0;
+  transform: scale(0.97);
+}
+
+/* 消息条与通知：原生的位移是 0.4s，连弹三条时明显拖沓 */
+.el-message {
+  transition:
+    opacity var(--ch-dur-fast) var(--ch-ease-out),
+    transform var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    top var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    bottom var(--ch-spring-swap-dur) var(--ch-spring-swap);
+}
+
+.el-notification {
+  transition:
+    opacity var(--ch-dur-fast) var(--ch-ease-out),
+    transform var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    left var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    right var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    top var(--ch-spring-swap-dur) var(--ch-spring-swap),
+    bottom var(--ch-spring-swap-dur) var(--ch-spring-swap);
+}
+
+/* ------------------------------------------------------------ ③ 自有动效 */
+
+/*
+ * 按钮按压。Fluent 的按钮只有颜色过渡，没有"按下去"的物理反馈。
+ *
+ * 上行/下行用**不同的缓动**，这是这里唯一需要技巧的地方：
+ *   - 按下（`:active` 生效时）：90ms 直落，要"跟手"，慢了就是延迟；
+ *   - 抬起（`:active` 撤销后回到基础规则）：走 PRESS 弹簧，轻轻弹回原位。
+ * CSS 的规则是"进入某状态用该状态的 transition、离开用目标状态的 transition"，
+ * 所以把弹簧写在基础规则、把快落写在 `:active` 里，正好得到想要的一对。
+ */
+.el-button {
+  transition:
+    transform var(--ch-spring-press-dur) var(--ch-spring-press),
+    color var(--el-transition-duration-fast) var(--ch-ease-out),
+    border-color var(--el-transition-duration-fast) var(--ch-ease-out),
+    background-color var(--el-transition-duration-fast) var(--ch-ease-out),
+    box-shadow var(--el-transition-duration-fast) var(--ch-ease-out);
+}
+
+.el-button:not(.is-disabled):active {
+  transform: scale(var(--ch-press-scale));
+  transition-duration: var(--ch-dur-instant);
+  transition-timing-function: var(--ch-ease-out);
+}
+
+/*
+ * 卡片抬升。**必须关在 `@media (hover: hover) and (pointer: fine)` 里**：
+ * 教室机器的希沃触摸屏点一下会产生"幽灵 hover"并一直粘着，
+ * 不加这层的话卡片被点过之后就永远浮着（见 AGENTS.md §5 第 30 条）。
+ * 这也正是 `composables/motion.ts` 里 `useHoverCapable()` 的 CSS 版本 ——
+ * 纯 CSS 效果用媒体查询就够了，不必为它挂一个 composable。
+ */
+@media (hover: hover) and (pointer: fine) {
+  .el-card {
+    transition:
+      border-color var(--el-transition-duration-fast) var(--ch-ease-out),
+      box-shadow var(--el-transition-duration) var(--ch-ease-out),
+      transform var(--ch-spring-swap-dur) var(--ch-spring-swap);
+  }
+
+  .el-card:hover {
+    transform: translateY(-1px);
+  }
+}
+
+/* 表格行：hover 底色快速跟上，别用 Element Plus 的 0.3s */
+.el-table td.el-table__cell {
+  transition: background-color var(--el-transition-duration-fast) var(--ch-ease-out);
+}
+
+/*
+ * 列表错峰入场。配合 `composables/motion.ts` 的 `useStaggerIn()` 使用 ——
+ * 那个函数按索引下发 `--ch-reveal-delay`，延迟在 CSS 里生效。
+ * `both` 是必需的：否则带延迟的元素会在延迟期间先按终态渲染一下（闪一帧）。
+ */
+@keyframes ch-reveal-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ch-reveal {
+  animation: ch-reveal-in var(--ch-dur-slow) var(--ch-ease-out) both;
+  animation-delay: var(--ch-reveal-delay, 0ms);
+}
+
+/*
+ * 页面切换**没有**容器级的过渡 —— 这里曾经有一对 `.ch-page-enter-active` /
+ * `-leave-active`（配 `<transition mode="out-in">`），已经去掉，原因写在
+ * ClientLayout.vue 的 router-view 注释里（延期换页 + 窗口被遮挡时卡死）。
+ * 页面切换的动效全部由下面的 `.page > *` 错峰入场承担。
+ */
+
+/*
+ * 页面内容的错峰入场。
+ *
+ * 挂在 `.page > *` 上而不是逐个视图去写类名：所有视图（含六个设置子页）的根容器
+ * 都叫 `.page`，一条规则覆盖全部，新增视图自动享有，也不会有人忘记加。
+ *
+ * 延迟按**块**递进（30ms 一档、封顶 180ms）：一屏通常是"页头 + 两三块内容"，
+ * 这个节奏读起来是依次浮现；给更多块继续累加就变成排队了，所以第 7 块起不再递增。
+ */
+@keyframes ch-page-block-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.page > * {
+  animation: ch-page-block-in var(--ch-dur-slow) var(--ch-ease-out) both;
+}
+
+.page > *:nth-child(2) {
+  animation-delay: 30ms;
+}
+
+.page > *:nth-child(3) {
+  animation-delay: 60ms;
+}
+
+.page > *:nth-child(4) {
+  animation-delay: 90ms;
+}
+
+.page > *:nth-child(5) {
+  animation-delay: 120ms;
+}
+
+.page > *:nth-child(6) {
+  animation-delay: 150ms;
+}
+
+.page > *:nth-child(n + 7) {
+  animation-delay: 180ms;
+}
+
+/*
+ * 三个例外，都是"动了就会破坏别人的测量"：
+ *   ① `v-loading` 的遮罩是插在 `.page` 里的直接子元素，让它跟着淡入会闪一下；
+ *   ② **弹窗遮罩**（`.el-overlay`）。Element Plus 的 `el-dialog` 默认 `append-to-body=false`，
+ *      所以声明在视图里的弹窗，它的遮罩是 `.page` 的**直接子元素**。而 `.el-overlay` 是
+ *      `position: fixed; inset: 0` 的全屏层，整体下移 6px 就会把"刚好铺满"的内容顶出屏幕 ——
+ *      作业看板正是这样被顶出去的（冒烟断言「作业看板全屏自适应」读到可视底 550 > 视口高 543）。
+ *      全屏层本来也不该参与"内容块依次浮现"，它一出现就该盖住整屏。
+ *   ③ **看板容器**（`.board-host`）：它的尺寸是按"刚好铺满屏幕"用 `transform: scale()`
+ *      精确算出来的（见 HomeworkView 的 computeScale），算完就是贴边的，同样经不起位移。
+ *   一句话：**凡是 `position: fixed` 的整屏层、或自己量几何再据此设尺寸的元素，
+ *   都不要叠位移类动画。**
+ */
+.page > .el-loading-mask,
+.page > .el-overlay,
+.page > .board-host {
+  animation: none;
+}
+
+/* ------------------------------------------------------- 降低动态效果偏好
+ *
+ * 系统开了「减少动态效果」时，把全站的动画压到 1ms —— 不是删掉，
+ * 而是让它在同一帧内完成（`transition: none` 会让依赖 transitionend 的逻辑失灵）。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /*
+   * 例外：加载指示旋的是"状态"不是"装饰"。把它一起停掉会让界面看起来像卡死了
+   * （用户会去重复点击），所以这里改为**放慢**而不是停。
+   */
+  .el-icon.is-loading,
+  .el-loading-spinner .circular,
+  .el-loading-spinner svg,
+  .is-loading {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/* ------------------------------------------------- 整页换肤（View Transition）
+ *
+ * `handleThemeToggle`（ClientLayout.vue）用 View Transition API 做"从点击位置扩散的圆"。
+ * 浏览器默认会给新旧两帧做一次交叉淡入 —— 这里把它关掉，改由 JS 用 WAAPI 驱动
+ * `::view-transition-new(root)` 的 clip-path。不关掉的话两套动画会叠在一起，
+ * 观感是"圆在扩散的同时整页又在闪"。
+ *
+ * 层级：老帧在下（z-index 1）、新帧在上（z-index 2），新帧的圆从无到有地盖住老帧。
+ * 不支持这个 API 的浏览器不会渲染这些伪元素，规则自然失效（JS 侧也有守卫）。
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 2;
 }

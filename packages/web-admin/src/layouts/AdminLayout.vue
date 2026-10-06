@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import { STORAGE_KEYS } from '@classhelper/shared';
@@ -7,14 +7,30 @@ import { authApi } from '@/api';
 import UpdateCheckDialog from '@/components/UpdateCheckDialog.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
+import { useUiStore } from '@/stores/ui';
 import { useResponsive } from '@/composables/useResponsive';
+import { useThemeReveal } from '@/composables/motion';
 import { APP_TITLE } from '@/config';
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const realtime = useRealtimeStore();
+const ui = useUiStore();
 const { isMobile } = useResponsive();
+
+/**
+ * 顶栏的主题切换。整页"从点击位置扩散的圆"由 `useThemeReveal()` 提供
+ * （与桌面客户端共用同一份实现，见 composables/motion.ts）。
+ *
+ * 入口只放在**登录后的主布局**里：登录页是刻意固定的深色渐变底（AGENTS.md §5 第 46 条），
+ * 它不随主题走，在那里放一个切换按钮只会让人以为按钮坏了。
+ */
+const revealThemeChange = useThemeReveal();
+
+function handleThemeToggle(event: MouseEvent): void {
+  revealThemeChange(event, () => ui.toggleTheme());
+}
 
 /**
  * 菜单项与可见角色（与后端 `@classhelper/shared/permissions` 矩阵保持一致）：
@@ -49,6 +65,110 @@ const activeMenu = computed(() => route.path);
 
 /** 顶栏显示的当前页面标题（小屏下替代侧边栏的"我在哪"提示，1Panel 同款做法） */
 const currentTitle = computed(() => menuItems.find((item) => item.path === route.path)?.title ?? APP_TITLE);
+
+/* -------------------------------------------------------------- 导航指示器 */
+
+/**
+ * 侧栏激活项的**滑动指示器**（beUI 的 `shared-layout-bg` / tabs 的 layoutId 手法）。
+ *
+ * 做法是**一个**绝对定位的药丸跟着激活项平移，而不是让每个菜单项各自画一块底色。
+ * 后者在切换时是"旧的瞬间消失、新的瞬间出现"，看不出两者之间的关系；
+ * 前者的滑动把「我从这一项去了那一项」这个关系画了出来 —— 这是整个动效层里
+ * 唯一一处"传达信息"而非"装饰"的动画。
+ *
+ * 位置靠**量 DOM**而不是写死数值：菜单项的位置由 Element Plus 的 padding 与行高决定，
+ * 写死会在组件库升级、字号变化或菜单文案变长时错位。
+ * 用 ResizeObserver 而不是 window.resize：侧栏宽度/菜单重排都可能由非窗口因素触发。
+ */
+/**
+ * `el-aside` 是**组件**而不是原生标签：模板 ref 拿到的是组件实例，
+ * 直接 `.querySelector()` 会 `TypeError: not a function`（实测踩过，而且被
+ * `app.config.errorHandler` 吞成了控制台里一行中文异常，界面看着毫无异样）。
+ * 组件实例的 `$el` 才是它真正渲染出来的那个 `<aside>` 元素。
+ */
+type AsideRef = { $el?: HTMLElement } | HTMLElement | null;
+const asideRef = ref<AsideRef>(null);
+
+function asideElement(): HTMLElement | null {
+  const value = asideRef.value;
+  if (!value) return null;
+  return value instanceof HTMLElement ? value : (value.$el ?? null);
+}
+
+const indicator = ref({ x: 0, y: 0, width: 0, height: 0, visible: false });
+
+function syncIndicator(): void {
+  const aside = asideElement();
+  const active = aside?.querySelector<HTMLElement>('.el-menu-item.is-active');
+  if (!aside || !active) {
+    indicator.value = { ...indicator.value, visible: false };
+    return;
+  }
+  const asideRect = aside.getBoundingClientRect();
+  const rect = active.getBoundingClientRect();
+  indicator.value = {
+    x: rect.left - asideRect.left,
+    y: rect.top - asideRect.top,
+    width: rect.width,
+    height: rect.height,
+    visible: rect.width > 0 && rect.height > 0,
+  };
+}
+
+const indicatorStyle = computed(() => ({
+  width: `${indicator.value.width}px`,
+  height: `${indicator.value.height}px`,
+  transform: `translate(${indicator.value.x}px, ${indicator.value.y}px)`,
+  opacity: indicator.value.visible ? '1' : '0',
+}));
+
+let asideObserver: ResizeObserver | null = null;
+let indicatorFrame = 0;
+
+/**
+ * 把测量推迟到下一帧再跑。
+ *
+ * 侧栏折叠时 `.aside` 的宽度有一整段过渡，`ResizeObserver` 会逐帧回调；若在回调里**同步**
+ * 读 `getBoundingClientRect()` 再写样式，就是在每一帧中间强行插入一次同步布局
+ * （Chromium 还会因此报 "ResizeObserver loop completed with undelivered notifications"）。
+ * 放进 rAF 就变成"本帧布局完成后统一量一次"，代价是跟随慢一帧，肉眼无感。
+ */
+function scheduleIndicatorSync(): void {
+  if (indicatorFrame) return;
+  indicatorFrame = requestAnimationFrame(() => {
+    indicatorFrame = 0;
+    syncIndicator();
+  });
+}
+
+/**
+ * 首次测量放在 onMounted（而不是 nextTick）：子组件先于父组件挂载完成，
+ * 此刻 `.el-menu-item.is-active` 已在文档里，量完再让浏览器首帧绘制 ——
+ * 于是指示器**第一次出现就是正确位置**，不会从左上角滑过去。
+ */
+onMounted(() => {
+  syncIndicator();
+  const aside = asideElement();
+  if (aside && typeof ResizeObserver !== 'undefined') {
+    asideObserver = new ResizeObserver(scheduleIndicatorSync);
+    asideObserver.observe(aside);
+  }
+});
+
+onUnmounted(() => {
+  if (indicatorFrame) cancelAnimationFrame(indicatorFrame);
+  indicatorFrame = 0;
+  asideObserver?.disconnect();
+  asideObserver = null;
+});
+
+// 路由变化后菜单的 active 类由 Element Plus 更新，等一拍再量
+watch(
+  () => route.path,
+  () => {
+    void nextTick(syncIndicator);
+  },
+);
 
 /** 小屏：侧边栏收进抽屉，由顶栏汉堡按钮唤出 */
 const drawerVisible = ref(false);
@@ -232,11 +352,20 @@ const tourSteps = computed(() => [
 <template>
   <el-container class="layout">
     <!-- 桌面/平板：常驻深色侧边栏 -->
-    <el-aside v-if="!isMobile" width="210px" class="layout-aside ch-sidebar" data-tour="side-nav">
+    <el-aside
+      v-if="!isMobile"
+      ref="asideRef"
+      width="210px"
+      class="layout-aside ch-sidebar"
+      data-tour="side-nav"
+    >
       <div class="brand">
-        <el-icon :size="22"><School /></el-icon>
+        <img class="brand-logo" src="/logo.png" alt="" width="24" height="24" />
         <span class="brand-text">班级小助手</span>
       </div>
+      <!-- 激活项的滑动指示器：单个药丸在菜单项之间平移，位置由 syncIndicator() 量出来。
+           pointer-events:none 是必需的 —— 它盖在菜单项上，否则会把点击吃掉。 -->
+      <div class="nav-indicator" :style="indicatorStyle" aria-hidden="true" />
       <el-menu :default-active="activeMenu" class="layout-menu" @select="handleMenuSelect">
         <el-menu-item v-for="item in visibleMenuItems" :key="item.path" :index="item.path">
           <el-icon><component :is="item.icon" /></el-icon>
@@ -280,6 +409,28 @@ const tourSteps = computed(() => [
         </div>
 
         <div class="header-right">
+          <!--
+            主题切换。与桌面客户端同一套（圆形揭示由 useThemeReveal 提供）。
+            注意 `.header-right` 必须是 flex 容器：Element Plus 给 `.el-button` 的是
+            `vertical-align: middle`、给 `.el-dropdown` 的是 `vertical-align: top`，
+            放在普通 block 里两个 inline-level 子元素会按各自的规则落位、错开几像素
+            （AGENTS.md §5 第 58 条，客户端当初就是这么翻的车）。
+          -->
+          <el-tooltip :content="ui.theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'" placement="bottom">
+            <el-button
+              class="theme-toggle"
+              text
+              circle
+              data-test="theme-toggle"
+              :aria-label="ui.theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'"
+              @click="handleThemeToggle"
+            >
+              <el-icon>
+                <Sunny v-if="ui.theme === 'dark'" />
+                <Moon v-else />
+              </el-icon>
+            </el-button>
+          </el-tooltip>
           <el-dropdown trigger="click">
             <span class="user-chip" data-tour="user-chip">
               <el-icon><UserFilled /></el-icon>
@@ -315,6 +466,18 @@ const tourSteps = computed(() => [
       </el-header>
 
       <el-main class="layout-main">
+        <!--
+          这里**刻意不用** `<transition>` 包 router-view。
+          页面切换的动效由 `.page > *` 的错峰入场承担（styles/index.css）——
+          那是随组件挂载同步触发的，不推迟任何东西。
+
+          包一层过渡（尤其 `mode="out-in"`）会把"旧组件卸载、新组件挂载"推迟到退场动画结束
+          （90ms 起）。代价有两个，都不值得：
+            ① 点菜单后有一小段时间页面上还是**上一页**，用户和自动化看到的都是旧内容；
+            ② 退场判定依赖 `animationend`，窗口被遮挡时 Chromium 冻结 CSS 动画、
+               事件永不触发，新页面就永远不挂载 —— 整个应用卡死在第一页。
+          真要加回来，必须先确认这两条都有人兜住。
+        -->
         <router-view v-slot="{ Component }">
           <component :is="Component" />
         </router-view>
@@ -331,7 +494,7 @@ const tourSteps = computed(() => [
     >
       <div class="ch-sidebar ch-sidebar-drawer">
         <div class="brand">
-          <el-icon :size="22"><School /></el-icon>
+          <img class="brand-logo" src="/logo.png" alt="" width="24" height="24" />
           <span class="brand-text">班级小助手</span>
         </div>
         <el-menu :default-active="activeMenu" class="layout-menu" @select="handleMenuSelect">
@@ -394,6 +557,8 @@ const tourSteps = computed(() => [
 .layout-aside {
   display: flex;
   flex-direction: column;
+  /* 导航指示器（.nav-indicator）的定位父级 */
+  position: relative;
 }
 
 .brand {
@@ -411,6 +576,16 @@ const tourSteps = computed(() => [
   font-size: 16px;
 }
 
+/*
+ * 品牌标：与应用图标同一份图（`public/logo.png`，由 `pnpm icons` 从 `build/classhelper.png` 生成）。
+ * 图本身自带圆角与透明边角，所以这里**不要**再加 border-radius / 背景 —— 会叠出第二层圆角。
+ * `flex: none` 是必需的：`.brand` 是 flex 容器，不加的话侧栏收窄时这张图会被压扁。
+ */
+.brand-logo {
+  flex: none;
+  display: block;
+}
+
 .layout-menu {
   border-right: none;
   background: transparent;
@@ -420,22 +595,54 @@ const tourSteps = computed(() => [
   --el-menu-active-color: #ffffff;
 }
 
-.layout-menu :deep(.el-menu-item.is-active) {
-  background: #409eff;
-  border-radius: var(--ch-radius-sm);
-  margin: 0 8px;
-}
-
+/*
+ * 激活项的底色改由导航指示器承担（见 .nav-indicator）。
+ *
+ * 这里顺手修掉一个既有小毛病：原先激活项自带 `margin: 0 8px`，把普通项的 `2px 8px`
+ * 覆盖掉了，于是**每次切换菜单，激活项上下各少 2px、它下面的所有项都跟着跳 4px**。
+ * 现在激活项不再单独改外边距，切换时整列菜单纹丝不动。
+ */
 .layout-menu :deep(.el-menu-item) {
   margin: 2px 8px;
   border-radius: var(--ch-radius-sm);
+  /* 压在指示器之上，文字才不会被盖住 */
+  position: relative;
+  z-index: 1;
+}
+
+.layout-menu :deep(.el-menu-item.is-active) {
+  color: #ffffff;
+}
+
+/*
+ * 导航指示器：一个跟着激活项平移的药丸。宽高与位移由 syncIndicator() 量出来后内联下发，
+ * 这里只负责外观与过渡。
+ *
+ * 缓动用 LAYOUT 弹簧（397ms）—— 它是"共享布局滑动"的专用参数：比 SWAP（263ms）更有分量，
+ * 因为这一跳可能跨越好几个菜单项，太快会显得"闪"而不是"滑"。
+ */
+.nav-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  border-radius: var(--ch-radius-sm);
+  background: #409eff;
+  /* 必须穿透：它盖在菜单项上，否则点击会被它吃掉 */
+  pointer-events: none;
+  will-change: transform;
+  transition:
+    transform var(--ch-spring-layout-dur) var(--ch-spring-layout),
+    width var(--ch-spring-layout-dur) var(--ch-spring-layout),
+    height var(--ch-spring-layout-dur) var(--ch-spring-layout),
+    opacity var(--ch-dur-fast) var(--ch-ease-out);
 }
 
 .layout-header {
   /* 顶栏跟随圆角设计：底部圆角 + 轻投影，与内容区一体化 */
   border-radius: 0 0 var(--ch-radius-lg) var(--ch-radius-lg);
   box-shadow: var(--ch-shadow-sm);
-  background: #fff;
+  background: var(--ch-surface);
   border-bottom: 1px solid var(--ch-border);
   display: flex;
   align-items: center;
@@ -453,14 +660,14 @@ const tourSteps = computed(() => [
   margin-right: 2px;
   border: none;
   border-radius: var(--ch-radius-sm);
-  background: #f2f3f5;
-  color: #303133;
+  background: var(--ch-surface-sunken);
+  color: var(--ch-text);
   cursor: pointer;
   transition: background 0.18s ease;
 }
 
 .nav-toggle:hover {
-  background: #e6e8eb;
+  background: var(--ch-surface-hover);
 }
 
 .header-left {
@@ -484,7 +691,17 @@ const tourSteps = computed(() => [
 .header-right {
   display: flex;
   align-items: center;
+  /* 主题按钮与用户名牌之间留一点气口（两者原本紧贴） */
+  gap: 4px;
   flex: 0 0 auto;
+}
+
+.theme-toggle {
+  color: var(--ch-text-muted);
+}
+
+.theme-toggle:hover {
+  color: var(--ch-text);
 }
 
 .user-chip {

@@ -31,7 +31,9 @@ import { squirclePath } from './squircle.js';
  * - 阴影：只在展开态，`0 2px 3px rgba(0,0,0,.11)`（WinIsland `draw_expanded_shadow`）；
  * - 排版：白字 + alpha 分级（.92/.72/.58），**所有文本 = 基础字号 × 排版系数**，
  *   因此「字号」设置一改，岛内文字整体等比缩放（WinIsland `font_size` 模型）；
- * - 动效：单调缓动（无过冲、无回弹），只有淡入淡出与窗口形变，符合"开合不震动"。
+ * - 动效：**单调缓动（无过冲、无回弹）**，只有淡入淡出与窗口形变，符合"开合不震动"。
+ *   曲线取自共享令牌（`--ch-ease-out`，见 packages/shared/src/motion.ts）；
+ *   刻意**不用** beUI 那几组带过冲的弹簧 —— 理由写在文件末尾"悬停微交互"那段。
  *
  * 窗口尺寸仍由主进程按状态缓动（见 src/main/island.ts），渲染进程负责形状、排版与交互回传。
  */
@@ -1201,11 +1203,7 @@ body {
   color: var(--wn-text-1);
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.list-row:hover {
-  background: var(--wn-surface);
+  transition: background var(--ch-dur-fast) var(--ch-ease-out);
 }
 
 .row-icon {
@@ -1292,11 +1290,7 @@ body {
   font-size: calc(var(--island-font, 13px) * 0.76);
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.more-btn:hover {
-  background: var(--wn-surface-hover);
+  transition: background var(--ch-dur-fast) var(--ch-ease-out);
 }
 
 .more-app {
@@ -1430,13 +1424,8 @@ body {
   cursor: pointer;
   flex: 0 0 auto;
   transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
-
-.icon-btn:hover {
-  background: var(--wn-surface-hover);
-  color: #fff;
+    background var(--ch-dur-fast) var(--ch-ease-out),
+    color var(--ch-dur-fast) var(--ch-ease-out);
 }
 
 .icon-btn svg {
@@ -1521,17 +1510,13 @@ body {
   cursor: pointer;
   white-space: nowrap;
   transition:
-    background 0.15s ease,
-    transform 0.12s ease;
+    background var(--ch-dur-fast) var(--ch-ease-out),
+    transform var(--ch-dur-instant) var(--ch-ease-out);
 }
 
 .ghost-btn {
   background: var(--wn-surface);
   color: var(--wn-text-1);
-}
-
-.ghost-btn:hover {
-  background: var(--wn-surface-hover);
 }
 
 .solid-btn {
@@ -1554,35 +1539,40 @@ body {
   transform: scale(0.97);
 }
 
-/* ---------------------------------------------------------------- 过渡（无缩放、无回弹） */
+/* --------------------------------------------------------------- 悬停微交互
+ *
+ * **必须关在 `@media (hover: hover) and (pointer: fine)` 里**：教室机器上的希沃触摸屏
+ * 点一下会产生"幽灵 hover"并**一直粘着**，直到点别处才消失 —— 不关的话，点过「知道了」
+ * 的按钮会永远保持高亮（同 AGENTS.md §5 第 30 条那类问题）。
+ * 这是 beUI `useHoverCapable` 的 CSS 版：纯样式效果用媒体查询就够，不必挂 composable。
+ */
+@media (hover: hover) and (pointer: fine) {
+  .list-row:hover {
+    background: var(--wn-surface);
+  }
 
-.island-instant-enter-active {
-  transition: none;
+  .more-btn:hover,
+  .ghost-btn:hover {
+    background: var(--wn-surface-hover);
+  }
+
+  .icon-btn:hover {
+    background: var(--wn-surface-hover);
+    color: #ffffff;
+  }
 }
 
-.island-instant-enter-from {
-  opacity: 1;
-}
-
-.island-instant-leave-active {
-  transition: opacity calc(var(--island-dur, 320ms) * 0.28) ease-out;
-}
-
-.island-instant-leave-to {
-  opacity: 0;
-}
-
-/* 展开 / 收回：只做淡入淡出，形变交给窗口尺寸（避免任何缩放回弹"震动"） */
-.island-fade-enter-active {
-  transition: opacity calc(var(--island-dur, 320ms) * 0.45) ease-out;
-}
-
-.island-fade-leave-active {
-  transition: opacity calc(var(--island-dur, 320ms) * 0.3) ease-out;
-}
-
-.island-fade-enter-from,
-.island-fade-leave-to {
-  opacity: 0;
-}
+/*
+ * 关于本岛的动效：**只有单调缓动（无过冲、无回弹）**，曲线取自共享令牌
+ * （`--ch-ease-out`，见 packages/shared/src/motion.ts）。
+ *
+ * 这里刻意**不用** beUI 那几组弹簧：弹簧带过冲，而本岛的形变由主进程按状态缓动窗口尺寸
+ * （`src/main/island.ts`），任何回弹都会让"开合"看起来在震动 ——
+ * 冒烟断言「展开过程不震动」「收回过程不抖动」逐帧采样岛体几何，正是为这条立的规矩。
+ * 岛的物理是自己的一套（`./spring.ts`，从 WinIsland 逐行移植），不该被换掉。
+ *
+ * （这里原本还有 `.island-instant-*` / `.island-fade-*` 两组过渡类 —— 它们**是死规则**：
+ * 全包只有 `<style>` 里出现，没有任何地方挂类名，是 §5 第 34 条删掉"收回快照"动画后的残留。
+ * 已删除，免得后人以为岛上存在一层 Vue `<Transition>`。）
+ */
 </style>

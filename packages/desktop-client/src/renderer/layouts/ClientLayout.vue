@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox, type MenuInstance } from 'element-plus';
 import { SOCKET_EVENTS, type NotificationDto } from '@classhelper/shared';
 import { startIslandBridge, stopIslandBridge } from '../island/bridge.js';
+import { useThemeReveal } from '../composables/motion.js';
+import { BRAND_LOGO_URL } from '../config.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useNotificationStore } from '../stores/notifications.js';
@@ -50,6 +52,115 @@ const menuGroups = [
     ],
   },
 ];
+
+/* -------------------------------------------------------------- 导航指示器 */
+
+/**
+ * 侧栏激活项的**滑动指示器**（beUI 的 `shared-layout-bg` / tabs 的 layoutId 手法）。
+ *
+ * 做法是**一个**绝对定位的底片跟着激活项平移，而不是让每个菜单项各自画一块底色 ——
+ * 后者在切换时是"旧的瞬间消失、新的瞬间出现"，看不出两者之间的关系。
+ *
+ * 位置靠**量 DOM**：菜单项的位置由 Element Plus 的 padding 与行高决定，
+ * 写死会在组件库升级或文案变长时错位；折叠成图标导轨时宽度还会变，量出来才跟得上。
+ *
+ * ⚠️ 这里用 `document.querySelector` 而不是模板 ref：`.aside` 是 `el-aside` **组件**，
+ * 模板 ref 拿到的是组件实例（`.querySelector` 不是函数，实测踩过）；
+ * 客户端只有一个主侧栏，直接查文档反而更直白。
+ */
+const indicator = ref({ x: 0, y: 0, width: 0, height: 0, visible: false });
+
+function syncIndicator(): void {
+  const aside = document.querySelector<HTMLElement>('.aside.ch-nav');
+  const active = aside?.querySelector<HTMLElement>('.el-menu-item.is-active');
+  if (!aside || !active) {
+    indicator.value = { ...indicator.value, visible: false };
+    return;
+  }
+  const asideRect = aside.getBoundingClientRect();
+  const rect = active.getBoundingClientRect();
+  indicator.value = {
+    x: rect.left - asideRect.left,
+    y: rect.top - asideRect.top,
+    width: rect.width,
+    height: rect.height,
+    visible: rect.width > 0 && rect.height > 0,
+  };
+}
+
+const indicatorStyle = computed(() => ({
+  width: `${indicator.value.width}px`,
+  height: `${indicator.value.height}px`,
+  transform: `translate(${indicator.value.x}px, ${indicator.value.y}px)`,
+  opacity: indicator.value.visible ? '1' : '0',
+}));
+
+let asideObserver: ResizeObserver | null = null;
+let indicatorFrame = 0;
+
+/**
+ * 把测量推迟到下一帧再跑。
+ *
+ * 侧栏折叠时 `.aside` 的宽度有一整段过渡，`ResizeObserver` 会逐帧回调；若在回调里**同步**
+ * 读 `getBoundingClientRect()` 再写样式，就是在每一帧中间强行插入一次同步布局
+ * （Chromium 还会因此报 "ResizeObserver loop completed with undelivered notifications"）。
+ * 放进 rAF 就变成"本帧布局完成后统一量一次"，代价是跟随慢一帧，肉眼无感。
+ */
+function scheduleIndicatorSync(): void {
+  if (indicatorFrame) return;
+  indicatorFrame = requestAnimationFrame(() => {
+    indicatorFrame = 0;
+    syncIndicator();
+  });
+}
+
+/**
+ * 首次测量放在 `onMounted`：子组件先于父组件挂载完成，此刻 `.el-menu-item.is-active`
+ * 已在文档里，量完再让浏览器首帧绘制 —— 指示器第一次出现就是正确位置，不会从左上角滑过去。
+ *
+ * `ResizeObserver` 不是为了窗口缩放，而是为了**侧栏折叠**：折叠时 `.aside` 的宽度
+ * 有一整段过渡（`--nav-dur`），观察它会逐帧回调，指示器于是跟着栏宽一起收 ——
+ * 否则图标导轨形成后，底片还停在展开态的宽度上。
+ */
+onMounted(() => {
+  syncIndicator();
+  const aside = document.querySelector<HTMLElement>('.aside.ch-nav');
+  if (aside && typeof ResizeObserver !== 'undefined') {
+    asideObserver = new ResizeObserver(scheduleIndicatorSync);
+    asideObserver.observe(aside);
+  }
+});
+
+onUnmounted(() => {
+  if (indicatorFrame) cancelAnimationFrame(indicatorFrame);
+  indicatorFrame = 0;
+  asideObserver?.disconnect();
+  asideObserver = null;
+});
+
+// 路由变化后菜单的 active 类由 Element Plus 更新，等一拍再量
+watch(
+  () => route.path,
+  () => {
+    void nextTick(syncIndicator);
+  },
+);
+
+/* ---------------------------------------------------------- 主题切换动画 */
+
+/**
+ * 顶栏的日夜快捷切换。
+ *
+ * "从点击位置扩散的圆"那套整页揭示由 `useThemeReveal()` 提供 ——
+ * **与 Web 管理端共用同一份实现**（两端 `composables/motion.ts` 里的同名函数），
+ * 这里只负责把"点击事件"和"切换主题"接起来。那三条守卫（不支持 View Transition /
+ * 减少动态效果 / 文档不可见）都在组合式函数里，别在这里再判一遍。
+ */
+const revealThemeChange = useThemeReveal();
+
+function handleThemeToggle(event: MouseEvent): void {
+  revealThemeChange(event, () => ui.toggleTheme());
+}
 
 /** 未读红点挂在「通知」项的图标右上角 */
 function showBadge(path: string): boolean {
@@ -186,11 +297,12 @@ onUnmounted(() => {
         </button>
         <!-- 品牌区在折叠时**不是 v-if 删掉**，而是靠 CSS 收宽度 + 淡出：
              v-if 会在动画中途把节点直接摘掉，看上去是"啪"地一跳；收放要连续就得让它们一直在。 -->
-        <span class="brand-logo">
-          <el-icon :size="16"><School /></el-icon>
-        </span>
+        <img class="brand-logo" :src="BRAND_LOGO_URL" alt="" width="26" height="26" />
         <span class="brand-text">班级小助手</span>
       </div>
+      <!-- 激活项的滑动指示器：单个底片在菜单项之间平移，位置由 syncIndicator() 量出来。
+           pointer-events:none 是必需的 —— 它盖在菜单项上，否则会把点击吃掉。 -->
+      <div class="nav-indicator" :style="indicatorStyle" aria-hidden="true" />
       <el-menu
         ref="menuRef"
         :default-active="activeMenu"
@@ -256,7 +368,7 @@ onUnmounted(() => {
               circle
               data-test="theme-toggle"
               :aria-label="ui.theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'"
-              @click="ui.toggleTheme()"
+              @click="handleThemeToggle"
             >
               <el-icon><Sunny v-if="ui.theme === 'dark'" /><Moon v-else /></el-icon>
             </el-button>
@@ -293,6 +405,19 @@ onUnmounted(() => {
           title="当前处于离线状态"
           :description="`服务器不可达，正在显示本地缓存数据（最近同步：${appStore.lastSyncText}）。恢复网络后会自动同步。`"
         />
+        <!--
+          这里**刻意不用** `<transition>` 包 router-view。
+          页面切换的动效由 `.page > *` 的错峰入场承担（styles/index.css）——
+          那是随组件挂载同步触发的，不推迟任何东西。
+
+          包一层过渡（尤其 `mode="out-in"`）会把"旧组件卸载、新组件挂载"推迟到退场动画结束
+          （90ms 起）。代价有两个，都不值得：
+            ① 点菜单后有一小段时间页面上还是**上一页**，用户和自动化看到的都是旧内容；
+            ② 退场判定依赖 `animationend`，窗口被遮挡时 Chromium 冻结 CSS 动画、
+               事件永不触发，新页面就永远不挂载 —— 整个客户端卡死在当前页。
+               教室机器上窗口被别的东西盖住是常态，这条尤其要守。
+          真要加回来，必须先确认这两条都有人兜住。
+        -->
         <router-view v-slot="{ Component }">
           <component :is="Component" />
         </router-view>
@@ -315,6 +440,49 @@ onUnmounted(() => {
      菜单自己的滚动由内部的 .menu（flex:1 + min-height:0 + overflow-y:auto）负责。 */
   overflow: hidden;
   transition: width var(--nav-dur) var(--nav-ease);
+  /* 滑动指示器（.nav-indicator）的定位父级 */
+  position: relative;
+}
+
+/*
+ * 导航指示器：一个跟着激活项平移的底片，承载了原先"激活项底色 + 左侧强调条"两件事。
+ *
+ * 位置与尺寸都由 syncIndicator() 量出来后内联下发，这里只负责外观与过渡。
+ * 缓动用 LAYOUT 弹簧（397ms）—— 它是"共享布局滑动"的专用参数：比 SWAP（263ms）更有分量，
+ * 因为这一跳可能跨越好几个菜单项，太快会显得"闪"而不是"滑"。
+ *
+ * 折叠成图标导轨时，栏宽有一整段 260ms 的过渡，ResizeObserver 会逐帧把新宽度送进来，
+ * 底片于是跟着栏宽一起收窄 —— 两个时长不一致是**故意的**：底片比栏慢一点，
+ * 读起来像"被栏宽带着走"，同步反而显得僵硬。
+ */
+.nav-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  border-radius: var(--ch-radius-control);
+  background: var(--ch-accent-soft);
+  /* 必须穿透：它盖在菜单项上，否则点击会被它吃掉 */
+  pointer-events: none;
+  will-change: transform;
+  transition:
+    transform var(--ch-spring-layout-dur) var(--ch-spring-layout),
+    width var(--ch-spring-layout-dur) var(--ch-spring-layout),
+    height var(--ch-spring-layout-dur) var(--ch-spring-layout),
+    opacity var(--ch-dur-fast) var(--ch-ease-out);
+}
+
+/* 左侧强调条（原有观感，现在跟着底片一起滑） */
+.nav-indicator::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--ch-accent);
 }
 
 .brand {
@@ -361,18 +529,23 @@ onUnmounted(() => {
   padding-left: 18px;
 }
 
-/* Fluent 品牌标：强调色圆角方块 + 白色图标 */
+/*
+ * 品牌标：与应用图标同一份图（`public/logo.png`，由 `pnpm icons` 从 `build/classhelper.png` 生成）。
+ * 上一版这里是"强调色渐变方块 + 白色 School 字形"手搓的占位标，换成真图标之后
+ * `background` / `color` / `border-radius` / `overflow` 全部撤掉 —— 圆角与透明边角本来就在图里，
+ * 再叠一层只会出现双重圆角。
+ *
+ * `src` 走 `BRAND_LOGO_URL`（见 `config.ts`）：模板里既不能写字面量的相对 `src`（Vite 会把它
+ * 当模块导入去解析、构建失败），也不能写根绝对路径（Electron 生产环境走 file://，会解析到盘符根目录）。
+ *
+ * 折叠态的 `.is-collapsed .brand-logo { width: 0 }` 照旧生效：img 的 width 一样可过渡，
+ * 而且它本来就带 opacity 淡出，收放观感与改造前完全一致。
+ */
 .brand-logo {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   width: 26px;
   height: 26px;
   flex: 0 0 auto;
-  border-radius: 6px;
-  color: #fff;
-  background: linear-gradient(135deg, var(--ch-accent) 0%, #4d94d1 100%);
-  overflow: hidden;
   transition:
     width var(--nav-dur) var(--nav-ease),
     opacity calc(var(--nav-dur) * 0.6) var(--nav-ease);

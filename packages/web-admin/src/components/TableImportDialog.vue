@@ -388,7 +388,7 @@ async function submit(): Promise<void> {
   flex-wrap: wrap;
 }
 .file-name {
-  color: #606266;
+  color: var(--ch-text-secondary);
   font-size: 13px;
 }
 .hidden-input {
@@ -399,7 +399,7 @@ async function submit(): Promise<void> {
   gap: 16px;
   flex-wrap: wrap;
   margin: 12px 0 4px;
-  color: #606266;
+  color: var(--ch-text-secondary);
   font-size: 13px;
 }
 .required-hint {
@@ -409,7 +409,7 @@ async function submit(): Promise<void> {
 }
 .mode-hint {
   width: 100%;
-  color: #909399;
+  color: var(--ch-text-muted);
   font-size: 12px;
 }
 .result-stats {

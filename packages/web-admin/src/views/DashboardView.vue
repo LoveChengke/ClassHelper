@@ -9,6 +9,8 @@ import {
   type DashboardSummary,
 } from '@classhelper/shared';
 import { dashboardApi, notificationApi } from '@/api';
+import StatCard from '@/components/StatCard.vue';
+import { useStaggerIn } from '@/composables/motion';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 import { SOCKET_EVENTS, type NotificationDto } from '@classhelper/shared';
@@ -37,6 +39,12 @@ const statCards = computed(() => {
     { label: '成绩记录', value: data?.gradeCount ?? 0, hint: '已发布成绩' },
   ];
 });
+
+/**
+ * 统计卡片的错峰入场（beUI 的 stagger reveal）：按索引下发 `--ch-reveal-delay`，
+ * 让七张卡片依次浮现而不是"啪"地一起出现。延迟在 `.ch-reveal` 里生效。
+ */
+const revealStyle = useStaggerIn();
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -93,11 +101,13 @@ function openNotification(item: NotificationDto): void {
     </div>
 
     <div class="stat-grid">
-      <div v-for="card in statCards" :key="card.label" class="stat-card">
-        <div class="stat-label">{{ card.label }}</div>
-        <div class="stat-value">{{ card.value }}</div>
-        <div class="stat-hint">{{ card.hint }}</div>
-      </div>
+      <StatCard
+        v-for="(card, index) in statCards"
+        :key="card.label"
+        v-bind="card"
+        class="ch-reveal"
+        :style="revealStyle(index)"
+      />
     </div>
 
     <el-row :gutter="12" class="mt-16">

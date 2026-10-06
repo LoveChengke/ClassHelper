@@ -34,7 +34,7 @@ async function submit(): Promise<void> {
   <div class="login-page">
     <div class="login-card">
       <div class="login-brand">
-        <el-icon :size="30" color="#409eff"><School /></el-icon>
+        <img class="login-logo" src="/logo.png" alt="" width="44" height="44" />
         <div>
           <h1 class="login-title">班级小助手</h1>
           <p class="login-subtitle">Web 管理端 · 教师 / 管理员登录</p>
@@ -81,6 +81,13 @@ async function submit(): Promise<void> {
   border-radius: 14px;
   padding: 30px 28px 22px;
   box-shadow: 0 18px 40px rgba(15, 30, 50, 0.28);
+  /*
+   * 入场用 PANEL 弹簧（beUI 的 center-morph-modal 观感：从略小、略高处落下来）。
+   * 登录页是整个应用里最"一次性"、最值得给一点分量的一屏 ——
+   * 它不像弹窗那样会被反复开关，慢一点不会变成等待。
+   * keyframes 定义在 styles/index.css 的动效层里（全局，scoped 样式也能引用）。
+   */
+  animation: ch-panel-in var(--ch-spring-panel-dur) var(--ch-spring-panel) both;
 }
 
 @media (max-width: 768px) {
@@ -105,6 +112,12 @@ async function submit(): Promise<void> {
   margin-bottom: 22px;
 }
 
+/* 品牌标：与应用图标同一份图（`public/logo.png`）。图自带圆角与透明边角，不要再加 border-radius。 */
+.login-logo {
+  flex: none;
+  display: block;
+}
+
 .login-title {
   font-size: 20px;
   margin: 0;
@@ -113,7 +126,7 @@ async function submit(): Promise<void> {
 .login-subtitle {
   margin: 4px 0 0;
   font-size: 13px;
-  color: #909399;
+  color: var(--ch-text-muted);
 }
 
 .login-button {

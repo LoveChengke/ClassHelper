@@ -623,14 +623,14 @@ onUnmounted(() => {
   width: 100%;
   font-size: 12px;
   line-height: 1.5;
-  color: #909399;
+  color: var(--ch-text-muted);
   margin-top: 4px;
 }
 
 .content-block {
   white-space: pre-wrap;
   line-height: 1.7;
-  background: #fafafa;
+  background: var(--ch-surface-sunken);
   border-radius: 12px;
   padding: 12px;
   margin: 0;
@@ -659,7 +659,7 @@ onUnmounted(() => {
 .submission-list {
   max-height: 46vh;
   overflow-y: auto;
-  border: 1px solid #eef0f5;
+  border: 1px solid var(--ch-border);
   border-radius: 12px;
   padding: 12px;
 }

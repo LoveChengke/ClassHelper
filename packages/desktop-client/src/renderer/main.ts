@@ -9,6 +9,7 @@ import 'element-plus/theme-chalk/dark/css-vars.css';
 import App from './App.vue';
 import router from './router/index.js';
 import { registerAppIcons } from './icons.js';
+import { applyMotionTokens } from './composables/motion.js';
 import './styles/index.css';
 
 const app = createApp(App);
@@ -36,6 +37,18 @@ if (window.desktop?.smokeTest) {
   });
   registerSmokeHooks();
 }
+
+/**
+ * 动效令牌（beUI 那套缓动与弹簧，见 packages/shared/src/motion.ts）写进 :root。
+ *
+ * 必须在 mount 之前：CSS 里引用的 `var(--ch-spring-*)` 要在首帧之前就已就位，
+ * 否则第一帧会按"变量不存在"渲染一遍（表现为入场动画闪一下）。
+ * 也刻意排在主题恢复（stores/ui.ts 的 init）之前 —— 令牌与主题互不相干，
+ * 但先落令牌能让首屏的入场动画从第一帧起就是对的节奏。
+ *
+ * ⚠️ 灵动岛是**另一个渲染进程**（src/island/main.ts），不经过这里。
+ */
+applyMotionTokens();
 
 await router.isReady();
 app.mount('#app');
