@@ -41,8 +41,16 @@
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
-  /** 页面上那份兜底版本号，由 `pnpm version:bump` 与根 package.json 一起维护 */
-  const FALLBACK_VERSION = ($('meta[name="ch-version"]')?.content ?? '').trim();
+  /**
+   * 页面上那份兜底版本号。两个宿主页面各有一个来源，**两个都是 `pnpm version:bump` 的落点**：
+   * 下载页是 `<meta name="ch-version">`，官网首页是顶栏那个版本徽标（`.brand-ver`）。
+   * 所以这里不必再添一个手写版本号 —— 页面自己显示的那份就是兜底值。
+   */
+  const FALLBACK_VERSION = (
+    $('meta[name="ch-version"]')?.content ??
+    $('.brand-ver')?.textContent ??
+    ''
+  ).trim();
 
   const CHEVRON =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" ' +
@@ -197,8 +205,9 @@
   const groupStatus = $('#group-note');
   const grid = $('#dl-grid');
   const gridNote = $('#dl-note');
-  const primary = $('#ver-primary');
   const command = $('#cmd-linux code');
+  /** 首屏那颗主按钮只有下载页有（首页把这一整段接在了首屏下面，不需要再给一颗） */
+  const primary = $('#ver-primary');
 
   if (
     !versionHost ||
@@ -209,7 +218,6 @@
     !groupStatus ||
     !grid ||
     !gridNote ||
-    !primary ||
     !command
   ) {
     return;
@@ -358,6 +366,22 @@
     }
   }
 
+  /**
+   * 分段控件横着装不下时，右边缘淡出一点。
+   *
+   * 这两排是**横滚**的，而滚动条是藏起来的（`scrollbar-width: none`，见 styles.css）——
+   * 不给人一点提示的话，末尾那个版本号看上去就是"被切断了"。滚到最右就不用再淡了。
+   */
+  function syncOverflowHint(host) {
+    const overflow = host.scrollWidth - host.clientWidth;
+    const atEnd = overflow <= 1 || host.scrollLeft >= overflow - 1;
+    host.classList.toggle('is-overflowing', !atEnd);
+  }
+
+  function watchOverflow(host) {
+    host.addEventListener('scroll', () => syncOverflowHint(host), { passive: true });
+  }
+
   /* ══════════════════════════════════════════════════════════════════════
      版本分段控件（条目按发布列表建）
      ══════════════════════════════════════════════════════════════════════ */
@@ -393,7 +417,13 @@
     markSelected(versionHost, state.version);
     // 首帧之后重量一次：楷体是 CDN 来的，字体落定前量出来的宽度是错的
     moveVersionIndicator(false);
-    if (motion) motion.nextFrame(() => moveVersionIndicator(false));
+    syncOverflowHint(versionHost);
+    if (motion) {
+      motion.nextFrame(() => {
+        moveVersionIndicator(false);
+        syncOverflowHint(versionHost);
+      });
+    }
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -414,7 +444,13 @@
     }
     markSelected(groupHost, state.group);
     moveGroupIndicator(false);
-    if (motion) motion.nextFrame(() => moveGroupIndicator(false));
+    syncOverflowHint(groupHost);
+    if (motion) {
+      motion.nextFrame(() => {
+        moveGroupIndicator(false);
+        syncOverflowHint(groupHost);
+      });
+    }
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -573,14 +609,16 @@
     renderGroupStatus(group);
     renderGridNote(release);
 
-    // 首屏那颗按钮跟着「版本 + 分组」走：默认就是这一版客户端的安装版
-    const first = resolveFiles(group.cards[0], release)[0];
-    if (first) {
-      primary.href = first.asset.url;
-      primary.textContent = `下载${group.label} ${release.tag}`;
-    } else {
-      primary.href = release.notesUrl;
-      primary.textContent = '去 Releases 挑一份';
+    // 下载页首屏那颗按钮跟着「版本 + 分组」走：默认就是这一版客户端的安装版
+    if (primary) {
+      const first = resolveFiles(group.cards[0], release)[0];
+      if (first) {
+        primary.href = first.asset.url;
+        primary.textContent = `下载${group.label} ${release.tag}`;
+      } else {
+        primary.href = release.notesUrl;
+        primary.textContent = '去 Releases 挑一份';
+      }
     }
 
     // Linux 那一行：钉到当前选中的版本（老版本 tag 不是 x.y.z 形式时不带 --version）
@@ -644,6 +682,8 @@
     }
 
     state.version = state.releases[0].tag;
+    watchOverflow(versionHost);
+    watchOverflow(groupHost);
     renderVersionTabs();
     bindGroupTabs();
     render();
@@ -653,6 +693,8 @@
       () => {
         moveVersionIndicator(false);
         moveGroupIndicator(false);
+        syncOverflowHint(versionHost);
+        syncOverflowHint(groupHost);
       },
       { passive: true },
     );

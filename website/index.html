@@ -182,6 +182,46 @@
         </div>
       </section>
 
+      <!-- ═══════════════════════ 下载：首屏下面直接给安装包 ═══════════════════════
+           与 /download.html 是同一段（同一套类名、同一个 assets/download.js）——
+           放这儿是为了让访客不跳页就能下；完整的下载页仍然保留（顶栏「下载」指着它）。 -->
+      <section class="band band-paper" id="download">
+        <div class="wrap">
+          <h2 class="h2">装什么，挑一下</h2>
+          <p class="lead narrow">
+            四个交付物互不依赖安装顺序，但
+            <strong>服务端要先有一台机器跑着</strong>
+            ，另外三个才连得上。 下面的版本与文件清单是当场从本仓库的 GitHub Releases
+            读出来的：显示什么，就真能下到什么。
+          </p>
+
+          <!-- 版本选择：Tab 由 assets/download.js 按发布列表建出来 -->
+          <div class="dl-pick">
+            <p class="sr-only" id="ver-label">选择版本</p>
+            <div class="dl-seg" role="tablist" aria-labelledby="ver-label" id="ver-tabs">
+              <span class="dl-seg-indicator" id="ver-indicator" aria-hidden="true"></span>
+            </div>
+            <p class="dl-pick-note" id="ver-note" role="status">正在读取版本列表……</p>
+          </div>
+
+          <div class="dl-groups">
+            <p class="dl-pick-label" id="group-label">装什么</p>
+            <div class="dl-seg" role="tablist" aria-labelledby="group-label" id="group-tabs">
+              <span class="dl-seg-indicator" id="group-indicator" aria-hidden="true"></span>
+              <button class="dl-seg-item" type="button" role="tab" data-value="client">客户端</button>
+              <button class="dl-seg-item" type="button" role="tab" data-value="server">服务端</button>
+              <button class="dl-seg-item" type="button" role="tab" data-value="plugin">插件</button>
+            </div>
+            <p class="dl-pick-note" id="group-note" role="status"></p>
+          </div>
+
+          <!-- 卡片由 assets/download.js 按「当前版本 + 当前分组」渲染 -->
+          <div class="dl-grid" id="dl-grid" role="tabpanel" tabindex="0" aria-live="polite"></div>
+
+          <p class="dl-note" id="dl-note"></p>
+        </div>
+      </section>
+
       <!-- 分幕标题：居中大标题 + 中间一段渐变高亮（照 ClassIsland 官网的分节写法） -->
       <section class="band act" aria-label="第一部分：它是怎么工作的">
         <div class="wrap">
@@ -680,5 +720,6 @@
 
     <script src="assets/motion.js" defer></script>
     <script src="assets/main.js" defer></script>
+    <script src="assets/download.js" defer></script>
   </body>
 </html>

@@ -2138,6 +2138,13 @@ html:not(.reveal-pending) .display .reveal-grad {
   display: none;
 }
 
+/* 装不下时右边缘淡出一点：滚动条是藏起来的，不提示的话末尾那个版本号像被切断了。
+   类名由 assets/download.js 按实际是否溢出挂上/摘掉（滚到最右就摘掉）。 */
+.dl-seg.is-overflowing {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent 100%);
+}
+
 .dl-seg-item {
   position: relative;
   z-index: 1;
@@ -2399,7 +2406,7 @@ html:not(.reveal-pending) .display .reveal-grad {
   display: block;
   margin-top: 3px;
   font-family: var(--mono);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   line-height: 1.6;
   color: var(--ink-2);
   overflow-wrap: anywhere;
@@ -2412,12 +2419,13 @@ html:not(.reveal-pending) .display .reveal-grad {
   color: var(--ink-3);
 }
 
-/* 主按钮下面那行：点下去到底拿到哪个文件（自托管场景里这个要看得见） */
+/* 主按钮下面那行：点下去到底拿到哪个文件（自托管场景里这个要看得见）。
+   字号别往 0.68rem 以下压 —— 它是全站最小的字，再小就看着像被裁掉了一截。 */
 .dl-card-file {
   margin-top: 12px;
   font-family: var(--mono);
-  font-size: 0.68rem;
-  line-height: 1.65;
+  font-size: 0.75rem;
+  line-height: 1.7;
   color: var(--ink-3);
   overflow-wrap: anywhere;
   max-width: 100%;
@@ -2469,6 +2477,6 @@ html:not(.reveal-pending) .display .reveal-grad {
   }
 
   .dl-card-file {
-    font-size: 0.62rem;
+    font-size: 0.7rem;
   }
 }
