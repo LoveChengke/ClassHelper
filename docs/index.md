@@ -1,12 +1,12 @@
 ---
 title: 首页
-description: 班级小助手（Class Helper）的官方文档：安装部署、功能说明、运维手册与开发参考。
+description: ClassHelper（Class Helper）的官方文档：安装部署、功能说明、运维手册与开发参考。
 ---
 
-# 班级小助手文档
+# ClassHelper文档
 
-班级小助手（Class Helper）是给中小学班级用的一套信息管理系统。**一份代码，四个交付物**：
-装在服务器上的后端、给老师用的 Web 管理端、装在教室机器的桌面客户端（学生端 / 教室大屏），
+ClassHelper（Class Helper）是给中小学班级用的一套信息管理系统。**一份代码，四个交付物**：
+装在服务器上的后端、给老师用的 Web 管理端、装在教室机器的桌面客户端（ClassHelper 班级端 / 教室大屏），
 以及装在 [ClassIsland](https://classisland.tech) 上的联动插件。
 
 <p class="ch-tagline">
@@ -16,7 +16,7 @@ description: 班级小助手（Class Helper）的官方文档：安装部署、�
 <div class="ch-cards">
   <a class="ch-card" href="get-started/index.md">
     <span class="ch-card-title">第一次装</span>
-    <span class="ch-card-desc">从零把服务端、管理端、学生端和 ClassIsland 插件跑起来，大约半小时。</span>
+    <span class="ch-card-desc">从零把服务端、管理端、ClassHelper 班级端和 ClassIsland 插件跑起来，大约半小时。</span>
   </a>
   <a class="ch-card" href="app/index.md">
     <span class="ch-card-title">已经在用了</span>
@@ -35,9 +35,9 @@ description: 班级小助手（Class Helper）的官方文档：安装部署、�
 ## 它长什么样
 
 <div class="ch-shots">
-  <img src="screenshots/client/01-schedule.png" alt="桌面客户端 · 课表「今天」时间轴" />
-  <img src="screenshots/island/island-5-clicked.png" alt="灵动岛 · 点开通知后的详情卡" />
-  <img src="screenshots/web-mobile/mobile-2-notifications.png" alt="Web 管理端 · 手机上的通知发布页" />
+  <img src="images/client-schedule.png" alt="桌面客户端 · 课表「今天」时间轴" />
+  <img src="images/island-5-clicked.png" alt="灵动岛 · 点开通知后的详情卡" />
+  <img src="images/mobile-notifications.jpg" alt="Web 管理端 · 手机上的抽屉导航与通知发布页" />
 </div>
 
 > 这些图都是脚本把程序真的跑起来截的，不是示意图。采集方式见 [验收与测试](dev/testing.md)。

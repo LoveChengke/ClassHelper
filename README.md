@@ -2,9 +2,9 @@
 
 <div align="center">
 
-# <img src="build/classhelper.png" width="30" height="30" alt="" /> 班级小助手
+# <img src="build/classhelper.png" width="30" height="30" alt="" /> ClassHelper
 
-<img src="docs/images/web-dashboard.jpg" alt="班级小助手 · Web 管理端仪表盘" />
+<img src="docs/images/web-dashboard.jpg" alt="ClassHelper · Web 管理端仪表盘" />
 
 [![正式版](https://img.shields.io/github/v/release/LoveChengke/ClassHelper?style=flat-square&color=%233fb950&label=正式版)](https://github.com/LoveChengke/ClassHelper/releases/latest)
 [![下载量](https://img.shields.io/github/downloads/LoveChengke/ClassHelper/total?style=social&label=下载量&logo=github)](https://github.com/LoveChengke/ClassHelper/releases)
@@ -16,7 +16,7 @@
 ![Electron](https://img.shields.io/badge/Electron-44-47848f?style=flat-square&logo=electron&logoColor=white)
 [![仓库大小](https://img.shields.io/github/repo-size/LoveChengke/ClassHelper?style=flat-square&color=3cb371)](https://github.com/LoveChengke/ClassHelper)
 
-班级小助手是给中小学班级用的一套信息管理系统。<br/>
+ClassHelper是给中小学班级用的一套信息管理系统。<br/>
 **老师发一条通知，教室那台机器上的灵动岛和 [ClassIsland](https://classisland.tech) 会同时弹出来**；<br/>
 学生打开客户端就能看到当天的课表和作业。
 
@@ -78,7 +78,7 @@
 
 - [x] 教室机器上报课表与上课状态，Web 端能看到「现在在上什么」
 - [x] 老师发的提醒在教室大屏上全屏弹出，支持语音朗读，播完回执不重复弹
-- [x] 可以把班级小助手排好的课表镜像回 ClassIsland，不影响老师原有的课表
+- [x] 可以把ClassHelper排好的课表镜像回 ClassIsland，不影响老师原有的课表
 - [x] 提醒弹在客户端还是 ClassIsland，由教室那台机器自己选
 
 ### 部署与运维
@@ -150,18 +150,22 @@
 
 | 场景 | 截图 |
 | --- | --- |
-| 抽屉菜单 | <img src="docs/images/mobile-dashboard.jpg" alt="手机 · 仪表盘" /> |
+| 仪表盘 | <img src="docs/images/mobile-dashboard.jpg" alt="手机 · 仪表盘" /> |
 | 通知发布 | <img src="docs/images/mobile-notifications.jpg" alt="手机 · 通知发布" /> |
 
 </details>
 
 ## 开始使用
 
-| 装在哪                  | 装什么                                            | 从 Releases 里拿                                          |
-| ----------------------- | ------------------------------------------------- | --------------------------------------------------------- |
-| 教师的电脑 / 学校服务器 | **服务端**（内含 Web 管理端与 Node 运行时）        | `班级小助手服务端-<版本>-x64-setup.exe`                    |
-| 教室机器 / 学生电脑     | **学生客户端**                                    | `班级小助手-<版本>-x64-setup.exe`，或 `-portable.exe` 免安装 |
-| 教室机器的 ClassIsland  | **联动插件**                                      | `ClassHelper.ClassIslandPlugin.cipx`                       |
+| 装在哪                  | 装什么                                            | 从 Releases 里拿                                                            |
+| ----------------------- | ------------------------------------------------- | --------------------------------------------------------------------------- |
+| 教师的电脑 / 学校服务器 | **服务端**（内含 Web 管理端与 Node 运行时）        | `ClassHelper-<版本>-x64-server-setup.exe`                                    |
+| 教室机器 / 学生电脑     | **学生客户端**                                    | `ClassHelper-<版本>-x64-client-setup.exe`，或 `-client-portable.exe` 免安装  |
+| 教室机器的 ClassIsland  | **联动插件**                                      | `ClassHelper.ClassIslandPlugin.cipx`                                         |
+
+也可以在官网的[下载页](https://lovechengke.github.io/ClassHelper/download.html)上挑：
+选一个版本，四个包排成四张卡，文件名、体积与 SHA256 清单都在那儿 ——
+那一页的清单是**当场**读 GitHub Releases 的，显示什么就能下什么。
 
 服务端**装上就算跑起来了**：双击安装程序，建库、建号、开机自启都由它自己办，
 装完在浏览器打开 `http://<服务器地址>:4000` 就能登录。教师的电脑、学校的服务器、
@@ -208,7 +212,7 @@ pnpm dev                                               # 后端 4000 + Web 端 5
 | -------------- | --------------- | ------------ |
 | 管理员         | `admin`         | `admin123`   |
 | 教师           | `teacher1`      | `teacher123` |
-| 学生端（班级） | 班级码 `G101`   | `123456`     |
+| ClassHelper 班级端（班级） | 班级码 `G101`   | `123456`     |
 
 - [AGENTS.md](AGENTS.md) —— 工程约定与本机踩坑，**改代码前先读它**
 - [docs/reference.md](docs/reference.md) —— 完整参考（功能行为、接口、验收记录）

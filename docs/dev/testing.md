@@ -80,20 +80,43 @@ pnpm build && pnpm verify:web
 
 ## 截图留档
 
-回归测试顺手把截图存到 `docs/screenshots/`（island / client / web-mobile / classisland 四组），
-文档站里用的就是这些图。要重新采集：
+截图分两套，各管一件事：
+
+| 目录                | 谁在用                                                      | 谁产出                                                                |
+| ------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------- |
+| `docs/images/`      | **文档站、README、官网用的是同一份图**，页面上展示的都是它  | `capture-shots.mjs`（Web / 手机）+ 客户端冒烟（客户端 / 灵动岛）      |
+| `docs/screenshots/` | 回归留档，页面不展示；`verify:*` 的像素级断言比对的就是它们 | 各冒烟脚本自动写入（island / client / web-mobile / classisland 四组） |
+
+**展示图重新采集**（保证文档站与 README、官网用的是同一份图）：
+
+```bash
+pnpm dev:server                                                                    # 后端同时托管 Web 管理端
+CAPTURE_OUT=docs/images,website/assets/shots node website/tools/capture-shots.mjs  # → web-*.jpg / mobile-*.jpg
+
+# 客户端与灵动岛走的是冒烟脚本。它除了正片，还会顺手落一份「岛外留白对照图」
+# （*-window.png / *-backdrop.png），所以先落到临时目录，再挑要用的拷进去。
+ISLAND_SHOTS_DIR="$PWD/.cache/shots" ELECTRON_CLIENT_SHOTS_DIR="$PWD/.cache/shots" \
+ELECTRON_SMOKE_ISLAND_ACCENT='#0a84ff' ELECTRON_SMOKE_ISLAND_STYLE=black \
+ELECTRON_SMOKE_USER=teacher1 ELECTRON_SMOKE_PASSWORD=123456 \
+  node packages/desktop-client/scripts/smoke.mjs
+cp .cache/shots/{island-*,client-*}.png docs/images/
+rm -f docs/images/*-window.png docs/images/*-backdrop.png
+cp docs/images/{island-*,client-*}.png website/assets/shots/       # 官网那份保持同步
+```
+
+**回归留档重新采集**（同一套冒烟，把输出指到留档目录）：
 
 ```bash
 pnpm dev:server
-ISLAND_SHOTS_DIR=F:/ClassHelper/.cache/island-shots \
-ELECTRON_CLIENT_SHOTS_DIR=F:/ClassHelper/.cache/client-shots \
+ISLAND_SHOTS_DIR="$PWD/.cache/island-shots" \
+ELECTRON_CLIENT_SHOTS_DIR="$PWD/.cache/client-shots" \
 ELECTRON_SMOKE_ISLAND_ACCENT='#0a84ff' ELECTRON_SMOKE_ISLAND_STYLE=black \
 ELECTRON_SMOKE_USER=teacher1 ELECTRON_SMOKE_PASSWORD=123456 \
   node packages/desktop-client/scripts/smoke.mjs
 ```
 
-官网的实机图则用 `website/tools/capture-shots.mjs`（采集步骤见 `README.md` §7）。
-
+> 展示图都是**逻辑像素 1×**（灵动岛的 268×44、424×230 就是这个数，不再乘 2），
+> 页面按原始尺寸显示即可 —— 换图时别顺手放大，否则整页的尺寸对不上。
 > 采集脚本会把窗口真的弹在屏幕上。客户端留档会**临时停掉 CSS 动画**再截图 ——
 > 窗口被遮挡时 Chromium 冻结动画，而页面入场动画的起始帧是 `opacity: 0`，
 > 不停掉的话截出来是**整片空白**（DOM 里文本齐全，只有图是空的）。

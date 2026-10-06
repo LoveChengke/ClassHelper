@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>下载 ClassHelper —— 挑版本、挑平台</title>
+    <meta
+      name="description"
+      content="从 GitHub Releases 直接下载 ClassHelper：教室机器要的班级端、服务器要的服务端（Windows 安装程序 / Linux 压缩包）、教室大屏要的 ClassIsland 联动插件。版本与文件清单取自本仓库的发布页，显示什么就能下什么。"
+    />
+    <meta name="theme-color" content="#16231e" />
+    <meta property="og:title" content="下载 ClassHelper" />
+    <meta
+      property="og:description"
+      content="班级端、服务端（Windows / Linux）、ClassIsland 联动插件 —— 选好版本，下面显示什么就能下什么。"
+    />
+    <meta property="og:type" content="website" />
+    <!-- 页面上所有版本号与文件名都从这一行起步：脚本会去 GitHub Releases 取真实清单，
+         取不到时（离线、被限流）就按这份版本号 + 发布命名约定拼直链。
+         它和根 package.json 一起由 `pnpm version:bump` 维护 —— 别在这儿单独改。 -->
+    <meta name="ch-version" content="1.1.2" />
+    <link rel="icon" href="assets/icon.png" />
+    <link rel="apple-touch-icon" href="assets/icon.png" />
+
+    <!-- 标题与引文用的楷体（霞鹜文楷 Screen）。加载失败时自动回落到系统的楷体 / 衬线 -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-screen-webfont@1.7.0/style.css"
+      media="print"
+      onload="this.media = 'all'"
+    />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <!-- 脚本在，先把标题藏起来准备逐字上浮；4 秒兜底，脚本坏在半路也不会把标题永久藏住 -->
+    <script>
+      document.documentElement.classList.add('reveal-pending');
+      setTimeout(function () {
+        document.documentElement.classList.remove('reveal-pending');
+      }, 4000);
+    </script>
+  </head>
+
+  <body>
+    <a class="skip" href="#main">跳到正文</a>
+
+    <header class="topbar">
+      <div class="wrap topbar-inner">
+        <a class="brand" href="index.html" data-press="0.96">
+          <img class="brand-mark" src="assets/icon.png" alt="" width="32" height="32" />
+          <span class="brand-name">ClassHelper</span>
+        </a>
+        <nav class="topnav" aria-label="站内导航">
+          <span class="nav-pill" aria-hidden="true"></span>
+          <a href="index.html">官网首页</a>
+          <a href="index.html#parts">组成部分</a>
+          <a href="index.html#shots">实机</a>
+          <a href="docs/index.html">文档站</a>
+        </nav>
+        <a
+          class="btn btn-quiet"
+          href="https://github.com/LoveChengke/ClassHelper/releases"
+          target="_blank"
+          rel="noreferrer"
+          data-press="0.95"
+        >
+          全部版本
+        </a>
+      </div>
+      <!-- 阅读进度：beUI ScrollProgressBar（2px，origin-left，弹簧缓跟） -->
+      <div class="scroll-progress" aria-hidden="true"></div>
+    </header>
+
+    <main id="main">
+      <!-- ═══════════════════════ 首屏：挑版本、挑平台 ═══════════════════════ -->
+      <section class="band band-board hero" id="top">
+        <div class="wrap">
+          <div class="hero-intro">
+            <h1 class="display" data-reveal>
+              <span class="reveal-line">先挑一个版本，</span>
+              <span class="reveal-line reveal-grad">再挑要装的那一份</span>
+            </h1>
+
+            <p class="hero-sub intro-seq" style="--intro-delay: 150ms">班级端 · 服务端 · ClassIsland 插件</p>
+
+            <p class="lead intro-seq" style="--intro-delay: 200ms">
+              下面的版本与文件清单是当场从本仓库的 GitHub Releases 读出来的：文件名、体积都照抄发布页，
+              页面显示什么，就真能下到什么。
+            </p>
+
+            <!-- 版本选择：Tab 由 assets/download.js 按发布列表建出来 -->
+            <div class="dl-pick intro-seq" style="--intro-delay: 250ms">
+              <p class="dl-pick-label" id="ver-label">版本</p>
+              <div class="dl-tabs" role="tablist" aria-labelledby="ver-label" id="ver-tabs">
+                <span class="dl-tabs-indicator" id="ver-indicator" aria-hidden="true"></span>
+              </div>
+              <p class="dl-pick-note" id="ver-note" role="status">正在读取版本列表……</p>
+            </div>
+
+            <noscript>
+              <p class="dl-pick-note">
+                这一页的版本清单要脚本才能读。直接去
+                <a href="https://github.com/LoveChengke/ClassHelper/releases">GitHub Releases</a>
+                挑一份 —— 文件名与体积那儿都有。
+              </p>
+            </noscript>
+
+            <div class="actions intro-seq" style="--intro-delay: 300ms">
+              <a
+                class="btn btn-solid"
+                id="ver-primary"
+                href="https://github.com/LoveChengke/ClassHelper/releases/latest"
+                data-press="0.93"
+              >
+                下最新版服务端
+              </a>
+              <a
+                class="btn btn-line"
+                href="https://github.com/LoveChengke/ClassHelper/releases"
+                target="_blank"
+                rel="noreferrer"
+                data-press="0.93"
+              >
+                全部版本与更新日志
+              </a>
+            </div>
+
+            <ul class="hero-badges intro-seq" style="--intro-delay: 350ms">
+              <li>Windows 10/11 x64</li>
+              <li>Linux x64 · Docker</li>
+              <li>ClassIsland 2.x 插件</li>
+              <li>包内自带 Node 运行时</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════ 这一版里有什么 ═══════════════════════ -->
+      <section class="band band-paper" id="pick">
+        <div class="wrap">
+          <h2 class="h2">这一版里有这几个包</h2>
+          <p class="lead narrow">
+            按「装在哪台机器上」挑：教室机器装班级端，服务器装服务端，教室大屏再给 ClassIsland 加一个插件。
+            四个包互不依赖顺序，但
+            <strong>服务端要先有一台机器跑着</strong>
+            ，别的才连得上。
+          </p>
+
+          <!-- 卡片由 assets/download.js 按当前选中的版本渲染 -->
+          <div class="dl-grid" id="dl-grid" role="tabpanel" tabindex="0" aria-live="polite"></div>
+
+          <p class="dl-note" id="dl-note"></p>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════ Linux 与 Docker ═══════════════════════ -->
+      <section class="band band-board" id="server-linux">
+        <div class="wrap">
+          <h2 class="h2">Linux 服务器上，一行命令装完</h2>
+          <p class="lead narrow">
+            脚本自己去 Releases 取这一版的压缩包、核对旁边的
+            <code>.sha256</code>
+            ，再装成 systemd 服务，顺手把
+            <code>classhelper</code>
+            运维命令放到
+            <code>/usr/local/bin</code>
+            里。
+          </p>
+
+          <div class="snippet">
+            <div class="snippet-head">
+              <span class="snippet-label">在服务器上跑这一条</span>
+              <button
+                class="copy"
+                type="button"
+                data-press="0.97"
+                data-copy="#cmd-linux"
+                data-copy-done="已复制"
+              >
+                <span class="copy-label">复制</span>
+              </button>
+            </div>
+            <pre
+              id="cmd-linux"
+            ><code>curl -fsSL -o /tmp/classhelper-install.sh https://raw.githubusercontent.com/LoveChengke/ClassHelper/master/deploy/install.sh &amp;&amp; sudo bash /tmp/classhelper-install.sh</code></pre>
+          </div>
+
+          <p class="lead narrow">
+            想先不改动系统，在末尾加
+            <code>--check</code>
+            就只体检。装完之后
+            <code>classhelper upgrade</code>
+            、
+            <code>backup</code>
+            、
+            <code>doctor</code>
+            、
+            <code>password</code>
+            这些命令都在等着，升级与回滚也走它们。
+          </p>
+
+          <p class="lead narrow">
+            云服务器、多终端共享的场合可以走 Docker Compose —— MySQL 与 SQLite 两种编排都在仓库的
+            <code>deploy/</code>
+            里，镜像 tag 与版本号对齐。完整步骤见
+            <a href="docs/management/production.html">生产部署</a>
+            与
+            <a href="docs/management/linux-deploy.html">Linux 运维</a>
+            。
+          </p>
+        </div>
+      </section>
+
+      <!-- 收尾 CTA：装完去哪儿 -->
+      <section class="band cta" aria-label="装完之后">
+        <div class="wrap">
+          <!-- prettier-ignore -->
+          <h2 class="cta-title">装完，<span class="act-hl">从这三页开始</span></h2>
+          <p class="cta-lead">
+            一台机器装完就能跑起来，学生机和教室大屏接上同一个地址就行。第一次部署大约半小时，
+            每一步都对着截图写好了。
+          </p>
+          <div class="cta-actions">
+            <a class="btn btn-solid" href="docs/get-started/index.html" data-press="0.93">第一次装</a>
+            <a class="btn btn-line" href="docs/management/production.html" data-press="0.93">
+              部署形态怎么选
+            </a>
+            <a class="btn btn-line" href="docs/faq.html" data-press="0.93">装不上怎么办</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ═══════════════════════ 页脚 ═══════════════════════ -->
+    <footer class="foot">
+      <div class="wrap foot-inner">
+        <div class="foot-brand">
+          <img src="assets/icon.png" alt="" width="36" height="36" />
+          <div>
+            <p class="foot-name">
+              ClassHelper
+              <span>Class Helper</span>
+            </p>
+            <p class="foot-ver">版本以 GitHub Releases 为准 · 源码公开 · 装在你自己的机器上</p>
+          </div>
+        </div>
+        <nav class="foot-nav" aria-label="相关链接">
+          <a href="index.html">官网首页</a>
+          <a href="docs/index.html">文档站</a>
+          <a href="https://github.com/LoveChengke/ClassHelper/releases" target="_blank" rel="noreferrer">
+            全部版本
+          </a>
+          <a href="https://github.com/LoveChengke/ClassHelper" target="_blank" rel="noreferrer">源码仓库</a>
+          <a href="https://classisland.tech" target="_blank" rel="noreferrer">ClassIsland</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="assets/motion.js" defer></script>
+    <script src="assets/main.js" defer></script>
+    <script src="assets/download.js" defer></script>
+  </body>
+</html>

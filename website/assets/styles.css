@@ -1,5 +1,5 @@
 /* ============================================================================
-   班级小助手 · 官网样式
+   ClassHelper · 官网样式
    ----------------------------------------------------------------------------
    两套表面，对应教室里的两样东西：
 
@@ -311,6 +311,22 @@ table {
 .btn-line:hover {
   border-color: var(--chalk-3);
   background: var(--board-raise);
+}
+
+/* .btn-line 的颜色是给黑板调的（粉笔白），落在浅色纸面上会看不见 —— 纸面另给一套 */
+.band-paper .btn-line {
+  border-color: var(--paper-rule);
+  color: var(--ink);
+}
+
+.band-paper .btn-line:hover {
+  border-color: var(--blue);
+  background: var(--paper-raise);
+}
+
+/* 纸面上的按钮行跟在正文后面，自己带一段上边距（黑板那边靠 .lead 的下边距撑开） */
+.band-paper .actions {
+  margin-top: 26px;
 }
 
 .btn-quiet {
@@ -2067,5 +2083,257 @@ html:not(.reveal-pending) .display .reveal-grad {
     transition-property: opacity, color, background-color, border-color !important;
     transition-duration: 0.2s !important;
     transition-delay: 0s !important;
+  }
+}
+
+/* ════════════════════════════════ 下载页 ═══════════════════════════════
+   download.html 专用。页面骨架与官网首页同一套（同样的色带、按钮、页脚），
+   这里只补两样只有这一页才有的东西：版本分段控件、每个交付物的文件卡。
+
+   两条口径和首页一致：
+     蓝（--blue-deep）  产品自己的强调色 —— 这里表示「这是一份真的能下的文件」
+     卡片一律纸面（--paper-raise）——「谁装什么」是要照着一项项核对的，跟名单一样  */
+
+/* ── 版本选择 ────────────────────────────────────────────────────────────
+   与首页实机截图那组分段控件同一套做法（beUI Tabs：一个指示器在选项之间滑移），
+   只是它管的是版本而不是图组，所以另起一套类名，不去动 .shots-*。 */
+
+.dl-pick {
+  margin: 34px 0 30px;
+}
+
+.dl-pick-label {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  color: var(--chalk-3);
+  margin-bottom: 10px;
+}
+
+.dl-tabs {
+  position: relative;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--board-line);
+  border-radius: 12px;
+  background: var(--board-deep);
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.dl-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.dl-tab {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--chalk-2);
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  padding: 8px 16px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.18s var(--ease-out);
+}
+
+.dl-tab:hover,
+.dl-tab[aria-selected='true'] {
+  color: var(--chalk);
+}
+
+/* 旗标：最新版 / 预发布。整排版本里只有它有，是这一行唯一的信息栅格 */
+.dl-tab-flag {
+  font-size: 0.68rem;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+  color: #cfe6fb;
+  background: rgba(47, 143, 230, 0.18);
+  border: 1px solid rgba(47, 143, 230, 0.4);
+}
+
+.dl-tab-flag-quiet {
+  color: var(--chalk-2);
+  background: rgba(232, 238, 233, 0.07);
+  border-color: var(--board-line);
+}
+
+.dl-tabs-indicator {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  height: calc(100% - 8px);
+  width: 0;
+  border-radius: 9px;
+  background: var(--board-raise);
+  pointer-events: none;
+}
+
+/* 版本清单的来路 —— 这段话是这一页的"数据来源声明"，取不到时要在这里说清楚 */
+.dl-pick-note {
+  margin-top: 12px;
+  font-size: var(--fs-xs);
+  line-height: 1.85;
+  color: var(--chalk-3);
+  max-width: 48em;
+}
+
+.dl-pick-note a {
+  color: var(--chalk-2);
+}
+
+.dl-pick-note code {
+  color: var(--chalk-2);
+}
+
+/* ── 文件卡（纸面） ───────────────────────────────────────────────────── */
+
+/* 正好四张卡：宽度取 400px 起，桌面上一律两列（2×2 比 3+1 那种"落单"好读）。
+   `min(400px, 100%)` 那层是必要的：只写 400px 的话，窄屏（比 400 还窄）上轨道会硬撑到 400，
+   卡片就顶出视口右侧 —— 这是 auto-fit + minmax 的经典坑。 */
+.dl-grid {
+  margin-top: 36px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr));
+  gap: 20px;
+}
+
+.dl-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--paper-raise);
+  border: 1px solid var(--paper-rule);
+  border-radius: 6px;
+  padding: 22px 22px 18px;
+}
+
+/* 「谁在用」那行 —— 与首页特性块的 #标签同一个位置，用蓝色承担 */
+.dl-card-who {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--blue-deep);
+}
+
+.dl-card-name {
+  margin-top: 5px;
+  font-size: 1.18rem;
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.dl-card-desc {
+  margin-top: 8px;
+  font-size: var(--fs-sm);
+  line-height: 1.85;
+  color: var(--ink-2);
+}
+
+.dl-files {
+  margin-top: 16px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 一行 = 一个文件，整行可点（GitHub 的发布资源带 Content-Disposition，点了就下） */
+.dl-file {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid var(--paper-rule);
+  border-radius: var(--radius);
+  background: var(--paper);
+  text-decoration: none;
+  transition:
+    border-color 0.16s var(--ease-out),
+    background-color 0.16s var(--ease-out);
+}
+
+.dl-file:hover,
+.dl-file:focus-visible {
+  border-color: var(--blue);
+  background: #eaf3fd;
+}
+
+.dl-file-top {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.dl-file-role {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.dl-file-size {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dl-file-name {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.dl-file-note {
+  display: block;
+  margin-top: 3px;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+
+/* 这一版没打这个包（老版本里真的会缺） */
+.dl-missing {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px dashed var(--paper-rule);
+  border-radius: var(--radius);
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+
+.dl-note {
+  margin-top: 24px;
+  font-size: var(--fs-xs);
+  line-height: 1.9;
+  color: var(--ink-3);
+  max-width: 54em;
+}
+
+.dl-note code {
+  background: rgba(23, 35, 31, 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+@media (max-width: 560px) {
+  .dl-card {
+    padding: 18px 16px 14px;
+  }
+
+  .dl-file-name {
+    font-size: 0.68rem;
   }
 }

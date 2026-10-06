@@ -3,13 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>班级小助手 Class Helper — 知道现在是第几节课的班级信息系统</title>
+    <title>ClassHelper Class Helper — 知道现在是第几节课的班级信息系统</title>
     <meta
       name="description"
-      content="班级小助手是一套自托管的班级信息管理系统：课表、作业、通知、成绩、叫人合在一个后端，教室大屏与每台学生机实时收到，上课时段自动不打扰课堂。支持 Windows 单机、Linux 服务器与 Docker 部署。"
+      content="ClassHelper是一套自托管的班级信息管理系统：课表、作业、通知、成绩、叫人合在一个后端，教室大屏与每台学生机实时收到，上课时段自动不打扰课堂。支持 Windows 单机、Linux 服务器与 Docker 部署。"
     />
     <meta name="theme-color" content="#16231e" />
-    <meta property="og:title" content="班级小助手 Class Helper" />
+    <meta property="og:title" content="ClassHelper Class Helper" />
     <meta
       property="og:description"
       content="课表、作业、通知、成绩、叫人合在一个后端，教室大屏与每台学生机实时收到，上课时段自动不打扰课堂。"
@@ -43,7 +43,7 @@
       <div class="wrap topbar-inner">
         <a class="brand" href="#top" data-press="0.96">
           <img class="brand-mark" src="assets/icon.png" alt="" width="32" height="32" />
-          <span class="brand-name">班级小助手</span>
+          <span class="brand-name">ClassHelper</span>
           <span class="brand-ver">1.1.2</span>
         </a>
         <nav class="topnav" aria-label="页内导航">
@@ -56,7 +56,7 @@
           <a href="#verify">验收</a>
           <a href="docs/index.html">文档站</a>
         </nav>
-        <a class="btn btn-quiet" href="#deploy" data-press="0.95">取安装包</a>
+        <a class="btn btn-quiet" href="download.html" data-press="0.95">下载</a>
       </div>
       <!-- 阅读进度：beUI ScrollProgressBar（2px，origin-left，弹簧缓跟） -->
       <div class="scroll-progress" aria-hidden="true"></div>
@@ -80,7 +80,7 @@
             </p>
 
             <div class="actions intro-seq" style="--intro-delay: 250ms">
-              <a class="btn btn-solid" href="#deploy" data-press="0.93">立即下载</a>
+              <a class="btn btn-solid" href="download.html" data-press="0.93">立即下载</a>
               <a
                 class="btn btn-line"
                 href="https://github.com/LoveChengke/ClassHelper"
@@ -575,6 +575,10 @@
             学生机这边是安装包和单文件版两种：安装包走 NSIS，单文件版不用装、放 U 盘里就能分发。
             两个都不写死服务器地址 —— 第一次打开时填教室的地址和班级码就行。
           </p>
+
+          <div class="actions">
+            <a class="btn btn-line" href="download.html" data-press="0.93">去下载页挑一份</a>
+          </div>
         </div>
       </section>
 
@@ -635,7 +639,7 @@
             不用先读一遍文档。
           </p>
           <div class="cta-actions">
-            <a class="btn btn-solid" href="#deploy" data-press="0.93">取安装包</a>
+            <a class="btn btn-solid" href="download.html" data-press="0.93">取安装包</a>
             <a
               class="btn btn-line"
               href="https://github.com/LoveChengke/ClassHelper"
@@ -657,7 +661,7 @@
           <img src="assets/icon.png" alt="" width="36" height="36" />
           <div>
             <p class="foot-name">
-              班级小助手
+              ClassHelper
               <span>Class Helper</span>
             </p>
             <p class="foot-ver">版本 1.1.2 · 源码公开 · 装在你自己的机器上</p>

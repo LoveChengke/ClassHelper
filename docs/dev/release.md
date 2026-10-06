@@ -19,22 +19,24 @@ description: 改版本号、跑验收、打安装包、发 GitHub Release、发�
 | 要给别人一份新安装包                    | 只在自己机器上跑             |
 | 插件单独发补丁（只动插件第 4 段版本号） | —                            |
 
-## 版本号写在哪（13 处 / 11 个文件）
+## 版本号写在哪（14 处 / 12 个文件）
 
-同一个版本号分散在 13 个落点上，**手工改必然漏一处**，而漏掉的那处不会报错：
+同一个版本号分散在 14 个落点上，**手工改必然漏一处**，而漏掉的那处不会报错：
 
-| 文件                                                             | 内容                            |
-| ---------------------------------------------------------------- | ------------------------------- |
-| `package.json`                                                   | 单一来源（服务端运行时读它）    |
-| `packages/{shared,server,web-admin,desktop-client}/package.json` | 各包的版本                      |
-| `deploy/package.runtime.json`                                    | 安装包 / 容器里的运行时依赖清单 |
-| `deploy/docker-compose.yml`、`docker-compose.sqlite.yml`         | 镜像 tag 的默认值               |
-| `packages/classisland-plugin/manifest.yml`                       | 插件清单（四段：`x.y.z.0`）     |
-| `packages/classisland-plugin/src/Services/BridgeService.cs`      | 插件上报的 `PluginVersion` 常量 |
-| `website/index.html` × 3                                         | 官网顶栏徽标 / 首屏芯片 / 页脚  |
+| 文件                                                             | 内容                               |
+| ---------------------------------------------------------------- | ---------------------------------- |
+| `package.json`                                                   | 单一来源（服务端运行时读它）       |
+| `packages/{shared,server,web-admin,desktop-client}/package.json` | 各包的版本                         |
+| `deploy/package.runtime.json`                                    | 安装包 / 容器里的运行时依赖清单    |
+| `deploy/docker-compose.yml`、`docker-compose.sqlite.yml`         | 镜像 tag 的默认值                  |
+| `packages/classisland-plugin/manifest.yml`                       | 插件清单（四段：`x.y.z.0`）        |
+| `packages/classisland-plugin/src/Services/BridgeService.cs`      | 插件上报的 `PluginVersion` 常量    |
+| `website/index.html` × 3                                         | 官网顶栏徽标 / 首屏芯片 / 页脚     |
+| `website/download.html`（`<meta name="ch-version">`）            | 下载页读不到版本清单时的兜底版本号 |
 
-最后一行值得单独说：官网是**纯静态站、没有构建步骤**，没有哪段代码会去读 `package.json`，
-所以那三处只能靠脚本一起改 —— 漏了的话首页会一直挂着旧版本号，而那是别人看到的第一眼。
+最后两行值得单独说：官网是**纯静态站、没有构建步骤**，没有哪段代码会去读 `package.json`，
+所以那几处只能靠脚本一起改 —— 漏了的话首页会一直挂着旧版本号（而那是别人看到的第一眼），
+下载页则会给离线访客一串指向**不存在版本**的直链。
 
 所以**改版本号的唯一入口是脚本**：
 
@@ -97,7 +99,7 @@ pnpm dist:all                   # = dist:server + dist:win + dist:classisland-pl
 打完之后**对打包副本再验一次**（开发产物通过 ≠ 用户机器上的副本通过）：
 
 ```bash
-pnpm verify:packaged --exe "releases/client/<版本>/免安装/班级小助手.exe"
+pnpm verify:packaged --exe "releases/client/<版本>/免安装/ClassHelper.exe"
 ```
 
 > Linux 包**只能在 Linux 上构建**（依赖是平台相关的），所以不在这条命令里 ——
@@ -127,15 +129,28 @@ git push origin master
 
 ### 7. 开 Release
 
-```bash
-gh release create v1.1.3 --title "v1.1.3" --generate-notes
+上传前先把产物改成 ASCII 名 —— 构建产物是中文名，Release 上的名字是给别人看、要贴进脚本的：
 
-gh release upload v1.1.3 \
-  releases/client/<版本>/安装包/*.exe \
-  releases/classisland-plugin/<版本>/安装包/*.cipx \
-  releases/server/<版本>/安装包/*.exe \
-  releases/SHA256SUMS-<版本>.txt --clobber
+```bash
+V=1.1.3
+mkdir -p .cache/release-staging
+cp "releases/client/$V/安装包/"*-x64-setup.exe    ".cache/release-staging/ClassHelper-$V-x64-client-setup.exe"
+cp "releases/client/$V/安装包/"*-x64-portable.exe ".cache/release-staging/ClassHelper-$V-x64-client-portable.exe"
+cp "releases/server/$V/安装包/"*-x64-setup.exe    ".cache/release-staging/ClassHelper-$V-x64-server-setup.exe"
+cp "releases/classisland-plugin/$V/安装包/ClassHelper.ClassIslandPlugin.cipx" .cache/release-staging/
+
+gh release create v$V --title "v$V" --generate-notes
+gh release upload v$V .cache/release-staging/* "releases/SHA256SUMS-$V.txt" --clobber
 ```
+
+| 构建产物                    | Release 上的名字                             |
+| --------------------------- | -------------------------------------------- |
+| `<客户端>-x64-setup.exe`    | `ClassHelper-<版本>-x64-client-setup.exe`    |
+| `<客户端>-x64-portable.exe` | `ClassHelper-<版本>-x64-client-portable.exe` |
+| `<服务端>-x64-setup.exe`    | `ClassHelper-<版本>-x64-server-setup.exe`    |
+
+这三个名字是**外部契约**：README 的「开始使用」表、官网下载页读不到版本清单时拼的兜底直链，
+都按它们写；改名要三处一起改。
 
 `gh release create` 会**创建 tag 并推送**，这一步会自动触发
 [`release-linux-server.yml`](https://github.com/LoveChengke/classhelper/blob/master/.github/workflows/release-linux-server.yml)
@@ -169,8 +184,12 @@ https://lovechengke.github.io/ClassHelper/docs/     ← 文档站
 （一个仓库在 Pages 上只有一个站点，所以是拼在一起发的 —— 官网在根、文档站在 `/docs/` 下。）
 
 文档站顶栏的版本徽标取自根 `package.json`，所以第 1 步改完就跟着变了；
-官网首屏那排芯片、顶栏徽标与页脚里的版本号也是**由 `pnpm version:bump` 一起改的**
-（它们是那 13 个落点里的三个）。
+官网首屏那排芯片、顶栏徽标与页脚里的版本号，以及下载页那个兜底版本号，
+也都是**由 `pnpm version:bump` 一起改的**（它们是那 14 个落点里的四个）。
+
+> 官网的「立即下载」会跳到 `/download.html`，那一页的版本清单是**当场**从 GitHub Releases 读的
+> （读不到才退回上面那个兜底版本号），所以发完 Release 不用重新部署那一页 —— 但**兜底值要跟着发版一起改**，
+> 不然离线访客点到的就是旧版本的直链。
 
 ### 9. 检查
 

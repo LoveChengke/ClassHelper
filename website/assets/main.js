@@ -1,5 +1,5 @@
 /**
- * 班级小助手 · 官网交互
+ * ClassHelper · 官网交互
  *
  * 动效全部走 assets/motion.js 里那套 beUI token（曲线、弹簧、时长口径）。
  * 这里只做页面逻辑，逐块对着 beUI 的组件写：
@@ -1353,4 +1353,9 @@
   setupNumberTickers();
   setupCopyButtons();
   setupShots();
+
+  // 下载页（download.html）的版本卡片是拉到 GitHub 清单之后才建出来的，建完会派发一次
+  // `ch:content` —— 那时候启动已经跑过了，按压反馈得在这儿补挂一次
+  // （bindPressable 对挂过的元素会自己跳过，重复派发不会重复绑定）。
+  document.addEventListener('ch:content', setupPressable);
 })();

@@ -1,7 +1,7 @@
-# 班级小助手 · 完整参考
+# ClassHelper · 完整参考
 
 班级信息管理系统。一个 pnpm monorepo，一份代码产出四个交付物：**后端服务**、**Web 管理端**（教师 / 管理员）、
-**桌面客户端**（学生端 / 教室机器）与 **ClassIsland 联动插件**（装在教室的 ClassIsland 上）。**当前版本 1.1.2**。
+**桌面客户端**（ClassHelper 班级端 / 教室机器）与 **ClassIsland 联动插件**（装在教室的 ClassIsland 上）。**当前版本 1.1.2**。
 
 核心链路：
 
@@ -19,7 +19,7 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
                                   └──── 老师下发的提醒 ◄────────┘
 ```
 
-> 本文是班级小助手的**完整参考**：功能行为、接口契约、验收证据与已知问题都在这里，是功能口径的权威来源。
+> 本文是ClassHelper的**完整参考**：功能行为、接口契约、验收证据与已知问题都在这里，是功能口径的权威来源。
 > 面向「第一次打开仓库」的展示型介绍在 [README](https://github.com/LoveChengke/classhelper/blob/master/README.md)；按读者分组的引导式文档在文档站（本目录）。
 > 工程约定（改代码前必读）与本机踩坑在 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md)；生产部署在
 > [production.md](management/production.md)；切换数据库在 [mysql.md](management/mysql.md)。
@@ -62,7 +62,7 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 | -------------------- | ----------------------------- | -------------------------------------------------------------------- | --------------------------------- |
 | 后端服务             | `packages/server`             | Express 5 + Prisma 7 + Socket.IO，接口前缀 `/api`                    | 其它三端                          |
 | Web 管理端           | `packages/web-admin`          | Vue 3 + Vite + Element Plus（构建后由后端托管，PWA 可安装）          | 教师、管理员（手机可用）          |
-| 桌面客户端           | `packages/desktop-client`     | Electron + Vue 3，含「灵动岛」浮窗、托盘、离线缓存                   | 学生端 / 教室机器                 |
+| 桌面客户端           | `packages/desktop-client`     | Electron + Vue 3，含「灵动岛」浮窗、托盘、离线缓存                   | ClassHelper 班级端 / 教室机器                 |
 | 共享契约             | `packages/shared`             | 三端共用的类型 / 常量 / 权限矩阵 / 工具函数                          | 上面三个 + 插件                   |
 | ClassIsland 联动插件 | `packages/classisland-plugin` | .NET 8 / C#，装在教室的 ClassIsland 上（上报课表与上课状态、弹提醒） | 教室机器（独立于 pnpm workspace） |
 | 官网                 | `website/`                    | 纯 HTML / CSS / JS 的静态页面，**没有构建步骤**                              | 展示与说明（`node website/serve.mjs` 本地预览） |
@@ -78,10 +78,10 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 
 | 产物                            | 产物文件位置（打包后）                                                          | 用途                                                                                      |
 | ------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| **服务端 + Web 管理端安装程序** | `releases/server/<版本>/安装包/班级小助手服务端-<版本>-x64-setup.exe`           | 装到教师电脑 / 校服务器即完整系统，**内置 Node 运行时**，双击安装、开机自启、自动建库建号 |
+| **服务端 + Web 管理端安装程序** | `releases/server/<版本>/安装包/ClassHelper服务端-<版本>-x64-setup.exe`           | 装到教师电脑 / 校服务器即完整系统，**内置 Node 运行时**，双击安装、开机自启、自动建库建号 |
 | **服务端 Linux 安装包**         | `releases/server/<版本>/linux-x64/classhelper-server-linux-x64-<版本>.tar.gz`   | 给 `deploy/install.sh` 用（另见同名 `.sha256`）；由 Actions 在 Linux 上构建后挂 Release   |
-| **学生客户端安装程序**          | `releases/client/<版本>/安装包/班级小助手-<版本>-x64-setup.exe`                  | 学生机安装（NSIS）                                                                        |
-| **学生客户端单文件版**          | `releases/client/<版本>/安装包/班级小助手-<版本>-x64-portable.exe`               | 免安装直接运行（U 盘分发）                                                                |
+| **学生客户端安装程序**          | `releases/client/<版本>/安装包/ClassHelper-<版本>-x64-setup.exe`                  | 学生机安装（NSIS）                                                                        |
+| **学生客户端单文件版**          | `releases/client/<版本>/安装包/ClassHelper-<版本>-x64-portable.exe`               | 免安装直接运行（U 盘分发）                                                                |
 | Web 管理端（PWA）               | 由服务端在 `/` 直接托管                                                         | 浏览器打开即用，可在 Edge/Chrome 中「安装为应用」；已适配手机小屏                         |
 | **ClassIsland 联动插件**        | `releases/classisland-plugin/<版本>/安装包/ClassHelper.ClassIslandPlugin.cipx`  | 装在教室机器的 ClassIsland 上（也可把 `ClassHelper.ClassIslandPlugin/` 目录丢进 Plugins） |
 
@@ -94,7 +94,7 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 
 | 场景                                | 形态                                                        | 入口                                                                                     |
 | ----------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| 学校机房 / 教师电脑（Windows 单机） | Windows 服务端安装程序（内置 Node，双击即用）               | `releases/server/<版本>/安装包/班级小助手服务端-<版本>-x64-setup.exe`                    |
+| 学校机房 / 教师电脑（Windows 单机） | Windows 服务端安装程序（内置 Node，双击即用）               | `releases/server/<版本>/安装包/ClassHelper服务端-<版本>-x64-setup.exe`                    |
 | 云服务器 / 多终端共享（推荐长期）   | Docker Compose + MySQL（另有 SQLite 单容器版）              | `deploy/Dockerfile`、`deploy/docker-compose{,.sqlite}.yml`                               |
 | 已有 Linux 服务器                   | **一键安装器 + `classhelper` 运维命令**（systemd / docker） | `sudo bash deploy/install.sh`（先 `--check` 体检）；运维见 `classhelper help`            |
 | 自定义 / 已有 Node 环境             | 手动部署免安装目录                                          | `pnpm dist:server` → `releases/server/<版本>/免安装/`                                    |
@@ -147,7 +147,7 @@ pnpm dev
 > `{ "success": false, "code": "NOT_FOUND" }`。Web 管理端开发地址是 **5173**，构建后由后端在 4000 托管。
 > 也可以分开启动：`pnpm dev:server`（仅后端）/ `pnpm dev:web`（仅 Web 端）。
 
-### 启动客户端（学生端）
+### 启动客户端（ClassHelper 班级端）
 
 ```bash
 # 开发模式：自动构建主进程 + 启动 Vite 渲染进程(5174) + 打开 Electron 窗口（热更新）
@@ -183,14 +183,14 @@ pnpm verify:desktop
 | 管理员 | `admin`       | `admin123`   | 可访问全部班级                             |
 | 教师   | `teacher1`    | `teacher123` | 张老师：高一(1)班、高二(3)班班主任         |
 | 教师   | `teacher2`    | `teacher123` | 李老师：高一(2)班班主任，高二(3)班协作教师 |
-| 班级   | 班级码 `G101` | `123456`     | 高一(1)班（**学生端唯一登录方式**）        |
+| 班级   | 班级码 `G101` | `123456`     | 高一(1)班（**ClassHelper 班级端唯一登录方式**）        |
 | 班级   | 班级码 `G102` | `123456`     | 高一(2)班                                  |
 | 班级   | 班级码 `G203` | `123456`     | 高二(3)班（不是 `G103`）                   |
 
 - 密码由**种子脚本硬编码**（`admin123` / `teacher123` / 班级 `123456`）；`.env` 的
   `DEFAULT_CLASS_PASSWORD` 只决定**新建**班级时的初始班级密码。
 - **学生没有个人账号**（2026-10-01 起彻底清理）：学生只是名单记录（成绩 / 未交名单 / 已读人数 / 叫人都按名单），
-  没有用户名密码、不能登录；学生端统一用班级码 + 班级密码。
+  没有用户名密码、不能登录；ClassHelper 班级端统一用班级码 + 班级密码。
 - 教学周由 `TERM_START_DATE`（第 1 教学周的周一）换算，当前周次用于课表默认视图。
 
 ### 常用命令
@@ -270,13 +270,12 @@ Element Plus 也通过对齐它的 `--el-border-radius-*` 一并改造：
 详情抽屉宽 86vw 且 `el-descriptions` 由 2~3 列降为单列；统计卡片两列。
 实现位置：`src/composables/useResponsive.ts`、`src/layouts/AdminLayout.vue`、`src/styles/index.css`。
 
-实拍（`pnpm verify:web` 自动留档到 `docs/screenshots/web-mobile/`）：
+实拍（`node website/tools/capture-shots.mjs` 采集，落在 `docs/images/` —— 与 README、官网用的是同一份图）：
 
-| 场景                                      | 截图                                                                  |
-| ----------------------------------------- | --------------------------------------------------------------------- |
-| 手机抽屉菜单                              | ![手机抽屉菜单](screenshots/web-mobile/mobile-1-drawer.png)      |
-| 手机通知页（工具栏铺满 + 表格卡片内滚动） | ![手机通知页](screenshots/web-mobile/mobile-2-notifications.png) |
-| 手机弹窗自适应                            | ![手机弹窗](screenshots/web-mobile/mobile-3-dialog.png)          |
+| 场景                                           | 截图                                             |
+| ---------------------------------------------- | ------------------------------------------------ |
+| 手机抽屉菜单（叠在「通知发布」页上）           | ![手机抽屉菜单](images/mobile-notifications.jpg) |
+| 手机仪表盘（统计卡两列，表格在卡片内横向滚动） | ![手机仪表盘](images/mobile-dashboard.jpg)       |
 
 > 手机访问：与电脑同一局域网时用 `http://<主机IP>:4000` 打开管理端；支持「添加到主屏幕」（PWA）。
 
@@ -289,7 +288,7 @@ Element Plus 也通过对齐它的 `--el-border-radius-*` 一并改造：
 | 删除教师有护栏           | 四种情况一律 409：还是**班主任**、名下有课程 / 班级分配、**发布过作业或通知**（后两项也是级联删除，删账号会连带删掉他在各班发过的内容）               |
 | 创建班级仅管理员         | `POST /api/classes` = `requireRole('ADMIN')`，教师（含班主任）403                                                                                     |
 | **设置 / 更改班主任**    | 新建班级时可选班主任（默认自己）；班级详情顶部「更换班主任」下拉随时改（`PATCH /api/classes/:id/head-teacher`，仅管理员），原班主任仍留在协作教师名单 |
-| 学生录入                 | 「学生管理」：单个新建（登录名自动生成）＋导入名单；学生端主体是班级账号                                                                              |
+| 学生录入                 | 「学生管理」：单个新建（登录名自动生成）＋导入名单；ClassHelper 班级端主体是班级账号                                                                              |
 
 > 学生名单接口（`/api/students`）与教师全量接口（`/api/teachers`）都是 **`requireRole('ADMIN')`**；
 > 「班级 → 学生名单」（`/api/classes/:id/students`）读接口对班级可见，写接口为 ADMIN/TEACHER（服务层再按班级角色兜底）。
@@ -371,7 +370,7 @@ Element Plus 也通过对齐它的 `--el-border-radius-*` 一并改造：
 （`renderer/components/OnboardingWelcome.vue`），关闭即从 DOM 卸载（不用 el-dialog，避免「关闭后 DOM 残留」
 的断言陷阱）；显隐由 `stores/onboarding.ts` 承载，登录页 / 设置页 / App.vue 三处共用一个开关。
 
-#### 作业看板（学生端）
+#### 作业看板（ClassHelper 班级端）
 
 默认按科目分卡片（每张卡列该科作业，条目可点开详情），工具栏可切「看板 / 列表」、开关「显示时间」、
 拖「字号」（11–28px 即时生效），点卡片或「全屏看板」进入全屏放大视图；这些偏好写入客户端配置
@@ -403,15 +402,16 @@ Element Plus 也通过对齐它的 `--el-border-radius-*` 一并改造：
 | 时间轴     | 左侧时间栏（开始 / 结束）+ 竖向轨道与节点 + 右侧课卡：**已结束**（置灰）、**正在上课**（强调色实底 + 进度条 + 距下课倒计时）、**下一节**（橙色标记 + 还有多久开始） |
 | 周视图     | 保留「节次 × 星期」表格（`本周` 标签）                                                                                                                              |
 
-实拍（`docs/screenshots/client/`）：
+实拍（`node website/tools/capture-shots.mjs` 采集，落在 `docs/images/` —— 与 README、官网用的是同一份图）：
 
-| 页面                  | 截图                                                         |
-| --------------------- | ------------------------------------------------------------ |
-| 课表 · 今天（时间轴） | ![客户端课表时间轴](screenshots/client/01-schedule.png) |
-| 作业                  | ![客户端作业](screenshots/client/02-homeworks.png)      |
-| 通知                  | ![客户端通知](screenshots/client/03-notifications.png)  |
-| 成绩                  | ![客户端成绩](screenshots/client/04-grades.png)         |
-| 设置                  | ![客户端设置](screenshots/client/05-settings.png)       |
+| 页面                  | 截图                                                 |
+| --------------------- | ---------------------------------------------------- |
+| 课表 · 今天（时间轴） | ![客户端课表时间轴](images/client-schedule.png)      |
+| 作业看板              | ![客户端作业看板](images/client-homeworks.png)       |
+| 通知                  | ![客户端通知](images/client-notifications.png)       |
+| 成绩                  | ![客户端成绩](images/client-grades.png)              |
+| 设置 · 灵动岛         | ![客户端设置灵动岛](images/client-settings-island.png) |
+| 设置 · 外观（深色）   | ![客户端设置外观](images/client-settings-appearance.png) |
 
 #### 个性化设置与系统托盘
 
@@ -440,7 +440,7 @@ Element Plus 也通过对齐它的 `--el-border-radius-*` 一并改造：
   教师 / 管理员本人密码在 Web 管理端顶栏下拉修改 —— 防止教室机器上误改班级密码后其他机器被锁在门外。
 
 **系统托盘**：关闭主窗口不退出程序，而是隐藏到托盘后台继续接收通知；托盘图标（左键单击 / 双击）恢复主窗口，
-右键菜单提供「显示主窗口 / 隐藏到托盘 / 退出班级小助手」。退出时统一清理：销毁托盘 → 销毁灵动岛
+右键菜单提供「显示主窗口 / 隐藏到托盘 / 退出ClassHelper」。退出时统一清理：销毁托盘 → 销毁灵动岛
 （含帧循环与定时器）→ 销毁全部窗口，并用 `app.exit(0)` 兜底，任务管理器中不留残留进程。
 
 #### 离线缓存与自动同步
@@ -518,15 +518,18 @@ Element Plus 也通过对齐它的 `--el-border-radius-*` 一并改造：
 - 相关文件：`src/main/island.ts`（控制器 + IPC）、`src/preload/island.ts`、`src/island/{IslandApp.vue,spring.ts,squircle.ts}`、
   `src/renderer/island/bridge.ts`。
 
-各形态实拍（由 `pnpm verify:desktop` 自动截取并归档到 `docs/screenshots/island/`，并做像素级校验）：
+各形态实拍（显示的是 `docs/images/` —— 与 README、官网同一份，按**逻辑像素 1×** 采集；
+`pnpm verify:desktop` 另有一套逐像素校验过的留档在 `docs/screenshots/island/`，那是回归产物，不在这页展示）：
 
-| 形态                     | 截图                                                                | 尺寸（逻辑 / 图片） | 说明                                              |
-| ------------------------ | ------------------------------------------------------------------- | ------------------- | ------------------------------------------------- |
-| 下课后自动弹出详情       | ![下课后自动弹出](screenshots/island/island-2-after-class.png) | 424×230 / 848×460   | 上课期间暂存的通知，下课后自动弹出                |
-| 上课期间紧急通知         | ![紧急通知立即展开](screenshots/island/island-3-urgent.png)    | 440×246 / 880×492   | 卡片**内部**红色光晕 + 紧急角标，无需点击         |
-| 非上课时段「新消息」胶囊 | ![新消息胶囊](screenshots/island/island-4-pill.png)            | 268×44 / 536×88     | 直接出现（无入场动画），点击后展开                |
-| 点击胶囊后的详情         | ![点击后展开](screenshots/island/island-5-clicked.png)         | 424×230 / 848×460   | 标题 / 内容 / 时间 + 打开应用 / 标为已读 / 知道了 |
-| 新作业胶囊 / 叫人卡片    | `island-7-homework.png` / `island-8-call.png`                       | 424×230 / 456×262   | 作业与叫人各自的配色与徽标                        |
+| 形态                     | 截图                                                 | 尺寸（逻辑 px） | 说明                                              |
+| ------------------------ | ---------------------------------------------------- | --------------- | ------------------------------------------------- |
+| 下课后自动弹出详情       | ![下课后自动弹出](images/island-2-after-class.png)   | 424×230         | 上课期间暂存的通知，下课后自动弹出                |
+| 上课期间紧急通知         | ![紧急通知立即展开](images/island-3-urgent.png)      | 440×246         | 卡片**内部**红色光晕 + 紧急角标，无需点击         |
+| 非上课时段「新消息」胶囊 | ![新消息胶囊](images/island-4-pill.png)              | 268×44          | 直接出现（无入场动画），点击后展开                |
+| 点击胶囊后的详情         | ![点击后展开](images/island-5-clicked.png)           | 424×230         | 标题 / 内容 / 时间 + 打开应用 / 标为已读 / 知道了 |
+| 多条通知竖向排列         | ![多条通知](images/island-9-list.png)                | 424×303         | 按重要程度排序，默认显示 3 条 +「展开更多」       |
+| 新作业胶囊               | ![新作业](images/island-7-homework.png)              | 424×230         | 青蓝描边 + 书本图标                               |
+| 叫人卡片                 | ![叫人](images/island-8-call.png)                    | 456×262         | 琥珀金卡片 +「叫人」徽标 +「收到」按钮            |
 
 > 截图路径可用 `ISLAND_SHOTS_DIR` 覆盖（默认 `.cache/island-shots/`）。
 
@@ -556,7 +559,7 @@ Element Plus 也通过对齐它的 `--el-border-radius-*` 一并改造：
 老师在 **Web 管理端 → 学生管理 → 叫人**（或 **通知发布 → 叫人**）选中学生，配合**快捷短语**或**自定义消息**发送。
 学生管理页是管理员专属，而班主任与科任老师都需要叫人，因此教师的叫人入口在「通知发布 → 叫人」。
 
-| 级别         | 落库级别 | 学生端行为                                                                                                |
+| 级别         | 落库级别 | ClassHelper 班级端行为                                                                                                |
 | ------------ | -------- | --------------------------------------------------------------------------------------------------------- |
 | **普通叫人** | `HIGH`   | 课间：先显示「叫人」胶囊，点击展开；**上课时段：只进队列、不打断课堂**，下课后自动弹出详情（90 秒后收起） |
 | **紧急叫人** | `URGENT` | **无视上课时段立即展开**（与紧急通知同待遇），上课时被收起后仍保留胶囊、可再次点开                        |
@@ -680,15 +683,15 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 
 | 方向                       | 做什么                                                                                                                   | 老师在哪看                             |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
-| ClassIsland → 班级小助手   | 上报**课表 + 节次时间 + 上课状态**（现在上什么 / 下一节 / 本节起止时间），写入本班课表                                   | Web 端「ClassIsland 联动」实时状态卡片 |
-| 班级小助手 → ClassIsland   | 老师在 Web 端发一条**提醒** → 落库 → 教室机器的插件取回 → ClassIsland 上**全屏弹出**（可语音朗读），播完回执、不会重复弹 | Web 端「ClassIsland 联动 → 下发提醒」  |
-| （可选）班级 → ClassIsland | 把班级小助手上排好的课表**镜像**回 ClassIsland：新建一份 `班级小助手-<班级名>` 档案课表，不动老师原有的课表              | 同上页面的「开镜像」开关               |
+| ClassIsland → ClassHelper   | 上报**课表 + 节次时间 + 上课状态**（现在上什么 / 下一节 / 本节起止时间），写入本班课表                                   | Web 端「ClassIsland 联动」实时状态卡片 |
+| ClassHelper → ClassIsland   | 老师在 Web 端发一条**提醒** → 落库 → 教室机器的插件取回 → ClassIsland 上**全屏弹出**（可语音朗读），播完回执、不会重复弹 | Web 端「ClassIsland 联动 → 下发提醒」  |
+| （可选）班级 → ClassIsland | 把ClassHelper上排好的课表**镜像**回 ClassIsland：新建一份 `ClassHelper-<班级名>` 档案课表，不动老师原有的课表              | 同上页面的「开镜像」开关               |
 
 #### 接入流程（三步）
 
 1. **Web 端签发设备令牌**：管理员 / 本班班主任在「ClassIsland 联动」页点「接入新设备」，选择班级并生成令牌
    （形如 `chci_xxxxxxxx…`，**明文只显示这一次**，服务端只存 sha256）；
-2. **教室机器填令牌**：在 ClassIsland 的「设置 → 班级小助手联动」里填入后端地址 + 令牌，点「立即上报」；
+2. **教室机器填令牌**：在 ClassIsland 的「设置 → ClassHelper联动」里填入后端地址 + 令牌，点「立即上报」；
 3. **验证**：页面顶部出现设备卡片与「在线」标记，说明链路通了 —— 之后课表与上课状态自动同步，
    老师发的提醒也会在这台机器上弹出来。
 
@@ -718,8 +721,8 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 | 要同步的内容                     | 需要打开的开关                                                                                                                                                               |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 服务端 → ClassIsland（镜像课表） | ① 插件设置「把班级课表镜像回 ClassIsland」+ ② Web 端该设备的「镜像课表」                                                                                                     |
-| ClassIsland → 服务端（上报课表） | 插件设置「上报课表到班级小助手」（关着时日志会明说「仅状态（开关已关闭）」）；同步是**双向对齐**的：老师在 ClassIsland 里删掉 / 挪动的节次会一并清理，Web 端手排的课不会被删 |
-| 提醒下发                         | ① 教室客户端「通知显示位置」不是「只在 ClassHelper」+ ② 插件「接收班级小助手提醒」                                                                                           |
+| ClassIsland → 服务端（上报课表） | 插件设置「上报课表到ClassHelper」（关着时日志会明说「仅状态（开关已关闭）」）；同步是**双向对齐**的：老师在 ClassIsland 里删掉 / 挪动的节次会一并清理，Web 端手排的课不会被删 |
+| 提醒下发                         | ① 教室客户端「通知显示位置」不是「只在 ClassHelper」+ ② 插件「接收ClassHelper提醒」                                                                                           |
 
 #### 提醒弹在哪个端：由教室客户端自己选
 
@@ -852,10 +855,11 @@ class-helper/
 │   ├── production.md            # 生产部署指南（四种形态 + Linux systemd + 运维 + 安全清单）
 │   ├── mysql.md                 # MySQL 切换指南
 │   ├── winisland-design-tokens.md  # 灵动岛照 WinIsland 提取的设计 token
-│   └── screenshots/             # 回归测试自动留档的截图（island / client / web-mobile / classisland）
+│   ├── images/                  # 展示图：文档站 / README / 官网共用的同一份（1× 逻辑像素）
+│   └── screenshots/             # 回归测试留档的截图（island / client / web-mobile / classisland），页面不展示
 ├── website/                     # 产品官网（纯静态，无构建；node serve.mjs 本地预览）
-│   ├── index.html
-│   └── assets/{styles.css,motion.js,main.js,icon.png,shots/}   # motion.js = beUI 动效 token 与弹簧引擎
+│   ├── index.html / download.html
+│   └── assets/{styles.css,motion.js,main.js,download.js,icon.png,shots/}   # motion.js = beUI 动效 token 与弹簧引擎
 └── packages/
     ├── shared/                  # 三端共享：类型契约、常量、权限矩阵、工具函数
     │   └── src/{types,constants,permissions,utils,index}.ts
@@ -890,7 +894,7 @@ class-helper/
     │   ├── src/Services/ScheduleMapper.cs                   # 课表与单双周映射
     │   ├── src/Services/ClassPlanWriter.cs                  # 镜像回 ClassIsland（含课间时间点）
     │   ├── src/Services/ClassHelperNotificationProvider.cs  # 把老师发的提醒显示到 ClassIsland 上
-    │   ├── src/Views/BridgeSettingsPage.axaml(.cs)          # 「班级小助手联动」设置页（Avalonia）
+    │   ├── src/Views/BridgeSettingsPage.axaml(.cs)          # 「ClassHelper联动」设置页（Avalonia）
     │   ├── src/Interop/ClassHelperClient.cs                 # 后端 HTTP 客户端 + 对齐服务端 zod 的 DTO
     │   └── scripts/{build,verify}.mjs   # 构建打包（.cipx）与静态契约校验
     ├── web-admin/               # Web 管理端（Vue 3 + Vite + Element Plus + PWA）
@@ -1191,7 +1195,7 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 
 | 验收项                                                        | 结果 | 证据                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ------------------------------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 教师 Web 端发布通知，学生端 5 秒内收到                        | ✅   | `verify:e2e`：`notification:new` 实测 30–50ms 到达（要求 < 5 秒）                                                                                                                                                                                                                                                                                                                                                                                     |
+| 教师 Web 端发布通知，ClassHelper 班级端 5 秒内收到                        | ✅   | `verify:e2e`：`notification:new` 实测 30–50ms 到达（要求 < 5 秒）                                                                                                                                                                                                                                                                                                                                                                                     |
 | 教师发布作业，学生能查看并标记完成                            | ✅   | `homework:new` 实时到达，`PATCH /homeworks/:id/status` 200 且列表回显 `completed=true`                                                                                                                                                                                                                                                                                                                                                                |
 | 教师录入成绩，学生能查看个人成绩                              | ✅   | `grade:updated` 实时到达，`/grades/my` 返回记录；批量录入与统计接口通过                                                                                                                                                                                                                                                                                                                                                                               |
 | 学生能查看课表，支持按周切换                                  | ✅   | `/schedules/grid?week=1` 返回周视图条目，`week` 过滤 `weekStart ≤ week ≤ weekEnd`，单双周按第 1 周 = 单周过滤                                                                                                                                                                                                                                                                                                                                         |
@@ -1211,7 +1215,7 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 | 成绩 / 名单表格导入（xlsx·xls·csv）                           | ✅   | 模板下载 + 预览映射 + 重复处理 + 行号级错误：`verify:e2e` 覆盖 20 余项，`verify:web` 弹窗实测                                                                                                                                                                                                                                                                                                                                                         |
 | ClassIsland 时间配置导入（覆盖 / 合并 / 回滚）                | ✅   | 合法 200、非法 400 `IMPORT_INVALID` 且原配置仍在、merge 覆盖与保留行为符合预期                                                                                                                                                                                                                                                                                                                                                                        |
 | 安装版覆盖升级自动补迁移                                      | ✅   | 真实旧库升级日志：`升级安装：已应用 N 个迁移文件，跳过 M 个已存在对象`，新表自动建好                                                                                                                                                                                                                                                                                                                                                                  |
-| 学生端主体 = 班级（班级码 + 班级密码登录）                    | ✅   | `verify:e2e` 班级账号 19 项：登录 / 错误密码 401 / 跨班 403 / 发布 403 / 班级码重复 400 / 密码重置 / 班级码用后还原                                                                                                                                                                                                                                                                                                                                   |
+| ClassHelper 班级端主体 = 班级（班级码 + 班级密码登录）                    | ✅   | `verify:e2e` 班级账号 19 项：登录 / 错误密码 401 / 跨班 403 / 发布 403 / 班级码重复 400 / 密码重置 / 班级码用后还原                                                                                                                                                                                                                                                                                                                                   |
 | 班级设备代全班操作（已读 · 完成 · 成绩总览）                  | ✅   | 标记已读写入全班、教师端 `readCount` = 班级学生数、`completedCount` 一致、`/grades/my` 返回全班成绩                                                                                                                                                                                                                                                                                                                                                   |
 | 客户端只保留班级登录入口                                      | ✅   | `verify:desktop`：导航「成绩」标题变为「本班成绩」；个人学生登录 403                                                                                                                                                                                                                                                                                                                                                                                  |
 | **教师录入（仅管理员）**                                      | ✅   | `verify:e2e`：教师读 / 建教师 403、管理员建 201 → 编辑 → 重置密码（新密码 200 / 旧密码 401）→ 删除（有职责 409 / 无职责 200）；`verify:web`：管理员真人点「教师管理 → 新建教师 → 保存 → 列表出现 → 删除」                                                                                                                                                                                                                                             |
@@ -1225,12 +1229,12 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 | **客户端设置改版（分组侧栏 / 深色模式 / 关于页）**            | ✅   | `verify:desktop`：「侧边栏点击导航」适配「学习 / 设置」分组；「主题切换与侧边栏折叠（真实点击、写回配置）」——`html.dark` 翻转 + 折叠宽度 200→64 + 双双落盘；「关于页渲染」含 configPath                                                                                                                                                                                                                                                               |
 | **数据库管理（仅管理员：状态 / 备份 / 导入导出 / 一键切换）** | ✅   | `verify:e2e` 13 项：状态与 14 表行数、教师全端点 403、连接测试（当前库可达 / 不可达 MySQL ok=false）、**Redis 主库 422**、切换校验分支（同库 400）、备份 → 快照导入 → 备份恢复 roundtrip（临时数据被清除）、定时配置校验、SQLite 文件下载；**切换子进程链路真机实测**：快照 728 行 → generate → db push → apply-snapshot 逐表一致；`verify:web`：数据库管理页（仅管理员）状态卡与备份表渲染                                                           |
 | **更新检查（服务端 / Web 端 / 客户端）**                      | ✅   | `verify:e2e` 4 项：未登录 401、管理员结构完整且本机版本取自 package.json、教师可查但 `force` 仅管理员生效、健康检查暴露版本号与 15 个模块；`verify:desktop` 4 项：IPC 返回结构正确（无外网时降级 `ok=false` 且带原因）、结果带缓存、冒烟模式跳过启动自动检查、关于页出现「检查更新」；`verify:web`：「顶栏用户菜单 → 弹窗给出结论并可关闭」。**真机联网实测**：`GET /api/update/check` → `ok=true`、`latestVersion=1.0.0`、5 个附件、更新说明 1358 字 |
-| **其他页面发通知也会联动 ClassIsland**                        | ✅   | `verify:classisland`：「通知发布页发的通知也会推送」「叫人也会推送」；真机实测截图 [03-from-notify-page](screenshots/classisland/03-from-notify-page.png)                                                                                                                                                                                                                                                                                        |
+| **其他页面发通知也会联动 ClassIsland**                        | ✅   | `verify:classisland`：「通知发布页发的通知也会推送」「叫人也会推送」；2026-09-27 在真机（ClassIsland 2.1.0.1 + 本插件）上实测过，当时的抓图留在 `docs/screenshots/classisland/`                                                                                                                                                                                                                                                                                        |
 | **作业按天查看（日期选择器 + 有作业日期高亮）**               | ✅   | `verify:e2e`：`assignDate` 默认服务器当天、`?date=` 只返回该天、`/homeworks/days` 返回有作业日期、非法日期 422                                                                                                                                                                                                                                                                                                                                        |
 | **支持在客户端录入作业（含自定义快捷短语）**                  | ✅   | `verify:e2e`：班级账号录入 201（归属班主任）、跨班 403；客户端录入弹窗 + 「设置 → 通用」管理短语                                                                                                                                                                                                                                                                                                                                                      |
 | **提醒弹在哪个端由客户端自行选择**                            | ✅   | 客户端「设置 → 提醒」三选一（`verify:desktop`：设置页真实点击 → 写回本地配置）；服务端按班级设置决定是否推送（`verify:classisland`：`client` 时通知与联动页下发都被跳过）                                                                                                                                                                                                                                                                             |
-| **班级小助手能读取 ClassIsland 的课表**                       | ✅   | `verify:classisland`：插件上报课表 → 本班课表新增 / 更新（重复上报幂等）、节次时间写入、设备状态快照可在 Web 端展示；`verify:web`：教师在「ClassIsland 联动」页真实签发设备令牌                                                                                                                                                                                                                                                                       |
-| **用户可选择通知是否在 ClassIsland 上显示**                   | ✅   | 插件设置页开关「接收班级小助手提醒」（本机总闸）+ Web 端「下发提醒」（标题 / 内容 / 时长 / 优先级 / 语音朗读 / 是否同步通知中心）；`verify:classisland`：提醒落库 → 待提醒 → 回执 → 确认后不补发                                                                                                                                                                                                                                                      |
+| **ClassHelper能读取 ClassIsland 的课表**                       | ✅   | `verify:classisland`：插件上报课表 → 本班课表新增 / 更新（重复上报幂等）、节次时间写入、设备状态快照可在 Web 端展示；`verify:web`：教师在「ClassIsland 联动」页真实签发设备令牌                                                                                                                                                                                                                                                                       |
+| **用户可选择通知是否在 ClassIsland 上显示**                   | ✅   | 插件设置页开关「接收ClassHelper提醒」（本机总闸）+ Web 端「下发提醒」（标题 / 内容 / 时长 / 优先级 / 语音朗读 / 是否同步通知中心）；`verify:classisland`：提醒落库 → 待提醒 → 回执 → 确认后不补发                                                                                                                                                                                                                                                      |
 | 能成功打包 Windows EXE                                        | ✅   | `-x64-setup.exe` / `-x64-portable.exe` / `win-unpacked/*.exe`（见 [7. 打包与交付](#7-打包与交付)）                                                                                                                                                                                                                                                                                                                                                    |
 | 提供完整 README（启动、构建、打包、默认账号）                 | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、数据库、打包与常见问题                                                                                                                                                                                                                                                                                                                                                                        |
 
@@ -1287,7 +1291,7 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 | 客户端渲染产物 `dist/renderer`      | 3.2MB                | **2.1MB**    | 成绩页图表从 echarts 全量（1.12MB，占 35%）换成内置 HTML/SVG 组件；Element Plus 图标从全量注册 293 个改为按需 42/33 个                    |
 | 客户端主进程产物体积                | 242KB                | 242KB        | 未变（冒烟代码拆分会重复 `island`/`config` 单例，esbuild 的 CJS 打包无法代码分割，故保留）                                                |
 | 客户端 `win-unpacked`               | 372MB                | **323MB**    | `electronLanguages: [zh-CN]`，只留中文语言包（其余 54 个 `locales/*.pak` 共 48MB）                                                        |
-| 客户端 `setup.exe` / `portable.exe` | 107MB                | **98MB**     | 同上。**安装包有硬底**：`班级小助手.exe`（electron.exe）压缩后本身就有 85~90MB，60MB 不可达                                               |
+| 客户端 `setup.exe` / `portable.exe` | 107MB                | **98MB**     | 同上。**安装包有硬底**：`ClassHelper.exe`（electron.exe）压缩后本身就有 85~90MB，60MB 不可达                                               |
 | 服务端 `dist`                       | 3.8MB                | **0.6MB**    | `tsconfig.build.json` 关掉 `declaration`/`declarationMap`/`sourceMap`（占原体积 82%）                                                     |
 | 服务端免安装目录                    | 436MB                | **335MB**    | 打包末尾的运行时裁剪：删掉 Prisma 为 postgresql/cockroachdb/sqlserver 准备的查询编译器副本、`*.map`、文档与测试夹具（共 2329 项 / 101MB） |
 | 服务端安装程序                      | 71MB                 | **62MB**     | 同上                                                                                                                                      |
@@ -1302,7 +1306,7 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 ### 客户端（Windows EXE）
 
 ```bash
-pnpm dist:dir     # 免安装目录：releases/client/<版本>/免安装/班级小助手.exe
+pnpm dist:dir     # 免安装目录：releases/client/<版本>/免安装/ClassHelper.exe
 pnpm dist:win     # nsis 安装包 + portable 单文件（需联网下载 NSIS 工具，可用镜像）
 ```
 
@@ -1313,7 +1317,7 @@ pnpm dist:win     # nsis 安装包 + portable 单文件（需联网下载 NSIS �
 electron-builder 的原始布局整理成 `安装包/`、`免安装/`、`构建中间/`；
 收尾把交付物完整性标签改成 Medium（Low 标签会导致装不上 / 双击没反应，见 [8. 常见问题](#8-常见问题)）。
 
-产物结构：`免安装/班级小助手.exe`（Electron 运行时）+ `resources/app.asar`
+产物结构：`免安装/ClassHelper.exe`（Electron 运行时）+ `resources/app.asar`
 （仅含 `dist/` 与 `package.json`，运行时不需要 node_modules）。
 
 > **把修复交付到「已安装的客户端」**：`pnpm dist:win` 只产出 `releases/client/<版本>/`。
@@ -1325,7 +1329,7 @@ electron-builder 的原始布局整理成 `安装包/`、`免安装/`、`构建�
 > # 2) 用新产物覆盖安装目录（不删 Uninstall 等安装器文件，所以不加 /MIR）
 > robocopy "packages\desktop-client\release\win-unpacked" "D:\class\@classhelperdesktop-client" /E /NFL /NDL /NJH /NJS /R:2 /W:1
 > # 3) 实测**那个副本**真的带上了修复（packaged=true）
-> pnpm verify:packaged --exe "D:\class\@classhelperdesktop-client\班级小助手.exe"
+> pnpm verify:packaged --exe "D:\class\@classhelperdesktop-client\ClassHelper.exe"
 > ```
 
 最近一次打包实测（产物不入库）：
@@ -1333,7 +1337,7 @@ electron-builder 的原始布局整理成 `安装包/`、`免安装/`、`构建�
 | 产物                                   | 大小   | 冒烟结果                                                             |
 | -------------------------------------- | ------ | -------------------------------------------------------------------- |
 | 服务端安装程序（内置 Node + Web 端）   | ~62MB  | ✅ 静默安装（升级保留 `.env` 与数据库）→ 自动建库建号 → 服务就绪     |
-| `releases/client/<版本>/免安装/班级小助手.exe`  | ~235MB | ✅ 打包版冒烟全绿，`packaged: true`，退出码 0                        |
+| `releases/client/<版本>/免安装/ClassHelper.exe`  | ~235MB | ✅ 打包版冒烟全绿，`packaged: true`，退出码 0                        |
 | `releases/client/<版本>/安装包/…-portable.exe` | ~98MB  | ✅ 打包后冒烟全绿，`packaged: true`，退出码 0                        |
 | `releases/client/<版本>/安装包/…-setup.exe`    | ~98MB  | ✅ 构建成功，已嵌入自定义图标                                        |
 | `releases/classisland-plugin/<版本>/…cipx`     | ~88KB  | ✅ 全量编译通过（1 警告 0 错误），包内 DLL 哈希与 `bin/Release` 一致 |
@@ -1404,25 +1408,16 @@ node website/serve.mjs        # http://127.0.0.1:5180，只是本地预览用
 > 标题与引文用的是楷体（优先加载霞鹜文楷 Screen，失败回落到系统 `KaiTi` / `STKaiti`），
 > 正文用产品自己那套 UI 字体。字体是 CDN 引入的，**断网时会自动回落，不影响阅读**。
 
-#### 采集实机图（`website/assets/shots/`）
+#### 采集实机图
 
-官网上那一栏实机截图**不是画的示意**，是脚本真的把程序跑起来截的。要重新采集：
+官网上那一栏实机截图**不是画的示意**，是脚本真的把程序跑起来截的：Web / 手机走
+`website/tools/capture-shots.mjs`，客户端页面与灵动岛走客户端冒烟。
 
-```bash
-pnpm dev:server                                    # 后端（同时托管 Web 管理端）
-node website/tools/capture-shots.mjs               # → web-*.jpg / mobile-*.jpg
-
-# 客户端页面 + 灵动岛各形态（跑一遍客户端冒烟，顺便留档）
-ISLAND_SHOTS_DIR=F:/ClassHelper/.cache/island-shots \
-ELECTRON_CLIENT_SHOTS_DIR=F:/ClassHelper/.cache/client-shots \
-ELECTRON_SMOKE_ISLAND_ACCENT='#0a84ff' ELECTRON_SMOKE_ISLAND_STYLE=black \
-ELECTRON_SMOKE_USER=teacher1 ELECTRON_SMOKE_PASSWORD=123456 \
-  node packages/desktop-client/scripts/smoke.mjs
-```
+展示图统一放在 `docs/images/` —— 文档站、README 与官网吃的是**同一份文件**，
+重新采集的完整命令（含目录与清理）写在[验收与测试](dev/testing.md)的「截图留档」一节。
 
 两个环境变量在 `smoke.ts` 里是**默认值为洋红**的开关：冒烟平时故意用洋红主题色把验证实例的岛
 和用户自己的岛区分开（见 AGENTS.md §5 第 38 条），采集留档图时才换成产品默认外观。
-指向 `website/assets/shots/` 的那两个目录变量不在 `website/`，要自己拷过去。
 
 > 采集脚本会把窗口**真的弹在屏幕上**（和 `verify:web` / `verify:desktop` 一样），跑的时候别动键鼠。
 > 客户端留档会**临时停掉 CSS 动画**再截图：窗口被遮挡时 Chromium 冻结动画，页面入场动画的起始帧是

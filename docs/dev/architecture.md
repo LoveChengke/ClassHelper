@@ -55,7 +55,8 @@ class-helper/
 │   ├── index.md                 # 首页
 │   ├── get-started/ app/ management/ dev/   # 四个章节
 │   ├── templates/classhelper/   # docfx 模板覆盖（_master.tmpl + public/main.css + 图标）
-│   ├── screenshots/             # 回归测试自动留档的截图（island / client / web-mobile / classisland）
+│   ├── images/                  # 展示图：文档站 / README / 官网共用的同一份（1× 逻辑像素）
+│   ├── screenshots/             # 回归测试留档的截图（island / client / web-mobile / classisland），页面不展示
 │   ├── build.mjs                # 构建入口（注入版本号与 404 的 base）
 │   ├── serve.mjs                # 本地预览（:5181）
 │   └── _site/                   # 构建产物（gitignore）

@@ -1,4 +1,4 @@
-# AGENTS.md — 班级小助手（Class Helper）
+# AGENTS.md — ClassHelper（Class Helper）
 
 本文件写给在本仓库里干活的 AI 编码代理。先读这里，再动代码。
 文中「本机环境」「已知坑」两节按**实测**写成；若与本机现状不符，以本机实测为准并顺手改掉这里。
@@ -28,7 +28,7 @@
         ▼
  Socket.IO ──► class:{classId} 房间 ──► 学生桌面客户端实时更新 UI
 
-ClassIsland（教室机器）──► 班级小助手联动插件 ──► /api/integrations/classisland/*（设备令牌鉴权）
+ClassIsland（教室机器）──► ClassHelper联动插件 ──► /api/integrations/classisland/*（设备令牌鉴权）
                                    ▲                                  │
                                    └──── 老师下发的提醒（上报返回值里顺带带回）◄┘
 ```
@@ -73,18 +73,24 @@ docs/                        **文档站**（docfx 项目；不进 pnpm workspac
                              docfx.json / toc.yml（顶栏）+ 各章节自己的 toc.yml（侧栏）
                              get-started/ app/ management/ dev/（四章内容）
                              management/{production,linux-deploy,mysql}.md（部署与换库）
-                             dev/winisland-design-tokens.md / screenshots/（回归留档的截图）
+                             dev/winisland-design-tokens.md
+                             images/（**展示图**：文档站 / README / 官网共用的同一份，1× 逻辑像素）
+                             screenshots/（回归留档的截图：island / client / web-mobile / classisland，
+                                          页面不展示；两者分工见 docs/dev/testing.md「截图留档」）
                              templates/classhelper/（模板覆盖：_master.tmpl + public/main.css + 图标）
                              build.mjs（构建，注入版本号与 404 的 base）/ serve.mjs（本地预览 :5181）
                              _site/（构建产物，gitignored）
                              ⚠ 站点的顶栏版本徽标取自根 package.json（build.mjs 用 --metadata 注入），
                                不要在文档里再写一份版本号。
+                             ⚠ 页面里的照片一律指向 images/ —— 它就是 README 与官网吃的那一份。
+                               别再往 screenshots/ 引图：那是冒烟脚本滚动的留档，随时被下一次验证覆盖。
                              ⚠ 模板目录里的 logo.png / favicon.png 由 `pnpm icons` 派生（见 §5 第 62 条），
                                别手工替换；改图标只改 build/classhelper.png 再跑 pnpm icons。
                              ⚠ 文档站只发布 docs/ 这一棵树，页面里**不要**写指向 docs/ 之外的相对链接
                                （如 ../AGENTS.md）—— 发布出去全是 404，要用 GitHub 的绝对 URL。
 website/                     产品官网（**纯静态、无构建步骤**，不进 pnpm workspace）
-                             index.html / assets/{styles.css,motion.js,main.js,icon.png,shots/}
+                             index.html（门面）/ download.html（下载页，首页的「立即下载」跳到它）
+                             assets/{styles.css,motion.js,main.js,download.js,icon.png,shots/}
                              serve.mjs（本地预览）/ tools/capture-shots.mjs（实机图采集）
                              404.html（**站点根** 404，含 {{BASE}} 占位符，由 build-pages.mjs 注入）
                              ⚠ serve.mjs 把 ../docs/_site 挂在 /docs/ 下，为的是让本地与线上同形 ——
@@ -93,11 +99,19 @@ website/                     产品官网（**纯静态、无构建步骤**，�
                                （main.js 会跳过它）。拆成 per-char 的 inline-block 后每个字各自建一层合成，
                                祖先的 background-clip: text 就穿不过去，渐变会整行失效。
                              ⚠ assets/motion.js 是动效层：曲线与弹簧 token 逐条取自 beUI
-                               （beui.dev/components/motion，见 README §7「官网」）。
+                               （beui.dev/components/motion，见 docs/reference.md 的「官网」一节）。
                                改官网动效请改 token 表，不要在组件里另写 duration / cubic-bezier。
-                             ⚠ assets/shots/ 里全是**跑起来截的**实机图，重采集步骤见 README
-                               §7「采集实机图」；客户端那两张要配合冒烟的
+                             ⚠ assets/shots/ 里全是**跑起来截的**实机图，重采集步骤见
+                               docs/dev/testing.md 的「截图留档」；客户端那两张要配合冒烟的
                                ELECTRON_CLIENT_SHOTS_DIR / ELECTRON_SMOKE_ISLAND_* 开关。
+                             ⚠ download.html 的版本清单是**当场**读 GitHub Releases 的
+                               （assets/download.js）—— 渲染出的卡片与文件行都是拉到数据之后才建的，
+                               建完会派发一次 ch:content，由 main.js 补挂按压反馈（新增动态内容照这个来）。
+                               读不到时退回 <meta name="ch-version"> 并按发布命名约定拼直链 ——
+                               那个 meta 是 version.mjs 的落点之一，发版必须一起改。
+                               命名约定与 README「开始使用」表里那三个名字要对齐
+                               （ClassHelper-<版本>-x64-client-setup.exe / -client-portable.exe /
+                               -x64-server-setup.exe），它们是离线兜底链接的唯一依据。
 packages/shared/src/         types.ts / constants.ts / permissions.ts / utils.ts / index.ts
 packages/server/
   prisma/schema.prisma       数据模型（14 个 model，无 enum、无 @db.*；连接串在 prisma.config.ts）
@@ -122,7 +136,7 @@ packages/desktop-client/
   src/main/                  主进程：index / config（含作业短语与看板偏好）/ ipc / island / tray / update / logger / smoke
   src/preload/               contextBridge 白名单桥（index.ts + island.ts，**不暴露 ipcRenderer 本体**）
   src/island/                灵动岛渲染进程：IslandApp.vue / spring.ts / squircle.ts / main.ts
-  src/renderer/              学生端渲染进程：api / cache(IndexedDB) / stores / views / island / router
+  src/renderer/              ClassHelper 班级端渲染进程：api / cache(IndexedDB) / stores / views / island / router
   src/types/desktop.d.ts     主进程 ↔ 渲染进程契约
   scripts/                   build-main / dev / smoke / dist-win
 packages/classisland-plugin/ .NET 8 插件（独立于 pnpm workspace，不参与 pnpm install）
@@ -187,12 +201,12 @@ pnpm build:classisland-plugin
 | -------------- | ------------------------------- | ------------ |
 | 管理员         | `admin`                         | `admin123`   |
 | 教师           | `teacher1` / `teacher2`         | `teacher123` |
-| 学生端班级账号 | 班级码 `G101` / `G102` / `G203` | `123456`     |
+| ClassHelper 班级端班级账号 | 班级码 `G101` / `G102` / `G203` | `123456`     |
 
 > 密码是**种子脚本里硬编码**的（`admin123` / `teacher123` / 班级 `123456`）；
 > `.env` 的 `DEFAULT_CLASS_PASSWORD` 只影响**新建**班级时的初始班级密码。
 > **学生没有个人账号**（2026-10-01 清理）：`student01…15` 只是名单记录（成绩/未交/叫人/已读按名单），
-> `User.passwordHash` 为空串、不能登录，也没有任何密码接口；学生端统一用班级码 + 班级密码。
+> `User.passwordHash` 为空串、不能登录，也没有任何密码接口；ClassHelper 班级端统一用班级码 + 班级密码。
 > 班级码 `G203` 是「高二(3)班」，不是 `G103`。
 
 ---
@@ -228,8 +242,8 @@ pnpm build:classisland-plugin
 | `pnpm dist:server` / `dist:win` / `dist:dir` / `dist:all` | 打包服务端安装程序 / 客户端安装包 / 免安装目录 / 全部                                                 |
 | `pnpm dist:server:linux`                                  | 打包 **Linux 服务端安装包**（`classhelper-server-linux-x64-<版本>.tar.gz` + `.sha256`）—— 见 §5 第 59 条 |
 | `pnpm icons`                                              | 从 `build/classhelper.png` 派生全部图标（PWA / favicon / 托盘 / 安装包 / 插件 / 官网 / 文档站 / 界面内品牌标） |
-| `pnpm version:check`                                      | 逐处列出并比对 13 个落点的版本号，不一致即 exit 1（见 §4.4「版本迭代」）                              |
-| `pnpm version:bump patch\|minor\|major`                   | **改版本号的唯一入口**：一次改写全部 13 处（含插件清单、C# 里的常量，以及官网上手写的三处版本号）     |
+| `pnpm version:check`                                      | 逐处列出并比对 14 个落点的版本号，不一致即 exit 1（见 §4.4「版本迭代」）                              |
+| `pnpm version:bump patch\|minor\|major`                   | **改版本号的唯一入口**：一次改写全部 14 处（含插件清单、C# 里的常量、官网上手写的三处，以及下载页的兜底值） |
 | `pnpm docs:build`                                         | 构建文档站到 `docs/_site`（需要 .NET SDK 8 + `dotnet tool install -g docfx`）                         |
 | `pnpm docs:serve`                                         | 构建文档站并起本地预览 → http://127.0.0.1:5181                                                        |
 | `pnpm docs:check`                                         | 构建文档站并把 docfx 的警告当错误（发布前用；最常见的警告是"某个 .md 没被任何 toc.yml 引用"）          |
@@ -254,11 +268,11 @@ pnpm build:classisland-plugin
 ```
 releases/
   client/<版本>/
-    安装包/      班级小助手-<版本>-x64-setup.exe / -portable.exe（+ .blockmap）
+    安装包/      ClassHelper-<版本>-x64-setup.exe / -portable.exe（+ .blockmap）
     免安装/      electron-builder 的 win-unpacked 内容
     构建中间/    builder-*.yml、*.nsis.7z
   server/<版本>/
-    安装包/      班级小助手服务端-<版本>-x64-setup.exe
+    安装包/      ClassHelper服务端-<版本>-x64-setup.exe
     免安装/      classhelper-server 免安装目录（含 .env、node.exe、data/、logs/）
     linux-x64/   classhelper-server-linux-x64-<版本>.tar.gz + .sha256 + 同内容解包目录
     构建中间/    server-installer.generated.nsi
@@ -296,9 +310,11 @@ pnpm dist:classisland-plugin
 > 算一次发布：攒够一批功能 / 修好一个用户能感知的 bug / 要给别人一份新安装包。
 > 不算：改注释、改文档、重构、加测试。
 
-**同一个版本号写在 13 处（11 个文件）里**（5 份 `package.json`、`deploy/package.runtime.json`、
-两个 `docker-compose*.yml` 的镜像 tag、插件 `manifest.yml`、以及插件 C# 里的 `PluginVersion` 常量）。
-手工改必然漏一处，而漏掉的那处**不会报错** —— 只会在某个不常走的分支上表现为"版本号对不上"。
+**同一个版本号写在 14 处（12 个文件）里**（5 份 `package.json`、`deploy/package.runtime.json`、
+两个 `docker-compose*.yml` 的镜像 tag、插件 `manifest.yml`、插件 C# 里的 `PluginVersion` 常量、
+官网首页上三处手写值，以及下载页 `<meta name="ch-version">` 那个兜底值）。
+手工改必然漏一处，而漏掉的那处**不会报错** —— 只会在某个不常走的分支上表现为"版本号对不上"
+（官网那三处的后果是首页一直挂着旧版本号；下载页那一处的后果是离线访客点到一串不存在的直链）。
 所以**改版本号的唯一入口是脚本**：
 
 ```bash
@@ -331,7 +347,7 @@ pnpm build && pnpm verify:web
 
 # ④ 打安装包（产物落在 releases/<组件>/<版本>/）
 pnpm dist:all
-pnpm verify:packaged --exe "releases/client/<版本>/免安装/班级小助手.exe"
+pnpm verify:packaged --exe "releases/client/<版本>/免安装/ClassHelper.exe"
 
 # ⑤ 整理跨组件哈希清单 releases/SHA256SUMS-<版本>.txt（人读；Linux 那一行由 CI 合并进来）
 # ⑥ 提交并推上去
@@ -345,6 +361,29 @@ gh release upload v<版本> \
   releases/server/<版本>/安装包/*.exe \
   releases/SHA256SUMS-<版本>.txt --clobber
 ```
+
+> **上传前把三个 EXE 改成 ASCII 名。** 构建产物是中文名（客户端 `ClassHelper-<版本>-x64-setup.exe`
+> / `-x64-portable.exe`，服务端 `ClassHelper 服务端-<版本>-x64-setup.exe`），而 Release 上的名字
+> 是给别人看、要贴进脚本的 —— 一律用 ASCII 形式，与构建产物一一对应（内容相同、sha256 相同）：
+>
+> | 构建产物                    | Release 上的名字                            |
+> | --------------------------- | ------------------------------------------- |
+> | `<客户端>-x64-setup.exe`    | `ClassHelper-<版本>-x64-client-setup.exe`    |
+> | `<客户端>-x64-portable.exe` | `ClassHelper-<版本>-x64-client-portable.exe` |
+> | `<服务端>-x64-setup.exe`    | `ClassHelper-<版本>-x64-server-setup.exe`    |
+>
+> **这三个名字是外部契约**：README 的「开始使用」表、官网下载页的离线兜底直链都按它们拼 ——
+> 改名要三处一起改。上传前改名比上传后 `gh release edit` 省事：
+>
+> ```bash
+> V=<版本>
+> mkdir -p .cache/release-staging
+> cp "releases/client/$V/安装包/"*-x64-setup.exe    ".cache/release-staging/ClassHelper-$V-x64-client-setup.exe"
+> cp "releases/client/$V/安装包/"*-x64-portable.exe ".cache/release-staging/ClassHelper-$V-x64-client-portable.exe"
+> cp "releases/server/$V/安装包/"*-x64-setup.exe    ".cache/release-staging/ClassHelper-$V-x64-server-setup.exe"
+> cp "releases/classisland-plugin/$V/安装包/ClassHelper.ClassIslandPlugin.cipx" .cache/release-staging/
+> gh release upload v$V .cache/release-staging/* "releases/SHA256SUMS-$V.txt" --clobber
+> ```
 
 **第 ⑦ 步的顺序有讲究**：`.github/workflows/release-linux-server.yml` 由 tag 推送触发，
 它在**最后一步**才把自己的那一行**合并进** Release 上已有的 `SHA256SUMS-<版本>.txt`
@@ -368,6 +407,7 @@ gh workflow run release-linux-server.yml -f tag=v<版本> -f attach=true
 
 ```
 https://lovechengke.github.io/ClassHelper/          ← 官网（website/，纯静态无构建）
+https://lovechengke.github.io/ClassHelper/download.html   ← 下载页（同一棵树里的一个页面）
 https://lovechengke.github.io/ClassHelper/docs/     ← 文档站（docfx 构建 docs/）
 ```
 
@@ -378,7 +418,11 @@ https://lovechengke.github.io/ClassHelper/docs/     ← 文档站（docfx 构建
 > 以及文档站模板 `docs/templates/classhelper/layout/_master.tmpl` 里那个 `{{_rel}}../` 的「官网」入口。
 
 - 顶栏的版本徽标取自根 `package.json`（`docs/build.mjs` 用 `--metadata _chVersion=…` 注入），
-  **不要在文档里再写一份版本号**；官网首屏那排芯片里的 `v1.1.2` 是手写的，发版时要一起改；
+  **不要在文档里再写一份版本号**；官网首页那排芯片里的 `v1.1.2` 与下载页的
+  `<meta name="ch-version">` 是手写的，发版时要一起改（都在 `pnpm version:bump` 的 14 个落点里）；
+- 下载页的版本清单**不在站点里存副本**：每次打开都由 `assets/download.js` 当场读
+  GitHub Releases（匿名接口 60 次/小时/IP），读不到才退回上面那个 meta 按发布命名约定拼直链。
+  所以发完 Release 不用重新部署这一页，但**兜底值必须跟着发版改**；
 - 首次启用需要在仓库 Settings → Pages 把 Source 选成「GitHub Actions」（只需一次）；
 - 404 页的 `<base>` 由 `scripts/build-pages.mjs`（本地 `./`）与 workflow（CI 传 `/<仓库名>/`）注入 ——
   项目页挂在 `/<仓库名>/` 子路径下，而浏览器是按**被请求的路径**解析 404 页里的相对链接的；
@@ -400,7 +444,7 @@ database / update`。
    `@classhelper/shared` 的 `resolveClassRole` → `ADMIN / HEAD（班主任）/ SUBJECT（科任）/ STUDENT / NONE`，
    权限判 `canManageSchedule` / `canPublishContent` / `canManageRoster` / `canManageGrades` 等
    （人类可读矩阵是 `PERMISSION_MATRIX`，README 直接引用它），**不要在页面里另写一套规则**。
-4. **学生端主体是「班级账号」。** 班级码 + 班级密码登录后，`classId` 即身份；该设备的「已读 / 完成」
+4. **ClassHelper 班级端主体是「班级账号」。** 班级码 + 班级密码登录后，`classId` 即身份；该设备的「已读 / 完成」
    代全班操作，个人学生登录已停用。API 里对此有专门分支，别按个人账号语义改。
 5. **实时推送只走房间。** 服务端 `src/realtime/`（`SOCKET_ROOMS`：`class:{classId}`、`user:{id}`、
    `teacher:{id}`、`role:{role}`、`students`、`teachers`；`bus.ts` 事件总线），客户端
@@ -1129,7 +1173,7 @@ database / update`。
 
    ```bash
    # 判据：看交付物（以及 node_modules/electron/dist）有没有 Low 标签
-   icacls packages\desktop-client\release\win-unpacked\班级小助手.exe | findstr Mandatory
+   icacls packages\desktop-client\release\win-unpacked\ClassHelper.exe | findstr Mandatory
    # 修法：把交付物改成 Medium。dist-win.mjs 收尾会自动做，手工补救用：
    icacls packages\desktop-client\release /setintegritylevel Medium /T /C
    # 目录自身要还原成继承，否则下次构建时自带 Low 标签的 7za / makensis 写不进去
@@ -1229,8 +1273,8 @@ database / update`。
     同理，断言岛体尺寸别写死"胶囊尺寸 + 留白"：那一刻是胶囊还是卡片取决于前面用例留下的状态，
     应改成**与形态无关的不变量**（如"窗口 = 卡片实测尺寸 + 2×阴影留白"）。
 
-23. **客户端安装包有硬底：`班级小助手.exe` 单独压缩后就有 85~90MB，"压到 60MB"做不到 —— 别再为这个反复折腾。**
-    实测（2026-10-05，Electron 44.3.0）：`win-unpacked` 372MB，其中 `班级小助手.exe`（就是 electron.exe，
+23. **客户端安装包有硬底：`ClassHelper.exe` 单独压缩后就有 85~90MB，"压到 60MB"做不到 —— 别再为这个反复折腾。**
+    实测（2026-10-05，Electron 44.3.0）：`win-unpacked` 372MB，其中 `ClassHelper.exe`（就是 electron.exe，
     rcedit 只加了 74KB）**234.7MB**；brotli-9 抽样压缩后估算它单独就有 85~90MB。也就是说把渲染产物
     从 3.2MB 压到 2.1MB、把图标从 293 个减到 42 个，对安装包只影响约 1MB。
     剩下能动的只有这些（合计约 12MB，风险不成比例，**当前一律不做**）：
