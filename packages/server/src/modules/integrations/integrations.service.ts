@@ -1,8 +1,10 @@
 import {
+  CLASS_HELPER_ONLINE_WINDOW_MS,
   SOCKET_EVENTS,
-  resolveCurrentWeek,
   weekDivFromParity,
   type ClassDto,
+  type ClassHelperDeviceStatusDto,
+  type ClassHelperStatusListDto,
   type ClassIslandPendingResult,
   type ClassIslandPushNotification,
   type ClassIslandReportResult,
@@ -13,8 +15,8 @@ import {
   type TimeLayoutEntry,
   type NotificationDto,
 } from '@classhelper/shared';
-import { env } from '../../config/env.js';
-import { assertCanManageSchedule, assertCanPublishContent, resolveClassScope } from '../../lib/access.js';
+import { assertCanManageSchedule, assertCanPublishNotification, resolveClassScope } from '../../lib/access.js';
+import { loadTermContext, resolveCurrentWeek } from '../../lib/term.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -54,7 +56,13 @@ import {
 
 /* ------------------------------------------------------------------ 设备管理（Web 端，JWT 鉴权） */
 
-/** 设备记录 -> DTO（tokenHash 永不出库） */
+/**
+ * 设备记录 -> DTO（tokenHash 永不出库）。
+ *
+ * `online` 由**最后一次心跳**（`lastHeartbeatAt`）与共享的
+ * `CLASS_HELPER_ONLINE_WINDOW_MS`（60 秒）算出，而不是最后一次带状态的上报 ——
+ * 插件每 60 秒打一次心跳，因此"最近一分钟内有心跳"才是最贴合的口径。
+ */
 function toDeviceDto(record: {
   id: string;
   classId: string;
@@ -64,9 +72,11 @@ function toDeviceDto(record: {
   enabled: boolean;
   syncScheduleToServer: boolean;
   mirrorScheduleToClassIsland: boolean;
+  requestScheduleReport: boolean;
   classIslandVersion: string | null;
   pluginVersion: string | null;
   lastSeenAt: Date | null;
+  lastHeartbeatAt: Date | null;
   classPlanLoaded: boolean;
   currentSubject: string | null;
   currentTimeState: string | null;
@@ -78,6 +88,7 @@ function toDeviceDto(record: {
   updatedAt: Date;
   class?: { name: string } | null;
 }): IntegrationDeviceDto {
+  const heartbeat = record.lastHeartbeatAt ?? record.lastSeenAt;
   return {
     id: record.id,
     classId: record.classId,
@@ -88,9 +99,12 @@ function toDeviceDto(record: {
     enabled: record.enabled,
     syncScheduleToServer: record.syncScheduleToServer,
     mirrorScheduleToClassIsland: record.mirrorScheduleToClassIsland,
+    requestScheduleReport: record.requestScheduleReport,
     classIslandVersion: record.classIslandVersion,
     pluginVersion: record.pluginVersion,
     lastSeenAt: record.lastSeenAt ? record.lastSeenAt.toISOString() : null,
+    lastHeartbeatAt: heartbeat ? heartbeat.toISOString() : null,
+    online: Boolean(record.enabled && heartbeat && Date.now() - heartbeat.getTime() < CLASS_HELPER_ONLINE_WINDOW_MS),
     classPlanLoaded: record.classPlanLoaded,
     currentSubject: record.currentSubject,
     currentTimeState: record.currentTimeState,
@@ -100,6 +114,74 @@ function toDeviceDto(record: {
     tokenHint: record.tokenHint,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
+  };
+}
+
+/**
+ * GET /api/integrations/classisland/status —— **ClassHelper 班级端在线状态**（教师网页）。
+ *
+ * 范围：管理员看全部班级，普通教师看自己担任班主任的班级 ∪ 任课（有 Course）的班级。
+ * 这是「教师网页可查看班级 ClassHelper 在线状态」这条需求的落点。
+ */
+export async function listClassHelperStatus(user: TokenPayload): Promise<ClassHelperStatusListDto> {
+  const scope = await resolveClassScope(user);
+  const classes = await prisma.class.findMany({
+    where: {
+      ...(scope.mode === 'all' ? {} : { id: { in: scope.classIds } }),
+      // 归档班级的班级端已经停用，不列出来
+      archivedYearId: null,
+    },
+    orderBy: [{ enrollmentYear: 'desc' }, { classIndex: 'asc' }],
+    select: {
+      id: true,
+      name: true,
+      grade: true,
+      studentGradeQueryEnabled: true,
+      integrationDevices: {
+        where: { mode: 'plugin' },
+        orderBy: [{ lastHeartbeatAt: 'desc' }],
+        select: {
+          id: true,
+          name: true,
+          deviceKey: true,
+          enabled: true,
+          lastSeenAt: true,
+          lastHeartbeatAt: true,
+          pluginVersion: true,
+          classIslandVersion: true,
+        },
+      },
+    },
+  });
+
+  const now = Date.now();
+  return {
+    serverTime: new Date().toISOString(),
+    onlineWindowMs: CLASS_HELPER_ONLINE_WINDOW_MS,
+    classes: classes.map((item) => {
+      const devices: ClassHelperDeviceStatusDto[] = item.integrationDevices.map((device) => {
+        const heartbeat = device.lastHeartbeatAt ?? device.lastSeenAt;
+        return {
+          deviceId: device.id,
+          deviceName: device.name,
+          deviceKey: device.deviceKey,
+          enabled: device.enabled,
+          online: Boolean(device.enabled && heartbeat && now - heartbeat.getTime() < CLASS_HELPER_ONLINE_WINDOW_MS),
+          lastSeenAt: device.lastSeenAt ? device.lastSeenAt.toISOString() : null,
+          lastHeartbeatAt: heartbeat ? heartbeat.toISOString() : null,
+          pluginVersion: device.pluginVersion,
+          classIslandVersion: device.classIslandVersion,
+        };
+      });
+      return {
+        classId: item.id,
+        className: item.name,
+        grade: item.grade,
+        devices,
+        online: devices.some((device) => device.online),
+        studentGradeQueryEnabled: item.studentGradeQueryEnabled ?? true,
+      };
+    }),
   };
 }
 
@@ -134,13 +216,15 @@ export async function createDevice(
   const created = await prisma.integrationDevice.create({
     data: {
       classId: input.classId,
-      name: input.name?.trim() || `${classRecord.name} ClassIsland 设备`,
+      name: input.name?.trim() || `${classRecord.name} ClassHelper 班级端`,
       deviceKey: `pending-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
       mode: input.mode ?? 'plugin',
       tokenHash: hashDeviceToken(token),
       tokenHint: tokenHintOf(token),
-      syncScheduleToServer: input.syncScheduleToServer !== false,
-      mirrorScheduleToClassIsland: input.mirrorScheduleToClassIsland === true,
+      // 同步方向（2026-10-06 起）：课表以服务端为准，**服务端 → 教室自动下发**；
+      // 「把教室课表传上来」改成 Web 端的一次性人工动作，所以默认关掉自动回传。
+      syncScheduleToServer: input.syncScheduleToServer === true,
+      mirrorScheduleToClassIsland: input.mirrorScheduleToClassIsland !== false,
     },
     include: { class: { select: { name: true } } },
   });
@@ -153,10 +237,11 @@ async function findDeviceOrFail(id: string): Promise<{
   id: string;
   classId: string;
   name: string;
+  enabled: boolean;
 }> {
   const record = await prisma.integrationDevice.findUnique({
     where: { id },
-    select: { id: true, classId: true, name: true },
+    select: { id: true, classId: true, name: true, enabled: true },
   });
   if (!record) throw ApiError.notFound('设备不存在或已被删除');
   return record;
@@ -187,6 +272,37 @@ export async function updateDevice(
   });
   logger.info(`ClassIsland 联动设备已更新：${updated.name} enabled=${updated.enabled}`);
   return toDeviceDto(updated);
+}
+
+/**
+ * 「**从教室机器获取一次课表**」的待办（Web 端手动动作）。
+ *
+ * 为什么是"待办"而不是直接拉：课表由**插件主动上报**，服务端没有反向通道去催它。
+ * 所以这里只置一个标记，插件在下一次上报（默认 60 秒一次的心跳）看到
+ * `settings.scheduleRequested = true` 就立刻把当前课表推上来并完成待办。
+ *
+ * 它独立于 `syncScheduleToServer`：后者是"允许自动回传"，现在默认**关闭**
+ * （自动回传会在老师手排课之后被教室的旧课表悄悄覆盖）；
+ * 管理员显式点"获取课表"时仍然应当能取到一次。
+ */
+export async function requestScheduleReport(
+  user: TokenPayload,
+  deviceId: string,
+): Promise<{ requested: boolean; deviceName: string; nextHeartbeatHint: string }> {
+  const current = await findDeviceOrFail(deviceId);
+  await assertCanManageSchedule(user, current.classId);
+  if (!current.enabled) throw ApiError.badRequest('该设备已停用，请先启用后再获取课表');
+
+  await prisma.integrationDevice.update({
+    where: { id: deviceId },
+    data: { requestScheduleReport: true },
+  });
+  logger.info(`已请求设备上报课表：${current.name}（classId=${current.classId}）由 ${user.name} 发起`);
+  return {
+    requested: true,
+    deviceName: current.name,
+    nextHeartbeatHint: '教室机器会在下一次心跳（约 1 分钟内）把当前课表上报上来',
+  };
 }
 
 /** 重置令牌：旧令牌立即失效（插件侧需要重新填写） */
@@ -251,14 +367,14 @@ function toPushDto(
  *
  * - 落库（ClassIslandPush）→ 在线设备通过 Socket.IO 立即收到；离线设备重连后走
  *   `GET /api/integrations/classisland/pending` 补齐，保证"老师按了发送就一定送到"；
- * - `saveToNotifications` 默认 true：同时写一条班级通知，学生端通知中心/灵动岛也能看到，
+ * - `saveToNotifications` 默认 true：同时写一条班级通知，ClassHelper 班级端通知中心/灵动岛也能看到，
  *   避免"只在 ClassIsland 上弹了一下，事后查无此事"。
  */
 export async function sendNotification(
   user: TokenPayload,
   input: SendNotificationInput,
 ): Promise<SendClassIslandNotificationResult> {
-  await assertCanPublishContent(user, input.classId);
+  await assertCanPublishNotification(user, input.classId);
 
   const teacher = await prisma.user.findUnique({
     where: { id: user.sub },
@@ -286,8 +402,8 @@ export async function sendNotification(
       include: { creator: { select: { id: true, name: true, username: true } }, reads: true },
     });
     notificationId = created.id;
-    const dto: NotificationDto = toNotificationDto(created, { userId: user.sub, withStatus: true });
-    // 学生端（桌面客户端 / 班级设备）照旧收到通知中心的实时推送
+    const dto: NotificationDto = toNotificationDto(created, { withStatus: true });
+    // ClassHelper 班级端照旧收到通知中心的实时推送
     emitToClass(input.classId, SOCKET_EVENTS.notificationNew, dto);
   }
 
@@ -420,17 +536,30 @@ export async function applyReport(
   input: ClassIslandReportInput,
 ): Promise<ClassIslandReportResult> {
   const now = new Date();
-  const week = resolveCurrentWeek(env.termStartDate, now);
+  // 周次口径按**本班**算（管理员可以给每个班单独配开学日期与逐周区间）
+  const week = resolveCurrentWeek(now, await loadTermContext(device.classId));
 
   // 0) 机器码回填（设备创建时只能用 pending-… 占位，首次上报才知道它到底是哪台机器）
   if (input.deviceKey) await syncDeviceKey(device, input.deviceKey);
 
   // 1) 状态快照（无论课表是否上报都更新，Web 端据此显示"现在上什么课"）
+  //
+  // 心跳与"带状态的上报"分开记：`lastHeartbeatAt` 每次上报都刷（在线判定看它），
+  // `lastSeenAt` 只在确实带了运行状态时刷 —— 这样"连得上但一直没上报状态"的设备
+  // 不会被误判成一切正常。
   const state = input.state;
+  const currentDevice = await prisma.integrationDevice.findUnique({
+    where: { id: device.deviceId },
+    select: { requestScheduleReport: true },
+  });
+  const scheduleRequested = currentDevice?.requestScheduleReport === true;
   await prisma.integrationDevice.update({
     where: { id: device.deviceId },
     data: {
-      lastSeenAt: now,
+      lastHeartbeatAt: now,
+      // 这次真的带了课表上来 → 待办完成
+      ...(input.schedule ? { requestScheduleReport: false } : {}),
+      ...(state ? { lastSeenAt: now } : {}),
       ...(input.pluginVersion ? { pluginVersion: input.pluginVersion } : {}),
       ...(input.classIslandVersion ? { classIslandVersion: input.classIslandVersion } : {}),
       ...(state
@@ -516,6 +645,10 @@ export async function applyReport(
     settings: {
       mirrorScheduleToClassIsland: device.mirrorScheduleToClassIsland,
       enabled: device.enabled,
+      // 「从教室机器取一次课表」的待办：Web 端点过之后置位，插件看到就立刻推一次课表上来。
+      // 注意它**独立于** syncScheduleToServer —— 后者是"允许自动回传"，现在默认关闭，
+      // 但管理员显式点"获取课表"时仍然应当能取到。
+      scheduleRequested: scheduleRequested,
     },
     pendingNotification: pending,
   };
@@ -588,7 +721,7 @@ export async function listPendingNotifications(device: DeviceContext): Promise<C
   return {
     notifications: records.map((item) => toPushDto(item)),
     serverTime: now.toISOString(),
-    week: resolveCurrentWeek(env.termStartDate, now),
+    week: resolveCurrentWeek(now, await loadTermContext(device.classId)),
   };
 }
 
@@ -613,14 +746,18 @@ export async function ackNotification(device: DeviceContext, id: string): Promis
 export async function pullClassPlanForDevice(device: DeviceContext): Promise<{
   classPlan: MirrorClassPlan;
   week: number;
+  /** 学期周次区间（管理员逐周配置的）；空数组 = 按学期开始日期线性推算 */
+  weekRanges: Array<{ weekNumber: number; startDate: string; endDate: string }>;
   serverTime: string;
 }> {
   const now = new Date();
-  const week = resolveCurrentWeek(env.termStartDate, now);
+  // 周次口径按**本班**算：管理员可以给每个班单独配开学日期与逐周区间（调休、错峰开学）
+  const termContext = await loadTermContext(device.classId);
+  const week = resolveCurrentWeek(now, termContext);
 
   const classRecord = await prisma.class.findUnique({
     where: { id: device.classId },
-    select: { id: true, name: true, termWeeks: true },
+    select: { id: true, name: true, termWeeks: true, termStartDate: true },
   });
   if (!classRecord) throw ApiError.notFound('班级不存在');
 
@@ -638,7 +775,7 @@ export async function pullClassPlanForDevice(device: DeviceContext): Promise<{
 
   // 节次时间表：优先用班级里已导入的 ClassIsland 时间表，其次按课表的开始时间合成
   const layoutId = `ch-${device.classId}`;
-  const layoutName = timeLayouts[0]?.name ?? '班级小助手时间表';
+  const layoutName = timeLayouts[0]?.name ?? 'ClassHelper时间表';
   let layouts: { startTime: string; endTime: string; timeType: number }[] = [];
   if (timeLayouts.length > 0 && timeLayouts[0]) {
     layouts = parseStoredTimeLayout(timeLayouts[0].items).map((item) => ({
@@ -669,12 +806,29 @@ export async function pullClassPlanForDevice(device: DeviceContext): Promise<{
     classPlan: {
       entries,
       timeLayouts: [{ id: layoutId, name: layoutName, layouts }],
-      profileName: `班级小助手-${classRecord.name}`,
-      termStartDate: env.termStartDate,
+      profileName: `ClassHelper-${classRecord.name}`,
+      // 下发本班实际生效的开学日期（管理员可以为某个班单独配，优先级高于全局 .env）
+      termStartDate: termContext.termStartDate,
     },
     week,
+    weekRanges: termContext.weeks,
     serverTime: now.toISOString(),
   };
+}
+
+/**
+ * 「课表/周次变了，请重新镜像」的轻量通知。
+ *
+ * 插件是**轮询**镜像的（不订阅 Socket.IO），所以这里只做两件事：
+ * 广播给 Web 端让页面刷新，以及把该班的设备标记为"有新版本"。
+ * 真正的下发发生在插件下一次拉取课表时 —— 它会把新的开学日期与周次区间一并带走。
+ */
+export async function notifyScheduleChanged(classId: string): Promise<void> {
+  emitToRooms([SOCKET_ROOMS.class(classId), SOCKET_ROOMS.teachers], SOCKET_EVENTS.scheduleUpdated, {
+    classId,
+    action: 'imported',
+  });
+  logger.info(`课表/周次已变更，等待教室机器下次镜像时下发：classId=${classId}`);
 }
 
 /** 解析库里存的节次 JSON（容错：坏数据不抛异常，退化为空） */
@@ -702,7 +856,7 @@ function parseStoredTimeLayout(raw: string): { startTime: string; endTime: strin
  * 没有导入节次时间表时，用课表里出现过的起止时间合成一份（去重、按时间排序）。
  *
  * **每节课之间补一个课间**（timeType=1：上一节下课 → 下一节上课），最后一节之后不补（放学）。
- * 班级小助手这边的节次时间表与 ClassIsland 档案保持同一口径，镜像过去才不会缺课间。
+ * ClassHelper这边的节次时间表与 ClassIsland 档案保持同一口径，镜像过去才不会缺课间。
  */
 function synthesizeTimeLayout(
   schedules: { startTime: string; endTime: string }[],

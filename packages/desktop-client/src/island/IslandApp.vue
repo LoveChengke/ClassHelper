@@ -827,7 +827,7 @@ onMounted(async () => {
           <footer class="foot">
             <span v-if="isListMode" class="more">共 {{ pendingCount }} 条待处理</span>
             <span v-else-if="queueCount > 0" class="more">还有 {{ queueCount }} 条通知</span>
-            <span v-else class="more muted">来自班级小助手</span>
+            <span v-else class="more muted">来自 ClassHelper</span>
             <span class="actions">
               <button type="button" class="ghost-btn" @click.stop="openApp">打开应用</button>
               <button v-if="canMarkRead" type="button" class="ghost-btn" @click.stop="markRead">

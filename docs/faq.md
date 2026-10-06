@@ -32,7 +32,7 @@ icacls <产物目录> /setintegritylevel Medium /T /C
 
 ### 安装包装不上，说应用正在运行
 
-同上。托盘 → 退出班级小助手。
+同上。托盘 → 退出 ClassHelper。
 
 ## 连接与登录
 
@@ -104,7 +104,7 @@ icacls <产物目录> /setintegritylevel Medium /T /C
 
 ### 学生登录不了
 
-**学生没有个人账号。** 学生端统一用**班级码 + 班级密码**登录（见[装学生端](get-started/client.md)）。
+**学生没有个人账号。** ClassHelper 班级端统一用**班级码 + 班级密码**登录（见[装 ClassHelper 班级端](get-started/client.md)）。
 用学生用户名去登录一定会失败，这是设计。
 
 ### 客户端里找不到"修改密码"

@@ -98,7 +98,7 @@ function renderLandingPage(webAdminServed: boolean): string {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>班级小助手 · 后端服务</title>
+    <title>ClassHelper · 后端服务</title>
     <style>
       body { margin: 0; padding: 40px; font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f5f7fa; color: #303133; }
       .card { max-width: 760px; margin: 0 auto; background: #fff; border: 1px solid #e4e7ed; border-radius: 12px; padding: 28px 32px; }
@@ -116,7 +116,7 @@ function renderLandingPage(webAdminServed: boolean): string {
   </head>
   <body>
     <div class="card">
-      <h1>班级小助手 · 后端服务 <span class="ok">running</span></h1>
+      <h1>ClassHelper · 后端服务 <span class="ok">running</span></h1>
       <p class="sub">版本 ${APP_VERSION} · 运行环境 ${env.nodeEnv} · 数据库 ${env.databaseProvider}</p>
       <p class="sub">
         健康检查 <a href="${API_PREFIX}/health">${API_PREFIX}/health</a> ·
@@ -127,7 +127,7 @@ function renderLandingPage(webAdminServed: boolean): string {
       <ul>${moduleRows}</ul>
       <div class="hint">
         WebSocket 端点：<code>ws://${env.host === '0.0.0.0' ? '本机地址' : env.host}:${env.port}/socket.io</code><br />
-        本服务只提供 REST API 与 WebSocket；学生端请使用「班级小助手」桌面客户端。
+        本服务只提供 REST API 与 WebSocket；ClassHelper 班级端请使用「ClassHelper」桌面客户端。
       </div>
     </div>
   </body>
@@ -182,7 +182,7 @@ export function createApp(): Express {
 
   // 限流：先挂通用限流，再挂更严格的登录限流（后挂者决定响应头里的策略，便于观察暴力破解防护）
   app.use(API_PREFIX, apiRateLimiter());
-  // 登录限流必须覆盖**两个**登录入口：`/auth/login`（教师/管理员）与 `/auth/class-login`（学生端
+  // 登录限流必须覆盖**两个**登录入口：`/auth/login`（教师/管理员）与 `/auth/class-login`（ClassHelper 班级端
   // 班级账号）。后者的密码默认就是 123456，漏掉它等于形同虚设 —— 这里用数组形式挂载，
   // 两个路径共享同一个计数器（同一 IP 对两种登录的失败次数合并计算）。
   app.use([`${API_PREFIX}/auth/login`, `${API_PREFIX}/auth/class-login`], loginRateLimiter());

@@ -38,6 +38,20 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '教师管理', icon: 'UserFilled', roles: ['ADMIN'] },
       },
       {
+        path: 'term-weeks',
+        name: 'term-weeks',
+        component: () => import('@/views/TermWeeksView.vue'),
+        // 改周次会让全校/某班的课表口径整体变化，与「班级管理」同一档权限
+        meta: { title: '学期周次', icon: 'Calendar', roles: ['ADMIN'] },
+      },
+      {
+        path: 'archives',
+        name: 'archives',
+        component: () => import('@/views/ArchivesView.vue'),
+        // 毕业归档会改动整届班级与学生的状态，与「班级管理」同一档权限
+        meta: { title: '毕业归档', icon: 'FolderOpened', roles: ['ADMIN'] },
+      },
+      {
         path: 'schedules',
         name: 'schedules',
         component: () => import('@/views/SchedulesView.vue'),
@@ -65,8 +79,8 @@ const routes: RouteRecordRaw[] = [
         path: 'integrations',
         name: 'integrations',
         component: () => import('@/views/IntegrationsView.vue'),
-        // 与后端 requireRole('ADMIN','TEACHER') 对齐：学生角色不该看到这一页
-        meta: { title: 'ClassIsland 联动', icon: 'Connection', roles: ['ADMIN', 'TEACHER'] },
+        // 与后端 requireRole('ADMIN','TEACHER') 对齐：这一页含"班级端在线状态"，教师要看自己的班
+        meta: { title: 'ClassHelper 联动', icon: 'Connection', roles: ['ADMIN', 'TEACHER'] },
       },
       {
         path: 'database',
@@ -125,7 +139,7 @@ router.beforeEach((to) => {
 
 router.afterEach((to) => {
   const title = typeof to.meta.title === 'string' ? to.meta.title : '';
-  document.title = title ? `${title} · 班级小助手` : '班级小助手 · 管理端';
+  document.title = title ? `${title} · ClassHelper` : 'ClassHelper · 管理端';
 });
 
 export default router;

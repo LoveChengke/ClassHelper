@@ -4,7 +4,7 @@
 
 | 形态                  | 适用场景                                     | 产物                                                     | 本机验证情况                           |
 | --------------------- | -------------------------------------------- | -------------------------------------------------------- | -------------------------------------- |
-| **A. Windows 安装包** | 学校机房、教师办公电脑（单机即完整系统）     | `releases/server/<版本>/安装包/班级小助手服务端-<版本>-x64-setup.exe` | ✅ 已完整实测（静默安装/启停/卸载/UI） |
+| **A. Windows 安装包** | 学校机房、教师办公电脑（单机即完整系统）     | `releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe` | ✅ 已完整实测（静默安装/启停/卸载/UI） |
 | **B. Docker + MySQL** | 云服务器、多终端共享一套数据（推荐长期方案） | `deploy/Dockerfile` + `deploy/docker-compose.yml`        | ⚠️ 文件已提供，本机无 Docker 未实测    |
 | **C. Linux 原生部署** | 已有 Linux 服务器（systemd，SQLite 或 MySQL） | [`deploy/install.sh`](https://github.com/LoveChengke/classhelper/blob/master/deploy/install.sh) + `classhelper` 运维命令             | ⚠️ 本机无 Linux，实机验收见 [linux-deploy.md](linux-deploy.md) §10 |
 | **D. 手动部署**       | 已有 Node 环境的服务器、需要自定义           | `pnpm dist:server` 的免安装目录                          | ✅ 免安装目录已实测（163 项端到端）    |
@@ -25,7 +25,7 @@ pnpm dist:server -- --reuse-deps   # 迭代打包：复用已安装依赖，跳�
 | 路径                                                                    | 说明                                            |
 | ----------------------------------------------------------------------- | ----------------------------------------------- |
 | `releases/server/<版本>/免安装/`                                        | 免安装目录，可直接拷到任意 Windows x64 机器运行 |
-| `releases/server/<版本>/安装包/班级小助手服务端-<版本>-x64-setup.exe`   | 安装程序（约 62 MB，NSIS）                      |
+| `releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe`   | 安装程序（约 62 MB，NSIS）                      |
 
 打包内容：内置 **Node 运行时**（目标机无需安装 Node.js）、后端产物、Web 管理端产物、
 生产依赖（真实目录，非软链）、迁移 SQL、`.env`（随机 JWT 密钥）、启停脚本。
@@ -35,9 +35,9 @@ pnpm dist:server -- --reuse-deps   # 迭代打包：复用已安装依赖，跳�
 双击安装程序即可，**无需管理员权限**（当前用户级安装）：
 
 - 安装目录：`%LOCALAPPDATA%\Programs\ClassHelperServer`
-- 静默安装：`"班级小助手服务端-1.1.2-x64-setup.exe" /S`
+- 静默安装：`"ClassHelper 服务端-1.2.0-x64-setup.exe" /S`
 - 开始菜单：启动服务 / 停止服务 / 重启服务 / 打开管理端 / 使用说明 / 卸载
-- 桌面：`班级小助手服务端.lnk`（打开管理端）
+- 桌面：`ClassHelper 服务端.lnk`（打开管理端）
 - 自动加入当前用户开机自启（`HKCU\...\CurrentVersion\Run`）
 - 卸载信息注册到「应用和功能」
 
@@ -314,7 +314,7 @@ start.cmd      :: Windows
 | `PID_FILE`                                          | —                      | PID 文件路径（安装包启停脚本依赖），相对 `server` 根      |
 | `WEB_DIST_DIR`                                      | 自动探测               | Web 管理端产物目录（`../web-admin/dist` 或 `./web`）      |
 | `LOG_LEVEL`                                         | `info`                 | `debug` / `info` / `warn` / `error`                       |
-| `DEFAULT_CLASS_PASSWORD`                            | `123456`               | 新建班级时班级账号（学生端登录）的默认密码                |
+| `DEFAULT_CLASS_PASSWORD`                            | `123456`               | 新建班级时班级账号（ClassHelper 班级端登录）的默认密码                |
 | `DEFAULT_TEACHER_PASSWORD`                          | `123456`               | 新增/重置教师账号的默认密码（管理员录入教师用）           |
 | `TERM_START_DATE`                                   | —                      | 第 1 教学周的周一，用于"当前周次"与课表默认视图           |
 | `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` | `admin` / `admin123`   | 空库首启动创建的管理员                                    |

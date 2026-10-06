@@ -1,5 +1,5 @@
 /*
- * 班级小助手文档站 —— docfx modern 模板的样式覆盖。
+ * ClassHelper文档站 —— docfx modern 模板的样式覆盖。
  *
  * docfx 按 `template` 数组的顺序合并模板，这个文件排在最后，因此覆盖掉 modern 模板自带的
  * `public/main.css`（它本身是空的，被留作官方覆盖点）。docfx.min.css 在本文件之前加载，

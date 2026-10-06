@@ -1,7 +1,7 @@
 # ClassHelper · 完整参考
 
 班级信息管理系统。一个 pnpm monorepo，一份代码产出四个交付物：**后端服务**、**Web 管理端**（教师 / 管理员）、
-**桌面客户端**（ClassHelper 班级端 / 教室机器）与 **ClassIsland 联动插件**（装在教室的 ClassIsland 上）。**当前版本 1.1.2**。
+**桌面客户端**（ClassHelper 班级端 / 教室机器）与 **ClassIsland 联动插件**（装在教室的 ClassIsland 上）。**当前版本 1.2.0**。
 
 核心链路：
 
@@ -19,7 +19,7 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
                                   └──── 老师下发的提醒 ◄────────┘
 ```
 
-> 本文是ClassHelper的**完整参考**：功能行为、接口契约、验收证据与已知问题都在这里，是功能口径的权威来源。
+> 本文是 ClassHelper的**完整参考**：功能行为、接口契约、验收证据与已知问题都在这里，是功能口径的权威来源。
 > 面向「第一次打开仓库」的展示型介绍在 [README](https://github.com/LoveChengke/classhelper/blob/master/README.md)；按读者分组的引导式文档在文档站（本目录）。
 > 工程约定（改代码前必读）与本机踩坑在 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md)；生产部署在
 > [production.md](management/production.md)；切换数据库在 [mysql.md](management/mysql.md)。
@@ -78,7 +78,7 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 
 | 产物                            | 产物文件位置（打包后）                                                          | 用途                                                                                      |
 | ------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| **服务端 + Web 管理端安装程序** | `releases/server/<版本>/安装包/ClassHelper服务端-<版本>-x64-setup.exe`           | 装到教师电脑 / 校服务器即完整系统，**内置 Node 运行时**，双击安装、开机自启、自动建库建号 |
+| **服务端 + Web 管理端安装程序** | `releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe`           | 装到教师电脑 / 校服务器即完整系统，**内置 Node 运行时**，双击安装、开机自启、自动建库建号 |
 | **服务端 Linux 安装包**         | `releases/server/<版本>/linux-x64/classhelper-server-linux-x64-<版本>.tar.gz`   | 给 `deploy/install.sh` 用（另见同名 `.sha256`）；由 Actions 在 Linux 上构建后挂 Release   |
 | **学生客户端安装程序**          | `releases/client/<版本>/安装包/ClassHelper-<版本>-x64-setup.exe`                  | 学生机安装（NSIS）                                                                        |
 | **学生客户端单文件版**          | `releases/client/<版本>/安装包/ClassHelper-<版本>-x64-portable.exe`               | 免安装直接运行（U 盘分发）                                                                |
@@ -94,7 +94,7 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 
 | 场景                                | 形态                                                        | 入口                                                                                     |
 | ----------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| 学校机房 / 教师电脑（Windows 单机） | Windows 服务端安装程序（内置 Node，双击即用）               | `releases/server/<版本>/安装包/ClassHelper服务端-<版本>-x64-setup.exe`                    |
+| 学校机房 / 教师电脑（Windows 单机） | Windows 服务端安装程序（内置 Node，双击即用）               | `releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe`                    |
 | 云服务器 / 多终端共享（推荐长期）   | Docker Compose + MySQL（另有 SQLite 单容器版）              | `deploy/Dockerfile`、`deploy/docker-compose{,.sqlite}.yml`                               |
 | 已有 Linux 服务器                   | **一键安装器 + `classhelper` 运维命令**（systemd / docker） | `sudo bash deploy/install.sh`（先 `--check` 体检）；运维见 `classhelper help`            |
 | 自定义 / 已有 Node 环境             | 手动部署免安装目录                                          | `pnpm dist:server` → `releases/server/<版本>/免安装/`                                    |
@@ -175,23 +175,28 @@ pnpm verify:desktop
 
 ### 默认账号与种子数据
 
-`pnpm db:seed` 会清空业务表并写入一套完整演示数据（计数由种子脚本自己打印，**2026-09-30 实测**：
-用户 18（1 管理员 + 2 教师 + 15 名学生名单）/ 班级 3 / 课程 54（每班 18 科）/ 课表 93 / 作业 15 / 通知 12 / 成绩 90）：
+`pnpm db:seed` 会清空业务表并写入一套完整演示数据（计数由种子脚本自己打印，**2026-10-06 实测**：
+账号 3 / 在读班级 3 / 学生 15 / 课程 54（每班 18 科）/ 课表 93 / 作业 16 / 通知 13 / 成绩 90 /
+调班历史 2 / 已归档届别 1）：
 
-| 角色   | 用户名        | 密码         | 说明                                       |
-| ------ | ------------- | ------------ | ------------------------------------------ |
-| 管理员 | `admin`       | `admin123`   | 可访问全部班级                             |
-| 教师   | `teacher1`    | `teacher123` | 张老师：高一(1)班、高二(3)班班主任         |
-| 教师   | `teacher2`    | `teacher123` | 李老师：高一(2)班班主任，高二(3)班协作教师 |
-| 班级   | 班级码 `G101` | `123456`     | 高一(1)班（**ClassHelper 班级端唯一登录方式**）        |
-| 班级   | 班级码 `G102` | `123456`     | 高一(2)班                                  |
-| 班级   | 班级码 `G203` | `123456`     | 高二(3)班（不是 `G103`）                   |
+| 角色                    | 凭据          | 密码         | 说明                                                        |
+| ----------------------- | ------------- | ------------ | ----------------------------------------------------------- |
+| 管理员                  | `admin`       | `admin123`   | 可访问全部班级、可执行毕业归档 / 学年升级 / 学期周次        |
+| 教师                    | `teacher1`    | `teacher123` | 张老师：`2026级1班` 班主任，兼该班数学                      |
+| 教师                    | `teacher2`    | `teacher123` | 李老师：`2026级2班` 班主任，兼 `2026级1班` 语文             |
+| ClassHelper 班级端      | 班级码 `G101` | `123456`     | `2026级1班`（**教室机器唯一的登录方式**）                   |
+| ClassHelper 班级端      | 班级码 `G102` | `123456`     | `2026级2班`                                                 |
+| ClassHelper 班级端      | 班级码 `G203` | `123456`     | `2025级3班`（不是 `G103`）                                  |
 
 - 密码由**种子脚本硬编码**（`admin123` / `teacher123` / 班级 `123456`）；`.env` 的
   `DEFAULT_CLASS_PASSWORD` 只决定**新建**班级时的初始班级密码。
-- **学生没有个人账号**（2026-10-01 起彻底清理）：学生只是名单记录（成绩 / 未交名单 / 已读人数 / 叫人都按名单），
-  没有用户名密码、不能登录；ClassHelper 班级端统一用班级码 + 班级密码。
-- 教学周由 `TERM_START_DATE`（第 1 教学周的周一）换算，当前周次用于课表默认视图。
+- **学生不是账号**（2026-10-06 起由表结构保证）：`Student` 表里没有 `passwordHash` / `role`，
+  学号（`202601`…`202615`）只是名单记录与查询键 —— 拿学号去登录只会得到 401。
+- 任课关系刻意让**语文**由另一位老师任教，所以班主任在语文上没有编辑权，
+  正好覆盖「班主任不自动拥有所有科目作业成绩编辑权」这条规则。
+- 演示数据里还有一个**已归档**的 `2023级1班`（3 名毕业生），用于验证「毕业归档」页。
+- 教学周由 `TERM_START_DATE`（第 1 教学周的周一）换算；管理员可在「学期周次」页逐周覆盖它，
+  见[学期周次](#412-学期周次可逐周覆盖仅管理员)。
 
 ### 常用命令
 
@@ -283,7 +288,7 @@ Element Plus 也通过对齐它的 `--el-border-radius-*` 一并改造：
 
 | 能力                     | 说明                                                                                                                                                  |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **教师管理**（独立页面） | 单个录入（姓名 / 用户名 / 初始密码 / 角色）＋导入名单（xlsx/csv）＋编辑（改名 / 改角色）＋修改密码＋删除                                              |
+| **教师管理**（独立页面） | 单个录入（姓名 / **工号** / 手机号 / 初始密码 / 角色）＋导入名单（xlsx/csv）＋编辑（改名 / 改工号 / 改角色）＋修改密码＋删除                                              |
 | 录入教师仅管理员         | 页面只对 `ADMIN` 显示，路由 `meta.roles=['ADMIN']`；服务端 `/api/teachers` 全量接口 `requireRole('ADMIN')`（教师调用 403）                            |
 | 删除教师有护栏           | 四种情况一律 409：还是**班主任**、名下有课程 / 班级分配、**发布过作业或通知**（后两项也是级联删除，删账号会连带删掉他在各班发过的内容）               |
 | 创建班级仅管理员         | `POST /api/classes` = `requireRole('ADMIN')`，教师（含班主任）403                                                                                     |
@@ -440,7 +445,7 @@ Element Plus 也通过对齐它的 `--el-border-radius-*` 一并改造：
   教师 / 管理员本人密码在 Web 管理端顶栏下拉修改 —— 防止教室机器上误改班级密码后其他机器被锁在门外。
 
 **系统托盘**：关闭主窗口不退出程序，而是隐藏到托盘后台继续接收通知；托盘图标（左键单击 / 双击）恢复主窗口，
-右键菜单提供「显示主窗口 / 隐藏到托盘 / 退出ClassHelper」。退出时统一清理：销毁托盘 → 销毁灵动岛
+右键菜单提供「显示主窗口 / 隐藏到托盘 / 退出 ClassHelper」。退出时统一清理：销毁托盘 → 销毁灵动岛
 （含帧循环与定时器）→ 销毁全部窗口，并用 `app.exit(0)` 兜底，任务管理器中不留残留进程。
 
 #### 离线缓存与自动同步
@@ -608,27 +613,30 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 界面：Web 管理端 →「成绩录入」→「导入表格」（`components/TableImportDialog.vue`）。
 
 1. **下载模板**：`GET /imports/template?kind=grades&format=xlsx|csv`
-   模板列：`学生用户名 / 学生姓名 / 考试名称 / 分数 / 总分 / 课程`（CSV 带 BOM，Excel 直接双击不乱码）。
+   模板列：`学生学号 / 学生姓名 / 考试名称 / 分数 / 总分 / 科目 / 等级`（CSV 带 BOM，Excel 直接双击不乱码）。
 2. **上传预览**：`POST /imports/table/preview` → 列名、前 20 行、`totalRows`、**建议字段映射**与校验问题。
    - 支持 `.xlsx / .xls / .csv / .tsv`（SheetJS，自动识别分隔符），**表格文件上限 8MB**；
      文件以 base64 放进 JSON，请求体上限设为 12MB 才能让 8MB 文件真正传得进来；超限返回 413 `IMPORT_TOO_LARGE`。
-   - 列名按同义词自动映射（如「学号→学生用户名」「得分→分数」「满分→总分」），也可手动改；
+   - 列名按同义词自动映射（如「用户名→学号」「得分→分数」「满分→总分」「课程→科目」），也可手动改；
      缺必填列不会静默通过，直接给出「缺少必填列「…」」提示。
 3. **确认导入**：`POST /imports/table/commit`，参数 `mapping`（规范字段 → 列名）+ `mode`：
    - `upsert`（默认）已存在则更新；`append` 已存在则跳过；
-   - 成绩重复判定：**同班级 + 同学生 + 同考试 + 同课程**；学生按「用户名」优先、「姓名」兜底匹配；
+   - 成绩重复判定：**同班级 + 同学生 + 同考试 + 同科目**；学生按「学号」优先、「姓名」兜底匹配；
    - 返回 `{ total, inserted, updated, skipped, failed, errors[], warnings[] }`，
      `errors[].row` 是 **Excel 视角的行号**（含表头），便于老师改完再导。
 
 #### 2）学生名单导入（管理员）
 
-界面：Web 管理端 →「学生管理」→「导入名单」（同一组件，`kind=students`）。模板列 `用户名 / 姓名`
-（学生没有账号属性，**没有密码列**）；用户名必须匹配 `^[A-Za-z0-9_.-]{3,32}$`；重复按同一用户名
-（`append` 跳过 / `upsert` 更新姓名与班级）；用户名被教师 / 管理员占用时该行进错误行，不会覆盖他人账号。
+界面：Web 管理端 →「学生管理」→「导入名单」（同一组件，`kind=students`）。模板列
+`学号 / 姓名 / 班级 / 性别 / 家长手机号`（学生不是账号，**没有密码列**）；学号必须匹配
+`^[A-Za-z0-9._-]{1,32}$`（入库前去掉全部空白并统一大写，所以唯一约束天然大小写无关）；
+重复按同一学号（`append` 跳过 / `upsert` 更新姓名、班级与联系方式）；
+表格里带「班级」列时按班级名解析（重名会报错让老师改用班级码），否则用弹窗里选的班级。
+**只写 `Student` 名单，不创建任何账号。**
 
 #### 3）教师名单导入（管理员）
 
-界面：Web 管理端 →「教师管理」→「导入名单」（`kind=teachers`）。模板列 `用户名 / 姓名 / 初始密码 / 角色`；
+界面：Web 管理端 →「教师管理」→「导入名单」（`kind=teachers`）。模板列 `工号 / 姓名 / 手机号 / 初始密码 / 角色`；
 角色取 `ADMIN` / `TEACHER`（留空按 `TEACHER`）；与新建教师同一套校验，导入后可直接登录。
 
 #### 4）ClassIsland 时间配置导入（管理员 / 本班班主任）
@@ -685,13 +693,13 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
 | ClassIsland → ClassHelper   | 上报**课表 + 节次时间 + 上课状态**（现在上什么 / 下一节 / 本节起止时间），写入本班课表                                   | Web 端「ClassIsland 联动」实时状态卡片 |
 | ClassHelper → ClassIsland   | 老师在 Web 端发一条**提醒** → 落库 → 教室机器的插件取回 → ClassIsland 上**全屏弹出**（可语音朗读），播完回执、不会重复弹 | Web 端「ClassIsland 联动 → 下发提醒」  |
-| （可选）班级 → ClassIsland | 把ClassHelper上排好的课表**镜像**回 ClassIsland：新建一份 `ClassHelper-<班级名>` 档案课表，不动老师原有的课表              | 同上页面的「开镜像」开关               |
+| （可选）班级 → ClassIsland | 把 ClassHelper上排好的课表**镜像**回 ClassIsland：新建一份 `ClassHelper-<班级名>` 档案课表，不动老师原有的课表              | 同上页面的「开镜像」开关               |
 
 #### 接入流程（三步）
 
 1. **Web 端签发设备令牌**：管理员 / 本班班主任在「ClassIsland 联动」页点「接入新设备」，选择班级并生成令牌
    （形如 `chci_xxxxxxxx…`，**明文只显示这一次**，服务端只存 sha256）；
-2. **教室机器填令牌**：在 ClassIsland 的「设置 → ClassHelper联动」里填入后端地址 + 令牌，点「立即上报」；
+2. **教室机器填令牌**：在 ClassIsland 的「设置 → ClassHelper 联动」里填入后端地址 + 令牌，点「立即上报」；
 3. **验证**：页面顶部出现设备卡片与「在线」标记，说明链路通了 —— 之后课表与上课状态自动同步，
    老师发的提醒也会在这台机器上弹出来。
 
@@ -721,8 +729,8 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 | 要同步的内容                     | 需要打开的开关                                                                                                                                                               |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 服务端 → ClassIsland（镜像课表） | ① 插件设置「把班级课表镜像回 ClassIsland」+ ② Web 端该设备的「镜像课表」                                                                                                     |
-| ClassIsland → 服务端（上报课表） | 插件设置「上报课表到ClassHelper」（关着时日志会明说「仅状态（开关已关闭）」）；同步是**双向对齐**的：老师在 ClassIsland 里删掉 / 挪动的节次会一并清理，Web 端手排的课不会被删 |
-| 提醒下发                         | ① 教室客户端「通知显示位置」不是「只在 ClassHelper」+ ② 插件「接收ClassHelper提醒」                                                                                           |
+| ClassIsland → 服务端（上报课表） | 插件设置「上报课表到 ClassHelper」（关着时日志会明说「仅状态（开关已关闭）」）；同步是**双向对齐**的：老师在 ClassIsland 里删掉 / 挪动的节次会一并清理，Web 端手排的课不会被删 |
+| 提醒下发                         | ① 教室客户端「通知显示位置」不是「只在 ClassHelper」+ ② 插件「接收 ClassHelper提醒」                                                                                           |
 
 #### 提醒弹在哪个端：由教室客户端自己选
 
@@ -757,14 +765,14 @@ Web 管理端「数据库管理」页（`/database`，仅 ADMIN 可见，后端�
 
 | 能力         | 说明                                                                                                                                                          |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 连接状态检测 | 当前类型（SQLite/MySQL）、连通性与延迟、引擎版本、数据体积、14 张表行数、连接串（MySQL 密码脱敏）                                                             |
+| 连接状态检测 | 当前类型（SQLite/MySQL）、连通性与延迟、引擎版本、数据体积、16 张表行数、连接串（MySQL 密码脱敏）                                                             |
 | 连接测试     | 任意目标库的连通性试连（切换前的第一步）                                                                                                                      |
 | **一键切换** | SQLite ⇄ MySQL：自动「备份当前库 → 改写 schema provider → prisma generate / db push 建表 → 子进程迁移全部数据 → 改写 .env」，异步任务带步骤进度，失败自动回滚 |
 | 备份 / 恢复  | gzip JSON 快照存 `<数据目录>/backups/`；手动备份 / 从备份恢复（整库覆盖）/ 删除                                                                               |
 | 定时备份     | enabled + 间隔小时数 + 保留份数，存 `data/database-settings.json`；服务端每 10 分钟检查一次到点任务（进程不运行不补跑）                                       |
 | 快捷导入导出 | 下载快照 JSON（跨库通用）/ 下载数据库文件（仅 SQLite）/ 导入快照（整库覆盖，base64 上传）                                                                     |
 
-关键设计：**备份、导入导出、跨库迁移共用同一种「JSON 快照」**（`lib/snapshot.ts`，14 张表按拓扑序导出，
+关键设计：**备份、导入导出、跨库迁移共用同一种「JSON 快照」**（`lib/snapshot.ts`，16 张表按拓扑序导出，
 恢复时临时关外键检查 —— `User.classId` 与 `Class.teacherId` 互相引用），因此任意备份都能恢复回任意一种受支持的数据库。
 MySQL 的连接测试 / 建表 / 写入依赖随包内置的 `@prisma/adapter-mariadb`（已在依赖里，不再是「切换时手动安装」）。
 
@@ -817,6 +825,72 @@ MySQL 的连接测试 / 建表 / 写入依赖随包内置的 `@prisma/adapter-ma
 只提示、不自动下载、不自动安装 —— 安装包仍由人从 Release 页取（`SHA256SUMS-<版本>.txt` 可核对）。
 
 ## 5. 技术参考
+
+### 4.11 毕业归档（仅管理员）
+
+按**年度**把毕业的班级与学生归档，并留档当年转出的学生、以及毕业班级发过的作业与通知。
+入口：Web 管理端 →「毕业归档」。
+
+**归档 = 打标记 + 只读，不删任何数据**：
+
+| 动作         | 结果                                                                                     |
+| ------------ | ---------------------------------------------------------------------------------------- |
+| 归档一个届别 | 该届班级从常规列表隐去（`Class.archivedYearId`）、在读学生标记为「已毕业」（`Student.archivedYearId`） |
+| 作业与通知   | **原样留在库里**，在「届别详情 → 看作业与通知」里只读浏览                                 |
+| 撤销归档     | 班级与学生回到在读状态；同样不删任何数据（转出的学生保持转出 —— 那是事实，不是归档造成的） |
+| 班级端登录   | 归档班级的教室机器**不能再登录**（403 `CLASS_ARCHIVED`），继续登进去只会看到一个只读的壳子 |
+
+**「未毕业而升级的班级不归档」**：学年升级在「班级管理 → 班级设置 → 学年升级」里做，
+**只改 `Class.grade`**（高一 → 高二），班级记录、学生名单、学号、作业与成绩全部沿用。
+
+**班级称呼是「XXXX级X班」（入学年份 + 班号）**，不是「高一(1)班」—— 后者每年都要改一遍，
+前者一路跟着这届学生到毕业。称呼由服务端按 `enrollmentYear` + `classIndex` 生成，表单里只填这两个数。
+
+**调班 / 转出**（Web 管理端 →「学生管理」）：
+
+- **调班**（单个 / 批量同一接口）：只改学生**当前班级**，**学号不变**、不创建账号；
+  原班级 / 新班级 / 操作人 / 时间记入 `StudentClassTransfer`，可查；
+  历史作业与成绩保留原归属（它们挂在各自的 `classId` 上，不随学生走）。
+- **转出**：学籍离开本校（不是调班）。班级归属保留作历史，状态置为 `transferred`，
+  并写一条 `mode='transfer-out'` 的历史，归档页据此统计"当年转出的学生"。
+
+### 4.12 学期周次（可逐周覆盖，仅管理员）
+
+入口：Web 管理端 →「学期周次」。
+
+课表、作业、成绩都按**教学周**组织，而「开学日期 + 每周七天」的线性推算遇到法定节假日调休、
+周末补课、错峰开学就会**整体错位**（错一周全错）。所以支持逐周指定实际日期：
+
+| 操作             | 说明                                                                     |
+| ---------------- | ------------------------------------------------------------------------ |
+| 选配置范围       | 留空 = **全校默认**；也可以挑某个班单独配（该班优先用自己的）             |
+| 学期开始日期     | 第 1 教学周的周一；填完点「按开学日期生成」得到一份标准学期              |
+| 逐周日期区间     | 用日期范围选择器改任意一周（调休那一周拉长 / 开学前那几天并进第 1 周…）  |
+| 拉取放假安排     | 联网获取当年的法定节假日，**只给建议、不会自动改数据**                   |
+| 保存             | 校验区间不重叠（重叠会让"现在第几周"出现歧义），然后**下发给所有 ClassHelper 班级端** |
+
+- 存储：`TermWeek`（`classId = ''` 表示全校默认）+ `Class.termStartDate`；
+- 判定：`lib/term.ts` 的 `loadTermContext()` 做「班级覆盖 → 全校默认 → 纯线性」三级回落，
+  `resolveCurrentWeek(now, context)` 优先按区间判定；
+- 机房/服务器**没有外网时，"拉取放假安排"返回 `ok:false` 是正常结果**（不是错误），
+  失败结果同样进缓存，避免断网点一次要白等一个超时。
+
+### 4.13 课表同步方向（服务端 → 教室）
+
+2026-10-06 起，课表以**服务端为准**：
+
+| 方向                  | 开关                              | 默认   | 谁触发                                     |
+| --------------------- | --------------------------------- | ------ | ------------------------------------------ |
+| 服务端 → 教室（下发） | `mirrorScheduleToClassIsland`     | **开** | 老师改完课表自动镜像回教室                 |
+| 教室 → 服务端（上传） | `syncScheduleToServer`            | **关** | 老师在 Web 端点「**从教室机器获取课表**」  |
+
+为什么要反过来：自动回传会在老师手排课之后被教室的旧课表**悄悄覆盖**。
+所以「取教室课表」改成一次显式的人工动作 —— 点击前会弹**警告对话框**说明会覆盖 / 合并本班课表，
+确认后服务端置一个待办（`IntegrationDevice.requestScheduleReport`），
+插件在下一次心跳（约 1 分钟）看到就把当前课表推上来并清除标记。
+
+> 插件侧对应 `ReportSettingsDto.scheduleRequested` 与 `ReportAsync(..., forceSchedule: true)`；
+> 补发发生在**镜像之前**（顺序反了会把刚拿到的课表盖掉）。
 
 ### 5.1 目录结构
 
@@ -894,7 +968,7 @@ class-helper/
     │   ├── src/Services/ScheduleMapper.cs                   # 课表与单双周映射
     │   ├── src/Services/ClassPlanWriter.cs                  # 镜像回 ClassIsland（含课间时间点）
     │   ├── src/Services/ClassHelperNotificationProvider.cs  # 把老师发的提醒显示到 ClassIsland 上
-    │   ├── src/Views/BridgeSettingsPage.axaml(.cs)          # 「ClassHelper联动」设置页（Avalonia）
+    │   ├── src/Views/BridgeSettingsPage.axaml(.cs)          # 「ClassHelper 联动」设置页（Avalonia）
     │   ├── src/Interop/ClassHelperClient.cs                 # 后端 HTTP 客户端 + 对齐服务端 zod 的 DTO
     │   └── scripts/{build,verify}.mjs   # 构建打包（.cipx）与静态契约校验
     ├── web-admin/               # Web 管理端（Vue 3 + Vite + Element Plus + PWA）
@@ -939,7 +1013,7 @@ class-helper/
 
 | 方法                        | 路径                                                          | 权限                         | 说明                                                                             |
 | --------------------------- | ------------------------------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------- |
-| POST                        | `/auth/login`                                                 | 公开                         | 登录（教师 / 管理员）；`role=STUDENT` 返回 403（学生只有名单，改用班级登录）     |
+| POST                        | `/auth/login`                                                 | 公开                         | 登录（教师 / 管理员的**工号** + 密码）；学生不是账号，拿学号登录只会得到 401     |
 | POST                        | `/auth/class-login`                                           | 公开                         | **班级账号登录**：班级码 + 班级密码 → `classSession` 会话                        |
 | GET                         | `/auth/me`                                                    | 登录                         | 当前用户（学生附带班级 / 年级）                                                  |
 | PATCH                       | `/auth/password`                                              | 登录                         | 修改自己的密码（班级会话 → 班级密码）                                            |
@@ -994,7 +1068,7 @@ class-helper/
 | GET / POST / PATCH / DELETE | `/integrations/devices[/:id]`                                 | 管理员 / 教师                | ClassIsland 联动设备管理（令牌只存 sha256，令牌前缀用于人眼识别）                |
 | POST                        | `/integrations/devices/:id/token`                             | 管理员 / 教师                | 重置设备令牌（旧令牌立即失效，明文只返回一次）                                   |
 | POST                        | `/integrations/classisland/notify`                            | 管理员 / 教师                | 下发提醒到该班 ClassIsland 设备（广播 `classisland:notification`）               |
-| GET                         | `/database/status`                                            | **管理员**                   | 数据库状态（连接 / 版本 / 体积 / 14 张表行数 / 备份列表 / 定时配置）             |
+| GET                         | `/database/status`                                            | **管理员**                   | 数据库状态（连接 / 版本 / 体积 / 16 张表行数 / 备份列表 / 定时配置）             |
 | POST                        | `/database/test-connection`                                   | **管理员**                   | 测试任意目标库连通性（provider 仅 sqlite / mysql）                               |
 | GET / POST                  | `/database/backups`                                           | **管理员**                   | 备份列表 / 立即备份（gzip JSON 快照，存 `<数据目录>/backups/`）                  |
 | POST / DELETE               | `/database/backups/:name/restore` · `/database/backups/:name` | **管理员**                   | 从备份恢复（整库覆盖）/ 删除备份                                                 |
@@ -1038,12 +1112,12 @@ class-helper/
 班级内的角色由「账号角色 + 与该班级的关系」共同决定，前后端共用同一份矩阵
 （`packages/shared/src/permissions.ts`，后端 `lib/access.ts` 复用，前端用它隐藏入口）：
 
-| 角色               | 判定方式                       | 可见范围                   |
-| ------------------ | ------------------------------ | -------------------------- |
-| `ADMIN` 管理员     | `User.role = ADMIN`            | 全部班级                   |
-| 班主任 `HEAD`      | `Class.teacherId === 当前用户` | 本班                       |
-| 科任老师 `SUBJECT` | `ClassTeacher` 中存在当前用户  | 被分配的班级               |
-| 学生 `STUDENT`     | `User.classId` / 班级账号      | 自己的班级（只读业务数据） |
+| 角色                  | 判定方式                                 | 可见范围                   |
+| --------------------- | ---------------------------------------- | -------------------------- |
+| `ADMIN` 管理员        | `User.role = ADMIN`                      | 全部班级                   |
+| 班主任 `HEAD`         | `Class.teacherId === 当前用户`           | 本班                       |
+| 科任老师 `SUBJECT`    | 该班存在 `Course.teacherId === 当前用户` | 被任课的班级               |
+| `CLASS_DEVICE` 班级端 | 班级码 + 班级密码登录                    | 本班（代全班读写个人数据） |
 
 **权限矩阵**（`PERMISSION_MATRIX`，验收脚本按此逐条断言）：
 
@@ -1118,15 +1192,21 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 
 > MySQL 驱动适配器 `@prisma/adapter-mariadb` **已随包内置**（数据库管理模块的连接测试 / 迁移需要），无需手动安装。
 
-数据模型共 **14 张表**：`User` / `Class` / `ClassTeacher` / `Enrollment` / `Course` / `Schedule` / `Homework` /
-`HomeworkStatus` / `Notification` / `NotificationRead` / `TimeLayout` / `Grade` / `IntegrationDevice` / `ClassIslandPush`。
-其中 `Class.code` / `Class.passwordHash` 是班级账号字段；`Class.notificationChannel` 决定提醒弹在哪端；
+数据模型共 **16 张表**：`User`（纯账号表）/ `Student`（名单，不是账号）/ `StudentClassTransfer`（调班与转出历史）/
+`ArchivedYear`（毕业归档届别）/ `Class` / `TermWeek`（学期周次区间）/ `Course`（= 班级 + 科目 + 教师的任课关系）/
+`Schedule` / `Homework` / `HomeworkStatus` / `Notification` / `NotificationRead` / `TimeLayout` / `Grade` /
+`IntegrationDevice` / `ClassIslandPush`。
+其中 `Class.name` 是「2026级1班」这种**届别称呼**；`Class.code` / `Class.passwordHash` 是班级端账号字段；
+`Class.notificationChannel` 决定提醒弹在哪端；`Class.studentGradeQueryEnabled` 是班级端查成绩的开关；
+`Student.studentNo` 是学生的唯一标识与查询键；`Grade.levelType` / `level` 是等级口径与等级；
 `Homework.assignDate` 是作业的「所属日期」；`Schedule.weekParity` 是单双周；`Schedule.source` 是课表来源；
 `ClassIslandPush.kind` 区分通知类与叫人。
 
-迁移历史（**10 个**，按时间顺序）：`init` → `add_time_layout` → `add_class_account` → `add_schedule_week_parity` →
+迁移历史（**16 个**，按时间顺序）：`init` → `add_time_layout` → `add_class_account` → `add_schedule_week_parity` →
 `add_class_term_weeks` → `add_classisland_integration` → `add_class_notification_channel` →
-`add_homework_assign_date` → `add_push_kind` → `add_schedule_source`。
+`add_homework_assign_date` → `add_push_kind` → `add_schedule_source` →
+`add_student_table` → `add_student_grade_query` → `add_grade_level` →
+`add_classhelper_heartbeat` → `add_archives` → `add_term_weeks`。
 
 **启动时迁移（安装版自动升级）**：`src/lib/db-bootstrap.ts` 用一张账本表 `_ch_migrations` 记录已执行的迁移目录名 ——
 全新安装依次执行全部迁移并创建初始管理员；覆盖安装只补跑账本里没有的迁移（已存在的表 / 索引自动跳过），
@@ -1234,7 +1314,7 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 | **支持在客户端录入作业（含自定义快捷短语）**                  | ✅   | `verify:e2e`：班级账号录入 201（归属班主任）、跨班 403；客户端录入弹窗 + 「设置 → 通用」管理短语                                                                                                                                                                                                                                                                                                                                                      |
 | **提醒弹在哪个端由客户端自行选择**                            | ✅   | 客户端「设置 → 提醒」三选一（`verify:desktop`：设置页真实点击 → 写回本地配置）；服务端按班级设置决定是否推送（`verify:classisland`：`client` 时通知与联动页下发都被跳过）                                                                                                                                                                                                                                                                             |
 | **ClassHelper能读取 ClassIsland 的课表**                       | ✅   | `verify:classisland`：插件上报课表 → 本班课表新增 / 更新（重复上报幂等）、节次时间写入、设备状态快照可在 Web 端展示；`verify:web`：教师在「ClassIsland 联动」页真实签发设备令牌                                                                                                                                                                                                                                                                       |
-| **用户可选择通知是否在 ClassIsland 上显示**                   | ✅   | 插件设置页开关「接收ClassHelper提醒」（本机总闸）+ Web 端「下发提醒」（标题 / 内容 / 时长 / 优先级 / 语音朗读 / 是否同步通知中心）；`verify:classisland`：提醒落库 → 待提醒 → 回执 → 确认后不补发                                                                                                                                                                                                                                                      |
+| **用户可选择通知是否在 ClassIsland 上显示**                   | ✅   | 插件设置页开关「接收 ClassHelper提醒」（本机总闸）+ Web 端「下发提醒」（标题 / 内容 / 时长 / 优先级 / 语音朗读 / 是否同步通知中心）；`verify:classisland`：提醒落库 → 待提醒 → 回执 → 确认后不补发                                                                                                                                                                                                                                                      |
 | 能成功打包 Windows EXE                                        | ✅   | `-x64-setup.exe` / `-x64-portable.exe` / `win-unpacked/*.exe`（见 [7. 打包与交付](#7-打包与交付)）                                                                                                                                                                                                                                                                                                                                                    |
 | 提供完整 README（启动、构建、打包、默认账号）                 | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、数据库、打包与常见问题                                                                                                                                                                                                                                                                                                                                                                        |
 

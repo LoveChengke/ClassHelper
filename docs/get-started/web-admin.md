@@ -1,6 +1,6 @@
 ---
 title: 认识 Web 管理端
-description: 登录班级小助手 Web 管理端，认一认 12 个页面、新手引导与手机端布局。
+description: 登录 ClassHelper Web 管理端，认一认 12 个页面、新手引导与手机端布局。
 ---
 
 # 认识 Web 管理端

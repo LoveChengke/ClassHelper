@@ -15,10 +15,10 @@ namespace ClassHelper.ClassIslandPlugin.Services;
 /// <summary>
 /// 联动主循环。三件事：
 /// 1. <b>上报</b>：应用启动后、课程事件（上课/下课/放学/状态变化）发生时、以及每 N 秒，
-///    把"当前上什么课"与（可选的）全量课表推给班级小助手；
+///    把"当前上什么课"与（可选的）全量课表推给 ClassHelper；
 /// 2. <b>接收</b>：每次上报的返回值里带一条"尚未确认的下发提醒"，
 ///    交给 <see cref="ClassHelperNotificationProvider"/> 在 ClassIsland 上弹出；
-/// 3. <b>镜像</b>：开启镜像开关时，把班级小助手上排好的课表写回 ClassIsland 档案。
+/// 3. <b>镜像</b>：开启镜像开关时，把 ClassHelper上排好的课表写回 ClassIsland 档案。
 ///
 /// 为什么用"上报即拉取"而不是长连接：
 /// 插件不需要额外的 Socket/WebSocket 依赖（避免程序集隔离带来的加载问题），
@@ -174,7 +174,7 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
         }
 
         Raise(nameof(IsAttached));
-        _logger.LogInformation("班级小助手联动：已订阅课程事件");
+        _logger.LogInformation("ClassHelper 联动：已订阅课程事件");
         RequestReport("应用启动");
     }
 
@@ -216,7 +216,7 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
     /// 执行一次上报并返回是否真的发出去了。
     /// <paramref name="includeSchedule"/> 为 true 时带上全量课表与节次时间。
     /// </summary>
-    public async Task<bool> ReportAsync(string reason, bool includeSchedule = true)
+    public async Task<bool> ReportAsync(string reason, bool includeSchedule = true, bool forceSchedule = false)
     {
         if (_disposed) return false;
 
@@ -253,17 +253,21 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
             var layoutCount = 0;
             // 开关关着时也要留下原因：否则日志只有"上报成功：仅状态"，
             // 用户会以为"服务端拿不到 ClassIsland 课表"是插件坏了。
-            if (includeSchedule && !_settings.UploadSchedule)
+            // forceSchedule：服务端显式点了「从教室机器获取课表」——这是一次人工请求，
+            // 不受本机「自动上报课表」开关影响（见下方 ReportSettingsDto.ScheduleRequested）
+            var uploadSchedule = forceSchedule || _settings.UploadSchedule;
+
+            if (includeSchedule && !uploadSchedule)
             {
                 _logger.LogInformation(
-                    "班级小助手联动：本机设置里「上报课表到班级小助手」是关闭的，本次只上报状态；" +
-                    "需要把教室课表同步到班级小助手请打开该开关");
+                    "ClassHelper 联动：本机设置里「上报课表到 ClassHelper」是关闭的，本次只上报状态；" +
+                    "需要把教室课表同步到 ClassHelper请打开该开关，或在 Web 端点「从教室机器获取课表」");
             }
 
-            if (includeSchedule && _settings.UploadSchedule && profile is not null)
+            if (includeSchedule && uploadSchedule && profile is not null)
             {
                 var entries = ScheduleMapper.MapAllClassPlans(profile, out var warnings);
-                foreach (var warning in warnings) _logger.LogWarning("班级小助手联动：{Warning}", warning);
+                foreach (var warning in warnings) _logger.LogWarning("ClassHelper 联动：{Warning}", warning);
                 entryCount = entries.Count;
                 request.Schedule = new SchedulePayloadDto { Mode = "merge", Entries = entries };
                 // 课表为空时不发（否则会把服务端已有课表"合并"成空），但**必须把原因写清楚**：
@@ -272,8 +276,8 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
                 {
                     request.Schedule = null;
                     _logger.LogWarning(
-                        "班级小助手联动：ClassIsland 里没有**启用的课表**（0 条），本次未上报课表。" +
-                        "请在 ClassIsland 里排好课表，或在 Web 端打开「镜像课表」由班级小助手下发一份");
+                        "ClassHelper 联动：ClassIsland 里没有**启用的课表**（0 条），本次未上报课表。" +
+                        "请在 ClassIsland 里排好课表，或在 Web 端打开「镜像课表」由 ClassHelper下发一份");
                 }
 
                 var layout = ResolvePrimaryTimeLayout(profile);
@@ -296,7 +300,7 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
                 .ConfigureAwait(false);
             if (!result.Ok || data is null)
             {
-                _logger.LogWarning("班级小助手联动上报失败（{Reason}）：{Message}", reason, result.Message);
+                _logger.LogWarning("ClassHelper 联动上报失败（{Reason}）：{Message}", reason, result.Message);
                 SetState(false, result.Message, entryCount, layoutCount, null);
                 return false;
             }
@@ -306,15 +310,15 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
             if (data.ScheduleApplied)
             {
                 _logger.LogInformation(
-                    "班级小助手联动：课表已同步（新增 {Created} / 更新 {Updated}）",
+                    "ClassHelper 联动：课表已同步（新增 {Created} / 更新 {Updated}）",
                     data.ScheduleCreated, data.ScheduleUpdated);
             }
 
             var detail = entryCount > 0
                 ? $"课表 {entryCount} 节 / 节次 {layoutCount} 条"
-                : _settings.UploadSchedule
+                : uploadSchedule
                     ? "仅状态（ClassIsland 里还没有启用的课表）"
-                    : "仅状态（本机「上报课表到班级小助手」开关已关闭）";
+                    : "仅状态（本机「上报课表到 ClassHelper」开关已关闭）";
             SetState(true, $"上报成功（{reason}）：{detail}，服务端第 {data.Week} 周",
                 entryCount, layoutCount, data.Week);
 
@@ -323,6 +327,14 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
             if (pending is not null && _settings.ReceiveNotifications)
             {
                 NotificationReceived?.Invoke(this, pending);
+            }
+
+            // 服务端请求"立刻上报一次课表"（老师在 Web 端点了「从教室机器获取课表」）。
+            // 放在镜像之前：先把教室的现状推上去，再做服务端→教室的镜像，顺序反了会把刚拿到的课表盖掉。
+            if (data.Settings?.ScheduleRequested == true && !uploadSchedule)
+            {
+                _logger.LogInformation("ClassHelper 联动：服务端请求立即上报课表，正在补发一次…");
+                _ = ReportAsync("服务端请求课表", includeSchedule: true, forceSchedule: true);
             }
 
             if (_settings.MirrorSchedule)
@@ -338,7 +350,7 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
             // （事件回调与定时器都是），没有这个 catch，中途抛出的异常（例如跨线程改档案时的
             // "Collection was modified"）会被 unobserved task 静默吞掉：日志里一条都没有，
             // 而 LastReportMessage 还停在上一次的成功结果，用户以为一切正常。
-            _logger.LogError(exception, "班级小助手联动：上报异常（{Reason}）", reason);
+            _logger.LogError(exception, "ClassHelper 联动：上报异常（{Reason}）", reason);
             SetState(false, $"上报异常：{exception.Message}", 0, 0, null);
             return false;
         }
@@ -369,13 +381,13 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
             var (result, items) = await _client.PendingAsync(_settings, CancellationToken.None).ConfigureAwait(false);
             if (!result.Ok)
             {
-                _logger.LogInformation("班级小助手联动：拉取待提醒失败（{Message}）", result.Message);
+                _logger.LogInformation("ClassHelper 联动：拉取待提醒失败（{Message}）", result.Message);
                 return;
             }
 
             foreach (var item in items)
             {
-                _logger.LogInformation("班级小助手联动：取到待弹出提醒「{Title}」（id={Id}）", item.Title, item.Id);
+                _logger.LogInformation("ClassHelper 联动：取到待弹出提醒「{Title}」（id={Id}）", item.Title, item.Id);
                 NotificationReceived?.Invoke(this, item);
             }
         }
@@ -392,16 +404,16 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
         if (result.Ok)
         {
             NotificationCount += 1;
-            _logger.LogInformation("班级小助手联动：已确认提醒 {Id}", id);
+            _logger.LogInformation("ClassHelper 联动：已确认提醒 {Id}", id);
         }
         else
         {
             // 回执失败无妨：服务端会按 24 小时有效期补发，最坏是重复弹一次
-            _logger.LogWarning("班级小助手联动：确认提醒失败 {Message}", result.Message);
+            _logger.LogWarning("ClassHelper 联动：确认提醒失败 {Message}", result.Message);
         }
     }
 
-    /// <summary>把班级小助手上排好的课表写回 ClassIsland（新建带前缀的档案课表，不动老师原有的课表）。</summary>
+    /// <summary>把 ClassHelper上排好的课表写回 ClassIsland（新建带前缀的档案课表，不动老师原有的课表）。</summary>
     public async Task MirrorScheduleAsync()
     {
         var profile = ResolveProfile();
@@ -412,7 +424,7 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
         {
             // 服务端在"镜像开关没开"时会返回 data=null —— 这不是错误，但要告诉用户去哪儿开
             _logger.LogInformation(
-                "班级小助手联动：跳过课表镜像（{Message}）。" +
+                "ClassHelper 联动：跳过课表镜像（{Message}）。" +
                 "需要在 Web 端「ClassIsland 联动」页给这台设备打开「镜像课表」，然后点一次「立即上报」或等下一个上报周期",
                 result.Message);
             return;
@@ -423,7 +435,7 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
         var signature = MirrorSignature(plan);
         if (signature == _lastMirrorSignature)
         {
-            _logger.LogDebug("班级小助手联动：课表内容与上次一致，跳过镜像");
+            _logger.LogDebug("ClassHelper 联动：课表内容与上次一致，跳过镜像");
             return;
         }
 
@@ -451,22 +463,22 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
 
             if (!outcome.Applied)
             {
-                _logger.LogInformation("班级小助手联动：课表镜像未生效（{Reason}）",
+                _logger.LogInformation("ClassHelper 联动：课表镜像未生效（{Reason}）",
                     outcome.Warnings.FirstOrDefault() ?? "服务端课表为空");
                 return;
             }
 
             _lastMirrorSignature = signature;
-            _logger.LogInformation("班级小助手联动：已把班级课表写入 ClassIsland（{Plans}）",
+            _logger.LogInformation("ClassHelper 联动：已把班级课表写入 ClassIsland（{Plans}）",
                 string.Join("、", outcome.PlanNames.Select(name => $"「{name}」")));
             foreach (var warning in outcome.Warnings)
             {
-                _logger.LogWarning("班级小助手联动镜像提示：{Warning}", warning);
+                _logger.LogWarning("ClassHelper 联动镜像提示：{Warning}", warning);
             }
         }
         catch (Exception exception)
         {
-            _logger.LogError(exception, "班级小助手联动：课表镜像失败");
+            _logger.LogError(exception, "ClassHelper 联动：课表镜像失败");
         }
     }
 
@@ -495,7 +507,7 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
     /* ---------------------------------------------------------------- 内部实现 */
 
     /// <summary>插件版本（与 manifest.yml / csproj 保持一致）。</summary>
-    private const string PluginVersion = "1.1.2.0";
+    private const string PluginVersion = "1.2.0.0";
 
     /// <summary>ClassIsland 版本读不到时不该让上报失败（开发版可能为 null）。</summary>
     private static string SafeAppVersion()
@@ -524,13 +536,13 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
         catch (Exception exception)
         {
             // 课程服务在"应用启动中/课表未加载"时可能抛异常，这里降级为只有心跳的上报
-            _logger.LogWarning(exception, "班级小助手联动：读取课程状态失败，本次只上报心跳");
+            _logger.LogWarning(exception, "ClassHelper 联动：读取课程状态失败，本次只上报心跳");
             return new StateDto { ClientTime = DateTimeOffset.Now.ToString("o") };
         }
     }
 
     /// <summary>
-    /// 选一份"最有代表性"的时间表上报给班级小助手：**上课点最多的那一份**。
+    /// 选一份"最有代表性"的时间表上报给 ClassHelper：**上课点最多的那一份**。
     ///
     /// 为什么不按"当前课表"选：镜像会给每个（星期 + 单双周）建一份时间表，
     /// 于是"今天"那一份可能只有一两节课 —— 按当前课表选就会把只有一节的时间表报上去，
@@ -578,7 +590,7 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
         }
         catch (Exception exception)
         {
-            _logger.LogWarning(exception, "班级小助手联动：读取档案失败");
+            _logger.LogWarning(exception, "ClassHelper 联动：读取档案失败");
             return null;
         }
     }

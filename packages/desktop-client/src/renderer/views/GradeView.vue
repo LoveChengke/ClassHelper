@@ -7,6 +7,7 @@ import {
   gradeLevel,
   gradePercent,
   type GradeDto,
+  type StudentGradeDetailDto,
 } from '@classhelper/shared';
 import { gradeApi } from '../api/index.js';
 import { fetchWithCache } from '../cache/index.js';
@@ -16,7 +17,10 @@ import { useAuthStore } from '../stores/auth.js';
 import { useRealtimeStore } from '../stores/realtime.js';
 
 const appStore = useAppStore();
-/** 班级账号（班级设备）看到的是全班成绩总览，标题与副标题随会话类型变化 */
+/**
+ * ClassHelper 班级端看到的是**全班成绩总览**（学生不是账号，登录主体就是班级），
+ * 标题与副标题随会话类型变化。
+ */
 const auth = useAuthStore();
 const realtime = useRealtimeStore();
 
@@ -42,14 +46,45 @@ const latestGrades = computed(() =>
   [...grades.value].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)).slice(0, 5),
 );
 
+/**
+ * 等级分布：优先用**库里存的等级**（教师可以手改、也可能是自定义等级），
+ * 只有老数据没有等级时才按得分率现算 —— 否则教师在 Web 端改过的等级在这里会被"算回去"。
+ */
 const levelCounts = computed(() => {
-  const levels: Record<string, number> = { A: 0, B: 0, C: 0, D: 0, E: 0 };
+  const levels: Record<string, number> = {};
   for (const item of grades.value) {
-    levels[gradeLevel(gradePercent(item.score, item.totalScore))] =
-      (levels[gradeLevel(gradePercent(item.score, item.totalScore))] ?? 0) + 1;
+    const level = item.level || gradeLevel(gradePercent(item.score, item.totalScore));
+    levels[level] = (levels[level] ?? 0) + 1;
   }
   return levels;
 });
+
+/* ------------------------------------------------------------ 按学号查成绩明细
+ *
+ * 学生没有账号、不能登录，因此"查自己的成绩"这件事由**教室机器**代做：
+ * 输入学号 → 服务端返回该生的全部成绩明细（含等级）。
+ * 是否开放由教师/管理员在班级里开关控制（关闭后服务端返回 403，这里直接提示原因）。
+ */
+const queryNo = ref('');
+const queryLoading = ref(false);
+const queried = ref<StudentGradeDetailDto | null>(null);
+const queryError = ref('');
+
+async function queryByStudentNo(): Promise<void> {
+  const studentNo = queryNo.value.trim();
+  if (!studentNo) return;
+  queryLoading.value = true;
+  queryError.value = '';
+  queried.value = null;
+  try {
+    queried.value = await gradeApi.studentDetail(studentNo);
+  } catch (error) {
+    // 403 的文案由服务端给出（"本班未开放学生自助查询成绩，请联系老师开启"），原样展示最准确
+    queryError.value = error instanceof Error ? error.message : '查询失败，请稍后重试';
+  } finally {
+    queryLoading.value = false;
+  }
+}
 
 /**
  * 按考试聚合平均得分率（最近 8 次考试），交给 ScoreBarChart 渲染。
@@ -111,9 +146,54 @@ onUnmounted(() => {
         </p>
       </div>
       <div class="toolbar">
+        <el-input
+          v-model="queryNo"
+          placeholder="输入学号查个人明细"
+          clearable
+          style="width: 200px"
+          @keyup.enter="queryByStudentNo"
+        />
+        <el-button :icon="'Search'" :loading="queryLoading" @click="queryByStudentNo">按学号查询</el-button>
         <el-button :icon="'Refresh'" @click="loadGrades">刷新</el-button>
       </div>
     </div>
+
+    <!-- 按学号查询结果：ClassHelper 班级端代学生查本人明细 -->
+    <el-card v-if="queried || queryError" shadow="never" class="mt-12">
+      <template #header>
+        <div class="query-header">
+          <span v-if="queried">
+            学号 {{ queried.student.studentNo }} · {{ queried.student.name }}
+            <span class="text-muted">（{{ queried.className ?? '未分班' }}）</span>
+          </span>
+          <span v-else>查询失败</span>
+          <el-button link @click="((queried = null), (queryError = ''))">收起</el-button>
+        </div>
+      </template>
+      <el-alert v-if="queryError" type="warning" :closable="false" show-icon :title="queryError" />
+      <template v-else-if="queried">
+        <div class="text-muted" style="margin-bottom: 8px">
+          共 {{ queried.items.length }} 条记录 · 平均得分率 {{ queried.averagePercent }}%
+        </div>
+        <el-table :data="queried.items" size="small" empty-text="该生还没有成绩记录" max-height="320">
+          <el-table-column prop="examName" label="考试" width="150" />
+          <el-table-column label="科目" width="110">
+            <template #default="{ row }">{{ row.course?.name ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column label="分数" width="120">
+            <template #default="{ row }">{{ row.score }} / {{ row.totalScore }}</template>
+          </el-table-column>
+          <el-table-column label="等级" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" effect="plain">{{ row.level || '-' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="发布时间">
+            <template #default="{ row }">{{ formatDate(row.publishedAt, true) }}</template>
+          </el-table-column>
+        </el-table>
+      </template>
+    </el-card>
 
     <el-row :gutter="12">
       <el-col :xs="24" :md="8">

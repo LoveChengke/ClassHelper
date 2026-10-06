@@ -30,6 +30,8 @@ export type ApiErrorCode =
   | 'IMPORT_EMPTY'
   /** 班级账号：该班级尚未设置班级密码（禁止班级登录，提示管理员设置） */
   | 'CLASS_PASSWORD_NOT_SET'
+  /** 班级账号：该班级已毕业归档，教室端已停止使用 */
+  | 'CLASS_ARCHIVED'
   | 'INTERNAL_ERROR';
 
 /** 业务异常：中间件会把它转换成统一错误响应体 */

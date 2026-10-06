@@ -13,7 +13,7 @@
  *   node scripts/dist-win.mjs --dir      # 仅生成免安装目录
  *
  * 产物统一落到 releases/client/<版本>/（releases/ 不入库，与服务端、插件同级）：
- *   安装包/   班级小助手-<版本>-x64-setup.exe / -portable.exe（+ .blockmap）
+ *   安装包/   ClassHelper-<版本>-x64-setup.exe / -portable.exe（+ .blockmap）
  *   免安装/   electron-builder 的 win-unpacked 内容
  *   构建中间/ builder-*.yml、*.nsis.7z
  * electron-builder 自身的 `directories.output` 由本脚本用 --config 覆盖成上面的版本目录；

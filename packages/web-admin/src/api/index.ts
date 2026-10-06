@@ -1,11 +1,17 @@
 import {
   API_PATHS,
+  type ArchivedClassContentDto,
+  type ArchivedYearDetailDto,
+  type ArchivedYearDto,
   type ClassDetailDto,
   type ClassDto,
+  type AutoTermWeeksRequest,
+  type ClassHelperStatusListDto,
   type ClassPlanImportResultDto,
   type ClassPlanPreviewDto,
   type ClassStatusDto,
   type CourseDto,
+  type CreateArchiveRequest,
   type CreateClassRequest,
   type CreateCallRequest,
   type CreateCourseRequest,
@@ -14,6 +20,7 @@ import {
   type CreateIntegrationDeviceRequest,
   type CreateNotificationRequest,
   type CreateScheduleRequest,
+  type CreateStudentRequest,
   type DashboardSummary,
   type DatabaseBackupMetaDto,
   type DatabaseBackupScheduleDto,
@@ -21,7 +28,9 @@ import {
   type DatabaseStatusDto,
   type DatabaseSwitchJobDto,
   type GradeDto,
+  type GradeLevelType,
   type GradeStats,
+  type HolidaySuggestionDto,
   type HomeworkDaysDto,
   type HomeworkDto,
   type HomeworkSubmissionsDto,
@@ -30,13 +39,20 @@ import {
   type LoginRequest,
   type LoginResponse,
   type NotificationDto,
+  type PaginatedResult,
   type ScheduleDto,
   type ScheduleWeekView,
   type SendClassIslandNotificationRequest,
   type SendClassIslandNotificationResult,
+  type SessionUser,
   type StudentDto,
+  type StudentGradeDetailDto,
+  type StudentStatus,
+  type StudentTransferDto,
+  type SubjectTeacherDto,
   type TableImportPreview,
   type TableImportResult,
+  type TermWeeksDto,
   type TimeLayoutDto,
   type TimeLayoutImportResult,
   type TimeLayoutParsePreview,
@@ -44,6 +60,8 @@ import {
   type UpdateClassRequest,
   type UpdateInfo,
   type UpdateIntegrationDeviceRequest,
+  type UpdateStudentRequest,
+  type UpdateTermWeeksRequest,
   type UserDto,
 } from '@classhelper/shared';
 import { api } from './http';
@@ -53,7 +71,8 @@ import { api } from './http';
 export const authApi = {
   login: (payload: LoginRequest): Promise<LoginResponse> => api.post(API_PATHS.auth.login, payload),
   logout: (): Promise<{ loggedOut: boolean }> => api.post(API_PATHS.auth.logout, {}),
-  me: (): Promise<StudentDto> => api.get(API_PATHS.auth.me),
+  /** 当前会话主体：教师/管理员是账号，ClassHelper 班级端是班级 */
+  me: (): Promise<SessionUser> => api.get(API_PATHS.auth.me),
   changePassword: (payload: {
     currentPassword: string;
     newPassword: string;
@@ -72,20 +91,33 @@ export const classApi = {
   students: (id: string): Promise<StudentDto[]> => api.get(`${API_PATHS.classes}/${id}/students`),
   addStudent: (
     id: string,
-    payload: { username: string; name: string; password?: string },
+    payload: { studentNo: string; name: string; gender?: string; guardianPhone?: string },
   ): Promise<StudentDto> => api.post(`${API_PATHS.classes}/${id}/students`, payload),
-  removeStudent: (id: string, userId: string): Promise<unknown> =>
-    api.delete(`${API_PATHS.classes}/${id}/students/${userId}`),
-  assignTeacher: (id: string, teacherId: string): Promise<unknown> =>
-    api.post(`${API_PATHS.classes}/${id}/teachers`, { teacherId }),
-  /** 设置 / 更改班主任：仅管理员 */
+  removeStudent: (id: string, studentId: string): Promise<unknown> =>
+    api.delete(`${API_PATHS.classes}/${id}/students/${studentId}`),
+  /** 设置 / 更改班主任（每班 1 人）：仅管理员 */
   assignHeadTeacher: (id: string, teacherId: string): Promise<ClassDto> =>
     api.patch(`${API_PATHS.classes}/${id}/head-teacher`, { teacherId }),
-  removeTeacher: (id: string, teacherId: string): Promise<unknown> =>
-    api.delete(`${API_PATHS.classes}/${id}/teachers/${teacherId}`),
+  /**
+   * 设置各科任课老师（班级 + 科目 + 教师）：仅管理员。
+   * 这是「科任老师」这条关系的唯一写入口。
+   */
+  assignSubjectTeachers: (
+    id: string,
+    assignments: Array<{ courseId?: string | null; subjectName: string; teacherId?: string | null }>,
+  ): Promise<SubjectTeacherDto[]> =>
+    api.put(`${API_PATHS.classes}/${id}/subject-teachers`, { assignments }),
   /** 设置 / 重置班级账号（班级码 + 班级密码）：仅管理员 */
   updateAccount: (id: string, payload: UpdateClassAccountRequest): Promise<ClassDto> =>
     api.patch(`${API_PATHS.classes}/${id}/class-account`, payload),
+  /** 班级端按学号查成绩的开关 */
+  getGradeQuery: (id: string): Promise<{ studentGradeQueryEnabled: boolean }> =>
+    api.get(`${API_PATHS.classes}/${id}/student-grade-query`),
+  setGradeQuery: (id: string, enabled: boolean): Promise<{ studentGradeQueryEnabled: boolean }> =>
+    api.patch(`${API_PATHS.classes}/${id}/student-grade-query`, { enabled }),
+  /** 学年升级：只改年级，不归档、数据沿用 */
+  promote: (classIds: string[], grade: string): Promise<{ promoted: number }> =>
+    api.post(`${API_PATHS.classes}/promote`, { classIds, grade }),
 };
 
 /* ------------------------------------------------------------------ 课程 */
@@ -134,11 +166,11 @@ export const homeworkApi = {
   update: (id: string, payload: Partial<CreateHomeworkRequest>): Promise<HomeworkDto> =>
     api.patch(`${API_PATHS.homeworks}/${id}`, payload),
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.homeworks}/${id}`),
-  /** 提交名单 / 未交名单（教师与班级设备可用） */
+  /** 提交名单 / 未交名单（教师与 ClassHelper 班级端可用） */
   submissions: (id: string): Promise<HomeworkSubmissionsDto> =>
     api.get(`${API_PATHS.homeworks}/${id}/submissions`),
-  saveSubmissions: (id: string, notSubmittedUserIds: string[]): Promise<HomeworkSubmissionsDto> =>
-    api.patch(`${API_PATHS.homeworks}/${id}/submissions`, { notSubmittedUserIds }),
+  saveSubmissions: (id: string, notSubmittedStudentIds: string[]): Promise<HomeworkSubmissionsDto> =>
+    api.patch(`${API_PATHS.homeworks}/${id}/submissions`, { notSubmittedStudentIds }),
 };
 
 /* ------------------------------------------------------------------ 通知 */
@@ -160,7 +192,7 @@ export const notificationApi = {
 /* ------------------------------------------------------------------ 叫人 */
 
 export const callApi = {
-  /** 点名让学生来找老师（学生端灵动岛会立即弹出"请 XXX 同学找 XXX 老师"） */
+  /** 点名让学生来找老师（ClassHelper 班级端灵动岛会立即弹出"请 XXX 同学找 XXX 老师"） */
   create: (payload: CreateCallRequest): Promise<NotificationDto> => api.post(API_PATHS.calls, payload),
 };
 
@@ -170,7 +202,8 @@ export const gradeApi = {
   list: (params: {
     classId?: string;
     courseId?: string;
-    userId?: string;
+    /** 学生 id（学生是名单记录，不是账号） */
+    studentId?: string;
     examName?: string;
   }): Promise<GradeDto[]> => api.get(API_PATHS.grades, params),
   stats: (params: { classId?: string; courseId?: string; examName?: string }): Promise<GradeStats> =>
@@ -181,27 +214,55 @@ export const gradeApi = {
     courseId?: string | null;
     examName: string;
     totalScore?: number;
+    levelType?: GradeLevelType;
     publishedAt?: string | null;
-    items: Array<{ userId: string; score: number }>;
+    items: Array<{ studentId: string; score: number; level?: string }>;
   }): Promise<{ count: number; items: GradeDto[] }> => api.post(`${API_PATHS.grades}/bulk`, payload),
   update: (id: string, payload: Partial<CreateGradeRequest>): Promise<GradeDto> =>
     api.patch(`${API_PATHS.grades}/${id}`, payload),
+  /** 批量改等级：逐条指定；或整批重算（classId + examName + levelType） */
+  updateLevels: (
+    payload:
+      | { items: Array<{ id: string; level: string }> }
+      | { classId: string; examName: string; courseId?: string | null; levelType: GradeLevelType },
+  ): Promise<{ updated: number }> => api.patch(`${API_PATHS.grades}/levels`, payload),
+  /** 按**学号**查某个学生的成绩明细（教师端"按学号查成绩"） */
+  studentDetail: (studentNo: string, classId?: string): Promise<StudentGradeDetailDto> =>
+    api.get(`${API_PATHS.grades}/student/${encodeURIComponent(studentNo)}`, classId ? { classId } : undefined),
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.grades}/${id}`),
 };
 
 /* ------------------------------------------------------------------ 学生 */
 
-// 学生是"名单"不是"账号"：没有密码相关接口（登录统一走班级码 + 班级密码）
+// 学生是「名单记录」不是「账号」：没有密码相关接口，登录统一走班级码 + 班级密码。
+// 学号（studentNo）是学生的唯一标识与查询键。
 export const studentApi = {
-  list: (params?: { classId?: string; keyword?: string }): Promise<StudentDto[]> =>
-    api.get(API_PATHS.students, params),
-  create: (payload: { username: string; name: string; classId?: string | null }): Promise<StudentDto> =>
-    api.post(API_PATHS.students, payload),
-  update: (
-    id: string,
-    payload: { username?: string; name?: string; classId?: string | null },
-  ): Promise<StudentDto> => api.patch(`${API_PATHS.students}/${id}`, payload),
+  list: (params?: {
+    classId?: string;
+    keyword?: string;
+    status?: StudentStatus;
+    includeArchived?: boolean;
+  }): Promise<StudentDto[]> => api.get(API_PATHS.students, params),
+  create: (payload: CreateStudentRequest): Promise<StudentDto> => api.post(API_PATHS.students, payload),
+  update: (id: string, payload: UpdateStudentRequest): Promise<StudentDto> =>
+    api.patch(`${API_PATHS.students}/${id}`, payload),
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.students}/${id}`),
+  /** 调班：单个与批量同一接口（studentIds 长度 1 即单个）；学号不变、历史可查 */
+  transfer: (studentIds: string[], toClassId: string | null, note?: string): Promise<{ moved: number }> =>
+    api.post(`${API_PATHS.students}/transfer`, { studentIds, toClassId, note }),
+  /** 转出（学籍离开本校，不是调班） */
+  transferOut: (studentIds: string[], note?: string): Promise<{ transferred: number }> =>
+    api.post(`${API_PATHS.students}/transfer-out`, { studentIds, note }),
+  /** 某个学生的调班 / 转出历史 */
+  transfersOf: (id: string): Promise<PaginatedResult<StudentTransferDto>> =>
+    api.get(`${API_PATHS.students}/${id}/transfers`),
+  /** 调班历史（可按学生或班级过滤） */
+  transfers: (params?: {
+    studentId?: string;
+    classId?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<PaginatedResult<StudentTransferDto>> => api.get(`${API_PATHS.students}/transfers`, params),
 };
 
 /* ------------------------------------------------------------------ 仪表盘 */
@@ -218,51 +279,100 @@ export const dashboardApi = {
 
 /* ------------------------------------------------------------------ 教师管理（仅管理员） */
 
+/** 教师的 `username` 就是**工号**（也是登录名），界面上统一叫「工号」 */
 export const teacherApi = {
   list: (keyword?: string): Promise<UserDto[]> =>
     api.get(API_PATHS.teachers, keyword ? { keyword } : undefined),
   create: (payload: {
     username: string;
     name: string;
+    phone?: string;
     password?: string;
     role?: 'TEACHER' | 'ADMIN';
   }): Promise<UserDto> => api.post(API_PATHS.teachers, payload),
   update: (
     id: string,
-    payload: { username?: string; name?: string; role?: 'TEACHER' | 'ADMIN' },
+    payload: { username?: string; name?: string; phone?: string; role?: 'TEACHER' | 'ADMIN' },
   ): Promise<UserDto> => api.patch(`${API_PATHS.teachers}/${id}`, payload),
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.teachers}/${id}`),
   resetPassword: (id: string, newPassword?: string): Promise<unknown> =>
     api.post(`${API_PATHS.teachers}/${id}/reset-password`, newPassword ? { newPassword } : {}),
-  /** 班级详情中的 teachers 字段即为已分配的协作教师 */
-  fromClass: (classId: string): Promise<ClassDetailDto> => classApi.detail(classId),
+};
+
+/* ------------------------------------------------------------------ 毕业归档（仅管理员） */
+
+/**
+ * 归档是**打标记 + 只读**，不删数据：毕业班级的作业与通知原样留在库里，
+ * 通过 `classContent()` 只读查看。「未毕业而升级的班级不归档」走 `classApi.promote`。
+ */
+export const archiveApi = {
+  list: (): Promise<ArchivedYearDto[]> => api.get(API_PATHS.archives),
+  summary: (): Promise<{
+    archiveCount: number;
+    classCount: number;
+    graduateCount: number;
+    transferredCount: number;
+    suggestedEnrollmentYears: number[];
+  }> => api.get(`${API_PATHS.archives}/summary`),
+  detail: (id: string): Promise<ArchivedYearDetailDto> => api.get(`${API_PATHS.archives}/${id}`),
+  /** 归档班级的作业与通知（只读） */
+  classContent: (id: string, classId: string, limit = 200): Promise<ArchivedClassContentDto> =>
+    api.get(`${API_PATHS.archives}/${id}/classes/${classId}/content`, { limit }),
+  create: (payload: CreateArchiveRequest): Promise<ArchivedYearDetailDto> =>
+    api.post(API_PATHS.archives, payload),
+  /** 撤销归档（误操作的退路，不删任何数据） */
+  remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.archives}/${id}`),
+};
+
+/* ------------------------------------------------------------------ 学期周次（仅管理员可写） */
+
+/**
+ * 学期周次：逐周指定实际的起止日期。
+ *
+ * 课表、作业、成绩都按教学周组织，而"开学日期 + 每周七天"的线性推算遇到调休、
+ * 周末补课、错峰开学就会整体错位 —— 所以支持逐周配置。
+ * `classId` 留空 = 全校默认；保存后变更会随课表下发给教室的 ClassHelper 班级端。
+ */
+export const termApi = {
+  get: (classId?: string): Promise<TermWeeksDto> =>
+    api.get(API_PATHS.term, classId ? { classId } : undefined),
+  save: (payload: UpdateTermWeeksRequest): Promise<TermWeeksDto> => api.put(API_PATHS.term, payload),
+  /** 按学期开始日期一键生成逐周区间（配置的起点） */
+  auto: (payload: AutoTermWeeksRequest): Promise<TermWeeksDto> => api.post(`${API_PATHS.term}/auto`, payload),
+  /** 联网获取法定节假日安排（只给建议；机房没外网时 ok=false 属正常） */
+  holidays: (year?: number): Promise<HolidaySuggestionDto> =>
+    api.get(`${API_PATHS.term}/holidays`, year ? { year } : undefined),
 };
 
 /* ------------------------------------------------------------------ 导入（模板 / 表格 / 课表时间配置 / ClassIsland 课程表） */
 
+type TableKind = 'grades' | 'students' | 'teachers' | 'classTeachers';
+
 export const importApi = {
   /** 模板下载地址（CSV 走 JSON，XLSX 走二进制） */
   template: (
-    kind: 'grades' | 'students' | 'teachers',
+    kind: TableKind,
     format: 'csv' | 'xlsx' = 'csv',
   ): Promise<{ kind: string; format: string; fileName: string; content: string }> =>
     api.get(`${API_PATHS.imports}/template`, { kind, format }),
 
   /** 上传表格并预览（解析 + 必填列校验 + 建议映射，不写库） */
   previewTable: (payload: {
-    kind: 'grades' | 'students' | 'teachers';
+    kind: TableKind;
     fileName: string;
     contentBase64: string;
   }): Promise<TableImportPreview> => api.post(`${API_PATHS.imports}/table/preview`, payload),
 
   /** 确认字段映射与写入模式后执行导入（教师名单与班级无关，classId 可省略） */
   commitTable: (payload: {
-    kind: 'grades' | 'students' | 'teachers';
+    kind: TableKind;
     classId?: string;
     fileName: string;
     contentBase64: string;
     mapping: Record<string, string>;
     mode: 'append' | 'upsert';
+    /** 班级任课老师导入：是否用「工号」匹配已有教师账号 */
+    useTeacherNo?: boolean;
   }): Promise<TableImportResult> => api.post(`${API_PATHS.imports}/table/commit`, payload),
 
   /** ClassIsland 时间配置解析预览（不写库） */
@@ -326,9 +436,23 @@ export const integrationApi = {
     api.post(`${API_PATHS.integrations}/devices/${id}/token`, {}),
   removeDevice: (id: string): Promise<{ id: string }> =>
     api.delete(`${API_PATHS.integrations}/devices/${id}`),
+  /**
+   * 「**从教室机器获取一次课表**」：置一个待办，插件在下一次心跳把当前课表推上来。
+   *
+   * 自动回传（`syncScheduleToServer`）现在默认关闭 —— 它会在老师手排课之后
+   * 被教室的旧课表悄悄覆盖。要取教室的课表就点这个按钮（前端会先弹警告）。
+   */
+  requestSchedule: (id: string): Promise<{ requested: boolean; deviceName: string; nextHeartbeatHint: string }> =>
+    api.post(`${API_PATHS.integrations}/devices/${id}/request-schedule`, {}),
   /** 把一条提醒下发到该班的 ClassIsland 设备（ClassIsland 上全屏弹出） */
   notify: (payload: SendClassIslandNotificationRequest): Promise<SendClassIslandNotificationResult> =>
     api.post(`${API_PATHS.integrations}/classisland/notify`, payload),
+  /**
+   * **ClassHelper 班级端在线状态**：管理员看全部班级，教师看自己班主任/任课的班级。
+   * 每条含班级、设备名/设备号、在线离线、最后在线时间、最后心跳时间。
+   */
+  classHelperStatus: (): Promise<ClassHelperStatusListDto> =>
+    api.get(`${API_PATHS.integrations}/classisland/status`),
 };
 
 /* ------------------------------------------------------------------ 数据库管理（仅管理员） */

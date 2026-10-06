@@ -8,7 +8,8 @@ import type { DatabaseProvider } from './db.js';
  * - 文件级备份只对 SQLite 有意义，跨库迁移根本用不上；
  * - JSON 快照与 provider 无关，一份实现同时服务备份、导入导出和 SQLite⇄MySQL 迁移。
  *
- * 外键注意：schema 里 User.classId → Class 且 Class.teacherId → User（互相引用），
+ * 外键注意：`Class.teacherId → User` 与 `Student.classId → Class` 构成一条链，
+ * 而 `Class.archivedYearId` / `Student.archivedYearId → ArchivedYear` 又是另一条；
  * 恢复时必须**临时关闭外键检查**再按序写入，否则任何排序都会被其中一侧卡死。
  * - SQLite：PRAGMA foreign_keys=OFF（libsql 连接级，进程内安全）
  * - MySQL：SET FOREIGN_KEY_CHECKS=0/1（会话级，连接池下同一客户端实例内生效）
@@ -17,13 +18,22 @@ import type { DatabaseProvider } from './db.js';
 export const SNAPSHOT_FORMAT = 'classhelper-snapshot';
 export const SNAPSHOT_VERSION = 1;
 
-/** 导出与恢复顺序（外键关闭后顺序不再影响写入，但保持拓扑序便于人工阅读与排查） */
+/**
+ * 导出与恢复顺序（外键关闭后顺序不再影响写入，但保持拓扑序便于人工阅读与排查）。
+ *
+ * **学生不是账号**：`Student` 是独立的一张表（没有密码、没有 role），
+ * `Grade` / `HomeworkStatus` / `NotificationRead` 都按 `studentId` 指向它；
+ * `StudentClassTransfer` 存调班与转出历史；`ArchivedYear` 是毕业归档的届别档案。
+ * 历史上那两张 `ClassTeacher`（无科目的协作关系）与 `Enrollment`（与 Student.classId 双写）
+ * 已随 2026-10-06 的重构删除。
+ */
 export const SNAPSHOT_TABLES = [
   'User',
+  'ArchivedYear',
   'Class',
+  'Student',
   'Course',
-  'ClassTeacher',
-  'Enrollment',
+  'StudentClassTransfer',
   'Schedule',
   'TimeLayout',
   'Homework',

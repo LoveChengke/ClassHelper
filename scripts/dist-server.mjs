@@ -5,7 +5,7 @@
  *
  * 产出（Windows）：
  *   releases/server/<版本>/免安装/                                    可直接运行的免安装目录
- *   releases/server/<版本>/安装包/班级小助手服务端-<版本>-x64-setup.exe  Windows 安装程序（NSIS）
+ *   releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe  Windows 安装程序（NSIS）
  *   releases/server/<版本>/构建中间/server-installer.generated.nsi      NSIS 生成脚本（可重新生成）
  *
  * 产出（Linux，加 --platform linux，即 pnpm dist:server:linux）：
@@ -38,7 +38,7 @@ const webDir = path.join(root, 'packages', 'web-admin');
 const deployDir = path.join(root, 'deploy');
 
 const VERSION = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
-const PRODUCT = '班级小助手服务端';
+const PRODUCT = 'ClassHelper 服务端';
 const PORT = '4000';
 const LINUX_ARCH = 'x64';
 
@@ -164,7 +164,7 @@ function writeRuntimeManifest() {
     version: VERSION,
     private: true,
     type: 'module',
-    description: '班级小助手服务端运行时（安装包 / 容器内置）',
+    description: 'ClassHelper 服务端运行时（安装包 / 容器内置）',
     dependencies: serverProdDependencies(),
   };
   fs.writeFileSync(path.join(staging, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
@@ -446,8 +446,8 @@ function pruneRuntime() {
 
 function writeEnvironmentFile() {
   const jwtSecret = crypto.randomBytes(48).toString('hex');
-  const content = `# 班级小助手服务端（安装程序生成，请妥善保管）
-# 修改后需重启服务生效（开始菜单 → 班级小助手服务端 → 重启服务）
+  const content = `# ClassHelper 服务端（安装程序生成，请妥善保管）
+# 修改后需重启服务生效（开始菜单 → ClassHelper 服务端 → 重启服务）
 
 NODE_ENV=production
 HOST=0.0.0.0
@@ -476,7 +476,7 @@ LOG_LEVEL=info
 
 # 可选项
 BCRYPT_ROUNDS=10
-# 新建班级的初始密码（学生端用「班级码 + 班级密码」登录，没有个人学生账号）
+# 新建班级的初始密码（ClassHelper 班级端用「班级码 + 班级密码」登录，没有个人学生账号）
 DEFAULT_CLASS_PASSWORD=123456
 TERM_START_DATE=
 `;
@@ -619,16 +619,16 @@ function writeReadme() {
 ========================================
 
 一、启动与访问
-  1. 双击「start.cmd」（或开始菜单 → 班级小助手服务端 → 启动服务）
+  1. 双击「start.cmd」（或开始菜单 → ClassHelper 服务端 → 启动服务）
   2. 浏览器打开 http://127.0.0.1:${PORT}/ 即可进入 Web 管理端
   3. 安装程序已把本服务加入当前用户的开机自启项，重启电脑后无需手动启动
 
 二、默认账号（首次安装后请立即修改密码）
   管理员  admin / admin123
   教师    teacher1 / teacher123、teacher2 / teacher123
-  班级    班级码 G101/G102/G203 + 班级密码 123456（学生端桌面客户端使用）
+  班级    班级码 G101/G102/G203 + 班级密码 123456（ClassHelper 班级端桌面客户端使用）
   说明    学生没有个人账号：学生只是名单记录（成绩/未交/叫人/已读都按名单走），
-          学生端统一用「班级码 + 班级密码」登录。
+          ClassHelper 班级端统一用「班级码 + 班级密码」登录。
 
 三、目录说明
   server\\        后端程序（server\\dist\\index.js 为入口）
@@ -761,7 +761,7 @@ function writeLinuxReadme() {
 
 三、安装后的默认账号（首次启动自动创建）
   管理员  admin / admin123（安装器里设置初始密码则用它）
-  学生端  班级码 + 班级密码（学生没有个人账号）
+  ClassHelper 班级端  班级码 + 班级密码（学生没有个人账号）
 
 四、常用运维命令（安装后）
   classhelper status / doctor / password admin / backup / upgrade / rollback / logs -f

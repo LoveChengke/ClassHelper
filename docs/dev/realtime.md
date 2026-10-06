@@ -44,7 +44,7 @@ io(url, { auth: { token } }); // 握手阶段用 JWT 鉴权
 | `user:{userId}`       | 某个用户自己的连接                |
 | `teacher:{teacherId}` | 某个教师                          |
 | `role:{role}`         | 某一角色（`ADMIN` / `TEACHER` …） |
-| `students`            | 全部学生端连接                    |
+| `students`            | 全部 ClassHelper 班级端连接                    |
 | `teachers`            | 全部教师端连接                    |
 
 服务端通过 `realtime/bus.ts` 的 `emitToClass` / `emitToUser` 发事件 ——

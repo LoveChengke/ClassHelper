@@ -28,7 +28,7 @@
         ▼
  Socket.IO ──► class:{classId} 房间 ──► 学生桌面客户端实时更新 UI
 
-ClassIsland（教室机器）──► ClassHelper联动插件 ──► /api/integrations/classisland/*（设备令牌鉴权）
+ClassIsland（教室机器）──► ClassHelper 联动插件 ──► /api/integrations/classisland/*（设备令牌鉴权）
                                    ▲                                  │
                                    └──── 老师下发的提醒（上报返回值里顺带带回）◄┘
 ```
@@ -105,23 +105,27 @@ website/                     产品官网（**纯静态、无构建步骤**，�
                                docs/dev/testing.md 的「截图留档」；客户端那两张要配合冒烟的
                                ELECTRON_CLIENT_SHOTS_DIR / ELECTRON_SMOKE_ISLAND_* 开关。
                              ⚠ download.html 的版本清单是**当场**读 GitHub Releases 的
-                               （assets/download.js）—— 渲染出的卡片与文件行都是拉到数据之后才建的，
-                               建完会派发一次 ch:content，由 main.js 补挂按压反馈（新增动态内容照这个来）。
+                               （assets/download.js）：版本分段控件 → 一行状态 → 「装什么」分段控件
+                               （客户端 / 服务端 / 插件，**默认停在客户端**）→ 卡片。卡片是拉到数据之后
+                               才建的，建完会派发一次 ch:content，由 main.js 补挂按压反馈
+                               （新增动态内容照这个来）。两个分段控件共用同一套指示器实现。
+                               卡片排版照 ClassIsland 官网那页：图标 + 名称 + 系统要求 + 主按钮 + 变体下拉
+                               （<details>，点别处或 Esc 收起）；插件那张只有一个文件，不摆点不开的箭头。
                                读不到时退回 <meta name="ch-version"> 并按发布命名约定拼直链 ——
                                那个 meta 是 version.mjs 的落点之一，发版必须一起改。
                                命名约定与 README「开始使用」表里那三个名字要对齐
                                （ClassHelper-<版本>-x64-client-setup.exe / -client-portable.exe /
                                -x64-server-setup.exe），它们是离线兜底链接的唯一依据。
-packages/shared/src/         types.ts / constants.ts / permissions.ts / utils.ts / index.ts
+packages/shared/src/         types.ts / constants.ts / permissions.ts / motion.ts / utils.ts / index.ts
 packages/server/
-  prisma/schema.prisma       数据模型（14 个 model，无 enum、无 @db.*；连接串在 prisma.config.ts）
-  prisma/migrations/         10 个迁移（init / time_layout / class_account / schedule_week_parity /
-                             class_term_weeks / classisland_integration / class_notification_channel /
-                             homework_assign_date / push_kind / schedule_source）
+  prisma/schema.prisma       数据模型（16 个 model，无 enum、无 @db.*；连接串在 prisma.config.ts）
+  prisma/migrations/         16 个迁移（到 add_schedule_source 为止是旧模型；之后 6 个是
+                             2026-10-06 的角色与权限重构：add_student_table / add_student_grade_query /
+                             add_grade_level / add_classhelper_heartbeat / add_archives / add_term_weeks）
   prisma/seed.ts             种子数据（会清空业务表后重建演示数据）
   prisma.config.ts           Prisma 7 配置：schema / migrations / seed / 连接串
-  scripts/verify-e2e.mjs     后端端到端验收（条数由脚本统计，2026-10-05 实测 190 项）
-  scripts/verify-classisland.mjs        联动链路验收（实测 42 项）
+  scripts/verify-e2e.mjs     后端端到端验收（条数由脚本统计，2026-10-06 实测 205 项）
+  scripts/verify-classisland.mjs        联动链路验收（实测 44 项）
   scripts/apply-column-migrations.cjs  旧库补列（手工覆盖 dist 部署时用）
   src/app.ts                 Express 装配（探针 → 限流 → 模块挂载 → 静态托管 → 兜底）
   src/index.ts               启动入口（自检 + HTTP + Socket.IO + 优雅退出）
@@ -130,8 +134,10 @@ packages/server/
                              password schemas session term version(读 package.json) web-static
   src/middleware/            auth validate error security
   src/realtime/              socket.ts（房间）+ bus.ts（事件总线）
-  src/modules/               15 个功能模块 + registry.ts + module.types.ts
-packages/web-admin/src/      api stores router layouts views(12) components(5) composables styles config.ts
+  src/modules/               17 个功能模块 + registry.ts + module.types.ts
+                             （含 archives 毕业归档、term 学期周次）
+packages/web-admin/src/      api stores router layouts views(14) components(5) composables styles config.ts
+                             （含 ArchivesView 毕业归档、TermWeeksView 学期周次）
 packages/desktop-client/
   src/main/                  主进程：index / config（含作业短语与看板偏好）/ ipc / island / tray / update / logger / smoke
   src/preload/               contextBridge 白名单桥（index.ts + island.ts，**不暴露 ipcRenderer 本体**）
@@ -140,7 +146,7 @@ packages/desktop-client/
   src/types/desktop.d.ts     主进程 ↔ 渲染进程契约
   scripts/                   build-main / dev / smoke / dist-win
 packages/classisland-plugin/ .NET 8 插件（独立于 pnpm workspace，不参与 pnpm install）
-  manifest.yml               清单：id=classhelper.classisland.bridge / apiVersion=2.0.0.0 / version=1.1.2.0
+  manifest.yml               清单：id=classhelper.classisland.bridge / apiVersion=2.0.0.0 / version=1.2.0.0
   ClassHelper.ClassIslandPlugin.csproj（TargetFramework=net8.0）
   src/Plugin.cs              入口：读配置 → 注册提醒提供方 / 设置页 / BridgeService
   src/Models/PluginSettings.cs
@@ -148,7 +154,7 @@ packages/classisland-plugin/ .NET 8 插件（独立于 pnpm workspace，不参�
                              ClassHelperNotificationProvider（把提醒显示到 ClassIsland 上）
   src/Views/BridgeSettingsPage.axaml(.cs)：Avalonia 设置页
   src/Interop/ClassHelperClient.cs：HTTP 客户端 + 与服务端逐个字段对齐的 DTO
-  scripts/                   build.mjs（编译 / 打包 .cipx）/ verify.mjs（静态契约校验，实测 68 项）
+  scripts/                   build.mjs（编译 / 打包 .cipx）/ verify.mjs（静态契约校验，实测 74 项）
 ```
 
 ---
@@ -205,9 +211,15 @@ pnpm build:classisland-plugin
 
 > 密码是**种子脚本里硬编码**的（`admin123` / `teacher123` / 班级 `123456`）；
 > `.env` 的 `DEFAULT_CLASS_PASSWORD` 只影响**新建**班级时的初始班级密码。
-> **学生没有个人账号**（2026-10-01 清理）：`student01…15` 只是名单记录（成绩/未交/叫人/已读按名单），
-> `User.passwordHash` 为空串、不能登录，也没有任何密码接口；ClassHelper 班级端统一用班级码 + 班级密码。
-> 班级码 `G203` 是「高二(3)班」，不是 `G103`。
+>
+> **学生不是账号**（2026-10-06 起由表结构保证）：`Student` 表里根本没有 `passwordHash` / `role`，
+> 学号（`202601`…`202615`）只是名单记录与查询键。拿学号去 `/auth/login` 只会得到 401。
+> 教室机器统一用**班级码 + 班级密码**登录（会话主体是班级，角色 `CLASS_DEVICE`）。
+>
+> 演示数据布局：在读班级 `2026级1班`（码 `G101`）/ `2026级2班`（码 `G102`）/ `2025级3班`（码 `G203`），
+> 外加一个**已归档**的 `2023级1班`（3 名毕业生，用于验证「毕业归档」页）。
+> 任课关系刻意让**语文**由另一位老师任教，这样班主任在语文上没有编辑权 ——
+> 正好覆盖「班主任不自动拥有所有科目作业成绩编辑权」这条规则。
 
 ---
 
@@ -233,12 +245,12 @@ pnpm build:classisland-plugin
 | `pnpm db:seed` / `pnpm db:reset`                          | 写种子 / 重置并重播种子                                                                               |
 | `pnpm db:studio`                                          | Prisma Studio                                                                                         |
 | `pnpm db:switch:mysql` / `db:switch:sqlite`               | 改写 `schema.prisma` 的 provider（配合 `docs/management/mysql.md`）                                              |
-| `pnpm verify:e2e`                                         | 后端端到端验收（**需后端已启动**；2026-10-05 实测 190 项全过）                                        |
+| `pnpm verify:e2e`                                         | 后端端到端验收（**需后端已启动**；2026-10-06 实测 205 项全过）                                        |
 | `pnpm verify:web`                                         | Web 管理端真实点击回归（Electron 驱动，需后端已启动且 Web 产物已构建）                                |
 | `pnpm verify:desktop`                                     | 客户端冒烟（Electron，无人工点击）                                                                    |
 | `pnpm verify:packaged`                                    | 对**打包后/已安装**的客户端 EXE 跑同一套冒烟（`--exe` 指定路径）                                      |
-| `pnpm verify:classisland`                                 | ClassIsland 联动链路（设备令牌 / 上报 / 提醒下发与回执 / 镜像契约 / 幽灵行清理；实测 42 项）          |
-| `pnpm verify:classisland-plugin`                          | 插件静态契约校验（清单一致性 / 注册完整性 / C# DTO ↔ 服务端 zod 与路由 / 已修复坑的护栏；实测 68 项） |
+| `pnpm verify:classisland`                                 | ClassIsland 联动链路（设备令牌 / 上报 / 提醒下发与回执 / 镜像契约 / 幽灵行清理；实测 44 项）          |
+| `pnpm verify:classisland-plugin`                          | 插件静态契约校验（清单一致性 / 注册完整性 / C# DTO ↔ 服务端 zod 与路由 / 已修复坑的护栏；实测 74 项） |
 | `pnpm dist:server` / `dist:win` / `dist:dir` / `dist:all` | 打包服务端安装程序 / 客户端安装包 / 免安装目录 / 全部                                                 |
 | `pnpm dist:server:linux`                                  | 打包 **Linux 服务端安装包**（`classhelper-server-linux-x64-<版本>.tar.gz` + `.sha256`）—— 见 §5 第 59 条 |
 | `pnpm icons`                                              | 从 `build/classhelper.png` 派生全部图标（PWA / favicon / 托盘 / 安装包 / 插件 / 官网 / 文档站 / 界面内品牌标） |
@@ -272,7 +284,7 @@ releases/
     免安装/      electron-builder 的 win-unpacked 内容
     构建中间/    builder-*.yml、*.nsis.7z
   server/<版本>/
-    安装包/      ClassHelper服务端-<版本>-x64-setup.exe
+    安装包/      ClassHelper 服务端-<版本>-x64-setup.exe
     免安装/      classhelper-server 免安装目录（含 .env、node.exe、data/、logs/）
     linux-x64/   classhelper-server-linux-x64-<版本>.tar.gz + .sha256 + 同内容解包目录
     构建中间/    server-installer.generated.nsi
@@ -434,22 +446,28 @@ https://lovechengke.github.io/ClassHelper/docs/     ← 文档站（docfx 构建
 ## 5. 架构硬约定（改代码前必须知道）
 
 1. **模块注册表是唯一入口。** 服务端每个功能是 `src/modules/<name>/`（`*.module.ts` 路由、
-   `*.schemas.ts` zod 校验、`*.service.ts` 业务）。当前 15 个：`auth / classes / courses / schedules /
-homeworks / notifications / calls / imports / integrations / grades / students / teachers / dashboard /
-database / update`。
+   `*.schemas.ts` zod 校验、`*.service.ts` 业务）。当前 17 个：`auth / classes / courses / schedules /
+homeworks / notifications / calls / imports / integrations / grades / students / teachers / archives /
+term / dashboard / database / update`。
    新增/下线功能**只改 `src/modules/registry.ts`**（加一行 / 改 `enabled: false`），不要动 `app.ts`。
 2. **统一响应与校验。** 用 `src/lib/http.ts` 的 `sendOk / sendCreated / …` 返回，用
    `middleware/validate.ts` 挂 zod schema；错误交给 `middleware/error.ts`，不要各写一套。
 3. **鉴权 = JWT + RBAC + 班级内角色。** 路由级用 `requireRole('ADMIN', 'TEACHER')`；班级维度用
-   `@classhelper/shared` 的 `resolveClassRole` → `ADMIN / HEAD（班主任）/ SUBJECT（科任）/ STUDENT / NONE`，
-   权限判 `canManageSchedule` / `canPublishContent` / `canManageRoster` / `canManageGrades` 等
-   （人类可读矩阵是 `PERMISSION_MATRIX`，README 直接引用它），**不要在页面里另写一套规则**。
-4. **ClassHelper 班级端主体是「班级账号」。** 班级码 + 班级密码登录后，`classId` 即身份；该设备的「已读 / 完成」
-   代全班操作，个人学生登录已停用。API 里对此有专门分支，别按个人账号语义改。
-5. **实时推送只走房间。** 服务端 `src/realtime/`（`SOCKET_ROOMS`：`class:{classId}`、`user:{id}`、
-   `teacher:{id}`、`role:{role}`、`students`、`teachers`；`bus.ts` 事件总线），客户端
-   `renderer/stores/realtime.ts` 订阅。**新增实时事件要同时改三处**：服务端 bus/socket、Web 端订阅、
-   客户端订阅（灵动岛也依赖它）。事件名一律取自共享常量 `SOCKET_EVENTS`，不要手写字符串。
+   `@classhelper/shared` 的 `resolveClassRole` → `ADMIN / HEAD（班主任）/ SUBJECT（科任）/
+   CLASS_DEVICE（班级端）/ NONE`，权限判 `canManageSchedule` / `canPublishNotification` /
+   `canManageRoster` / `canManageGrades` / `canManageSubjectContent` 等
+   （人类可读矩阵是 `PERMISSION_MATRIX`），**不要在页面里另写一套规则**。
+4. **学生不是账号 —— 这是表结构保证的，别在代码里"兼容"学生账号。**
+   `Student` 表没有 `passwordHash` / `role`，学生不能登录、没有任何密码接口；
+   学号（`Student.studentNo`）是学生的唯一标识与查询键（名单 / 成绩 / 作业提交 / 导入导出全用它）。
+   曾经那套"`User.role='STUDENT'` + 空串密码占位 + 登录前判 role 再 403"的写法在 2026-10-06
+   整体删除，**不要再加回来**：任何 `role === 'STUDENT'` 的分支都是回归。
+5. **任课关系的唯一来源是 `Course`（班级 + 科目 + 教师）。** 没有第二张任课表
+   （历史上那张无科目的 `ClassTeacher` 已删除）。作业与成绩的写权限必须走
+   **`assertCanManageSubjectContent(user, classId, courseId, action, { allowClassDevice })`**：
+   挂了科目就只能由该科的任课老师改，没挂科目则归班主任 / 管理员；
+   班级端只有**作业**可以写（成绩不给）。**新增"发布内容"类入口必须复用它**，否则又会出现
+   "某个页面能改别人的科目"。
 6. **共享契约只在 `packages/shared`。** 三端都 `import ... from '@classhelper/shared'`；它产出 `dist`，
    改完要 `pnpm build:shared`（或跑着 `pnpm dev` 的 watch）。类型/常量**不要在两端各写一份**。
 7. **数据模型跨库通用。** `schema.prisma` 只用 String / Int / Float / Boolean / DateTime，不用 Prisma enum、
@@ -1095,6 +1113,42 @@ database / update`。
 
 ---
 
+63. **实时推送只走房间，而且没有"学生房间"。** 服务端 `src/realtime/`（`SOCKET_ROOMS`：
+    `class:{classId}`、**`session:{id}`**、`teacher:{id}`、`role:{role}`、`students`、`teachers`；
+    `bus.ts` 事件总线），客户端 `renderer/stores/realtime.ts` 订阅。
+    `session:{id}` 里的 id 是**会话主体**：教师/管理员是自己的账号 id，
+    ClassHelper 班级端是**班级 id**（见 `socket.ts` 的握手逻辑）—— 「叫人」这类定向消息就发到它。
+    **2026-10-06 起把 `user:{id}` 改名成了 `session:{id}` 并且不再有学生房间**：学生不是账号，
+    没有任何客户端会订阅它。**新增实时事件要同时改三处**：服务端 bus/socket、Web 端订阅、
+    客户端订阅（灵动岛也依赖它）。事件名一律取自共享常量 `SOCKET_EVENTS`，不要手写字符串。
+
+64. **ClassHelper 班级端主体是「班级」，`classId` 即身份。** 班级码 + 班级密码登录后角色是
+    `CLASS_DEVICE`，该设备的「作业完成 / 通知已读」由 `lib/session.ts` 的 `resolvePersonalIds()`
+    展开成**全班学生 id** 后再写（所以教师端的"完成人数 / 已读人数"统计依然准确）。
+    写 `createdBy` 之类的字段前要把它换成该班班主任 —— 班级端的 `sub` 是**班级 id**，
+    直接写会撞 `User` 外键（见 §5 第 20 条「教室机器能录入作业」）。
+    班级端的成绩查询受 `Class.studentGradeQueryEnabled` 这个**按班开关**控制（默认开启）。
+
+65. **课表同步的主方向是「服务端 → 教室」，教室不再自动回传。**
+    `IntegrationDevice.mirrorScheduleToClassIsland` 默认 **true**（服务端改完课表自动下发），
+    `syncScheduleToServer` 默认 **false**。要取教室的课表走
+    `POST /integrations/devices/:id/request-schedule` —— 它只置一个待办
+    （`requestScheduleReport`），插件在下一次心跳看到就把课表推上来并清除标记。
+    Web 端点击前**必须弹警告**（会覆盖 / 合并本班课表）。
+    插件侧对应 `ReportSettingsDto.scheduleRequested` + `ReportAsync(..., forceSchedule: true)`，
+    且补发发生在**镜像之前**（顺序反了会把刚拿到的课表盖掉）——
+    `verify:classisland-plugin` 有 6 条护栏盯着这段契约，别删。
+
+66. **学期周次可以逐周配，别再用"开学日期 + 每周七天"硬推。**
+    `TermWeek`（`classId = ''` 表示全校默认）存每一周的 `startDate`/`endDate`；
+    `lib/term.ts` 的 `loadTermContext(classId)` 负责把"班级覆盖 → 全校默认 → 纯线性"三级回落算出来，
+    `resolveCurrentWeek(now, context)` 优先按区间判定。
+    **调休 / 周末补课 / 错峰开学会让线性推算整体错位一周以上**，而课表、作业、成绩都按周次组织。
+    改周次（`PUT /api/term`、`POST /api/term/auto`）之后要 `notifyScheduleChanged()`，
+    让变更随课表下发给教室的 ClassHelper 班级端。
+    联网拉取调休建议（`GET /api/term/holidays`）**只给建议、不改数据**，且
+    **机房无外网时 `ok:false` 是正常结果**，失败结果同样进缓存（否则断网点一次要白等一个超时）。
+
 ## 6. 代码风格
 
 - **TypeScript ESM + NodeNext**：`package.json` 全是 `"type": "module"`，相对导入**必须带 `.js` 后缀**
@@ -1310,9 +1364,9 @@ pnpm lint                # ESLint（0 error 为底线）
 pnpm typecheck           # 全仓库类型检查
 
 pnpm dev:server          # 另开终端
-pnpm verify:e2e          # 后端端到端（2026-10-05 实测 190 项全过）
-pnpm verify:classisland  # ClassIsland 联动链路（实测 42 项）
-pnpm verify:classisland-plugin          # 插件静态契约（不需要后端，实测 68 项）
+pnpm verify:e2e          # 后端端到端（2026-10-06 实测 205 项全过）
+pnpm verify:classisland  # ClassIsland 联动链路（实测 44 项）
+pnpm verify:classisland-plugin          # 插件静态契约（不需要后端，实测 74 项）
 pnpm build:desktop && pnpm verify:desktop   # 客户端冒烟（AI 会话可跑，先看 §7 第 7 条）
 pnpm build && pnpm verify:web               # Web 端真实点击回归（同上）
 ```

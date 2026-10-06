@@ -6,7 +6,7 @@ import { extractBearerToken, verifyToken, type TokenPayload } from '../lib/jwt.j
 
 /**
  * 认证中间件：解析 Bearer token 并回查数据库，
- * 保证角色 / 班级变更（例如教师把学生转到别的班）立即生效，不被过期载荷影响。
+ * 保证角色 / 班级变更（例如管理员换了班主任）立即生效，不被过期载荷影响。
  */
 export function authenticate(): RequestHandler {
   return async (req, _res, next) => {
@@ -16,7 +16,7 @@ export function authenticate(): RequestHandler {
 
       const payload = verifyToken(token);
 
-      // 班级账号（班级设备）：主体是班级而不是某个学生账号，回查 Class 表
+      // ClassHelper 班级端：主体是**班级**而不是某个账号，回查 Class 表
       if (payload.classSession) {
         const record = await prisma.class.findUnique({
           where: { id: payload.classId ?? payload.sub },
@@ -30,7 +30,7 @@ export function authenticate(): RequestHandler {
             sub: record.id,
             username: record.code,
             name: record.name,
-            role: 'STUDENT',
+            role: 'CLASS_DEVICE',
             classId: record.id,
             classSession: true,
             classCode: record.code,
@@ -40,9 +40,10 @@ export function authenticate(): RequestHandler {
         return;
       }
 
+      // 账号（教师 / 管理员）：`User` 是纯账号表，学生不在里面
       const user = await prisma.user.findUnique({
         where: { id: payload.sub },
-        select: { id: true, username: true, name: true, role: true, classId: true },
+        select: { id: true, username: true, name: true, role: true },
       });
       if (!user) throw ApiError.unauthorized('账号不存在或已被删除');
 
@@ -53,7 +54,7 @@ export function authenticate(): RequestHandler {
           username: user.username,
           name: user.name,
           role: user.role as UserRole,
-          classId: user.classId,
+          classId: null,
         },
       };
       next();

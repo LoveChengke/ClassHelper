@@ -285,7 +285,7 @@ classhelper logs --unit classhelper-backup     # 看定时备份的日志
 sudo classhelper password                 # 改 admin
 sudo classhelper password teacher1        # 改指定教师
 sudo classhelper password --list          # 列出可登录账号与班级账号（含是否已设密码）
-sudo classhelper password --class G101    # 改某个班的班级密码（学生端登录用）
+sudo classhelper password --class G101    # 改某个班的班级密码（ClassHelper 班级端登录用）
 ```
 
 安全约定（照要求逐条落实）：
@@ -432,7 +432,7 @@ sudo cp deploy/nginx.conf /etc/nginx/conf.d/classhelper.conf
 | 升级卡住/失败 | 失败会自动回滚；看 `classhelper logs -n 100`，确认磁盘余量 ≥1GB |
 | `classhelper` 命令找不到 | `ls -l /usr/local/bin/classhelper`；被删了就重装或 `ln -sfn <安装目录>/bin/classhelper /usr/local/bin/classhelper` |
 | 忘记管理员密码 | `sudo classhelper password admin`（直连数据库，不需要登录） |
-| 学生端连不上 | 客户端「服务器地址」填 `http://IP:端口` 或域名；确认没有多余路径与斜杠 |
+| ClassHelper 班级端连不上 | 客户端「服务器地址」填 `http://IP:端口` 或域名；确认没有多余路径与斜杠 |
 | CentOS 7 装完立刻退出 | glibc < 2.28，见下面的"已知限制" |
 
 ---
@@ -527,7 +527,7 @@ sudo bash /tmp/verify-linux.sh --full --package /tmp/classhelper-server-linux-x6
 
 ```bash
 # ① 浏览器打开 http://<IP>:4000/ ，用 admin 登录，改一次密码再登录
-# ② 学生端客户端填 http://<IP>:4000 用班级码 G101/123456 登录，收到一条老师发的通知
+# ② ClassHelper 班级端客户端填 http://<IP>:4000 用班级码 G101/123456 登录，收到一条老师发的通知
 # ③ 重跑安装器（幂等性）：sudo bash /tmp/install.sh --yes --package <同一个包>
 #    期望：配置与数据保留、JWT_SECRET 不变（已登录用户不被踢下线）
 # ④ 卸载：sudo classhelper uninstall --yes

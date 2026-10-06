@@ -34,13 +34,13 @@ export function createTray(handlers: TrayHandlers): Tray | null {
   const image = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
   tray = new Tray(image);
 
-  tray.setToolTip('班级小助手（后台运行中）');
+  tray.setToolTip('ClassHelper（后台运行中）');
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: '显示主窗口', click: () => handlers.onShow() },
       { label: '隐藏到托盘', click: () => handlers.onHide() },
       { type: 'separator' },
-      { label: '退出班级小助手', click: () => handlers.onQuit() },
+      { label: '退出 ClassHelper', click: () => handlers.onQuit() },
     ]),
   );
   // 左键单击/双击托盘图标：恢复窗口（用户习惯）

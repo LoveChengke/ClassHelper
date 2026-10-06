@@ -1,4 +1,4 @@
-; 班级小助手服务端 + Web 管理端 Windows 安装程序
+; ClassHelper 服务端 + Web 管理端 Windows 安装程序
 ; 由 scripts/dist-server.mjs 生成（占位符在打包时替换）
 ;
 ; 设计要点：
@@ -33,7 +33,7 @@ ShowUninstDetails show
 !define MUI_UNICON "${ICON_FILE}"
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_TITLE "安装完成"
-!define MUI_FINISHPAGE_TEXT "班级小助手服务端已安装完成。$\r$\n$\r$\n安装程序已将服务加入当前用户的开机自启项，浏览器打开 http://127.0.0.1:${APP_PORT}/ 即可使用管理端。$\r$\n$\r$\n默认账号：admin / admin123（首次登录后请立即修改密码）"
+!define MUI_FINISHPAGE_TEXT "ClassHelper 服务端已安装完成。$\r$\n$\r$\n安装程序已将服务加入当前用户的开机自启项，浏览器打开 http://127.0.0.1:${APP_PORT}/ 即可使用管理端。$\r$\n$\r$\n默认账号：admin / admin123（首次登录后请立即修改密码）"
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "立即启动服务并打开管理端"
 !define MUI_FINISHPAGE_RUN_FUNCTION LaunchService

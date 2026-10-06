@@ -12,14 +12,14 @@ using Microsoft.Extensions.Logging;
 namespace ClassHelper.ClassIslandPlugin.Services;
 
 /// <summary>
-/// 提醒提供方：把老师在班级小助手上发布的提醒显示到 ClassIsland 上。
+/// 提醒提供方：把老师在 ClassHelper上发布的提醒显示到 ClassIsland 上。
 ///
 /// 与 <see cref="BridgeService"/> 的分工：
 /// - <see cref="BridgeService"/> 负责"拉"（上报时顺路把待提醒带回来）与"回执"（ack）；
 /// - 本类只负责"显示"——提醒必须由提醒提供方发出，ClassIsland 才会走主界面的
 ///   全屏特效 / 语音 / 音效那一整套流程。
 ///
-/// 为什么不给这个提供方再配一套"提醒设置"：本插件的开关全在「班级小助手联动」设置页里，
+/// 为什么不给这个提供方再配一套"提醒设置"：本插件的开关全在「ClassHelper 联动」设置页里，
 /// 再在「提醒」设置页放第二份开关只会让老师困惑（两处都能关，到底以哪个为准）。
 /// 因此这里用无设置的 <see cref="NotificationProviderBase"/>，读的是同一份 <see cref="PluginSettings"/>。
 /// </summary>
@@ -27,9 +27,9 @@ namespace ClassHelper.ClassIslandPlugin.Services;
 // 不是 "fluent(...)" 表达式）：E8BD 是喇叭字形。
 [NotificationProviderInfo(
     ProviderGuidValue,
-    "班级小助手提醒",
+    "ClassHelper提醒",
     "\uE8BD",
-    "显示老师从班级小助手下发的提醒。")]
+    "显示老师从 ClassHelper下发的提醒。")]
 public sealed class ClassHelperNotificationProvider : NotificationProviderBase
 {
     /// <summary>
@@ -100,11 +100,11 @@ public sealed class ClassHelperNotificationProvider : NotificationProviderBase
             _lessons.OnAfterSchool += (_, _) => Dispatcher.UIThread.Post(FlushDeferred);
             _lessons.CurrentTimeStateChanged += (_, _) => Dispatcher.UIThread.Post(FlushDeferred);
             _lessonsHooked = true;
-            _logger.LogInformation("班级小助手联动：提醒提供方已订阅课程事件（上课时段暂存、下课补弹）");
+            _logger.LogInformation("ClassHelper 联动：提醒提供方已订阅课程事件（上课时段暂存、下课补弹）");
         }
         catch (Exception exception)
         {
-            _logger.LogWarning(exception, "班级小助手联动：订阅课程事件失败，将在下次提醒时重试");
+            _logger.LogWarning(exception, "ClassHelper 联动：订阅课程事件失败，将在下次提醒时重试");
         }
     }
 
@@ -137,7 +137,7 @@ public sealed class ClassHelperNotificationProvider : NotificationProviderBase
 
         var pending = _deferred.ToList();
         _deferred.Clear();
-        _logger.LogInformation("班级小助手联动：下课了，补弹 {Count} 条上课时段暂存的提醒", pending.Count);
+        _logger.LogInformation("ClassHelper 联动：下课了，补弹 {Count} 条上课时段暂存的提醒", pending.Count);
         foreach (var item in pending) ShowOnUiThread(item);
     }
 
@@ -151,7 +151,7 @@ public sealed class ClassHelperNotificationProvider : NotificationProviderBase
         {
             if (!_playing.Add(notification.Id))
             {
-                _logger.LogDebug("班级小助手联动：提醒 {Id} 正在播放，跳过重复投递", notification.Id);
+                _logger.LogDebug("ClassHelper 联动：提醒 {Id} 正在播放，跳过重复投递", notification.Id);
                 return;
             }
         }
@@ -169,7 +169,7 @@ public sealed class ClassHelperNotificationProvider : NotificationProviderBase
             if (IsInClass() && !IsImmediate(notification))
             {
                 _deferred.Add(notification);
-                _logger.LogInformation("班级小助手联动：上课中，「{Title}」已暂存，下课后弹出", notification.Title);
+                _logger.LogInformation("ClassHelper 联动：上课中，「{Title}」已暂存，下课后弹出", notification.Title);
                 return;
             }
 
@@ -177,7 +177,7 @@ public sealed class ClassHelperNotificationProvider : NotificationProviderBase
             // 只有真正播完（或被用户关掉）才回执：中途退出 ClassIsland 时下次上报还会补发，不会静默丢失
             AckWhenFinished(request, notification);
             ShowNotification(request);
-            _logger.LogInformation("班级小助手联动：已弹出提醒「{Title}」（{Seconds} 秒）",
+            _logger.LogInformation("ClassHelper 联动：已弹出提醒「{Title}」（{Seconds} 秒）",
                 notification.Title, notification.DurationSeconds);
         }
         catch (Exception exception)
@@ -185,7 +185,7 @@ public sealed class ClassHelperNotificationProvider : NotificationProviderBase
             // 显示失败不能让 ClassIsland 崩掉：记日志，且**不回执**，服务端下次轮询还会重发。
             // 同时要把 id 从"正在播放"里放出来，否则本次失败后再也不会重试。
             lock (_playing) _playing.Remove(notification.Id);
-            _logger.LogError(exception, "班级小助手联动：显示提醒「{Title}」失败", notification.Title);
+            _logger.LogError(exception, "ClassHelper 联动：显示提醒「{Title}」失败", notification.Title);
         }
     }
 
@@ -204,7 +204,7 @@ public sealed class ClassHelperNotificationProvider : NotificationProviderBase
         var duration = TimeSpan.FromSeconds(seconds);
         var maskDuration = TimeSpan.FromSeconds(Math.Min(notification.Urgent ? 5 : 3, seconds));
 
-        var title = string.IsNullOrWhiteSpace(notification.Title) ? "班级小助手" : notification.Title;
+        var title = string.IsNullOrWhiteSpace(notification.Title) ? "ClassHelper" : notification.Title;
         var content = string.IsNullOrWhiteSpace(notification.Content) ? title : notification.Content;
 
         // 语音：老师勾了朗读 + 本机允许朗读，两者都满足才念（本机开关是给学生机的总闸）
@@ -240,7 +240,7 @@ public sealed class ClassHelperNotificationProvider : NotificationProviderBase
         return new NotificationRequest { MaskContent = mask, OverlayContent = overlay };
     }
 
-    /// <summary>提醒播完 / 被关掉后回执给班级小助手，服务端不再补发。</summary>
+    /// <summary>提醒播完 / 被关掉后回执给 ClassHelper，服务端不再补发。</summary>
     private void AckWhenFinished(NotificationRequest request, PushNotificationDto notification)
     {
         void Handler(object? sender, EventArgs args)

@@ -11,7 +11,7 @@ const dayKeySchema = z
 export const listHomeworksQuerySchema = z.object({
   classId: z.string().min(1).optional(),
   courseId: z.string().min(1).optional(),
-  /** 学生端：只看未完成 */
+  /** ClassHelper 班级端：只看未完成 */
   pendingOnly: booleanFlagSchema,
   keyword: z.string().trim().max(64).optional(),
   /** 只看某一天的作业（按 Homework.assignDate，本地日期） */
@@ -48,13 +48,16 @@ export const updateHomeworkSchema = z.object({
 
 export const updateHomeworkStatusSchema = z.object({
   completed: z.boolean(),
-  /** 教师代学生标记时使用；学生只能标记自己 */
-  userId: z.string().min(1).optional(),
+  /**
+   * 教师代学生标记时必填（学生不是账号，必须显式指定本班学生）；
+   * ClassHelper 班级端**不要传** —— 它代全班标记。
+   */
+  studentId: z.string().min(1).optional(),
 });
 
 /** 保存"未交名单"：列出未交的学生 id（其余学生一律标记为已交） */
 export const updateHomeworkSubmissionsSchema = z.object({
-  notSubmittedUserIds: z.array(z.string().min(1)).max(200).default([]),
+  notSubmittedStudentIds: z.array(z.string().min(1)).max(500).default([]),
 });
 
 export type ListHomeworkDaysInput = z.infer<typeof listHomeworkDaysQuerySchema>;

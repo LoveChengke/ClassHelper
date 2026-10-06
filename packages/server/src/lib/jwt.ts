@@ -7,13 +7,14 @@ import { ApiError } from './http.js';
 /** JWT 载荷（同时作为 req.auth.user 的类型来源） */
 export interface TokenPayload {
   sub: string;
+  /** 教师/管理员的工号，或 ClassHelper 班级端的班级码 */
   username: string;
   name: string;
   role: UserRole;
   classId: string | null;
-  /** true 表示"班级账号（班级设备）"登录：sub 是班级 id，而非某个学生账号 */
+  /** true 表示「ClassHelper 班级端」登录：sub 是班级 id，而非某个账号 */
   classSession?: boolean;
-  /** 班级账号的班级码（便于日志/审计） */
+  /** 班级端的班级码（便于日志/审计） */
   classCode?: string;
 }
 
@@ -31,7 +32,7 @@ export function verifyToken(token: string): TokenPayload {
 
     const record = decoded as Record<string, unknown>;
     const role = record.role;
-    if (role !== 'ADMIN' && role !== 'TEACHER' && role !== 'STUDENT') {
+    if (role !== 'ADMIN' && role !== 'TEACHER' && role !== 'CLASS_DEVICE') {
       throw new Error('unexpected role in token');
     }
 

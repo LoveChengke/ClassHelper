@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# 班级小助手 · 日志轮转
+# ClassHelper · 日志轮转
 # 由 deploy/install.sh 安装到 /etc/logrotate.d/classhelper
 #
 # copytruncate 而不是 create+信号：安装器与 classhelper 都是"追加写完就关"

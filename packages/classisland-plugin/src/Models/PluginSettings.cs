@@ -17,8 +17,11 @@ public class PluginSettings : ObservableObject
     private string _deviceKey = "";
     private bool _autoReport = true;
     private int _reportIntervalSeconds = 60;
-    private bool _uploadSchedule = true;
-    private bool _mirrorSchedule = false;
+    // 同步方向（2026-10-06 起）：课表以 ClassHelper为准，**服务端 → 教室自动下发**；
+    // 「把教室课表传上去」改为 Web 端的一次性人工动作（点之前会弹警告）。
+    // 自动回传会悄悄盖掉老师刚手排的课，所以默认关闭。
+    private bool _uploadSchedule = false;
+    private bool _mirrorSchedule = true;
     private bool _receiveNotifications = true;
     private int _notificationDurationSeconds = 8;
     private int _notificationPollSeconds = 10;
@@ -26,7 +29,7 @@ public class PluginSettings : ObservableObject
     private bool _showDebugInfo = false;
 
     /// <summary>
-    /// 班级小助手后端地址，例如 <c>http://127.0.0.1:4000</c>。
+    /// ClassHelper后端地址，例如 <c>http://127.0.0.1:4000</c>。
     /// </summary>
     public string ServerUrl
     {
@@ -35,7 +38,7 @@ public class PluginSettings : ObservableObject
     }
 
     /// <summary>
-    /// 设备令牌（形如 <c>chci_...</c>）：在班级小助手 Web 端「ClassIsland 联动」页面生成。
+    /// 设备令牌（形如 <c>chci_...</c>）：在 ClassHelper Web 端「ClassIsland 联动」页面生成。
     /// </summary>
     public string DeviceToken
     {
@@ -74,8 +77,13 @@ public class PluginSettings : ObservableObject
     }
 
     /// <summary>
-    /// 是否把 ClassIsland 的课表同步到班级小助手。
-    /// 关闭后仍会上报"当前上什么课"的状态，只是不再写课表。
+    /// 是否把 ClassIsland 的课表**自动**同步到 ClassHelper。
+    ///
+    /// **默认关闭**：课表以 ClassHelper为准，教室这边改完课表不会自己传上去
+    /// （否则老师刚在 ClassHelper上排好的课会被教室的旧课表悄悄覆盖）。
+    /// 要取教室的课表，请在 Web 端点「从教室机器获取课表」——那是一次显式的人工请求，
+    /// 与本开关无关（见 <c>ReportSettingsDto.ScheduleRequested</c>）。
+    /// 关闭后仍会上报"当前上什么课"的状态。
     /// </summary>
     public bool UploadSchedule
     {
@@ -84,8 +92,10 @@ public class PluginSettings : ObservableObject
     }
 
     /// <summary>
-    /// 是否把班级小助手上排好的课表镜像回 ClassIsland
-    /// （新建一份名为「班级小助手-&lt;班级名&gt;」的档案课表，不覆盖老师原有的课表）。
+    /// 是否把 ClassHelper上排好的课表镜像回 ClassIsland
+    /// （新建一份名为「ClassHelper-&lt;班级名&gt;」的档案课表，不覆盖老师原有的课表）。
+    ///
+    /// **默认开启**：这是现在课表同步的主方向。
     /// </summary>
     public bool MirrorSchedule
     {
@@ -94,7 +104,7 @@ public class PluginSettings : ObservableObject
     }
 
     /// <summary>
-    /// 是否接收老师在班级小助手上发布的提醒，并在 ClassIsland 上弹出。
+    /// 是否接收老师在 ClassHelper上发布的提醒，并在 ClassIsland 上弹出。
     /// </summary>
     public bool ReceiveNotifications
     {

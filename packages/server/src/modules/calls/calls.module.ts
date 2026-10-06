@@ -11,7 +11,7 @@ router.use(authenticate());
 
 /**
  * POST /api/calls - 叫人（老师点名让学生过来）
- * 学生端会在灵动岛上立即弹出"请 XXX 同学找 XXX 老师"，无论是否在上课。
+ * ClassHelper 班级端会在灵动岛上立即弹出"请 XXX 同学找 XXX 老师"，无论是否在上课。
  */
 router.post('/', requireRole('ADMIN', 'TEACHER'), validate({ body: createCallSchema }), async (req, res) => {
   const user = getAuthUser(req);

@@ -357,7 +357,7 @@ async function main() {
 
   // 1. 首页
   const title = await win.webContents.executeJavaScript('document.title');
-  record('Web 管理端首页加载', typeof title === 'string' && title.includes('班级小助手'), `title=${title}`);
+  record('Web 管理端首页加载', typeof title === 'string' && title.includes('ClassHelper'), `title=${title}`);
 
   // 2. 登录页
   const loginReady = await waitFor(win, `document.querySelectorAll('input').length >= 2`, 15000);
@@ -951,6 +951,44 @@ async function main() {
 
   // 7.8 授课科目统一：新增课表的科目下拉直接列出"全校统一科目"（不必按班级先录入课程），
   //     选中后自动建课并写入课表；用例结束把这条课表删掉，保证不污染演示数据。
+  //
+  // 前置：种子数据给每个班建满了全部科目，"统一科目（自动建课）"那组就永远是空的。
+  // 这里先删掉本班一门**没有任何课表/作业/成绩引用**的科目（通用技术，演示课表只用前 11 门），
+  // 让下拉里真的出现"可自动建课"的分组；用例跑完会自动把它建回来（净效果为零）。
+  const sparePrep = await win.webContents.executeJavaScript(`(async () => {
+    const token = localStorage.getItem('classhelper.token') ?? '';
+    const headers = { authorization: 'Bearer ' + token };
+    const classLabel = (document.querySelector('.toolbar .el-select')?.textContent ?? '').trim();
+    const classes = (await (await fetch('/api/classes', { headers })).json()).data ?? [];
+    const target = classes.find((item) => item.name === classLabel) ?? classes[0];
+    if (!target) return { ok: false, classLabel, classCount: classes.length };
+    const courses = (await (await fetch('/api/courses?classId=' + target.id, { headers })).json()).data ?? [];
+    const spare = courses.find((item) => item.name === '通用技术');
+    if (!spare) return { ok: true, className: target.name, removed: false };
+    const status = (await fetch('/api/courses/' + spare.id, { method: 'DELETE', headers })).status;
+    // 关键：页面上的课程列表是**进入课表页时拉一次**的，删完必须重新加载，
+    // 否则「统一科目」分组仍按旧的课程表算，依旧是空的。
+    if (status === 200) {
+      location.reload();
+      return { ok: true, className: target.name, removed: true, reloading: true };
+    }
+    return { ok: true, className: target.name, removed: false, status };
+  })()`);
+  console.log('[ui-smoke] 统一科目用例前置：', JSON.stringify(sparePrep));
+
+  if (sparePrep?.reloading) {
+    // 等页面重新加载并回到课表页（新增课表按钮是这条用例的入口）
+    const reloadDeadline = Date.now() + 15000;
+    let ready = false;
+    while (Date.now() < reloadDeadline && !ready) {
+      await sleep(200);
+      ready = await win.webContents.executeJavaScript(
+        `Array.from(document.querySelectorAll('button')).some((node) => (node.textContent ?? '').trim() === '新增课表')`,
+      );
+    }
+    if (!ready) console.log('[ui-smoke] 警告：删课科目后页面重载超时');
+  }
+
   const unifiedSubject = await win.webContents.executeJavaScript(`(async () => {
     const openButton = Array.from(document.querySelectorAll('button')).find((node) =>
       (node.textContent ?? '').trim() === '新增课表',
@@ -1191,9 +1229,9 @@ async function main() {
     };
   })()`);
   record(
-    'ClassIsland 联动页（教师为本班签发设备令牌 + 下发提醒表单）',
+    'ClassHelper 联动页（教师为本班签发设备令牌 + 下发提醒表单）',
     Boolean(integrationUi?.ok) &&
-      integrationUi?.title === 'ClassIsland 联动' &&
+      integrationUi?.title === 'ClassHelper 联动' &&
       integrationUi?.hasNotify === true &&
       integrationUi?.hasCreate === true &&
       integrationUi?.submit === true &&

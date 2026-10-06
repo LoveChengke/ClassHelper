@@ -1,5 +1,7 @@
 import { dayKeyLocal } from '@classhelper/shared';
 import type {
+  ArchivedClassDto,
+  ArchivedYearDto,
   ClassDto,
   ClassIslandNotificationChannel,
   ClassTeacherBrief,
@@ -11,7 +13,10 @@ import type {
   NotificationDto,
   NotificationPriority,
   ScheduleDto,
+  SessionUser,
+  StudentBrief,
   StudentDto,
+  StudentTransferDto,
   UserDto,
   UserRole,
 } from '@classhelper/shared';
@@ -28,13 +33,13 @@ const toIso = (value: Date): string => value.toISOString();
 const toIsoOrNull = (value: Date | null | undefined): string | null => (value ? value.toISOString() : null);
 
 /**
- * "个人记录"归属范围解析：
- * - 传入 userIds（班级账号 = 全班学生）时优先使用；
- * - 否则退化为单个 userId（普通学生账号 = 自己）。
+ * "个人记录"归属范围解析（记录键是**学生 id**）：
+ * - 传入 studentIds（ClassHelper 班级端 = 全班学生）时优先使用；
+ * - 否则退化为单个 studentId。
  */
-function resolvePool(options: { userId?: string | null; userIds?: string[] }): string[] {
-  if (options.userIds && options.userIds.length > 0) return options.userIds;
-  return options.userId ? [options.userId] : [];
+function resolvePool(options: { studentId?: string | null; studentIds?: string[] }): string[] {
+  if (options.studentIds && options.studentIds.length > 0) return options.studentIds;
+  return options.studentId ? [options.studentId] : [];
 }
 
 export interface UserLike {
@@ -42,7 +47,8 @@ export interface UserLike {
   username: string;
   name: string;
   role: string;
-  classId: string | null;
+  /** 手机号；老库/老对象可能没有这个字段 */
+  phone?: string | null;
   createdAt: Date;
 }
 
@@ -52,7 +58,32 @@ export interface TeacherBriefLike {
   username: string;
 }
 
-export interface StudentLike extends UserLike {
+/** 学生简要信息（id + 学号 + 姓名） */
+export interface StudentBriefLike {
+  id: string;
+  studentNo: string;
+  name: string;
+}
+
+/**
+ * 学生记录（`Student` 表）。
+ *
+ * 学生不是账号 —— 这里没有 `role`、没有 `passwordHash`，
+ * 唯一的标识是 `studentNo`（学号）。
+ */
+export interface StudentLike {
+  id: string;
+  studentNo: string;
+  name: string;
+  classId: string | null;
+  gender: string;
+  guardianPhone: string;
+  status: string;
+  archivedYearId?: string | null;
+  archivedAt?: Date | null;
+  transferredAt?: Date | null;
+  transferNote?: string;
+  createdAt: Date;
   class?: { name: string; grade: string } | null;
 }
 
@@ -67,17 +98,76 @@ export function toUserDto(user: UserLike): UserDto {
     username: user.username,
     name: user.name,
     role: user.role as UserRole,
-    classId: user.classId,
+    phone: user.phone ?? '',
     createdAt: toIso(user.createdAt),
   };
 }
 
-export function toStudentDto(user: StudentLike): StudentDto {
+/** 账号的会话主体（登录返回 / GET /auth/me） */
+export function toUserSessionUser(user: UserLike): SessionUser {
   return {
-    ...toUserDto(user),
-    className: user.class?.name ?? null,
-    grade: user.class?.grade ?? null,
+    id: user.id,
+    username: user.username,
+    name: user.name,
+    role: user.role as UserRole,
+    phone: user.phone ?? '',
+    classId: null,
+    createdAt: toIso(user.createdAt),
   };
+}
+
+/** ClassHelper 班级端登录时用到的班级字段 */
+export interface ClassDeviceLike {
+  id: string;
+  code: string;
+  name: string;
+  grade: string;
+  studentGradeQueryEnabled: boolean;
+  createdAt: Date;
+}
+
+/**
+ * ClassHelper 班级端的会话主体：`id` 与 `classId` 都是**班级 id**，
+ * 角色是 `CLASS_DEVICE`（学生不是账号，因此这里不会出现学生身份）。
+ */
+export function toClassDeviceUser(record: ClassDeviceLike): SessionUser {
+  return {
+    id: record.id,
+    username: record.code,
+    name: record.name,
+    role: 'CLASS_DEVICE',
+    classId: record.id,
+    className: record.name,
+    grade: record.grade,
+    classSession: true,
+    classCode: record.code,
+    studentGradeQueryEnabled: record.studentGradeQueryEnabled,
+    createdAt: toIso(record.createdAt),
+  };
+}
+
+export function toStudentDto(student: StudentLike): StudentDto {
+  return {
+    id: student.id,
+    studentNo: student.studentNo,
+    name: student.name,
+    classId: student.classId,
+    className: student.class?.name ?? null,
+    grade: student.class?.grade ?? null,
+    gender: (student.gender ?? '') as StudentDto['gender'],
+    guardianPhone: student.guardianPhone ?? '',
+    status: (student.status ?? 'active') as StudentDto['status'],
+    archivedYearId: student.archivedYearId ?? null,
+    archivedAt: toIsoOrNull(student.archivedAt),
+    transferredAt: toIsoOrNull(student.transferredAt),
+    transferNote: student.transferNote ?? '',
+    createdAt: toIso(student.createdAt),
+  };
+}
+
+/** 学生简要信息（成绩、提交名单等引用位） */
+export function toStudentBrief(student: StudentBriefLike): StudentBrief {
+  return { id: student.id, studentNo: student.studentNo, name: student.name };
 }
 
 export function toTeacherBrief(user: TeacherBriefLike): ClassTeacherBrief {
@@ -94,11 +184,20 @@ export interface ClassLike {
   id: string;
   name: string;
   grade: string;
+  /** 入学年份（届别）；老数据可能为空 */
+  enrollmentYear?: number | null;
+  /** 班号；老数据可能为空 */
+  classIndex?: number | null;
   teacherId: string;
   /** 本学期教学周数（班主任可调，默认 20） */
   termWeeks?: number;
-  /** 通知显示位置：both / client / classisland（由教室的班级客户端设置） */
+  /** 通知显示位置：both / client / classisland（由 ClassHelper 班级端设置） */
   notificationChannel?: string | null;
+  /** 班级端按学号查成绩的开关 */
+  studentGradeQueryEnabled?: boolean | null;
+  /** 毕业归档所属届别；null = 在读 */
+  archivedYearId?: string | null;
+  archivedAt?: Date | null;
   createdAt: Date;
   teacher?: TeacherBriefLike | null;
   _count?: {
@@ -120,9 +219,15 @@ export function toClassDto(item: ClassLike): ClassDto {
     id: item.id,
     name: item.name,
     grade: item.grade,
+    enrollmentYear: item.enrollmentYear ?? null,
+    classIndex: item.classIndex ?? null,
     teacherId: item.teacherId,
     termWeeks: item.termWeeks ?? 20,
     notificationChannel: toNotificationChannel(item.notificationChannel),
+    // 默认开启：老库补列时的默认值也是 true，两边保持一致
+    studentGradeQueryEnabled: item.studentGradeQueryEnabled ?? true,
+    archivedYearId: item.archivedYearId ?? null,
+    archivedAt: toIsoOrNull(item.archivedAt),
     createdAt: toIso(item.createdAt),
     teacher: item.teacher ? toTeacherBrief(item.teacher) : null,
     studentCount: item._count?.students ?? undefined,
@@ -193,7 +298,7 @@ export function toScheduleDto(item: ScheduleLike): ScheduleDto {
 export interface HomeworkStatusLike {
   id: string;
   homeworkId: string;
-  userId: string;
+  studentId: string;
   completed: boolean;
   updatedAt: Date;
 }
@@ -218,24 +323,24 @@ export function toHomeworkStatusDto(item: HomeworkStatusLike): HomeworkStatusDto
   return {
     id: item.id,
     homeworkId: item.homeworkId,
-    userId: item.userId,
+    studentId: item.studentId,
     completed: item.completed,
     updatedAt: toIso(item.updatedAt),
   };
 }
 
 /**
- * @param options.userId 指定当前用户，用于填充 completed / homeworkStatus
- * @param options.userIds 班级账号（班级设备）场景：以"全班学生"为范围找完成状态
+ * @param options.studentId 指定单个学生，用于填充 completed / homeworkStatus
+ * @param options.studentIds ClassHelper 班级端场景：以"全班学生"为范围找完成状态
  * @param options.withStatus 是否统计完成人数（教师视角）
  */
 export function toHomeworkDto(
   item: HomeworkLike,
-  options: { userId?: string | null; userIds?: string[]; withStatus?: boolean } = {},
+  options: { studentId?: string | null; studentIds?: string[]; withStatus?: boolean } = {},
 ): HomeworkDto {
   const statuses = item.statuses ?? [];
   const pool = resolvePool(options);
-  const own = pool.length > 0 ? statuses.find((status) => pool.includes(status.userId)) : undefined;
+  const own = pool.length > 0 ? statuses.find((status) => pool.includes(status.studentId)) : undefined;
 
   return {
     id: item.id,
@@ -261,7 +366,7 @@ export function toHomeworkDto(
 export interface NotificationReadLike {
   id: string;
   notificationId: string;
-  userId: string;
+  studentId: string;
   readAt: Date;
 }
 
@@ -278,17 +383,17 @@ export interface NotificationLike {
 }
 
 /**
- * @param options.userId 指定当前用户（普通学生账号）
- * @param options.userIds 班级账号（班级设备）场景：以"全班学生"为范围找已读状态
+ * @param options.studentId 指定单个学生
+ * @param options.studentIds ClassHelper 班级端场景：以"全班学生"为范围找已读状态
  * @param options.withStatus 是否统计已读人数（教师视角）
  */
 export function toNotificationDto(
   item: NotificationLike,
-  options: { userId?: string | null; userIds?: string[]; withStatus?: boolean } = {},
+  options: { studentId?: string | null; studentIds?: string[]; withStatus?: boolean } = {},
 ): NotificationDto {
   const reads = item.reads ?? [];
   const pool = resolvePool(options);
-  const own = pool.length > 0 ? reads.find((read) => pool.includes(read.userId)) : undefined;
+  const own = pool.length > 0 ? reads.find((read) => pool.includes(read.studentId)) : undefined;
 
   return {
     id: item.id,
@@ -311,13 +416,17 @@ export interface GradeLike {
   id: string;
   classId: string;
   courseId: string | null;
-  userId: string;
+  studentId: string;
   examName: string;
   score: number;
   totalScore: number;
+  /** 等级口径：percent / letter / custom（老库可能为空，按 percent 兜底） */
+  levelType?: string | null;
+  /** 等级文本（老库可能为空） */
+  level?: string | null;
   publishedAt: Date;
   course?: CourseBriefLike | null;
-  student?: TeacherBriefLike | null;
+  student?: StudentBriefLike | null;
   class?: { name: string } | null;
 }
 
@@ -326,13 +435,111 @@ export function toGradeDto(item: GradeLike): GradeDto {
     id: item.id,
     classId: item.classId,
     courseId: item.courseId,
-    userId: item.userId,
+    studentId: item.studentId,
     examName: item.examName,
     score: item.score,
     totalScore: item.totalScore,
+    levelType: (item.levelType ?? 'percent') as GradeDto['levelType'],
+    level: item.level ?? '',
     publishedAt: toIso(item.publishedAt),
     course: item.course ? toCourseBrief(item.course) : null,
-    student: item.student ? toTeacherBrief(item.student) : null,
+    student: item.student ? toStudentBrief(item.student) : null,
     className: item.class?.name ?? null,
+  };
+}
+
+/* ------------------------------------------------------------------ 调班 / 归档 */
+
+export interface StudentTransferLike {
+  id: string;
+  studentId: string;
+  studentNo: string;
+  studentName: string;
+  fromClassId: string | null;
+  fromClassName: string;
+  toClassId: string | null;
+  toClassName: string;
+  operatorId: string | null;
+  operatorName: string;
+  mode: string;
+  note?: string | null;
+  createdAt: Date;
+}
+
+export function toStudentTransferDto(item: StudentTransferLike): StudentTransferDto {
+  return {
+    id: item.id,
+    studentId: item.studentId,
+    studentNo: item.studentNo,
+    studentName: item.studentName,
+    fromClassId: item.fromClassId,
+    fromClassName: item.fromClassName,
+    toClassId: item.toClassId,
+    toClassName: item.toClassName,
+    operatorId: item.operatorId,
+    operatorName: item.operatorName,
+    mode: item.mode as StudentTransferDto['mode'],
+    note: item.note ?? '',
+    createdAt: toIso(item.createdAt),
+  };
+}
+
+export interface ArchivedYearLike {
+  id: string;
+  enrollmentYear: number;
+  graduationYear: number;
+  name: string;
+  note: string;
+  operatorId: string | null;
+  operatorName: string;
+  classCount: number;
+  studentCount: number;
+  transferredCount: number;
+  homeworkCount: number;
+  notificationCount: number;
+  archivedAt: Date;
+}
+
+export function toArchivedYearDto(item: ArchivedYearLike): ArchivedYearDto {
+  return {
+    id: item.id,
+    enrollmentYear: item.enrollmentYear,
+    graduationYear: item.graduationYear,
+    name: item.name,
+    note: item.note,
+    operatorId: item.operatorId,
+    operatorName: item.operatorName,
+    classCount: item.classCount,
+    studentCount: item.studentCount,
+    transferredCount: item.transferredCount,
+    homeworkCount: item.homeworkCount,
+    notificationCount: item.notificationCount,
+    archivedAt: toIso(item.archivedAt),
+  };
+}
+
+export interface ArchivedClassLike {
+  id: string;
+  name: string;
+  grade: string;
+  enrollmentYear: number | null;
+  classIndex: number | null;
+  archivedAt: Date | null;
+  teacher?: { name: string } | null;
+  _count?: { students?: number; homeworks?: number; notifications?: number };
+}
+
+export function toArchivedClassDto(item: ArchivedClassLike): ArchivedClassDto {
+  return {
+    id: item.id,
+    name: item.name,
+    grade: item.grade,
+    enrollmentYear: item.enrollmentYear,
+    classIndex: item.classIndex,
+    headTeacherName: item.teacher?.name ?? null,
+    studentCount: item._count?.students ?? 0,
+    homeworkCount: item._count?.homeworks ?? 0,
+    notificationCount: item._count?.notifications ?? 0,
+    archivedAt: toIsoOrNull(item.archivedAt),
   };
 }

@@ -1,17 +1,17 @@
 ---
 title: 开发文档
-description: 班级小助手的架构、接口、数据模型、权限、动效层，以及验收与发版流程。
+description: ClassHelper的架构、接口、数据模型、权限、动效层，以及验收与发版流程。
 ---
 
 # 开发文档
 
-班级小助手是一个 **pnpm monorepo**，一份代码产出四个交付物：
+ClassHelper是一个 **pnpm monorepo**，一份代码产出四个交付物：
 
 | 交付物               | 位置                          | 形态                                                            |
 | -------------------- | ----------------------------- | --------------------------------------------------------------- |
 | 后端服务             | `packages/server`             | Express 5 + Prisma 7 + Socket.IO，接口前缀 `/api`               |
 | Web 管理端           | `packages/web-admin`          | Vue 3 + Vite + Element Plus（教师 / 管理员用，PWA 可安装）      |
-| 桌面客户端           | `packages/desktop-client`     | Electron + Vue 3（学生端 / 教室机器，含灵动岛浮窗）             |
+| 桌面客户端           | `packages/desktop-client`     | Electron + Vue 3（ClassHelper 班级端 / 教室机器，含灵动岛浮窗）             |
 | 共享契约             | `packages/shared`             | 三端共用的类型 / 常量 / 权限 / 工具函数                         |
 | ClassIsland 联动插件 | `packages/classisland-plugin` | .NET 8 / C#（**独立于 pnpm workspace**，不参与 `pnpm install`） |
 
@@ -38,7 +38,7 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 | [架构总览](architecture.md)                  | 目录结构、技术栈、模块化设计、几条贯穿全局的约定 |
 | [REST API](api.md)                           | 全部接口一览（方法 / 路径 / 权限）               |
 | [实时事件（Socket.IO）](realtime.md)         | 事件清单、房间规则、新增事件要改哪三处           |
-| [数据模型](data-model.md)                    | 14 张表、迁移历史、跨库约定                      |
+| [数据模型](data-model.md)                    | 16 张表、迁移历史、跨库约定                      |
 | [角色与权限](permissions.md)                 | 权限矩阵与实现位置                               |
 | [动效层与主题](motion.md)                    | beUI 令牌、CSS `linear()` 弹簧、深色主题         |
 | [ClassIsland 插件](classisland-plugin.md)    | 插件契约、镜像为什么要带 `startTime`、部署与调试 |

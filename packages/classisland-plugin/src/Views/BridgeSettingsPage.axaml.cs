@@ -11,7 +11,7 @@ using CommunityToolkit.Mvvm.Input;
 namespace ClassHelper.ClassIslandPlugin.Views;
 
 /// <summary>
-/// 「班级小助手联动」设置页。
+/// 「ClassHelper 联动」设置页。
 ///
 /// 页面上的绑定源就是本页自己（<c>DataContext = this</c>）：<see cref="Settings"/> 暴露全部配置项，
 /// <see cref="Bridge"/> 暴露运行状态。这样 XAML 里能直接写 <c>{Binding Settings.Xxx}</c>，
@@ -20,7 +20,7 @@ namespace ClassHelper.ClassIslandPlugin.Views;
 // 图标用 Fluent 字体的码位（与 ClassIsland 内置设置页写法一致）：未选中/选中同一枚插头图标
 [SettingsPageInfo(
     "classhelper.classisland.bridge.settings",
-    "班级小助手联动",
+    "ClassHelper 联动",
     "\uE71B",
     "\uE71B",
     SettingsPageCategory.External)]

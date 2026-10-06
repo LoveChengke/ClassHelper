@@ -10,7 +10,7 @@ namespace ClassHelper.ClassIslandPlugin.Services;
 /// <summary>
 /// 课表 / 状态 → 上报载荷 的换算层。
 ///
-/// 这里集中全部"ClassIsland 口径 ↔ 班级小助手口径"的转换，保证只有一处需要跟着
+/// 这里集中全部"ClassIsland 口径 ↔ ClassHelper口径"的转换，保证只有一处需要跟着
 /// ClassIsland 的模型变化而修改：
 /// - 星期：ClassIsland <c>WeekDay</c> 是 0=周日、1=周一…6=周六；本系统是 1=周一…7=周日；
 /// - 单双周：ClassIsland <c>WeekCountDiv</c>/<c>WeekCountDivTotal</c>；本系统 ALL/ODD/EVEN；
@@ -91,7 +91,7 @@ public static class ScheduleMapper
         var parity = ToWeekParity(plan.TimeRule.WeekCountDiv, plan.TimeRule.WeekCountDivTotal);
         if (plan.TimeRule.WeekCountDivTotal > 2)
         {
-            warning = "存在 3 周以上的轮换课表，班级小助手只支持单双周，已按「每周」处理";
+            warning = "存在 3 周以上的轮换课表，ClassHelper只支持单双周，已按「每周」处理";
         }
 
         var classes = plan.Classes;
@@ -102,7 +102,7 @@ public static class ScheduleMapper
             // 索引必须与 Classes 对齐：这里按下标取时间点，**不能**先用 Where 过滤再取
             var point = classPoints[index];
             if (info is null) continue;
-            // 老师停用的一节：本系统没有"停用"概念，不上报（否则学生端会看到一节实际上不上的课）
+            // 老师停用的一节：本系统没有"停用"概念，不上报（否则 ClassHelper 班级端会看到一节实际上不上的课）
             if (!info.IsEnabled) continue;
 
             // 空课（未安排科目）不上报：服务端的科目是必填的，空课由课表里的缺席表达

@@ -173,6 +173,30 @@ export function durationMinutes(startTime: string, endTime: string): number {
   return (eh as number) * 60 + (em as number) - ((sh as number) * 60 + (sm as number));
 }
 
+/* ------------------------------------------------------------------ 学生 / 学号 */
+
+/**
+ * 学号归一化：去掉**全部空白**（首尾与内部），字母统一转大写。
+ *
+ * 学号是学生的唯一标识与查询键，因此这些手输差异必须收敛到同一个键上，
+ * 否则同一个学生会在名单/成绩里变成两条：
+ *   「2026 001」与「2026001」 —— 多余空格；
+ *   「a2026001」与「A2026001」 —— 大小写。
+ * 统一转大写（而不是只去空格）是关键：`Student.studentNo` 上的唯一约束因此
+ * **天然就是大小写无关的**，不需要在写入前多查一次库，也不会出现
+ * "库里存着两条只差大小写的学号"这种脏数据。数字学号不受影响。
+ *
+ * 允许的字符集与后端 zod 校验一致：1~32 位数字 / 字母 / `.` `_` `-`。
+ */
+export function normalizeStudentNo(value: string): string {
+  return value.replace(/\s+/g, '').toUpperCase();
+}
+
+/** 学号格式校验（与后端 `studentNoSchema` 同一口径） */
+export function isValidStudentNo(value: string): boolean {
+  return /^[A-Za-z0-9._-]{1,32}$/.test(normalizeStudentNo(value));
+}
+
 /* ------------------------------------------------------------------ 成绩 */
 
 /** 得分率（0-100），总分非法时返回 0 */
@@ -181,7 +205,7 @@ export function gradePercent(score: number, totalScore: number): number {
   return round((score / totalScore) * 100, 1);
 }
 
-/** 等级换算，学生端图表与标签复用 */
+/** 等级换算，ClassHelper 班级端图表与标签复用 */
 export function gradeLevel(percent: number): GradeLevel {
   if (percent >= 90) return 'A';
   if (percent >= 80) return 'B';
@@ -289,6 +313,89 @@ export function resolveCurrentWeek(
   const diffDays = Math.floor((now.getTime() - monday.getTime()) / MS_PER_DAY);
   const week = Math.floor(diffDays / 7) + 1;
   return clamp(week, 1, maxWeek);
+}
+
+/* ------------------------------------------------------------------ 学期周次区间 */
+
+/**
+ * 按**逐周区间**判定当前是第几教学周。
+ *
+ * 为什么需要它：`resolveCurrentWeek` 假设"每周都是七天、中间没有断档"，
+ * 而法定节假日调休、周末补课、错峰开学都会让某一周变长变短 —— 线性推算出来的周次
+ * 会与教室里实际情况整体错位（课表、作业、成绩都按周次组织，错一周就全错）。
+ *
+ * @returns 命中的周次；当前日期不在任何已配置的区间内时返回 `null`（交给调用方线性兜底）
+ */
+export function resolveWeekFromRanges(
+  ranges: readonly { weekNumber: number; startDate: string; endDate: string }[],
+  now: Date = new Date(),
+): number | null {
+  const today = dayKeyLocal(now);
+  if (!today) return null;
+  for (const range of ranges) {
+    // 日期串是 YYYY-MM-DD，字典序即时间序，不需要解析成 Date
+    if (today >= range.startDate && today <= range.endDate) return range.weekNumber;
+  }
+  return null;
+}
+
+/**
+ * 按"学期开始日期 + 每周七天"生成逐周区间（管理员的起点，生成后可以逐周微调）。
+ *
+ * @param termStartDate 第 1 教学周的**周一**（YYYY-MM-DD）
+ */
+export function buildAutoTermWeeks(
+  termStartDate: string,
+  maxWeek: number = MAX_TERM_WEEK,
+): Array<{ weekNumber: number; startDate: string; endDate: string; note: string }> {
+  if (!termStartDate) return [];
+  const start = toDate(termStartDate);
+  if (Number.isNaN(start.getTime())) return [];
+  const weekday = start.getDay() === 0 ? 7 : start.getDay();
+  const monday = new Date(start.getTime() - (weekday - 1) * MS_PER_DAY);
+  monday.setHours(0, 0, 0, 0);
+
+  const total = Math.max(1, Math.min(maxWeek, MAX_TERM_WEEK));
+  const weeks: Array<{ weekNumber: number; startDate: string; endDate: string; note: string }> = [];
+  for (let index = 0; index < total; index += 1) {
+    const from = new Date(monday.getTime() + index * 7 * MS_PER_DAY);
+    const to = new Date(from.getTime() + 6 * MS_PER_DAY);
+    weeks.push({
+      weekNumber: index + 1,
+      startDate: dayKeyLocal(from),
+      endDate: dayKeyLocal(to),
+      note: '',
+    });
+  }
+  return weeks;
+}
+
+/**
+ * 校验一组周次区间：周次为正整数、起止顺序正确、**区间之间不重叠**。
+ * 返回人类可读的错误列表（空数组 = 通过）。
+ */
+export function validateTermWeeks(
+  weeks: readonly { weekNumber: number; startDate: string; endDate: string }[],
+): string[] {
+  const errors: string[] = [];
+  const ordered = [...weeks].sort((a, b) => a.startDate.localeCompare(b.startDate));
+  for (const week of ordered) {
+    if (!isDayKey(week.startDate) || !isDayKey(week.endDate)) {
+      errors.push(`第 ${week.weekNumber} 周：日期格式应为 YYYY-MM-DD`);
+      continue;
+    }
+    if (week.startDate > week.endDate) {
+      errors.push(`第 ${week.weekNumber} 周：开始日期晚于结束日期`);
+    }
+  }
+  for (let index = 1; index < ordered.length; index += 1) {
+    const prev = ordered[index - 1]!;
+    const current = ordered[index]!;
+    if (current.startDate <= prev.endDate) {
+      errors.push(`第 ${prev.weekNumber} 周与第 ${current.weekNumber} 周的日期区间重叠`);
+    }
+  }
+  return errors;
 }
 
 /** 把课表条目转换成时段信息 */

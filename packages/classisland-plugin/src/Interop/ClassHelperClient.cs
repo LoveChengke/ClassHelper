@@ -80,6 +80,14 @@ public class ReportSettingsDto
 {
     [JsonPropertyName("mirrorScheduleToClassIsland")] public bool MirrorScheduleToClassIsland { get; set; }
     [JsonPropertyName("enabled")] public bool Enabled { get; set; }
+
+    /// <summary>
+    /// 服务端请求**立刻上报一次课表**（老师在 Web 端点了「从教室机器获取课表」）。
+    ///
+    /// 它与本机的「上报课表到 ClassHelper」开关无关：那个开关管的是"要不要**自动**回传"，
+    /// 现在是默认关闭的；而这是一次显式的人工请求，看到就要照做。
+    /// </summary>
+    [JsonPropertyName("scheduleRequested")] public bool ScheduleRequested { get; set; }
 }
 
 public class ReportResultDto
@@ -157,10 +165,32 @@ public class ClassPlanMirrorDto
     [JsonPropertyName("termStartDate")] public string TermStartDate { get; set; } = "";
 }
 
+/// <summary>服务端逐周配的学期周次区间（管理员在「学期周次」里维护）。</summary>
+public class TermWeekRangeDto
+{
+    [JsonPropertyName("weekNumber")] public int WeekNumber { get; set; }
+    /// <summary>YYYY-MM-DD</summary>
+    [JsonPropertyName("startDate")] public string StartDate { get; set; } = "";
+    /// <summary>YYYY-MM-DD</summary>
+    [JsonPropertyName("endDate")] public string EndDate { get; set; } = "";
+}
+
 public class PullResultDto
 {
     [JsonPropertyName("classPlan")] public ClassPlanMirrorDto? ClassPlan { get; set; }
     [JsonPropertyName("week")] public int Week { get; set; }
+
+    /// <summary>
+    /// 学期逐周区间；空 = 服务端只按学期开始日期线性推算。
+    ///
+    /// ClassIsland 自身只认"教学周序号 + 单双周"，没有"按日期区间定义某一周"的模型
+    /// （本机装的 2.1.0.1 没有该字段），所以这份区间在插件侧只用于：
+    /// 1) 校正"现在是第几周"（调休会让线性推算整体错位）；
+    /// 2) 在设置页里显示教室这台机器当前处在哪一段日期区间，方便老师核对。
+    /// 课表本身的周次口径仍由 <see cref="ClassPlanMirrorDto.TermStartDate"/> 与单双周表达。
+    /// </summary>
+    [JsonPropertyName("weekRanges")] public List<TermWeekRangeDto> WeekRanges { get; set; } = new();
+
     [JsonPropertyName("serverTime")] public string ServerTime { get; set; } = "";
 }
 
@@ -174,7 +204,7 @@ internal class ApiEnvelope<T>
     [JsonPropertyName("code")] public string? Code { get; set; }
 }
 
-/// <summary>调用班级小助手后端的结果（不抛异常，便于设置页展示原因）。</summary>
+/// <summary>调用 ClassHelper后端的结果（不抛异常，便于设置页展示原因）。</summary>
 public class ApiCallResult
 {
     public bool Ok { get; init; }
@@ -187,7 +217,7 @@ public class ApiCallResult
 }
 
 /// <summary>
-/// 班级小助手后端客户端。
+/// ClassHelper后端客户端。
 ///
 /// 只用 <see cref="HttpClient"/> + System.Text.Json：不引入额外依赖包，
 /// 避免插件加载时因为"插件程序集隔离"缺少依赖而无法启动
@@ -214,7 +244,7 @@ public sealed class ClassHelperClient : IDisposable
     };
 
     /// <summary>
-    /// 与班级小助手通信的 HttpClient。
+    /// 与 ClassHelper通信的 HttpClient。
     ///
     /// **必须显式处理代理**：教室机器（以及开发机）常常配了系统代理，
     /// 而 Windows 的代理设置默认连 `127.0.0.1` 也会走代理 —— 于是"填写令牌后立刻 HTTP 404"，
@@ -335,7 +365,7 @@ public sealed class ClassHelperClient : IDisposable
                     // 老师截图给我们就能一眼定位。
                     message = envelope is null
                         ? $"HTTP {(int)response.StatusCode}（{method.Method} {request.RequestUri}）——" +
-                          "响应不是班级小助手的标准格式，请检查服务器地址是否正确、" +
+                          "响应不是 ClassHelper的标准格式，请检查服务器地址是否正确、" +
                           "或该系统代理是否拦截了内网请求"
                         : $"HTTP {(int)response.StatusCode}（{method.Method} {request.RequestUri}）";
                 }
@@ -350,7 +380,7 @@ public sealed class ClassHelperClient : IDisposable
                 // 设置页显示"连接异常"却没有原因，与上面专门为代理错误页写的诊断自相矛盾。
                 LastError =
                     $"HTTP {(int)response.StatusCode}（{method.Method} {request.RequestUri}）——" +
-                    "响应不是班级小助手的标准格式，请检查服务器地址是否正确，或该系统代理是否拦截了内网请求";
+                    "响应不是 ClassHelper的标准格式，请检查服务器地址是否正确，或该系统代理是否拦截了内网请求";
                 return new ApiEnvelope<T> { Success = false, Message = LastError };
             }
 
@@ -365,7 +395,7 @@ public sealed class ClassHelperClient : IDisposable
         }
         catch (HttpRequestException exception)
         {
-            LastError = $"无法连接班级小助手服务：{exception.Message}";
+            LastError = $"无法连接 ClassHelper服务：{exception.Message}";
             return null;
         }
         catch (Exception exception)

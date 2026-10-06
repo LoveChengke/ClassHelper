@@ -15,10 +15,10 @@
     <ScrollViewer>
         <StackPanel Classes="settings-container animated-intro" Spacing="0">
             <!-- 连接 -->
-            <TextBlock Text="连接班级小助手"
+            <TextBlock Text="连接 ClassHelper"
                        Theme="{StaticResource SubtitleTextBlockStyle}" />
             <TextBlock Margin="0 6 0 12" TextWrapping="Wrap"
-                       Text="填入班级小助手后端的地址与设备令牌。设备令牌在班级小助手 Web 端「ClassIsland 联动」页面里为本班新建设备后生成，只显示一次。" />
+                       Text="填入 ClassHelper后端的地址与设备令牌。设备令牌在 ClassHelper Web 端「ClassIsland 联动」页面里为本班新建设备后生成，只显示一次。" />
 
             <TextBox Watermark="http://127.0.0.1:4000"
                      Text="{Binding Settings.ServerUrl, Mode=TwoWay}" />
@@ -53,10 +53,10 @@
             <TextBlock Margin="0 24 0 0" Text="同步内容"
                        Theme="{StaticResource SubtitleTextBlockStyle}" />
             <TextBlock Margin="0 6 0 12" TextWrapping="Wrap"
-                       Text="课表以「合并」方式写入班级小助手：同一星期、同一时间的课目会被更新，不会产生重复行。" />
+                       Text="课表以「合并」方式写入 ClassHelper：同一星期、同一时间的课目会被更新，不会产生重复行。" />
 
-            <fa:SettingsExpander Header="上报课表到班级小助手"
-                                 Description="把 ClassIsland 里启用的课表同步给班级小助手，Web 端与桌面客户端即可看到课程表。">
+            <fa:SettingsExpander Header="自动上报课表到 ClassHelper"
+                                 Description="把 ClassIsland 里启用的课表**自动**同步给 ClassHelper。默认关闭：课表以 ClassHelper 为准，自动回传会在老师手排课之后被教室的旧课表悄悄覆盖。要取教室的课表，请在 Web 端点「从教室机器获取课表」——那是一次显式的人工请求，与本开关无关。">
                 <fa:SettingsExpander.IconSource>
                     <ci:FluentIconSource Glyph="&#xE8A5;" />
                 </fa:SettingsExpander.IconSource>
@@ -66,7 +66,7 @@
             </fa:SettingsExpander>
 
             <fa:SettingsExpander Header="把班级课表镜像回 ClassIsland"
-                                 Description="反方向同步：把班级小助手上排好的课表写回 ClassIsland，会新建一份以「班级小助手-」开头的档案课表，不会修改老师原有的课表。">
+                                 Description="反方向同步：把 ClassHelper上排好的课表写回 ClassIsland，会新建一份以「ClassHelper-」开头的档案课表，不会修改老师原有的课表。">
                 <fa:SettingsExpander.IconSource>
                     <ci:FluentIconSource Glyph="&#xE8F1;" />
                 </fa:SettingsExpander.IconSource>
@@ -101,10 +101,10 @@
             <TextBlock Margin="0 24 0 0" Text="提醒"
                        Theme="{StaticResource SubtitleTextBlockStyle}" />
             <TextBlock Margin="0 6 0 12" TextWrapping="Wrap"
-                       Text="老师在班级小助手上发布的提醒会以 ClassIsland 的全屏提醒呈现；未弹出的提醒在应用重开后会自动补发，确认弹出后不再重复。" />
+                       Text="老师在 ClassHelper上发布的提醒会以 ClassIsland 的全屏提醒呈现；未弹出的提醒在应用重开后会自动补发，确认弹出后不再重复。" />
 
-            <fa:SettingsExpander Header="接收班级小助手提醒"
-                                 Description="关闭后本机会忽略老师在班级小助手上发布的提醒（提醒仍会留在班级通知中心）。">
+            <fa:SettingsExpander Header="接收 ClassHelper提醒"
+                                 Description="关闭后本机会忽略老师在 ClassHelper上发布的提醒（提醒仍会留在班级通知中心）。">
                 <fa:SettingsExpander.IconSource>
                     <ci:FluentIconSource Glyph="&#xE8BD;" />
                 </fa:SettingsExpander.IconSource>
@@ -165,7 +165,7 @@
             </StackPanel>
 
             <TextBlock Margin="0 24 0 0" Opacity="0.6" TextWrapping="Wrap"
-                       Text="提示：班级小助手 Web 端 →「ClassIsland 联动」可以新建/重置设备令牌、开关同步项，并实时看到本机当前上的课。" />
+                       Text="提示：ClassHelper Web 端 →「ClassIsland 联动」可以新建/重置设备令牌、开关同步项，并实时看到本机当前上的课。" />
         </StackPanel>
     </ScrollViewer>
 </controls:SettingsPageBase>

@@ -95,7 +95,7 @@ async function enterOffline(): Promise<void> {
       <div class="login-head">
         <img class="login-logo" :src="BRAND_LOGO_URL" alt="" width="44" height="44" />
         <div>
-          <h1 class="login-title">班级小助手</h1>
+          <h1 class="login-title">ClassHelper</h1>
           <p class="login-sub">班级客户端 · 以班级账号登录，实时接收课表、作业、通知与成绩</p>
         </div>
       </div>

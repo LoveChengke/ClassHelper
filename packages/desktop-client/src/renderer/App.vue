@@ -136,7 +136,7 @@ onUnmounted(() => {
 <template>
   <div v-if="booting" class="boot-screen">
     <el-icon :size="30" class="is-loading" color="#409eff"><Loading /></el-icon>
-    <p class="boot-title">班级小助手</p>
+    <p class="boot-title">ClassHelper</p>
     <!--
       启动文案会依次经过「读取本地配置 → 恢复登录状态」，直接换字是一下"啪"的跳变。
       交叉淡入（旧的上移淡出、新的从下方淡入）把两次状态读成**同一行字在更新**，

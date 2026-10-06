@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
   CALL_QUICK_PHRASES,
-  ROLE_LABELS,
+  STUDENT_GENDERS,
+  STUDENT_GENDER_LABELS,
+  STUDENT_STATUSES,
+  STUDENT_STATUS_LABELS,
+  STUDENT_STATUS_TAG_TYPES,
   formatDate,
   type ClassDto,
   type StudentDto,
+  type StudentStatus,
+  type StudentTransferDto,
 } from '@classhelper/shared';
 import { callApi, classApi, studentApi } from '@/api';
 import TableImportDialog from '@/components/TableImportDialog.vue';
@@ -14,7 +20,11 @@ import TableImportDialog from '@/components/TableImportDialog.vue';
 const loading = ref(false);
 const students = ref<StudentDto[]>([]);
 const classes = ref<ClassDto[]>([]);
-const filter = reactive({ classId: '', keyword: '' });
+const filter = reactive({ classId: '', keyword: '', status: '' as '' | StudentStatus });
+/** 表格勾选（批量调班 / 批量转出用） */
+const selection = ref<StudentDto[]>([]);
+
+const classOptions = computed(() => classes.value);
 
 async function loadClasses(): Promise<void> {
   classes.value = await classApi.list();
@@ -23,9 +33,10 @@ async function loadClasses(): Promise<void> {
 async function loadStudents(): Promise<void> {
   loading.value = true;
   try {
-    const params: { classId?: string; keyword?: string } = {};
+    const params: { classId?: string; keyword?: string; status?: StudentStatus } = {};
     if (filter.classId) params.classId = filter.classId;
     if (filter.keyword.trim()) params.keyword = filter.keyword.trim();
+    if (filter.status) params.status = filter.status;
     students.value = await studentApi.list(params);
   } finally {
     loading.value = false;
@@ -47,94 +58,64 @@ function openImport(): void {
 const formVisible = ref(false);
 const formRef = ref<FormInstance>();
 const editingId = ref<string | null>(null);
-/** 表单不再暴露「用户名」：新建时由前端自动生成学号式名单标识（见 autoCreateStudent） */
-const form = reactive({ name: '', classId: '' });
+/** 学号是学生的唯一标识与查询键，必须由管理员显式填写（不再自动生成） */
+const form = reactive({
+  studentNo: '',
+  name: '',
+  classId: '',
+  gender: '' as '' | 'MALE' | 'FEMALE',
+  guardianPhone: '',
+});
 const rules: FormRules = {
+  studentNo: [{ required: true, message: '请输入学号', trigger: 'blur' }],
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
 };
 
 function openCreate(): void {
   editingId.value = null;
+  form.studentNo = '';
   form.name = '';
   form.classId = filter.classId;
+  form.gender = '';
+  form.guardianPhone = '';
   formVisible.value = true;
 }
 
 function openEdit(row: StudentDto): void {
   editingId.value = row.id;
+  form.studentNo = row.studentNo;
   form.name = row.name;
   form.classId = row.classId ?? '';
+  form.gender = row.gender;
+  form.guardianPhone = row.guardianPhone;
   formVisible.value = true;
-}
-
-/**
- * 自动生成学生名单标识（学号式：student01、student02 …，与种子数据同风格）。
- *
- * 后端 `POST /api/students` 的 username 必填且全局唯一（教师/管理员账号同样占位），
- * 界面已按需求隐藏「用户名」输入，因此这里用「全量学生 + 递增序号」生成，
- * 并在服务端返回 409（唯一约束冲突）时换下一个序号重试；其它错误立即抛出，避免刷屏。
- * 学生没有密码、不能登录，username 仅作名单标识。
- */
-function studentUsernameAt(index: number): string {
-  return index < 100 ? `student${String(index).padStart(2, '0')}` : `student${index}`;
-}
-
-async function autoCreateStudent(): Promise<void> {
-  const existing = new Set((await studentApi.list()).map((item) => item.username));
-  let index = existing.size + 1;
-  let lastError: unknown = new Error('自动生成名单标识失败');
-
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    let username = studentUsernameAt(index);
-    while (existing.has(username)) {
-      index += 1;
-      username = studentUsernameAt(index);
-    }
-    try {
-      await studentApi.create({
-        username,
-        name: form.name.trim(),
-        classId: form.classId || null,
-      });
-      return;
-    } catch (error) {
-      const status = (error as { response?: { status?: number } }).response?.status;
-      if (status !== 409) throw error;
-      lastError = error;
-      existing.add(username);
-      index += 1;
-    }
-  }
-  throw lastError;
 }
 
 async function submitForm(): Promise<void> {
   const valid = await formRef.value?.validate().catch(() => false);
   if (!valid) return;
 
+  const payload = {
+    studentNo: form.studentNo.trim(),
+    name: form.name.trim(),
+    classId: form.classId || null,
+    gender: form.gender,
+    guardianPhone: form.guardianPhone.trim(),
+  };
+
   if (editingId.value) {
-    // 用户名不再由界面维护：编辑只改姓名与班级
-    await studentApi.update(editingId.value, {
-      name: form.name.trim(),
-      classId: form.classId || null,
-    });
+    await studentApi.update(editingId.value, payload);
     ElMessage.success('学生信息已更新');
   } else {
-    try {
-      await autoCreateStudent();
-      ElMessage.success('学生已创建（名单标识已自动生成）');
-    } catch {
-      // 接口层已弹出服务端原因，这里补充可执行的兜底建议
-      ElMessage.error('创建失败：可稍后重试，或用「导入名单」在表格里显式指定用户名');
-      return;
-    }
+    await studentApi.create(payload);
+    ElMessage.success('学生已加入名单');
   }
   formVisible.value = false;
   await loadStudents();
 }
 
 async function removeStudent(row: StudentDto): Promise<void> {
-  await ElMessageBox.confirm(`删除学生「${row.name}」及其成绩、作业记录？`, '危险操作', {
+  await ElMessageBox.confirm(`删除学生「${row.name}（${row.studentNo}）」及其成绩、作业记录？`, '危险操作', {
     type: 'warning',
     confirmButtonText: '确认删除',
   });
@@ -142,6 +123,87 @@ async function removeStudent(row: StudentDto): Promise<void> {
   ElMessage.success('学生已删除');
   await loadStudents();
 }
+
+/* ------------------------------------------------------------ 调班 / 转出 */
+// 规则（需求「管理员调班」）：只改学生当前班级，**学号不变**、不创建账号；
+// 原班级/新班级/操作人/时间记入历史；历史作业与成绩保留原归属。
+
+const transferVisible = ref(false);
+const transferSaving = ref(false);
+const transferTargets = ref<StudentDto[]>([]);
+const transferForm = reactive({ toClassId: '', note: '' });
+
+function openTransfer(rows: StudentDto[]): void {
+  if (rows.length === 0) {
+    ElMessage.warning('请先勾选要调动的学生');
+    return;
+  }
+  transferTargets.value = rows;
+  transferForm.toClassId = '';
+  transferForm.note = '';
+  transferVisible.value = true;
+}
+
+async function submitTransfer(): Promise<void> {
+  transferSaving.value = true;
+  try {
+    const result = await studentApi.transfer(
+      transferTargets.value.map((item) => item.id),
+      transferForm.toClassId || null,
+      transferForm.note.trim() || undefined,
+    );
+    ElMessage.success(`已调动 ${result.moved} 名学生（学号不变，历史可查）`);
+    transferVisible.value = false;
+    await loadStudents();
+  } finally {
+    transferSaving.value = false;
+  }
+}
+
+async function transferOut(rows: StudentDto[]): Promise<void> {
+  if (rows.length === 0) {
+    ElMessage.warning('请先勾选要办理转出的学生');
+    return;
+  }
+  const names = rows.map((item) => item.name).join('、');
+  const { value } = await ElMessageBox.prompt(
+    `将 ${rows.length} 名学生（${names}）标记为「已转出」。\n` +
+      '转出表示学籍离开本校：班级归属与历史成绩、作业都会保留，只是不再计入在读名单。',
+    '办理学生转出',
+    { inputPlaceholder: '转出去向 / 原因（可选）', inputValue: '', confirmButtonText: '确认转出' },
+  );
+  const result = await studentApi.transferOut(
+    rows.map((item) => item.id),
+    (value ?? '').trim() || undefined,
+  );
+  ElMessage.success(`已办理 ${result.transferred} 名学生转出`);
+  await loadStudents();
+}
+
+/* ------------------------------------------------------------ 调班历史 */
+
+const historyVisible = ref(false);
+const historyLoading = ref(false);
+const historyRows = ref<StudentTransferDto[]>([]);
+const historyTarget = ref<StudentDto | null>(null);
+
+async function openHistory(row: StudentDto): Promise<void> {
+  historyTarget.value = row;
+  historyVisible.value = true;
+  historyLoading.value = true;
+  try {
+    const result = await studentApi.transfersOf(row.id);
+    historyRows.value = result.items;
+  } finally {
+    historyLoading.value = false;
+  }
+}
+
+const TRANSFER_MODE_LABELS: Record<string, string> = {
+  single: '单个调班',
+  batch: '批量调班',
+  'transfer-out': '转出',
+};
 
 onMounted(async () => {
   await Promise.all([loadClasses(), loadStudents()]);
@@ -200,21 +262,37 @@ async function submitCall(): Promise<void> {
     <div class="page-header">
       <div>
         <h2 class="page-title">学生管理</h2>
-        <p class="page-subtitle">学生名单、分班与叫人（学生端统一用班级账号登录，学生本身没有密码）</p>
+        <p class="page-subtitle">
+          学生是班级名单里的记录：<b>没有个人账号、不能登录</b>，学号是唯一标识；教室机器用班级码 + 班级密码登录
+        </p>
       </div>
       <div class="toolbar">
         <el-select
           v-model="filter.classId"
           placeholder="全部班级"
           clearable
-          style="width: 180px"
+          style="width: 170px"
           @change="loadStudents"
         >
-          <el-option v-for="item in classes" :key="item.id" :label="item.name" :value="item.id" />
+          <el-option v-for="item in classOptions" :key="item.id" :label="item.name" :value="item.id" />
+        </el-select>
+        <el-select
+          v-model="filter.status"
+          placeholder="全部状态"
+          clearable
+          style="width: 130px"
+          @change="loadStudents"
+        >
+          <el-option
+            v-for="status in STUDENT_STATUSES"
+            :key="status"
+            :label="STUDENT_STATUS_LABELS[status]"
+            :value="status"
+          />
         </el-select>
         <el-input
           v-model="filter.keyword"
-          placeholder="姓名"
+          placeholder="学号 / 姓名"
           clearable
           style="width: 180px"
           @keyup.enter="loadStudents"
@@ -227,10 +305,42 @@ async function submitCall(): Promise<void> {
     </div>
 
     <el-card shadow="never" class="table-card">
-      <el-table v-loading="loading" :data="students" empty-text="暂无学生数据">
-        <el-table-column prop="name" label="姓名" width="120" />
-        <el-table-column label="角色" width="90">
-          <template #default="{ row }">{{ ROLE_LABELS[row.role as 'STUDENT'] ?? row.role }}</template>
+      <template #header>
+        <div class="card-header">
+          <span>共 {{ students.length }} 名学生</span>
+          <div class="toolbar">
+            <el-button
+              type="primary"
+              plain
+              :icon="'Switch'"
+              :disabled="selection.length === 0"
+              @click="openTransfer(selection)"
+            >
+              批量调班<span v-if="selection.length">（{{ selection.length }}）</span>
+            </el-button>
+            <el-button
+              type="danger"
+              plain
+              :icon="'Right'"
+              :disabled="selection.length === 0"
+              @click="transferOut(selection)"
+            >
+              批量转出<span v-if="selection.length">（{{ selection.length }}）</span>
+            </el-button>
+          </div>
+        </div>
+      </template>
+      <el-table
+        v-loading="loading"
+        :data="students"
+        empty-text="暂无学生数据"
+        @selection-change="(rows: StudentDto[]) => (selection = rows)"
+      >
+        <el-table-column type="selection" width="46" />
+        <el-table-column prop="studentNo" label="学号" width="130" />
+        <el-table-column prop="name" label="姓名" width="110" />
+        <el-table-column label="性别" width="80">
+          <template #default="{ row }">{{ STUDENT_GENDER_LABELS[row.gender as '' | 'MALE' | 'FEMALE'] }}</template>
         </el-table-column>
         <el-table-column label="班级" width="140">
           <template #default="{ row }">
@@ -238,15 +348,24 @@ async function submitCall(): Promise<void> {
             <span v-else class="text-muted">未分班</span>
           </template>
         </el-table-column>
-        <el-table-column label="年级" width="90">
-          <template #default="{ row }">{{ row.grade ?? '-' }}</template>
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" :type="STUDENT_STATUS_TAG_TYPES[row.status as StudentStatus]">
+              {{ STUDENT_STATUS_LABELS[row.status as StudentStatus] }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="guardianPhone" label="家长手机号" width="140">
+          <template #default="{ row }">{{ row.guardianPhone || '-' }}</template>
         </el-table-column>
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ formatDate(row.createdAt, true) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="330" fixed="right">
           <template #default="{ row }">
             <el-button link type="success" @click="openCall(row)">叫人</el-button>
+            <el-button link type="primary" @click="openTransfer([row])">调班</el-button>
+            <el-button link @click="openHistory(row)">调班历史</el-button>
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button link type="danger" @click="removeStudent(row)">删除</el-button>
           </template>
@@ -254,7 +373,52 @@ async function submitCall(): Promise<void> {
       </el-table>
     </el-card>
 
-    <!-- 叫人：选中学生 + 快捷短语/自定义消息 → 学生端灵动岛立即弹出 -->
+    <!-- 调班：只改当前班级，学号不变、历史作业与成绩保留原归属 -->
+    <el-dialog v-model="transferVisible" title="调班" width="480px">
+      <el-alert type="info" :closable="false" class="call-alert">
+        调班只改学生**当前班级**：学号不变、不创建账号；原班级 / 新班级 / 操作人 / 时间会记入调班历史，
+        该生已有的成绩与作业仍留在原班级。
+      </el-alert>
+      <el-form label-width="90px">
+        <el-form-item label="学生">
+          <span>{{ transferTargets.length }} 名（{{ transferTargets.map((s) => s.name).join('、') }}）</span>
+        </el-form-item>
+        <el-form-item label="调入班级">
+          <el-select v-model="transferForm.toClassId" placeholder="留空 = 移出班级（未分班）" clearable style="width: 100%">
+            <el-option v-for="item in classOptions" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="transferForm.note" maxlength="200" placeholder="例如：按分班考试成绩调整（可选）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="transferVisible = false">取消</el-button>
+        <el-button type="primary" :loading="transferSaving" @click="submitTransfer">确认调动</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 调班历史 -->
+    <el-drawer v-model="historyVisible" :title="`调班历史 — ${historyTarget?.name ?? ''}`" size="640px">
+      <el-table v-loading="historyLoading" :data="historyRows" empty-text="该生还没有调班记录">
+        <el-table-column label="时间" width="160">
+          <template #default="{ row }">{{ formatDate(row.createdAt, true) }}</template>
+        </el-table-column>
+        <el-table-column label="方式" width="100">
+          <template #default="{ row }">{{ TRANSFER_MODE_LABELS[row.mode] ?? row.mode }}</template>
+        </el-table-column>
+        <el-table-column label="原班级" width="130">
+          <template #default="{ row }">{{ row.fromClassName || '未分班' }}</template>
+        </el-table-column>
+        <el-table-column label="新班级" width="130">
+          <template #default="{ row }">{{ row.toClassName || '未分班' }}</template>
+        </el-table-column>
+        <el-table-column prop="operatorName" label="操作人" width="100" />
+        <el-table-column prop="note" label="备注" show-overflow-tooltip />
+      </el-table>
+    </el-drawer>
+
+    <!-- 叫人：选中学生 + 快捷短语/自定义消息 → 教室机器立即弹出 -->
     <el-dialog v-model="callVisible" title="叫人" width="480px">
       <el-alert
         v-if="callTarget"
@@ -264,7 +428,7 @@ async function submitCall(): Promise<void> {
         class="call-alert"
       >
         <template #default>
-          发送后学生端桌面会浮出「请 {{ callTarget.name }} 同学找 XXX 老师」；
+          发送后教室的 ClassHelper 班级端会浮出「请 {{ callTarget.name }} 同学找 XXX 老师」；
           <b>紧急</b>
           叫人无视上课时段立即展开，
           <b>普通</b>
@@ -314,14 +478,30 @@ async function submitCall(): Promise<void> {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="formVisible" :title="editingId ? '编辑学生' : '新建学生'" width="460px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
+    <el-dialog v-model="formVisible" :title="editingId ? '编辑学生' : '新建学生'" width="480px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
+        <el-form-item label="学号" prop="studentNo">
+          <el-input v-model="form.studentNo" placeholder="学生的唯一标识，如 202601" />
+        </el-form-item>
         <el-form-item label="姓名" prop="name">
           <el-input v-model="form.name" />
         </el-form-item>
+        <el-form-item label="性别">
+          <el-select v-model="form.gender" placeholder="未填" clearable style="width: 100%">
+            <el-option
+              v-for="gender in STUDENT_GENDERS.filter((g) => g !== '')"
+              :key="gender"
+              :label="STUDENT_GENDER_LABELS[gender]"
+              :value="gender"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="家长手机号">
+          <el-input v-model="form.guardianPhone" placeholder="可选" />
+        </el-form-item>
         <el-form-item label="班级">
           <el-select v-model="form.classId" placeholder="暂不分班" clearable style="width: 100%">
-            <el-option v-for="item in classes" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option v-for="item in classOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -342,6 +522,14 @@ async function submitCall(): Promise<void> {
 </template>
 
 <style scoped>
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .call-alert {
   margin-bottom: 12px;
 }

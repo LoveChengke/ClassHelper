@@ -1,6 +1,6 @@
 ---
 title: REST API
-description: 班级小助手后端全部接口一览：方法、路径、权限与说明。
+description: ClassHelper后端全部接口一览：方法、路径、权限与说明。
 ---
 
 # REST API
@@ -17,13 +17,13 @@ description: 班级小助手后端全部接口一览：方法、路径、权限�
 
 | 方法                        | 路径                                                          | 权限                         | 说明                                                                           |
 | --------------------------- | ------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------ |
-| POST                        | `/auth/login`                                                 | 公开                         | 登录（教师 / 管理员）；`role=STUDENT` 返回 403（学生只有名单，改用班级登录）   |
+| POST                        | `/auth/login`                                                 | 公开                         | 登录（教师 / 管理员的**工号** + 密码）；学生不是账号，拿学号登录只会得到 401   |
 | POST                        | `/auth/class-login`                                           | 公开                         | **班级账号登录**：班级码 + 班级密码 → 班级会话                                 |
 | GET                         | `/auth/me`                                                    | 登录                         | 当前用户（学生附带班级 / 年级）                                                |
 | PATCH                       | `/auth/password`                                              | 登录                         | 修改自己的密码（班级会话 → 班级密码）                                          |
 | POST                        | `/auth/logout`                                                | 登录                         | 退出（无状态，客户端丢弃 token）                                               |
 | GET                         | `/classes`                                                    | 登录                         | 班级列表（按权限收敛）                                                         |
-| GET                         | `/classes/:id`                                                | 班级可见                     | 班级详情（学生 / 课程 / 协作教师）                                             |
+| GET                         | `/classes/:id`                                                | 班级可见                     | 班级详情（学生 / 课程 / 班主任 / 各科任课老师）                                 |
 | POST                        | `/classes`                                                    | 管理员                       | 创建班级（自动生成班级码，可指定班主任）                                       |
 | PATCH / DELETE              | `/classes/:id`                                                | 管理员 / 教师                | 编辑 / 删除班级                                                                |
 | PATCH                       | `/classes/:id/class-account`                                  | 管理员                       | 设置 / 重置班级账号（班级码 + 班级密码）                                       |
@@ -33,7 +33,7 @@ description: 班级小助手后端全部接口一览：方法、路径、权限�
 | PATCH                       | `/classes/:id/notification-channel`                           | 班级账号 / 教师 / 管理员     | 设置「通知显示到哪个端」                                                       |
 | GET / POST                  | `/classes/:id/students`                                       | 班级可见 / ADMIN·TEACHER     | 学生名单 / 添加学生                                                            |
 | DELETE                      | `/classes/:id/students/:userId`                               | ADMIN·TEACHER                | 移出学生                                                                       |
-| POST / DELETE               | `/classes/:id/teachers[/:teacherId]`                          | ADMIN·TEACHER                | 分配 / 取消协作教师                                                            |
+| PUT                         | `/classes/:id/subject-teachers`                               | ADMIN                        | 设置各科任课老师（班级 + 科目 + 教师）                                         |
 | GET / POST / PATCH / DELETE | `/courses`                                                    | 登录（写：班主任 / 管理员）  | 课程管理                                                                       |
 | GET                         | `/schedules?classId=&week=&dayOfWeek=`                        | 登录                         | 课表列表（`week` 过滤周次范围）                                                |
 | GET                         | `/schedules/grid?classId=&week=`                              | 登录                         | 周视图（7 列结构，供客户端直接渲染）                                           |
@@ -72,7 +72,7 @@ description: 班级小助手后端全部接口一览：方法、路径、权限�
 | GET / POST / PATCH / DELETE | `/integrations/devices[/:id]`                                 | 管理员 / 教师                | ClassIsland 联动设备管理（令牌只存 sha256，令牌前缀用于人眼识别）              |
 | POST                        | `/integrations/devices/:id/token`                             | 管理员 / 教师                | 重置设备令牌（旧令牌立即失效，明文只返回一次）                                 |
 | POST                        | `/integrations/classisland/notify`                            | 管理员 / 教师                | 下发提醒到该班 ClassIsland 设备（广播 `classisland:notification`）             |
-| GET                         | `/database/status`                                            | **管理员**                   | 数据库状态（连接 / 版本 / 体积 / 14 张表行数 / 备份列表 / 定时配置）           |
+| GET                         | `/database/status`                                            | **管理员**                   | 数据库状态（连接 / 版本 / 体积 / 16 张表行数 / 备份列表 / 定时配置）           |
 | POST                        | `/database/test-connection`                                   | **管理员**                   | 测试任意目标库连通性（provider 仅 sqlite / mysql）                             |
 | GET / POST                  | `/database/backups`                                           | **管理员**                   | 备份列表 / 立即备份（gzip JSON 快照，存 `<数据目录>/backups/`）                |
 | POST / DELETE               | `/database/backups/:name/restore` · `/database/backups/:name` | **管理员**                   | 从备份恢复（整库覆盖）/ 删除备份                                               |

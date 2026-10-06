@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# 班级小助手 · 服务端 Linux 一键安装器
+# ClassHelper · 服务端 Linux 一键安装器
 #
 # 支持：Ubuntu 20.04+ / Debian 11+ / CentOS 7+ / Rocky Linux / AlmaLinux 8+
 #       （自动识别 apt / yum / dnf；直接安装形态要求 systemd）
@@ -53,7 +53,7 @@ set -euo pipefail
 
 # ---------------------------------------------------------------- 集中变量
 
-PRODUCT="班级小助手"
+PRODUCT="ClassHelper"
 SERVICE_NAME="classhelper"
 
 INSTALL_DIR="/opt/classhelper"
@@ -179,7 +179,7 @@ usage() {
     return 0
   fi
   cat <<'USAGE'
-班级小助手 · 服务端 Linux 安装器
+ClassHelper · 服务端 Linux 安装器
 
 （本次是从远端直接执行的，没有本地脚本文件可读，这里只列常用参数；
   完整说明见 https://github.com/LoveChengke/ClassHelper/blob/master/docs/management/linux-deploy.md ）
@@ -793,7 +793,7 @@ write_config() {
 
   cat >"$CONFIG_FILE" <<EOF
 # ---------------------------------------------------------------------------
-# 班级小助手服务端配置（由 install.sh 生成于 $(date '+%F %T')）
+# ClassHelper 服务端配置（由 install.sh 生成于 $(date '+%F %T')）
 #
 # 这是**唯一的配置真身**：安装目录里的 .env 是指向本文件的软链，
 # systemd 通过 EnvironmentFile 读本文件；改完执行 classhelper restart 生效。
@@ -830,7 +830,7 @@ BCRYPT_ROUNDS=10
 INITIAL_ADMIN_USERNAME=admin
 ${admin_line}
 
-# 新建班级 / 重置教师账号时的默认密码（学生端用「班级码 + 班级密码」登录）
+# 新建班级 / 重置教师账号时的默认密码（ClassHelper 班级端用「班级码 + 班级密码」登录）
 DEFAULT_CLASS_PASSWORD=123456
 DEFAULT_TEACHER_PASSWORD=123456
 
@@ -973,7 +973,7 @@ install_docker_engine() {
 write_compose() {
   local compose="${CONFIG_DIR}/compose.yml"
   cat >"$compose" <<EOF
-# 班级小助手 · 由 install.sh 生成的 compose 文件（${MODE} 形态）
+# ClassHelper · 由 install.sh 生成的 compose 文件（${MODE} 形态）
 # 配置见 ${CONFIG_FILE}（改完执行 classhelper restart 重建容器）
 # 数据在 Docker 卷 classhelper-data 里；备份用 classhelper backup
 #
@@ -1025,7 +1025,7 @@ setup_nginx() {
     install -m 600 "${INSTALL_DIR}/nginx.conf" "$target"
   else
     cat >"$target" <<EOF
-# 班级小助手 · Nginx 反向代理（替换 server_name 与证书路径后启用）
+# ClassHelper · Nginx 反向代理（替换 server_name 与证书路径后启用）
 server {
     listen 80;
     server_name class.example.com;
@@ -1148,7 +1148,7 @@ print_result() {
   printf '  1. 改掉默认密码：%sclasshelper password admin%s\n' "$C_CYAN" "$C_RESET"
   printf '  2. 公网访问请上 HTTPS：改好 %s/nginx.conf 的域名与证书，并把 CORS_ORIGIN\n' "$CONFIG_DIR"
   printf '     收敛到你的域名（classhelper config set CORS_ORIGIN https://your.domain）\n'
-  printf '  3. 学生端「服务器地址」填 http://%s:%s 或你的域名\n' "$ip" "$PORT"
+  printf '  3. ClassHelper 班级端「服务器地址」填 http://%s:%s 或你的域名\n' "$ip" "$PORT"
   printf '%s────────────────────────────────────────────────────────────%s\n' "$C_GREEN" "$C_RESET"
 }
 

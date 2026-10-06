@@ -2,7 +2,6 @@ import {
   SOCKET_EVENTS,
   buildScheduleWeekView,
   resolveClassStatus,
-  resolveCurrentWeek,
   weekParityOf,
   type ClassStatusDto,
   type ScheduleDto,
@@ -12,12 +11,13 @@ import {
   assertClassAccess,
   assertCanManageSchedule,
   classScopeWhere,
-  isStudent,
-  requireStudentClassId,
+  isClassDevice,
+  requireClassDeviceClassId,
   resolveClassScope,
 } from '../../lib/access.js';
-import { env } from '../../config/env.js';
 import { prisma } from '../../lib/db.js';
+// 周次口径按**班级**取（管理员可以为每个班单独配开学日期与逐周区间）
+import { loadTermContext, resolveCurrentWeek } from '../../lib/term.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { toScheduleDto } from '../../lib/mappers.js';
@@ -60,7 +60,8 @@ export async function getScheduleGrid(
   user: TokenPayload,
   options: { classId?: string; week?: number },
 ): Promise<ScheduleWeekView> {
-  const week = options.week ?? resolveCurrentWeek(env.termStartDate);
+  // 当前周次按**本班**的口径算（管理员可以为每个班单独配开学日期与逐周区间）
+  const week = options.week ?? resolveCurrentWeek(new Date(), await loadTermContext(options.classId));
   const items = await listSchedules(user, { classId: options.classId, week });
   return buildScheduleWeekView(items, week);
 }
@@ -71,7 +72,7 @@ export async function getScheduleGrid(
  */
 export async function computeClassStatus(classId: string, at?: Date): Promise<ClassStatusDto> {
   const now = at ?? new Date();
-  const week = resolveCurrentWeek(env.termStartDate, now);
+  const week = resolveCurrentWeek(now, await loadTermContext(classId));
   const schedules = await prisma.schedule.findMany({
     where: { classId },
     include: { course: courseSelect },
@@ -98,7 +99,7 @@ export async function getClassStatus(
   user: TokenPayload,
   options: { classId?: string; at?: Date } = {},
 ): Promise<ClassStatusDto> {
-  const classId = isStudent(user) ? requireStudentClassId(user) : options.classId;
+  const classId = isClassDevice(user) ? requireClassDeviceClassId(user) : options.classId;
   if (!classId) throw ApiError.badRequest('请指定班级（classId）');
   await assertClassAccess(user, classId);
   return computeClassStatus(classId, options.at);

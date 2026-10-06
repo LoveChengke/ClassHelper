@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isValidStudentNo, normalizeStudentNo } from '@classhelper/shared';
 
 /** 通用路径参数：:id */
 export const idParamSchema = z.object({ id: z.string().min(1, '缺少 id') });
@@ -52,3 +53,43 @@ export const attachmentUrlSchema = z
 
 /** 周次：1..30 */
 export const weekNumberSchema = z.coerce.number().int().min(1).max(30);
+
+/**
+ * 学号：学生的唯一标识与查询键。
+ *
+ * 只做**格式**校验（1~32 位数字/字母/`._-`），归一化（去空白）后入库；
+ * 唯一性由 `Student.studentNo` 的唯一约束 + service 层的大小写无关查重共同保证。
+ */
+export const studentNoSchema = z
+  .string()
+  .trim()
+  .min(1, '请填写学号')
+  .max(32, '学号最多 32 位')
+  .transform((value) => normalizeStudentNo(value))
+  .refine((value) => isValidStudentNo(value), {
+    message: '学号只能包含字母、数字与 . _ -（1~32 位）',
+  });
+
+/** 学生姓名 */
+export const studentNameSchema = z.string().trim().min(1, '请输入姓名').max(32);
+
+/** 学生性别：'' / MALE / FEMALE */
+export const studentGenderSchema = z.enum(['', 'MALE', 'FEMALE']).optional();
+
+/** 学生状态 */
+export const studentStatusSchema = z.enum(['active', 'graduated', 'transferred', 'inactive']).optional();
+
+/** 家长手机号（可空） */
+export const guardianPhoneSchema = z.string().trim().max(32).optional();
+
+/** 入学年份（届别） */
+export const enrollmentYearSchema = z.coerce.number().int().min(2000).max(2100);
+
+/** 班号 */
+export const classIndexSchema = z.coerce.number().int().min(1).max(99);
+
+/** 成绩等级口径 */
+export const gradeLevelTypeSchema = z.enum(['percent', 'letter', 'custom']);
+
+/** 成绩等级文本（自定义等级也要能填，所以只限长度） */
+export const gradeLevelSchema = z.string().trim().max(16);

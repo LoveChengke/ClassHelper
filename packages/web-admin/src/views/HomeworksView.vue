@@ -71,7 +71,7 @@ const submissionsHomeworkId = ref('');
 let submissionsRequestId = 0;
 
 const notSubmittedNames = computed(() =>
-  submissionStudents.value.filter((item) => notSubmittedIds.value.includes(item.userId)),
+  submissionStudents.value.filter((item) => notSubmittedIds.value.includes(item.studentId)),
 );
 
 /** 打开详情时顺带读一次未交名单（教师/管理员都有权限） */
@@ -83,7 +83,7 @@ async function loadSubmissions(homeworkId: string): Promise<boolean> {
     // 迟到的响应：用户已经切到别的作业了，直接丢弃
     if (requestId !== submissionsRequestId) return false;
     submissionStudents.value = result.students;
-    notSubmittedIds.value = result.notSubmitted.map((item) => item.userId);
+    notSubmittedIds.value = result.notSubmitted.map((item) => item.studentId);
     submissionsHomeworkId.value = homeworkId;
     return true;
   } catch {
@@ -115,7 +115,7 @@ async function saveSubmissions(): Promise<void> {
   try {
     const result = await homeworkApi.saveSubmissions(current.value.id, notSubmittedIds.value);
     submissionStudents.value = result.students;
-    notSubmittedIds.value = result.notSubmitted.map((item) => item.userId);
+    notSubmittedIds.value = result.notSubmitted.map((item) => item.studentId);
     if (current.value) current.value.completedCount = result.completedCount;
     ElMessage.success(`未交名单已保存（未交 ${result.notSubmitted.length} / ${result.total} 人）`);
     submissionsVisible.value = false;
@@ -131,7 +131,7 @@ function markAllSubmitted(): void {
 }
 
 function markAllNotSubmitted(): void {
-  notSubmittedIds.value = submissionStudents.value.map((item) => item.userId);
+  notSubmittedIds.value = submissionStudents.value.map((item) => item.studentId);
 }
 
 async function loadClasses(): Promise<void> {
@@ -488,7 +488,7 @@ onUnmounted(() => {
             :cell-class-name="dayCellClass"
             style="width: 200px"
           />
-          <span class="form-hint">作业会出现在这一天（按天查看与学生端都按它归类）</span>
+          <span class="form-hint">作业会出现在这一天（按天查看与 ClassHelper 班级端都按它归类）</span>
         </el-form-item>
         <el-form-item label="标题" prop="title">
           <el-input v-model="form.title" maxlength="120" show-word-limit />
@@ -527,7 +527,7 @@ onUnmounted(() => {
               <template v-else>
                 <el-tag
                   v-for="student in notSubmittedNames"
-                  :key="student.userId"
+                  :key="student.studentId"
                   type="warning"
                   size="small"
                   effect="light"
@@ -554,7 +554,7 @@ onUnmounted(() => {
           class="mt-16"
           type="info"
           :closable="false"
-          title="学生端实时同步"
+          title="ClassHelper 班级端实时同步"
           :description="`学生客户端在收到 homework:new / homework:status 事件后会自动刷新列表，并在离线时使用本地缓存（摘要：${truncate(current.content, 30)}）`"
         />
       </template>
@@ -575,11 +575,11 @@ onUnmounted(() => {
       <div v-loading="submissionsLoading" class="submission-list">
         <el-empty
           v-if="submissionStudents.length === 0 && !submissionsLoading"
-          description="该班还没有学生账号"
+          description="该班还没有学生，请先在学生名单里添加"
         />
         <el-checkbox-group v-model="notSubmittedIds">
-          <el-checkbox v-for="student in submissionStudents" :key="student.userId" :value="student.userId">
-            {{ student.name }}（{{ student.username }}）
+          <el-checkbox v-for="student in submissionStudents" :key="student.studentId" :value="student.studentId">
+            {{ student.name }}（学号 {{ student.studentNo }}）
           </el-checkbox>
         </el-checkbox-group>
       </div>

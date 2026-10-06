@@ -1,4 +1,4 @@
-# 班级小助手服务端 · 生产镜像
+# ClassHelper 服务端 · 生产镜像
 #
 # 两阶段构建：
 #   build   —— 安装依赖并编译 shared / server / web-admin

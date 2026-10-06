@@ -1,3 +1,4 @@
+import { archivesModule } from './archives/archives.module.js';
 import { authModule } from './auth/auth.module.js';
 import { callsModule } from './calls/calls.module.js';
 import { classesModule } from './classes/classes.module.js';
@@ -12,6 +13,7 @@ import { notificationsModule } from './notifications/notifications.module.js';
 import { schedulesModule } from './schedules/schedules.module.js';
 import { studentsModule } from './students/students.module.js';
 import { teachersModule } from './teachers/teachers.module.js';
+import { termModule } from './term/term.module.js';
 import { updateModule } from './update/update.module.js';
 import type { ApiModule } from './module.types.js';
 
@@ -35,6 +37,8 @@ export const apiModules: ApiModule[] = [
   gradesModule,
   studentsModule,
   teachersModule,
+  archivesModule,
+  termModule,
   dashboardModule,
   databaseModule,
   updateModule,

@@ -4,11 +4,17 @@ import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'elem
 import {
   SOCKET_EVENTS,
   MAX_TERM_WEEK,
+  SUBJECT_CATALOG,
+  currentAcademicYearStart,
+  formatClassName,
+  STUDENT_STATUS_LABELS,
   formatDate,
   type ClassDetailDto,
   type ClassDto,
   type CourseDto,
   type StudentDto,
+  type StudentStatus,
+  type SubjectTeacherDto,
   type UpdateClassAccountRequest,
   type UserDto,
 } from '@classhelper/shared';
@@ -45,11 +51,25 @@ async function loadClasses(): Promise<void> {
 const formVisible = ref(false);
 const formRef = ref<FormInstance>();
 const editingId = ref<string | null>(null);
-const form = reactive({ name: '', grade: '', code: '', termWeeks: 20, headTeacherId: '' });
+/**
+ * 班级称呼是「XXXX级X班」（入学年份 + 班号），不是「高一(1)班」：
+ * 后者每年都要改一遍，前者一路跟着这届学生到毕业（升级只改年级、称呼不变）。
+ */
+const form = reactive({
+  grade: '',
+  enrollmentYear: currentAcademicYearStart(),
+  classIndex: 1,
+  code: '',
+  termWeeks: 20,
+  headTeacherId: '',
+});
 const rules: FormRules = {
-  name: [{ required: true, message: '请输入班级名称', trigger: 'blur' }],
   grade: [{ required: true, message: '请输入年级', trigger: 'blur' }],
+  enrollmentYear: [{ required: true, message: '请输入入学年份', trigger: 'blur' }],
+  classIndex: [{ required: true, message: '请输入班号', trigger: 'blur' }],
 };
+/** 表单里实时预览班级称呼 */
+const previewName = computed(() => formatClassName(form.enrollmentYear, form.classIndex));
 
 /** 管理员可选班主任（教师 + 管理员账号）；「新建班级」才设置，「编辑」走单独的"更换班主任" */
 const staffOptions = ref<UserDto[]>([]);
@@ -62,8 +82,9 @@ async function loadStaffOptions(): Promise<void> {
 
 function openCreate(): void {
   editingId.value = null;
-  form.name = '';
   form.grade = '';
+  form.enrollmentYear = currentAcademicYearStart();
+  form.classIndex = classes.value.length + 1;
   form.code = '';
   form.termWeeks = 20;
   form.headTeacherId = auth.user?.id ?? '';
@@ -73,8 +94,10 @@ function openCreate(): void {
 
 function openEdit(row: ClassDto): void {
   editingId.value = row.id;
-  form.name = row.name;
   form.grade = row.grade;
+  // 老数据可能没有届别：回填当前学年起始年份，管理员可在表单里改正
+  form.enrollmentYear = row.enrollmentYear ?? currentAcademicYearStart();
+  form.classIndex = row.classIndex ?? 1;
   form.code = '';
   form.termWeeks = row.termWeeks ?? 20;
   // 必须回填当前班主任：编辑弹窗里的下拉与"新建"共用同一个 form.headTeacherId，
@@ -92,8 +115,9 @@ async function submitForm(): Promise<void> {
 
   if (editingId.value) {
     await classApi.update(editingId.value, {
-      name: form.name,
       grade: form.grade,
+      enrollmentYear: form.enrollmentYear,
+      classIndex: form.classIndex,
       termWeeks: form.termWeeks,
     });
     // 编辑弹窗里也能直接换班主任（仅管理员；班主任决定谁能管这个班的课表与成绩）
@@ -106,15 +130,16 @@ async function submitForm(): Promise<void> {
     ElMessage.success('班级已更新');
   } else {
     await classApi.create({
-      name: form.name,
       grade: form.grade,
+      enrollmentYear: form.enrollmentYear,
+      classIndex: form.classIndex,
       // 学期周数：新建时也要提交。原先只提交名称/年级/班级码，表单里填的周数被直接丢弃，
       // 服务端落库恒为默认 20，用户看到的是"设置了没生效"且没有任何提示。
       termWeeks: form.termWeeks,
       ...(form.code.trim() ? { code: form.code.trim().toUpperCase() } : {}),
       ...(isAdmin.value && form.headTeacherId ? { teacherId: form.headTeacherId } : {}),
     });
-    ElMessage.success('班级创建成功');
+    ElMessage.success(`班级 ${previewName.value} 创建成功`);
   }
   formVisible.value = false;
   await loadClasses();
@@ -144,7 +169,7 @@ const accountSaving = ref(false);
 const accountTarget = ref<ClassDto | null>(null);
 const accountForm = reactive({ code: '', password: '' });
 
-/** 打开班级账号设置：班级码即学生端「班级登录」的账号 */
+/** 打开班级账号设置：班级码即 ClassHelper 班级端「班级登录」的账号 */
 function openAccount(row: ClassDto): void {
   accountTarget.value = row;
   accountForm.code = row.code ?? '';
@@ -231,28 +256,36 @@ async function refreshDetail(): Promise<void> {
 /* ------------------------------------------------------------ 学生 */
 
 const studentFormVisible = ref(false);
-const studentForm = reactive({ username: '', name: '', password: '' });
+/** 学生只有名单：学号 + 姓名（没有密码、没有账号） */
+const studentForm = reactive({
+  studentNo: '',
+  name: '',
+  gender: '' as '' | 'MALE' | 'FEMALE',
+  guardianPhone: '',
+});
 const studentRules: FormRules = {
-  username: [{ required: true, message: '请输入学号/用户名', trigger: 'blur' }],
+  studentNo: [{ required: true, message: '请输入学号', trigger: 'blur' }],
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
 };
 
 async function addStudent(): Promise<void> {
   if (!detail.value) return;
-  if (!studentForm.username.trim() || !studentForm.name.trim()) {
-    ElMessage.warning('请填写用户名和姓名');
+  if (!studentForm.studentNo.trim() || !studentForm.name.trim()) {
+    ElMessage.warning('请填写学号和姓名');
     return;
   }
   const created = await classApi.addStudent(detail.value.id, {
-    username: studentForm.username.trim(),
+    studentNo: studentForm.studentNo.trim(),
     name: studentForm.name.trim(),
-    ...(studentForm.password ? { password: studentForm.password } : {}),
+    ...(studentForm.gender ? { gender: studentForm.gender } : {}),
+    ...(studentForm.guardianPhone.trim() ? { guardianPhone: studentForm.guardianPhone.trim() } : {}),
   });
-  ElMessage.success(`已加入学生：${created.name}`);
+  ElMessage.success(`已加入学生：${created.name}（${created.studentNo}）`);
   studentFormVisible.value = false;
-  studentForm.username = '';
+  studentForm.studentNo = '';
   studentForm.name = '';
-  studentForm.password = '';
+  studentForm.gender = '';
+  studentForm.guardianPhone = '';
   await refreshDetail();
   await loadClasses();
 }
@@ -290,31 +323,112 @@ async function removeCourse(row: CourseDto): Promise<void> {
   await refreshDetail();
 }
 
-/* ------------------------------------------------------------ 协作教师 */
+/* ------------------------------------------------------------ 任课老师（班级 + 科目 + 教师） */
 
+/**
+ * **这是「科任老师」这条关系的唯一写入口**。
+ *
+ * 作业与成绩能不能被某位老师改动，查的就是这里写下的 `Course.teacherId`：
+ * 科任老师只能动自己任教的科目；班主任若不教这一科，同样改不了这一科。
+ * 同一位老师可以既是班主任又是某科科任 —— 两条记录指向同一个账号，
+ * 不重复建号，权限在服务端合并。
+ */
 const teachers = ref<UserDto[]>([]);
-const selectedTeacherId = ref<string>('');
+const subjectDraft = reactive({ subjectName: '', teacherId: '' });
 
 async function loadTeachers(): Promise<void> {
   teachers.value = await teacherApi.list();
 }
 
-async function assignTeacher(): Promise<void> {
-  if (!detail.value || !selectedTeacherId.value) {
-    ElMessage.warning('请选择教师');
+/** 该班还没有的科目（下拉里列出来，选中即自动建课） */
+const assignableSubjects = computed(() => {
+  const existing = new Set((detail.value?.subjectTeachers ?? []).map((item) => item.subjectName));
+  return SUBJECT_CATALOG.filter((name) => !existing.has(name));
+});
+
+const subjectSaving = ref(false);
+
+async function saveSubjectTeacher(): Promise<void> {
+  if (!detail.value || !subjectDraft.subjectName.trim() || !subjectDraft.teacherId) {
+    ElMessage.warning('请选择科目与任课老师');
     return;
   }
-  await classApi.assignTeacher(detail.value.id, selectedTeacherId.value);
-  ElMessage.success('教师已分配');
-  selectedTeacherId.value = '';
+  subjectSaving.value = true;
+  try {
+    await classApi.assignSubjectTeachers(detail.value.id, [
+      { subjectName: subjectDraft.subjectName.trim(), teacherId: subjectDraft.teacherId },
+    ]);
+    ElMessage.success('任课老师已设置');
+    subjectDraft.subjectName = '';
+    subjectDraft.teacherId = '';
+    await refreshDetail();
+  } finally {
+    subjectSaving.value = false;
+  }
+}
+
+/** 改某一科的任课老师（就地改，不新建科目） */
+async function changeSubjectTeacher(row: SubjectTeacherDto, teacherId: string): Promise<void> {
+  if (!detail.value || !teacherId) return;
+  await classApi.assignSubjectTeachers(detail.value.id, [
+    { courseId: row.courseId, subjectName: row.subjectName, teacherId },
+  ]);
+  ElMessage.success(`「${row.subjectName}」的任课老师已更新`);
   await refreshDetail();
 }
 
-async function removeTeacher(teacherId: string): Promise<void> {
+/** 解除某科的任课老师（课程保留，作业与成绩仍挂在它上面） */
+async function clearSubjectTeacher(row: SubjectTeacherDto): Promise<void> {
   if (!detail.value) return;
-  await classApi.removeTeacher(detail.value.id, teacherId);
-  ElMessage.success('已取消分配');
+  await classApi.assignSubjectTeachers(detail.value.id, [
+    { courseId: row.courseId, subjectName: row.subjectName, teacherId: null },
+  ]);
+  ElMessage.success(`已解除「${row.subjectName}」的任课老师`);
   await refreshDetail();
+}
+
+/* ------------------------------------------------------------ 班级设置：成绩查询开关 / 学年升级 */
+
+const gradeQuerySaving = ref(false);
+
+/** 是否允许教室的 ClassHelper 班级端按学号查询本班学生的成绩明细 */
+async function toggleGradeQuery(enabled: boolean): Promise<void> {
+  if (!detail.value) return;
+  gradeQuerySaving.value = true;
+  try {
+    await classApi.setGradeQuery(detail.value.id, enabled);
+    detail.value.studentGradeQueryEnabled = enabled;
+    ElMessage.success(enabled ? '已允许班级端按学号查成绩' : '已关闭班级端成绩查询');
+  } finally {
+    gradeQuerySaving.value = false;
+  }
+}
+
+const promoteForm = reactive({ grade: '', saving: false });
+
+/** 学年升级：只改年级，**不归档**，班级记录/学生名单/学号/作业成绩全部沿用 */
+async function promote(): Promise<void> {
+  if (!detail.value || !promoteForm.grade.trim()) {
+    ElMessage.warning('请填写升级后的年级，例如「高二」');
+    return;
+  }
+  const target = promoteForm.grade.trim();
+  await ElMessageBox.confirm(
+    `把「${detail.value.name}」的年级改为「${target}」？升级只改年级，不归档：` +
+      '班级记录、学生名单、学号、作业与成绩全部沿用。',
+    '学年升级',
+    { type: 'info', confirmButtonText: '确认升级' },
+  );
+  promoteForm.saving = true;
+  try {
+    await classApi.promote([detail.value.id], target);
+    ElMessage.success('已升级，数据继续沿用');
+    promoteForm.grade = '';
+    await refreshDetail();
+    await loadClasses();
+  } finally {
+    promoteForm.saving = false;
+  }
 }
 
 /* ------------------------------------------------------------ 实时刷新 */
@@ -361,8 +475,16 @@ onUnmounted(() => {
 
     <el-card shadow="never" class="table-card">
       <el-table v-loading="loading" :data="classes" empty-text="暂无班级，点击右上角新建">
-        <el-table-column prop="name" label="班级" min-width="140" />
-        <el-table-column prop="grade" label="年级" width="100" />
+        <el-table-column prop="name" label="班级" min-width="130" />
+        <el-table-column label="届别" width="120">
+          <template #default="{ row }">
+            <el-tag v-if="row.enrollmentYear" size="small" effect="plain">
+              {{ row.enrollmentYear }} 级 · {{ row.classIndex }} 班
+            </el-tag>
+            <span v-else class="text-muted">未设置</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="grade" label="年级" width="90" />
         <el-table-column label="班主任" width="140">
           <template #default="{ row }">{{ row.teacher?.name ?? '-' }}</template>
         </el-table-column>
@@ -378,7 +500,7 @@ onUnmounted(() => {
         <el-table-column label="通知" width="80">
           <template #default="{ row }">{{ row.notificationCount ?? 0 }}</template>
         </el-table-column>
-        <el-table-column label="班级账号（学生端登录）" width="220">
+        <el-table-column label="班级账号（班级端登录）" width="200">
           <template #default="{ row }">
             <template v-if="row.code">
               <el-tag type="info" effect="plain">{{ row.code }}</el-tag>
@@ -403,12 +525,12 @@ onUnmounted(() => {
       </el-table>
     </el-card>
 
-    <!-- 班级账号：班级码 + 班级密码（学生端「班级登录」凭据） -->
-    <el-dialog v-model="accountVisible" title="班级账号（学生端登录）" width="460px">
+    <!-- 班级账号：班级码 + 班级密码（教室机器上 ClassHelper 班级端的登录凭据） -->
+    <el-dialog v-model="accountVisible" title="班级账号（ClassHelper 班级端登录）" width="480px">
       <el-alert type="info" :closable="false" show-icon class="mb-12">
         <template #title>
-          学生端以「班级」为主体登录：班级码 + 班级密码。登录后本机代表整个班级，
-          作业完成、通知已读都会按全班记录。
+          教室机器以「班级」为主体登录：班级码 + 班级密码。登录后本机代表整个班级，
+          作业完成、通知已读都会按全班记录。<b>学生没有个人账号，不能登录</b>。
         </template>
       </el-alert>
       <el-form label-width="90px">
@@ -436,10 +558,20 @@ onUnmounted(() => {
     </el-dialog>
 
     <!-- 新建 / 编辑 -->
-    <el-dialog v-model="formVisible" :title="editingId ? '编辑班级' : '新建班级'" width="420px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
-        <el-form-item label="班级名称" prop="name">
-          <el-input v-model="form.name" placeholder="例如 高一(1)班" />
+    <el-dialog v-model="formVisible" :title="editingId ? '编辑班级' : '新建班级'" width="460px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
+        <el-form-item label="入学年份" prop="enrollmentYear">
+          <el-input-number v-model="form.enrollmentYear" :min="2000" :max="2100" :step="1" />
+          <span class="text-muted ml-8">这一届学生入学的年份（届别）</span>
+        </el-form-item>
+        <el-form-item label="班号" prop="classIndex">
+          <el-input-number v-model="form.classIndex" :min="1" :max="99" :step="1" />
+        </el-form-item>
+        <el-form-item label="班级称呼">
+          <el-tag type="primary" effect="plain" size="large">{{ previewName }}</el-tag>
+          <span class="text-muted ml-8">
+            称呼由「入学年份 + 班号」生成；学年升级只改年级，称呼一路跟着这届学生到毕业
+          </span>
         </el-form-item>
         <el-form-item label="年级" prop="grade">
           <el-input v-model="form.grade" placeholder="例如 高一" />
@@ -477,9 +609,17 @@ onUnmounted(() => {
     <el-drawer v-model="detailVisible" size="60%" :title="detail ? `${detail.name} · 详情` : '班级详情'">
       <div v-loading="detailLoading">
         <el-descriptions v-if="detail" :column="detailColumns" border size="small">
+          <el-descriptions-item label="届别">
+            {{ detail.enrollmentYear ? `${detail.enrollmentYear} 级` : '未设置' }}
+          </el-descriptions-item>
           <el-descriptions-item label="年级">{{ detail.grade }}</el-descriptions-item>
           <el-descriptions-item label="班主任">{{ detail.teacher?.name ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="学生数">{{ detail.students.length }}</el-descriptions-item>
+          <el-descriptions-item label="班级端成绩查询">
+            <el-tag :type="detail.studentGradeQueryEnabled ? 'success' : 'info'" size="small">
+              {{ detail.studentGradeQueryEnabled ? '已开放' : '已关闭' }}
+            </el-tag>
+          </el-descriptions-item>
         </el-descriptions>
 
         <!-- 更换班主任（仅管理员）：班主任决定谁能管这个班的课表与成绩 -->
@@ -500,7 +640,7 @@ onUnmounted(() => {
               :value="item.id"
             />
           </el-select>
-          <span class="text-muted">切换后立即生效：原班主任仍保留在下方「协作教师」名单里</span>
+          <span class="text-muted">切换班主任不影响任课关系：各科科任老师在下方「任课老师」里单独配</span>
         </div>
 
         <el-tabs v-model="activeTab" class="mt-12">
@@ -512,8 +652,13 @@ onUnmounted(() => {
               <span class="text-muted">共 {{ detail?.students.length ?? 0 }} 人</span>
             </div>
             <el-table :data="detail?.students ?? []" size="small" class="mt-12" empty-text="暂无学生">
-              <el-table-column prop="username" label="用户名" width="140" />
+              <el-table-column prop="studentNo" label="学号" width="140" />
               <el-table-column prop="name" label="姓名" width="120" />
+              <el-table-column label="状态" width="100">
+                <template #default="{ row }">
+                  <el-tag size="small" effect="plain">{{ STUDENT_STATUS_LABELS[row.status as StudentStatus] }}</el-tag>
+                </template>
+              </el-table-column>
               <el-table-column label="加入时间" width="180">
                 <template #default="{ row }">{{ formatDate(row.createdAt, true) }}</template>
               </el-table-column>
@@ -545,18 +690,52 @@ onUnmounted(() => {
             />
           </el-tab-pane>
 
-          <el-tab-pane label="协作教师" name="teachers">
-            <el-table :data="detail?.teachers ?? []" size="small" class="mt-12" empty-text="暂无协作教师">
-              <el-table-column prop="name" label="姓名" width="140" />
-              <el-table-column prop="username" label="用户名" width="140" />
-              <el-table-column label="操作" width="110">
+          <el-tab-pane label="任课老师" name="subjects">
+            <el-alert type="info" :closable="false" class="mt-12">
+              这是「班级 + 科目 + 教师」的任课关系：<b>科任老师只能发布 / 修改 / 删除自己任教科目的作业和成绩</b>；
+              班主任若不教这一科，同样改不了这一科。同一位老师既可以是班主任、又可以教某一科 ——
+              系统里只有他一个账号，权限自动合并，不会重复建号。
+            </el-alert>
+            <el-table :data="detail?.subjectTeachers ?? []" size="small" class="mt-12" empty-text="还没有配置任课老师">
+              <el-table-column prop="subjectName" label="科目" width="140" />
+              <el-table-column label="任课老师" width="260">
                 <template #default="{ row }">
-                  <el-button link type="danger" @click="removeTeacher(row.id)">取消分配</el-button>
+                  <el-select
+                    v-if="isAdmin"
+                    :model-value="row.teacherId"
+                    placeholder="选择老师"
+                    style="width: 220px"
+                    filterable
+                    @change="(value: string) => changeSubjectTeacher(row, value)"
+                  >
+                    <el-option
+                      v-for="item in teachers"
+                      :key="item.id"
+                      :label="`${item.name}（${item.username}）`"
+                      :value="item.id"
+                    />
+                  </el-select>
+                  <span v-else>{{ row.teacherName || '-' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="isAdmin" label="操作" width="110">
+                <template #default="{ row }">
+                  <el-button link type="danger" @click="clearSubjectTeacher(row)">解除</el-button>
                 </template>
               </el-table-column>
             </el-table>
-            <div class="toolbar mt-12">
-              <el-select v-model="selectedTeacherId" placeholder="选择教师" style="width: 220px" filterable>
+
+            <div v-if="isAdmin" class="toolbar mt-12">
+              <el-select
+                v-model="subjectDraft.subjectName"
+                placeholder="选择科目"
+                style="width: 180px"
+                filterable
+                allow-create
+              >
+                <el-option v-for="name in assignableSubjects" :key="name" :label="name" :value="name" />
+              </el-select>
+              <el-select v-model="subjectDraft.teacherId" placeholder="选择任课老师" style="width: 220px" filterable>
                 <el-option
                   v-for="item in teachers"
                   :key="item.id"
@@ -564,24 +743,68 @@ onUnmounted(() => {
                   :value="item.id"
                 />
               </el-select>
-              <el-button type="primary" @click="assignTeacher">分配</el-button>
+              <el-button type="primary" :loading="subjectSaving" @click="saveSubjectTeacher">设为任课老师</el-button>
+            </div>
+          </el-tab-pane>
+
+          <el-tab-pane label="班级设置" name="settings">
+            <div class="setting-row mt-12">
+              <div>
+                <div class="setting-title">ClassHelper 班级端按学号查询成绩明细</div>
+                <div class="text-muted">
+                  打开后，教室里那台 ClassHelper 班级端可以按学号查到本班学生的成绩明细（含等级）；
+                  关闭后班级端查成绩一律 403，教师端不受影响。
+                </div>
+              </div>
+              <el-switch
+                :model-value="detail?.studentGradeQueryEnabled ?? true"
+                :loading="gradeQuerySaving"
+                :disabled="!isAdmin && auth.role !== 'TEACHER'"
+                @change="(value: boolean) => toggleGradeQuery(value)"
+              />
+            </div>
+
+            <el-divider />
+
+            <div v-if="isAdmin" class="setting-row">
+              <div>
+                <div class="setting-title">学年升级</div>
+                <div class="text-muted">
+                  把本班年级改成下一学年（例如高一 → 高二）。<b>升级不归档</b>：
+                  班级记录、学生名单、学号、作业与成绩全部沿用，只动「年级」这一个字段。
+                </div>
+              </div>
+              <div class="toolbar">
+                <el-input v-model="promoteForm.grade" placeholder="升级后的年级，如 高二" style="width: 200px" />
+                <el-button type="primary" :loading="promoteForm.saving" @click="promote">升级</el-button>
+              </div>
             </div>
           </el-tab-pane>
         </el-tabs>
       </div>
     </el-drawer>
 
-    <!-- 添加学生 -->
-    <el-dialog v-model="studentFormVisible" title="添加学生到本班" width="440px">
-      <el-form :model="studentForm" :rules="studentRules" label-width="90px">
-        <el-form-item label="用户名" prop="username">
-          <el-input v-model="studentForm.username" placeholder="学号或登录名，已存在则直接转入本班" />
+    <!-- 添加学生（只有名单：没有密码、不建账号） -->
+    <el-dialog v-model="studentFormVisible" title="添加学生到本班" width="460px">
+      <el-alert type="info" :closable="false" style="margin-bottom: 12px">
+        学生只是班级名单里的记录：没有账号、没有密码、不能登录（教室机器统一用班级码 + 班级密码）。
+        学号已存在时会直接转入本班，并留下一條调班历史。
+      </el-alert>
+      <el-form :model="studentForm" :rules="studentRules" label-width="100px">
+        <el-form-item label="学号" prop="studentNo">
+          <el-input v-model="studentForm.studentNo" placeholder="学生的唯一标识，如 202601" />
         </el-form-item>
         <el-form-item label="姓名" prop="name">
           <el-input v-model="studentForm.name" />
         </el-form-item>
-        <el-form-item label="初始密码">
-          <el-input v-model="studentForm.password" placeholder="留空则使用默认密码" />
+        <el-form-item label="性别">
+          <el-select v-model="studentForm.gender" placeholder="未填" clearable style="width: 100%">
+            <el-option label="男" value="MALE" />
+            <el-option label="女" value="FEMALE" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="家长手机号">
+          <el-input v-model="studentForm.guardianPhone" placeholder="可选" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -601,5 +824,17 @@ onUnmounted(() => {
 }
 .ml-8 {
   margin-left: 8px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.setting-title {
+  font-weight: 600;
+  margin-bottom: 4px;
 }
 </style>

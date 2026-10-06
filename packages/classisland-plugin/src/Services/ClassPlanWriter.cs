@@ -5,10 +5,10 @@ using ClassIsland.Shared.Models.Profile;
 namespace ClassHelper.ClassIslandPlugin.Services;
 
 /// <summary>
-/// 把班级小助手拉回来的课表写进 ClassIsland 档案。
+/// 把 ClassHelper拉回来的课表写进 ClassIsland 档案。
 ///
 /// **核心约束**：ClassIsland 的一份 <see cref="ClassPlan"/> 只带**一个** <see cref="TimeRule"/>
-/// （即一个星期几 + 一个单双周相位），而班级小助手的课表同时覆盖 7 天与单双周。
+/// （即一个星期几 + 一个单双周相位），而 ClassHelper的课表同时覆盖 7 天与单双周。
 /// 因此这里把服务端的条目**按（星期几 + 单双周）分组**，每一组生成一份独立的档案课表。
 ///
 /// **时间点的构造方式**：ClassIsland 的 <c>ClassPlan.Classes[i]</c> 必须与
@@ -25,10 +25,10 @@ namespace ClassHelper.ClassIslandPlugin.Services;
 public static class ClassPlanWriter
 {
     /// <summary>识别前缀：只有名字带此前缀的课表才由本插件创建与维护。</summary>
-    public const string PlanNamePrefix = "班级小助手-";
+    public const string PlanNamePrefix = "ClassHelper-";
 
     /// <summary>时间表名字后缀。</summary>
-    public const string TimeLayoutNameSuffix = "（班级小助手）";
+    public const string TimeLayoutNameSuffix = "（ClassHelper）";
 
     /// <summary>一次镜像的结果（写入的课表名与冲突提示）。</summary>
     public sealed class ApplyResult
@@ -146,7 +146,7 @@ public static class ClassPlanWriter
             {
                 result.Warnings.Add(
                     $"星期 {group.WeekDay} 已有启用的课表（{string.Join("、", conflicts)}），" +
-                    "两者重叠时以班级小助手同步的课表为准");
+                    "两者重叠时以 ClassHelper同步的课表为准");
             }
         }
 
@@ -183,7 +183,7 @@ public static class ClassPlanWriter
     /// 按分组内的条目重建时间表：**每节课之间补一个课间**（最后一节之后不补）。
     ///
     /// 课间 = 「上一节下课」到「下一节上课」之间的那段空隙，直接由两条课目的时间算出来，
-    /// 不依赖服务端有没有给课间点 —— 这样无论班级小助手那边是否维护节次时间表，
+    /// 不依赖服务端有没有给课间点 —— 这样无论 ClassHelper那边是否维护节次时间表，
     /// ClassIsland 档案里的课表都会有一致的课间（需求：每节课的间隔都是课间，放学后除外）。
     /// </summary>
     private static (Guid Id, TimeLayout Layout) BuildTimeLayout(
@@ -226,7 +226,7 @@ public static class ClassPlanWriter
     }
 
     /// <summary>
-    /// 课表名：单组时用「班级小助手-&lt;班级名&gt;」；多组时补上星期与单双周以免互相覆盖。
+    /// 课表名：单组时用「ClassHelper-&lt;班级名&gt;」；多组时补上星期与单双周以免互相覆盖。
     /// </summary>
     private static string BuildPlanName(
         string profileName,
@@ -235,7 +235,7 @@ public static class ClassPlanWriter
         int weekCountDivTotal,
         int groupCount)
     {
-        var baseName = string.IsNullOrWhiteSpace(profileName) ? "班级小助手课表" : profileName.Trim();
+        var baseName = string.IsNullOrWhiteSpace(profileName) ? "ClassHelper课表" : profileName.Trim();
         if (!baseName.StartsWith(PlanNamePrefix, StringComparison.Ordinal))
         {
             baseName = PlanNamePrefix + baseName;

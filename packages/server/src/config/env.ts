@@ -27,7 +27,7 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('7d'),
   CORS_ORIGIN: z.string().default('*'),
   BCRYPT_ROUNDS: z.coerce.number().int().min(4).max(15).default(10),
-  /** 新建班级时的默认班级密码（学生端班级账号登录用），管理员可随时重置 */
+  /** 新建班级时的默认班级密码（ClassHelper 班级端班级账号登录用），管理员可随时重置 */
   DEFAULT_CLASS_PASSWORD: z.string().min(6).default('123456'),
   /** 新建/重置教师账号时的默认密码（管理员录入教师用） */
   DEFAULT_TEACHER_PASSWORD: z.string().min(6).default('123456'),

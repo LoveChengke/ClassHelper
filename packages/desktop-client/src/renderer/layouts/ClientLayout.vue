@@ -298,7 +298,7 @@ onUnmounted(() => {
         <!-- 品牌区在折叠时**不是 v-if 删掉**，而是靠 CSS 收宽度 + 淡出：
              v-if 会在动画中途把节点直接摘掉，看上去是"啪"地一跳；收放要连续就得让它们一直在。 -->
         <img class="brand-logo" :src="BRAND_LOGO_URL" alt="" width="26" height="26" />
-        <span class="brand-text">班级小助手</span>
+        <span class="brand-text">ClassHelper</span>
       </div>
       <!-- 激活项的滑动指示器：单个底片在菜单项之间平移，位置由 syncIndicator() 量出来。
            pointer-events:none 是必需的 —— 它盖在菜单项上，否则会把点击吃掉。 -->

@@ -24,7 +24,12 @@ export function emitToClass(classId: string, event: string, payload: unknown): v
   emitToRooms([SOCKET_ROOMS.class(classId)], event, payload);
 }
 
-/** 定向推送给单个用户 */
-export function emitToUser(userId: string, event: string, payload: unknown): void {
-  emitToRooms([SOCKET_ROOMS.user(userId)], event, payload);
+/**
+ * 定向推送给单个会话。
+ *
+ * 会话 id：教师/管理员是自己的账号 id，ClassHelper 班级端是**班级 id**
+ * （见 socket.ts 的握手逻辑）。学生不是账号，因此没有"学生房间"。
+ */
+export function emitToSession(sessionId: string, event: string, payload: unknown): void {
+  emitToRooms([SOCKET_ROOMS.session(sessionId)], event, payload);
 }

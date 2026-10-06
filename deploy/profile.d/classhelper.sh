@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# 班级小助手 · 登录 shell 环境变量
+# ClassHelper · 登录 shell 环境变量
 #
 # 由 deploy/install.sh 安装到 /etc/profile.d/classhelper.sh（占位符替换成真实路径）。
 # 生效方式：重新登录，或 `source /etc/profile.d/classhelper.sh`。

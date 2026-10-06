@@ -107,7 +107,7 @@ docker compose up -d
 
 日志里会明确写出「全新安装 / 升级安装」、应用了几个迁移、跳过了几个已存在对象。
 
-### 客户端（学生端）
+### 客户端（ClassHelper 班级端）
 
 从 Releases 取新的 `setup.exe` 覆盖安装即可，配置在 `%APPDATA%`，不受影响。
 

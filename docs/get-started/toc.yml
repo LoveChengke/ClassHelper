@@ -8,7 +8,7 @@
   href: web-admin.md
 - name: 建班级、排课表
   href: setup-class.md
-- name: 装学生端
+- name: 装 ClassHelper 班级端
   href: client.md
 - name: 接入 ClassIsland
   href: classisland.md

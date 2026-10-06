@@ -21,7 +21,7 @@ import {
 import { API_BASE_URL } from '@/config';
 import { importApi } from '@/api';
 
-type Kind = 'grades' | 'students' | 'teachers';
+type Kind = 'grades' | 'students' | 'teachers' | 'classTeachers';
 
 interface FieldDef {
   key: string;
@@ -29,27 +29,52 @@ interface FieldDef {
   required: boolean;
 }
 
-/** 与后端 IMPORT_FIELDS 保持一致（仅用于展示标签与必填提示） */
+/**
+ * 与后端 `IMPORT_FIELDS` 保持一致（仅用于展示标签与必填提示）。
+ *
+ * 学生相关一律是**学号**（原「用户名」列已改名，但导入时仍兼容老模板的表头）。
+ */
 const FIELDS: Record<Kind, FieldDef[]> = {
   grades: [
-    { key: 'username', label: '学生用户名', required: false },
+    { key: 'studentNo', label: '学生学号', required: false },
     { key: 'name', label: '学生姓名', required: false },
     { key: 'examName', label: '考试名称', required: true },
     { key: 'score', label: '分数', required: true },
     { key: 'totalScore', label: '总分', required: false },
-    { key: 'courseName', label: '课程', required: false },
+    { key: 'courseName', label: '科目', required: false },
+    { key: 'level', label: '等级', required: false },
   ],
   students: [
-    { key: 'username', label: '用户名', required: true },
+    { key: 'studentNo', label: '学号', required: true },
     { key: 'name', label: '姓名', required: true },
-    { key: 'password', label: '初始密码', required: false },
+    { key: 'className', label: '班级', required: false },
+    { key: 'gender', label: '性别', required: false },
+    { key: 'guardianPhone', label: '家长手机号', required: false },
   ],
   teachers: [
-    { key: 'username', label: '用户名', required: true },
+    { key: 'username', label: '工号', required: true },
     { key: 'name', label: '姓名', required: true },
+    { key: 'phone', label: '手机号', required: false },
     { key: 'password', label: '初始密码', required: false },
     { key: 'role', label: '角色', required: false },
   ],
+  classTeachers: [
+    { key: 'className', label: '班级', required: true },
+    { key: 'subjectName', label: '科目', required: false },
+    { key: 'teacherNo', label: '教师工号', required: true },
+    { key: 'teacherName', label: '教师姓名', required: false },
+    { key: 'role', label: '角色', required: true },
+  ],
+};
+
+/** 各类导入的一句话说明（弹窗顶部提示） */
+const KIND_HINTS: Record<Kind, string> = {
+  grades: '按**学号**匹配本班学生；同一学生 + 科目 + 考试重复导入会覆盖旧分数。',
+  students: '按**学号**去重；只生成班级名单，**不创建任何账号**（学生没有密码、不能登录）。班级列可留空，用上一步选的班级。',
+  teachers: '按**工号**去重；工号就是登录名。',
+  classTeachers:
+    '导入「班级 + 科目 + 教师」的任课关系。角色填「班主任」或「科任」；' +
+    '同一位老师既是班主任又教某一科时，写两条记录即可 —— 系统只保留一个账号，权限自动合并。',
 };
 
 const props = defineProps<{
@@ -78,14 +103,21 @@ const mapping = ref<Record<string, string>>({});
 const mode = ref<'append' | 'upsert'>('upsert');
 const result = ref<TableImportResult | null>(null);
 const fileInputRef = ref<HTMLInputElement>();
+/** 班级任课老师导入：是否用「工号」匹配已有教师账号（默认开） */
+const useTeacherNo = ref(true);
 
 const fields = computed(() => FIELDS[props.kind]);
 const title = computed(() => {
   if (props.kind === 'grades') return '导入成绩表格';
-  return props.kind === 'teachers' ? '导入教师名单' : '导入学生名单';
+  if (props.kind === 'teachers') return '导入教师名单';
+  if (props.kind === 'classTeachers') return '导入班级任课老师';
+  return '导入学生名单';
 });
-/** 教师名单不需要班级（教师不属于任何班级） */
-const needsClass = computed(() => props.kind !== 'teachers');
+const hint = computed(() => KIND_HINTS[props.kind]);
+/** 教师名单、班级任课老师都不需要先在弹窗里选班级（表格里有班级列 / 与班级无关） */
+const needsClass = computed(() => props.kind !== 'teachers' && props.kind !== 'classTeachers');
+/** 「使用工号匹配」开关只对班级任课老师导入有意义 */
+const usesTeacherNo = computed(() => props.kind === 'classTeachers');
 
 watch(visible, (value) => {
   if (value) reset();
@@ -235,6 +267,7 @@ async function submit(): Promise<void> {
       contentBase64: contentBase64.value,
       mapping: mapping.value,
       mode: mode.value,
+      ...(usesTeacherNo.value ? { useTeacherNo: useTeacherNo.value } : {}),
     });
     result.value = data;
     ElMessage.success(
@@ -249,13 +282,10 @@ async function submit(): Promise<void> {
 
 <template>
   <el-dialog v-model="visible" :title="title" width="760px" class="import-dialog" top="6vh">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      title="支持 .xlsx / .xls / .csv；先下载模板填写可以避免列名不符"
-      class="mb-12"
-    />
+    <el-alert type="info" :closable="false" show-icon class="mb-12">
+      <template #title>{{ hint }}</template>
+      <template #default>支持 .xlsx / .xls / .csv；先下载模板填写可以避免列名不符。</template>
+    </el-alert>
 
     <div class="import-toolbar">
       <el-button size="small" @click="downloadTemplate('xlsx')">下载模板（Excel）</el-button>
@@ -334,7 +364,22 @@ async function submit(): Promise<void> {
             <el-radio value="append">已存在则跳过</el-radio>
           </el-radio-group>
           <div class="mode-hint">
-            {{ kind === 'grades' ? '成绩重复判定：同一学生 + 考试 + 课程' : '名单重复判定：同一用户名' }}
+            {{
+              kind === 'grades'
+                ? '成绩重复判定：同一学生 + 科目 + 考试'
+                : kind === 'teachers'
+                  ? '教师重复判定：同一工号'
+                  : kind === 'classTeachers'
+                    ? '同一个班同一科目已有任课老师时会直接改掉（不重复建记录）'
+                    : '学生重复判定：同一学号'
+            }}
+          </div>
+        </el-form-item>
+        <el-form-item v-if="usesTeacherNo" label="教师匹配">
+          <el-switch v-model="useTeacherNo" />
+          <div class="mode-hint">
+            打开时优先按<b>工号</b>匹配已有教师账号（匹配不到会按工号新建）；
+            关闭时只按姓名匹配，匹配不到就报错。同一份表格里同一位老师出现多次只会有一个账号。
           </div>
         </el-form-item>
       </el-form>

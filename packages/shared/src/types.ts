@@ -4,14 +4,42 @@
  * 后端返回值与前端调用方都必须依赖它，避免契约漂移。
  */
 
-/** 用户角色：管理员 / 教师 / 学生 */
-export type UserRole = 'ADMIN' | 'TEACHER' | 'STUDENT';
+/**
+ * 账号角色：管理员 / 教师 / ClassHelper 班级端。
+ *
+ * **没有 STUDENT**：学生不是账号，只是 `Student` 表里的班级名单记录，
+ * 既没有密码也没有登录入口（2026-10-06 起由表结构保证，不再靠代码分支拦）。
+ * `CLASS_DEVICE` 是教室里那台绑定到某个班的 ClassHelper 班级端（班级码 + 班级密码登录），
+ * 它代全班读写个人数据。
+ */
+export type UserRole = 'ADMIN' | 'TEACHER' | 'CLASS_DEVICE';
 
 /** 通知优先级 */
 export type NotificationPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
 
-/** 成绩等级 */
+/** 百分制默认等级换算结果的取值域（自定义等级不受它限制） */
 export type GradeLevel = 'A' | 'B' | 'C' | 'D' | 'E';
+
+/**
+ * 成绩的等级口径：
+ * - `percent` 百分制：等级由得分率自动换算（教师仍可手改单条）
+ * - `letter`  等级制：A / B / C / D
+ * - `custom`  自定义等级：教师填任意文本（优 / 良 / 合格 / 待提高…）
+ */
+export type GradeLevelType = 'percent' | 'letter' | 'custom';
+
+/**
+ * 学生状态。
+ *
+ * - `active`      在读
+ * - `graduated`   已毕业（随届别归档）
+ * - `transferred` 已转出（学籍离开本校，班级归属保留作历史）
+ * - `inactive`    停用（休学等，记录保留）
+ */
+export type StudentStatus = 'active' | 'graduated' | 'transferred' | 'inactive';
+
+/** 学生性别：'' = 未填 */
+export type StudentGender = '' | 'MALE' | 'FEMALE';
 
 /** 统一响应体（后端所有接口均返回该结构） */
 export interface ApiResponse<T = unknown> {
@@ -43,20 +71,22 @@ export interface PaginatedResult<T> {
   pageSize: number;
 }
 
-/* ------------------------------------------------------------------ 用户 / 认证 */
+/* ------------------------------------------------------------------ 账号（管理员 / 教师） */
 
+/**
+ * 账号 DTO：管理员与教师。
+ *
+ * `username` 对教师而言就是**工号**（界面上一律显示「工号」），也是登录名。
+ * 学生不在这个类型里 —— 他们只是班级名单记录，见 `StudentDto`。
+ */
 export interface UserDto {
   id: string;
   username: string;
   name: string;
   role: UserRole;
-  classId: string | null;
+  /** 手机号（可空） */
+  phone: string;
   createdAt: string;
-}
-
-export interface StudentDto extends UserDto {
-  className?: string | null;
-  grade?: string | null;
 }
 
 export interface LoginRequest {
@@ -66,14 +96,30 @@ export interface LoginRequest {
 
 /**
  * 登录会话主体。
- * - 普通账号（教师/管理员）：就是用户本身；学生个人账号已清理，学生只有名单记录；
- * - 班级账号（班级设备）：`classSession = true`，此时 `id` 与 `classId` 都是班级 id，
- *   `name` 是班级名，个人数据由服务端按"全班"范围读写。
+ * - 教师 / 管理员：就是账号本身（`classSession` 为空）；
+ * - ClassHelper 班级端：`classSession = true`，此时 `id` 与 `classId` 都是班级 id，
+ *   `name` 是班级名，`username` 是班级码，个人数据由服务端按「全班」范围读写。
  */
-export interface SessionUser extends StudentDto {
+export interface SessionUser {
+  id: string;
+  /** 教师/管理员的工号，或班级端的班级码 */
+  username: string;
+  name: string;
+  role: UserRole;
+  classId: string | null;
+  createdAt: string;
+  phone?: string;
+  className?: string | null;
+  grade?: string | null;
+  /** ClassHelper 班级端（班级会话） */
   classSession?: boolean;
-  /** 班级账号的班级码（仅班级会话返回） */
+  /** 班级端的班级码（仅班级会话返回） */
   classCode?: string;
+  /**
+   * 班级端按学号查询成绩明细的开关（仅班级会话返回）。
+   * 客户端据此决定要不要显示"按学号查成绩"入口。
+   */
+  studentGradeQueryEnabled?: boolean;
 }
 
 export interface LoginResponse {
@@ -81,18 +127,265 @@ export interface LoginResponse {
   user: SessionUser;
 }
 
-/** 班级账号登录（学生端）：班级码 + 班级密码 */
+/** 班级端登录（ClassHelper 班级端）：班级码 + 班级密码 */
 export interface ClassLoginRequest {
   code: string;
   password: string;
+}
+
+/* ------------------------------------------------------------------ 学生（班级名单记录，没有账号） */
+
+/**
+ * 学生 DTO。
+ *
+ * 学生**不是账号**：没有密码、不能登录、没有个人入口。
+ * `studentNo`（学号）是学生在系统里的唯一标识，也是查询键（成绩、作业提交名单、导入导出都用它）。
+ */
+export interface StudentDto {
+  id: string;
+  /** 学号：学生唯一标识（全校唯一） */
+  studentNo: string;
+  name: string;
+  /** 当前班级；null = 未分班 */
+  classId: string | null;
+  className?: string | null;
+  grade?: string | null;
+  gender: StudentGender;
+  /** 家长手机号（可空） */
+  guardianPhone: string;
+  status: StudentStatus;
+  /** 毕业归档所属届别；null = 未归档 */
+  archivedYearId?: string | null;
+  archivedAt?: string | null;
+  /** 转出时间（status='transferred' 时写入） */
+  transferredAt?: string | null;
+  transferNote?: string;
+  createdAt: string;
+}
+
+/** 学生简要信息（成绩、提交名单等引用处使用） */
+export interface StudentBrief {
+  id: string;
+  studentNo: string;
+  name: string;
+}
+
+export interface CreateStudentRequest {
+  studentNo: string;
+  name: string;
+  classId?: string | null;
+  gender?: StudentGender;
+  guardianPhone?: string;
+  status?: StudentStatus;
+}
+
+export interface UpdateStudentRequest {
+  studentNo?: string;
+  name?: string;
+  classId?: string | null;
+  gender?: StudentGender;
+  guardianPhone?: string;
+  status?: StudentStatus;
+}
+
+/** 学生是否属于某个班的判定范围（列表查询用） */
+export interface StudentQueryParams {
+  classId?: string;
+  keyword?: string;
+}
+
+/* ------------------------------------------------------------------ 调班 */
+
+/** 调班 / 转出的方式 */
+export type StudentTransferMode = 'single' | 'batch' | 'transfer-out';
+
+/** 一次调班 / 转出的历史记录（原班级 / 新班级 / 操作人 / 时间） */
+export interface StudentTransferDto {
+  id: string;
+  studentId: string;
+  /** 学号快照：学生被删除后历史仍可读 */
+  studentNo: string;
+  studentName: string;
+  fromClassId: string | null;
+  fromClassName: string;
+  toClassId: string | null;
+  toClassName: string;
+  operatorId: string | null;
+  operatorName: string;
+  /** single = 单个调班 / batch = 批量调班 / transfer-out = 转出（离开本校） */
+  mode: StudentTransferMode;
+  note: string;
+  createdAt: string;
+}
+
+/**
+ * 调班请求：单个与批量共用。
+ * 传一个 id 就是单个调班；`toClassId = null` 表示移出班级（回到「未分班」）。
+ * **学号不变**，只改学生当前的班级归属；历史作业与成绩保留原归属。
+ */
+export interface TransferStudentsRequest {
+  studentIds: string[];
+  toClassId: string | null;
+  note?: string;
+}
+
+/**
+ * 学生转出（学籍离开本校，不是调班）：班级归属保留作历史，状态置为 `transferred`。
+ * 单个与批量共用 —— 传一个 id 就是单个。
+ */
+export interface TransferOutStudentsRequest {
+  studentIds: string[];
+  /** 转出去向 / 原因备注 */
+  note?: string;
+}
+
+/* ------------------------------------------------------------------ 毕业归档 */
+
+/**
+ * 届别档案：一次「毕业归档」的留痕。
+ *
+ * 归档是**打标记 + 只读**，不删任何数据：毕业班级的作业与通知原样留在库里，
+ * 通过归档详情只读查看。**未毕业而升级的班级不归档**（升级只改年级，数据沿用）。
+ */
+export interface ArchivedYearDto {
+  id: string;
+  /** 届别 = 入学年份（2026 表示 2026 级） */
+  enrollmentYear: number;
+  /** 毕业年份 */
+  graduationYear: number;
+  /** 届别名，如「2026 级」 */
+  name: string;
+  note: string;
+  operatorId: string | null;
+  operatorName: string;
+  /** 归档时的统计快照 */
+  classCount: number;
+  studentCount: number;
+  transferredCount: number;
+  homeworkCount: number;
+  notificationCount: number;
+  archivedAt: string;
+}
+
+/** 归档里的一个班级 */
+export interface ArchivedClassDto {
+  id: string;
+  name: string;
+  grade: string;
+  enrollmentYear: number | null;
+  classIndex: number | null;
+  headTeacherName: string | null;
+  studentCount: number;
+  homeworkCount: number;
+  notificationCount: number;
+  archivedAt: string | null;
+}
+
+export interface ArchivedYearDetailDto extends ArchivedYearDto {
+  classes: ArchivedClassDto[];
+  /** 本届毕业生 */
+  graduates: StudentDto[];
+  /** 本届在读期间转出的学生 */
+  transferred: StudentDto[];
+}
+
+/** 归档班级的作业与通知（只读） */
+export interface ArchivedClassContentDto {
+  classId: string;
+  className: string;
+  homeworks: HomeworkDto[];
+  notifications: NotificationDto[];
+}
+
+export interface CreateArchiveRequest {
+  /** 要归档的届别（入学年份） */
+  enrollmentYear: number;
+  /** 毕业年份；留空 = 入学年份 + 默认学制（3 年） */
+  graduationYear?: number;
+  note?: string;
+}
+
+/** 学年升级：只改年级，不归档、数据沿用 */
+export interface PromoteClassesRequest {
+  classIds: string[];
+  /** 升级后的年级，如「高二」 */
+  grade: string;
+}
+
+/* ------------------------------------------------------------------ 学期周次 */
+
+/**
+ * 一个教学周的日期区间。
+ *
+ * 学期周次不能只靠"开学日期 + 每周七天"线性推算：法定节假日调休、周末补课、错峰开学
+ * 都会让某一周变长变短。管理员可以逐周设置区间（也可以先按开学日期一键生成再微调）。
+ */
+export interface TermWeekDto {
+  weekNumber: number;
+  /** YYYY-MM-DD（本地日期） */
+  startDate: string;
+  /** YYYY-MM-DD */
+  endDate: string;
+  note: string;
+}
+
+export interface TermWeeksDto {
+  /**
+   * 这套区间属于谁：空串 = **全校默认**；非空 = 某个班的覆盖。
+   * 班级没有自己的配置时回落到全校默认。
+   */
+  classId: string;
+  /** 学期开始日期（第 1 教学周的周一，YYYY-MM-DD） */
+  termStartDate: string;
+  /** 当前教学周（按区间判定；不在任何区间内时按学期开始日期线性兜底） */
+  currentWeek: number;
+  /** 本学期的教学周数上限 */
+  maxWeek: number;
+  /** 是否已逐周配置（false = 完全按学期开始日期线性推算） */
+  configured: boolean;
+  weeks: TermWeekDto[];
+}
+
+export interface UpdateTermWeeksRequest {
+  /** 不传 = 改全校默认 */
+  classId?: string | null;
+  /** 学期开始日期（第 1 教学周的周一）；不传则保持原值 */
+  termStartDate?: string;
+  /** 逐周区间（整表覆盖） */
+  weeks: Array<{ weekNumber: number; startDate: string; endDate: string; note?: string }>;
+}
+
+export interface AutoTermWeeksRequest {
+  classId?: string | null;
+  termStartDate?: string;
+  /** 生成多少周；不传用班级的教学周数（Class.termWeeks） */
+  maxWeek?: number;
+}
+
+/** 联网获取的法定节假日建议（失败时 ok=false，属于正常结果） */
+export interface HolidaySuggestionDto {
+  ok: boolean;
+  /** 失败原因（给人看的一句话）；ok=true 时为 null */
+  error: string | null;
+  /** 数据来源年份 */
+  year: number;
+  /** 建议的「不上课」日期区间（调休放假），管理员可据此调整周次 */
+  holidays: Array<{ name: string; startDate: string; endDate: string }>;
+  checkedAt: string;
 }
 
 /* ------------------------------------------------------------------ 班级 */
 
 export interface ClassDto {
   id: string;
+  /** 班级称呼，如「2026级1班」（由 enrollmentYear + classIndex 生成） */
   name: string;
+  /** 当前年级（高一 / 高二 / 高三），学年升级时更新 */
   grade: string;
+  /** 入学年份（届别）：2026 → 称呼「2026级…」 */
+  enrollmentYear: number | null;
+  /** 班号（同一届内的序号） */
+  classIndex: number | null;
   teacherId: string;
   createdAt: string;
   teacher?: ClassTeacherBrief | null;
@@ -100,33 +393,79 @@ export interface ClassDto {
   courseCount?: number;
   homeworkCount?: number;
   notificationCount?: number;
-  /** 班级码（学生端班级账号登录用）；仅对有管理权限的角色返回 */
+  /** 班级码（ClassHelper 班级端班级账号登录用）；仅对有管理权限的角色返回 */
   code?: string;
   /** 是否已设置班级密码（哈希永不外泄） */
   hasPassword?: boolean;
   /** 本学期教学周数（班主任可调，默认 20）：课表周次选择与默认 weekEnd 都用它 */
   termWeeks: number;
+  /** 本班学期开始日期（YYYY-MM-DD）；null = 用全局配置 */
+  termStartDate?: string | null;
   /** 是否已有启用中的 ClassIsland 联动设备（班级列表/课表页显示「已接入」徽标） */
   classIslandConnected?: boolean;
-  /** 通知显示位置（由教室的班级客户端设置，见 CLASSISLAND_NOTIFICATION_CHANNELS） */
+  /** 通知显示位置（由 ClassHelper 班级端设置，见 CLASSISLAND_NOTIFICATION_CHANNELS） */
   notificationChannel?: ClassIslandNotificationChannel;
+  /**
+   * 是否允许 ClassHelper 班级端按学号查询本班学生的成绩明细（默认开启）。
+   * 关闭后班级端查成绩一律 403，教师端不受影响。
+   */
+  studentGradeQueryEnabled: boolean;
+  /** 毕业归档所属届别；null = 在读（常规班级列表只显示未归档的） */
+  archivedYearId?: string | null;
+  archivedAt?: string | null;
 }
 
+/** 账号简要信息（工号 + 姓名）：用于"班主任""发布人"等展示位 */
 export interface ClassTeacherBrief {
   id: string;
   name: string;
+  /** 教师的工号（管理员为登录名） */
   username: string;
+}
+
+/**
+ * 某班某科的任课老师 —— 需求里的「班级 + 科目 + 教师」任课关系。
+ * 落在 `Course` 上（它本来就是 `classId + name + teacherId`）。
+ */
+export interface SubjectTeacherDto {
+  courseId: string;
+  /** 科目名 */
+  subjectName: string;
+  teacherId: string;
+  teacherName: string;
+}
+
+/** 管理员设置某班某科的任课老师 */
+export interface AssignSubjectTeachersRequest {
+  assignments: Array<{
+    /** 已有课程 id；留空时按 subjectName 匹配或自动建课 */
+    courseId?: string | null;
+    subjectName: string;
+    /** 留空表示解除该科的任课老师（保留课程本身） */
+    teacherId?: string | null;
+  }>;
 }
 
 export interface ClassDetailDto extends ClassDto {
   students: StudentDto[];
   courses: CourseDto[];
-  teachers: ClassTeacherBrief[];
+  /** 班主任（与 `teacher` 同一人，单独给一个语义明确的字段） */
+  headTeacher: ClassTeacherBrief | null;
+  /** 各科任课老师 */
+  subjectTeachers: SubjectTeacherDto[];
 }
 
 export interface CreateClassRequest {
-  name: string;
+  /**
+   * 班级称呼。**可以留空** —— 填了 `enrollmentYear` 与 `classIndex` 时由服务端生成「2026级1班」，
+   * 这时传进来的 name 会被忽略（避免出现"名字是高一(1)班、届别是 2026 级"这种自相矛盾的数据）。
+   */
+  name?: string;
   grade: string;
+  /** 入学年份（届别），如 2026 */
+  enrollmentYear: number;
+  /** 班号（同一届内的序号），如 1 */
+  classIndex: number;
   /** 可选：自定义班级码，留空自动生成 */
   code?: string;
   /** 本学期教学周数（1~30，仅管理员可调）；不传由服务端用默认值 20 */
@@ -136,10 +475,21 @@ export interface CreateClassRequest {
 }
 
 export interface UpdateClassRequest {
-  name?: string;
+  /** 本班学期开始日期（YYYY-MM-DD，第 1 教学周的周一）；留空串表示回落到全局配置 */
+  termStartDate?: string | null;
+  /** 入学年份（有名无实的旧数据需要补填；填了会重算 name） */
+  enrollmentYear?: number;
+  /** 班号（同上） */
+  classIndex?: number;
+  /** 当前年级（高一 / 高二 / 高三；学年升级时改它，**不归档**） */
   grade?: string;
   /** 本学期教学周数（1~30，仅管理员可调） */
   termWeeks?: number;
+}
+
+/** 班级端成绩查询开关 */
+export interface UpdateStudentGradeQueryRequest {
+  enabled: boolean;
 }
 
 /** 管理员设置/重置班级账号（班级码 + 班级密码） */
@@ -292,7 +642,7 @@ export interface HomeworkDto {
   assignDate: string;
   course?: CourseBrief | null;
   creator?: ClassTeacherBrief | null;
-  /** 当前登录学生的完成状态（学生端接口返回） */
+  /** 当前登录学生的完成状态（ClassHelper 班级端接口返回） */
   completed?: boolean;
   homeworkStatus?: HomeworkStatusDto | null;
   /** 教师视角：已提交人数 */
@@ -315,7 +665,8 @@ export interface HomeworkDaysDto {
 export interface HomeworkStatusDto {
   id: string;
   homeworkId: string;
-  userId: string;
+  /** 学生 id（学生是名单记录，没有账号） */
+  studentId: string;
   completed: boolean;
   updatedAt: string;
 }
@@ -336,15 +687,16 @@ export interface UpdateHomeworkStatusRequest {
 
 /** 作业提交名单里的一位学生 */
 export interface HomeworkSubmissionDto {
-  userId: string;
+  studentId: string;
+  /** 学号（学生唯一标识与查询键） */
+  studentNo: string;
   name: string;
-  username: string;
   completed: boolean;
 }
 
 /**
  * 作业提交名单（"未交名单"功能的载体）：
- * 教师端 / 班级设备用它勾选谁没交作业，其余学生一律视为已交。
+ * 教师端 / ClassHelper 班级端用它勾选谁没交作业，其余学生一律视为已交。
  */
 export interface HomeworkSubmissionsDto {
   homeworkId: string;
@@ -360,13 +712,13 @@ export interface HomeworkSubmissionsDto {
 
 export interface UpdateHomeworkSubmissionsRequest {
   /** 未交作业的学生 id（其余学生一律标记为已交） */
-  notSubmittedUserIds: string[];
+  notSubmittedStudentIds: string[];
 }
 
 export interface HomeworkQueryParams {
   classId?: string;
   courseId?: string;
-  /** 学生端：只看未完成 */
+  /** ClassHelper 班级端：只看未完成 */
   pendingOnly?: boolean;
   keyword?: string;
 }
@@ -403,14 +755,14 @@ export interface CreateNotificationRequest {
 
 /**
  * 叫人请求：老师在 Web 管理端选中学生 + 快捷短语/自定义消息，
- * 学生端灵动岛会立即弹出"请 XXX 同学找 XXX 老师"。
+ * ClassHelper 班级端灵动岛会立即弹出"请 XXX 同学找 XXX 老师"。
  */
 export interface CreateCallRequest {
   classId: string;
   studentId: string;
   /**
    * 是否"紧急叫人"：
-   * - true：落库为 URGENT，学生端灵动岛无视上课时段立即展开（与紧急通知同等待遇）；
+   * - true：落库为 URGENT，ClassHelper 班级端灵动岛无视上课时段立即展开（与紧急通知同等待遇）；
    * - 省略/false：普通叫人（默认），按普通通知处理 —— 上课时段只进队列、不打断课堂，下课后弹出。
    */
   urgent?: boolean;
@@ -433,23 +785,38 @@ export interface GradeDto {
   id: string;
   classId: string;
   courseId: string | null;
-  userId: string;
+  /** 学生 id（学生是名单记录，没有账号） */
+  studentId: string;
   examName: string;
   score: number;
   totalScore: number;
+  /**
+   * 等级口径：percent 百分制 / letter 等级制 A-D / custom 自定义等级。
+   * 决定 `level` 是怎么来的，也决定界面上给不给"改等级"的入口。
+   */
+  levelType: GradeLevelType;
+  /**
+   * 等级文本。`percent` 下由服务端按得分率生成初值（教师仍可手改并覆盖），
+   * `letter`/`custom` 下由教师直接指定。
+   */
+  level: string;
   publishedAt: string;
   course?: CourseBrief | null;
-  student?: ClassTeacherBrief | null;
+  student?: StudentBrief | null;
   className?: string | null;
 }
 
 export interface CreateGradeRequest {
   classId: string;
   courseId?: string | null;
-  userId: string;
+  studentId: string;
   examName: string;
   score: number;
   totalScore?: number;
+  /** 等级口径，默认 percent */
+  levelType?: GradeLevelType;
+  /** 手填等级；percent 且留空时由服务端按得分率换算 */
+  level?: string;
   publishedAt?: string | null;
 }
 
@@ -459,16 +826,35 @@ export interface BulkCreateGradeRequest {
   courseId?: string | null;
   examName: string;
   totalScore?: number;
+  levelType?: GradeLevelType;
   publishedAt?: string | null;
-  items: Array<{ userId: string; score: number }>;
+  items: Array<{ studentId: string; score: number; level?: string }>;
 }
 
-/** 成绩统计（教师端图表 / 学生端汇总） */
+/** 单个 / 批量修改等级 */
+export interface UpdateGradeLevelsRequest {
+  /** 逐条指定等级（单个就是长度为 1 的数组） */
+  items: Array<{ id: string; level: string }>;
+}
+
+/** 按学号查询的学生成绩明细（ClassHelper 班级端 / 教师端共用） */
+export interface StudentGradeDetailDto {
+  student: StudentBrief;
+  classId: string | null;
+  className: string | null;
+  /** 该生的全部成绩（按考试时间倒序） */
+  items: GradeDto[];
+  /** 得分率均值（0-100，一位小数） */
+  averagePercent: number;
+}
+
+/** 成绩统计（教师端图表 / 班级端汇总） */
 export interface GradeStats {
   total: number;
   averagePercent: number;
   byCourse: Array<{ courseId: string | null; courseName: string; count: number; averagePercent: number }>;
-  distribution: Array<{ level: GradeLevel; count: number }>;
+  /** 等级分布：等级文本 -> 人数（自定义等级也能统计） */
+  distribution: Array<{ level: string; count: number }>;
 }
 
 /* ------------------------------------------------------------------ 上课时段（灵动岛 / 紧急通知确认共用） */
@@ -647,14 +1033,24 @@ export interface ServerToClientEvents {
   'classisland:state': (payload: ClassIslandStateEvent) => void;
   /** ClassIsland 联动：老师发的提醒已下发给该班设备（Web 端据此提示「已送达」） */
   'classisland:notification': (payload: ClassIslandNotificationEvent) => void;
-  connected: (payload: { userId: string; role: UserRole; rooms: string[] }) => void;
+  /** 会话主体 id：教师/管理员是自己的账号 id，ClassHelper 班级端是班级 id */
+  connected: (payload: { sessionId: string; role: UserRole; rooms: string[] }) => void;
 }
 
 /* ------------------------------------------------------------------ 导入（模板 / 表格 / 课表时间配置） */
 
+/**
+ * 表格导入的类型：
+ * - `grades`       成绩单（按学号匹配本班学生）
+ * - `students`     学生名单（学号必填唯一；只建名单，不建账号）
+ * - `teachers`     教师账号名单（工号 + 姓名）
+ * - `classTeachers` 班级任课老师（班级 + 科目 + 工号 + 角色）
+ */
+export type TableImportKind = 'grades' | 'students' | 'teachers' | 'classTeachers';
+
 /** 表格导入预览：列名、前若干行、建议字段映射与校验问题 */
 export interface TableImportPreview {
-  kind: 'grades' | 'students';
+  kind: TableImportKind;
   columns: string[];
   rows: string[][];
   totalRows: number;
@@ -672,7 +1068,7 @@ export interface TableImportRowError {
 
 /** 导入结果统计 */
 export interface TableImportResult {
-  kind: 'grades' | 'students';
+  kind: TableImportKind;
   total: number;
   inserted: number;
   updated: number;
@@ -731,7 +1127,7 @@ export type ClassIslandNotificationChannel = 'both' | 'client' | 'classisland';
 
 /**
  * 联动方式：
- * - `plugin`：安装「班级小助手联动插件」，由插件把 ClassIsland 的当前状态与课表推给本服务；
+ * - `plugin`：安装「ClassHelper 联动插件」，由插件把 ClassIsland 的当前状态与课表推给本服务；
  * - `import`：只把 ClassIsland 导出的档案 JSON 导入本服务（一次性，无实时联动）。
  */
 export type IntegrationMode = 'plugin' | 'import';
@@ -752,12 +1148,20 @@ export interface IntegrationDeviceDto {
   mode: IntegrationMode;
   /** 是否接入：接入后插件才能上报状态/课表并接收通知 */
   enabled: boolean;
-  /** 是否允许插件把 ClassIsland 的课表回传到本服务（覆盖/合并本班课表） */
+  /**
+   * 是否允许插件把 ClassIsland 的课表**自动**回传到本服务（覆盖/合并本班课表）。
+   * **默认关闭**：课表以服务端为准，自动回传会在老师手排课之后被教室的旧课表覆盖；
+   * 要取教室的课表请用「从教室机器获取课表」这个手动动作。
+   */
   syncScheduleToServer: boolean;
   /** 是否允许把班级课表镜像回 ClassIsland（由插件执行） */
   mirrorScheduleToClassIsland: boolean;
-  /** 最后一次成功上报的时间 */
+  /** 最后一次"带运行状态"的上报时间（心跳之外还有实际内容的那次） */
   lastSeenAt: string | null;
+  /** 最后一次心跳时间（每次上报都刷新）；在线判定看它 */
+  lastHeartbeatAt: string | null;
+  /** 是否在线：最后一次心跳在 CLASS_HELPER_ONLINE_WINDOW_MS 之内 */
+  online: boolean;
   /** 最后一次上报里 ClassIsland 是否已加载课表 */
   classPlanLoaded: boolean;
   /** 最后一次上报里的当前科目 */
@@ -769,6 +1173,8 @@ export interface IntegrationDeviceDto {
   currentPeriodEnd: string | null;
   /** 最后一次上报里的下一节课科目 */
   nextSubject: string | null;
+  /** 是否有待办的「立即上报一次课表」请求（Web 端点过之后置位，插件上报后清除） */
+  requestScheduleReport: boolean;
   /** 令牌前缀提示（chci_xxxxxxxx…）：设备列表里用于区分多台设备各自用的令牌 */
   tokenHint?: string;
   /** 创建/重置接口一次性下发的纯文本设备令牌（其他接口永不返回） */
@@ -797,6 +1203,53 @@ export interface UpdateIntegrationDeviceRequest {
   syncScheduleToServer?: boolean;
   mirrorScheduleToClassIsland?: boolean;
   mode?: IntegrationMode;
+}
+
+/* ------------------ ClassHelper 班级端在线状态（教师网页查看） ------------------ */
+
+/** 一台 ClassHelper 班级端设备的在线状态 */
+export interface ClassHelperDeviceStatusDto {
+  deviceId: string;
+  /** 设备显示名（默认取机器名） */
+  deviceName: string;
+  /** 设备/机器码 */
+  deviceKey: string;
+  /** 是否接入（停用的设备一律按离线展示） */
+  enabled: boolean;
+  /** 在线 = 最近一次心跳在 CLASS_HELPER_ONLINE_WINDOW_MS 之内 */
+  online: boolean;
+  /** 最后一次带运行状态的上报时间 */
+  lastSeenAt: string | null;
+  /** 最后一次心跳时间 */
+  lastHeartbeatAt: string | null;
+  pluginVersion: string | null;
+  classIslandVersion: string | null;
+}
+
+/**
+ * 某个班的 ClassHelper 班级端在线状态。
+ *
+ * 范围：管理员看全部班级；普通教师看自己担任班主任的班级 ∪ 任课（有 Course）的班级。
+ */
+export interface ClassHelperStatusDto {
+  classId: string;
+  className: string;
+  grade: string;
+  /** 该班绑定的全部设备（可能多台：讲台机 + 备用机） */
+  devices: ClassHelperDeviceStatusDto[];
+  /** 任一设备在线即视为该班在线 */
+  online: boolean;
+  /** 是否允许班级端按学号查询本班学生成绩明细 */
+  studentGradeQueryEnabled: boolean;
+}
+
+/** GET /api/integrations/classisland/status 的返回 */
+export interface ClassHelperStatusListDto {
+  /** 后端判定所用的服务器时间（前端据此算"距今多久"，避免依赖本机时钟） */
+  serverTime: string;
+  /** 在线判定窗口（毫秒） */
+  onlineWindowMs: number;
+  classes: ClassHelperStatusDto[];
 }
 
 /** 通知下发：把一条通知推给某班级的 ClassIsland 设备（在 ClassIsland 上全屏提醒） */
@@ -907,6 +1360,11 @@ export interface ClassIslandReportResult {
   settings: {
     mirrorScheduleToClassIsland: boolean;
     enabled: boolean;
+    /**
+     * 服务端请求插件**立刻上报一次课表**（Web 端点了「从教室机器获取课表」）。
+     * 独立于 `syncScheduleToServer`：那个开关管的是"要不要自动回传"。
+     */
+    scheduleRequested?: boolean;
   };
   /** 尚未在 ClassIsland 上确认过的一条提醒（插件可立即弹出） */
   pendingNotification?: ClassIslandPushNotification | null;
@@ -980,6 +1438,13 @@ export interface ClassIslandClassPlanPull {
     termStartDate: string;
   };
   week: number;
+  /**
+   * 学期逐周区间（管理员在「学期周次」里配的）。
+   * 空数组 = 完全按 `termStartDate` 线性推算。
+   * ClassIsland 自身只认"教学周序号 + 单双周"，因此它拿这个主要是为了
+   * 校正"现在是第几周"、以及在设置页里展示教室所在的实际日期区间。
+   */
+  weekRanges?: Array<{ weekNumber: number; startDate: string; endDate: string }>;
   serverTime: string;
 }
 

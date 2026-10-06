@@ -382,7 +382,7 @@ onUnmounted(() => {
     <div class="page-header">
       <div>
         <h2 class="page-title">通知发布</h2>
-        <p class="page-subtitle">发布后按班级房间广播（notification:new），学生端 5 秒内到达</p>
+        <p class="page-subtitle">发布后按班级房间广播（notification:new），ClassHelper 班级端 5 秒内到达</p>
       </div>
       <div class="toolbar">
         <el-select
@@ -515,7 +515,7 @@ onUnmounted(() => {
       </template>
     </el-dialog>
 
-    <!-- 叫人：选班级 → 选学生 → 快捷短语 / 自定义消息 → 学生端灵动岛立即弹出 -->
+    <!-- 叫人：选班级 → 选学生 → 快捷短语 / 自定义消息 → ClassHelper 班级端灵动岛立即弹出 -->
     <el-dialog v-model="callVisible" title="叫人" width="520px">
       <el-form label-width="76px">
         <el-form-item label="班级">
@@ -528,7 +528,7 @@ onUnmounted(() => {
             <el-option
               v-for="item in callStudents"
               :key="item.id"
-              :label="`${item.name}（${item.username}）`"
+              :label="`${item.name}（${item.studentNo}）`"
               :value="item.id"
             />
           </el-select>
@@ -569,8 +569,8 @@ onUnmounted(() => {
         :closable="false"
         :title="
           callUrgent
-            ? '紧急叫人：学生端桌面无视上课时段立即展开，需学生点「收到」'
-            : '普通叫人：学生端课间先显示胶囊、点击展开；上课时段只排队，下课后弹出'
+            ? '紧急叫人：ClassHelper 班级端桌面无视上课时段立即展开，需学生点「收到」'
+            : '普通叫人：ClassHelper 班级端课间先显示胶囊、点击展开；上课时段只排队，下课后弹出'
         "
       />
       <template #footer>

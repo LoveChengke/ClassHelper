@@ -444,11 +444,34 @@ async function main() {
   });
   record('非法显示位置被拒（422）', badChannel.status === 422, `status=${badChannel.status}`);
 
-  // ---------------------------------------------------------------- 5. 课表镜像（默认关闭 → 打开 → 拉取）
+  // ---------------------------------------------------------------- 5. 课表镜像
+  //
+  // 同步方向在 2026-10-06 反转：**服务端 → 教室自动下发**成为主方向（默认开启），
+  // 「把教室课表传上来」改成 Web 端的一次性人工动作。因此这里先验证"默认就下发"，
+  // 再验证"关掉之后确实不下发"。
+  const mirrorDefault = await api('/integrations/classisland/class-plan', { deviceToken });
+  record(
+    '课表默认由服务端自动下发（新方向：服务端 → 教室）',
+    mirrorDefault.status === 200 && mirrorDefault.payload?.data?.classPlan?.entries?.length >= 0,
+    `status=${mirrorDefault.status} data=${mirrorDefault.payload?.data === null ? 'null' : 'object'}`,
+  );
+
+  const disabled = await api(`/integrations/devices/${deviceId}`, {
+    method: 'PATCH',
+    token: teacherToken,
+    body: { mirrorScheduleToClassIsland: false },
+  });
+  record(
+    '关闭「镜像课表到 ClassIsland」',
+    disabled.status === 200 && disabled.payload?.data?.mirrorScheduleToClassIsland === false,
+    `status=${disabled.status}`,
+  );
+
   const mirrorOff = await api('/integrations/classisland/class-plan', { deviceToken });
   record(
-    '镜像开关关闭时不下发课表',
-    mirrorOff.status === 200 && mirrorOff.payload?.data === null,
+    '关掉镜像后不再下发课表',
+    mirrorOff.status === 200 &&
+      (mirrorOff.payload?.data === null || mirrorOff.payload?.data === undefined),
     `data=${mirrorOff.payload?.data === null ? 'null' : 'object'}`,
   );
 
@@ -458,7 +481,7 @@ async function main() {
     body: { mirrorScheduleToClassIsland: true },
   });
   record(
-    '打开「镜像课表到 ClassIsland」',
+    '重新打开「镜像课表到 ClassIsland」',
     enabled.status === 200 && enabled.payload?.data?.mirrorScheduleToClassIsland === true,
     `status=${enabled.status}`,
   );
@@ -562,7 +585,7 @@ async function main() {
 
   // 第二次上报：只报第二节 → 第一节应当被清理。
   // 原先 merge 只 upsert、从不删除，老师删掉的课会永远留在服务端（幽灵课），
-  // 学生端与 Web 端会一直显示一节实际上已经不上的课。
+  // ClassHelper 班级端与 Web 端会一直显示一节实际上已经不上的课。
   const pruneReport = await api('/integrations/classisland/report', {
     method: 'POST',
     deviceToken,

@@ -1,9 +1,9 @@
 {
   "name": "classhelper-server-runtime",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
-  "description": "班级小助手服务端运行时（安装包 / 容器内置）",
+  "description": "ClassHelper 服务端运行时（安装包 / 容器内置）",
   "dependencies": {
     "@libsql/client": "^0.17.0",
     "@prisma/adapter-libsql": "7.10.0",

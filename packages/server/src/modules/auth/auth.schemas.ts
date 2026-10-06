@@ -5,7 +5,7 @@ export const loginSchema = z.object({
   password: z.string().min(1, '请输入密码').max(128),
 });
 
-/** 班级账号登录（学生端）：班级码 + 班级密码 */
+/** 班级账号登录（ClassHelper 班级端）：班级码 + 班级密码 */
 export const classLoginSchema = z.object({
   code: z.string().trim().min(4, '请输入班级码').max(16),
   password: z.string().min(1, '请输入班级密码').max(128),

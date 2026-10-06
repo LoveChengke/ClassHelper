@@ -6,7 +6,7 @@
  *
  * 用法：
  *   node scripts/verify-packaged.mjs
- *   node scripts/verify-packaged.mjs --exe "D:\class\@classhelperdesktop-client\班级小助手.exe"
+ *   node scripts/verify-packaged.mjs --exe "D:\class\@classhelperdesktop-client\ClassHelper.exe"
  *   node scripts/verify-packaged.mjs --offline
  *   node scripts/verify-packaged.mjs --code G101 --password 123456
  *
@@ -28,7 +28,7 @@ const argOf = (name) => {
 
 // 默认取 releases/client/<版本>/免安装/（dist-win 的产物落点，见 AGENTS.md §4）
 const clientVersion = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version;
-const defaultExe = path.join(repoRoot, 'releases', 'client', clientVersion, '免安装', '班级小助手.exe');
+const defaultExe = path.join(repoRoot, 'releases', 'client', clientVersion, '免安装', 'ClassHelper.exe');
 
 const exe = path.resolve(argOf('--exe') ?? defaultExe);
 const classCode = argOf('--code') ?? process.env.ELECTRON_SMOKE_CLASS_CODE ?? 'G101';

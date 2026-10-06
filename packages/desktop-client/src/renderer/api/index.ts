@@ -15,19 +15,20 @@ import {
   type NotificationDto,
   type ScheduleDto,
   type ScheduleWeekView,
-  type StudentDto,
+  type SessionUser,
+  type StudentGradeDetailDto,
 } from '@classhelper/shared';
 import { api } from './http.js';
 
-/** 客户端只需用到学生视角的这批接口（与后端同一套 REST 契约） */
+/** ClassHelper 班级端只需要这一批接口（与后端同一套 REST 契约） */
 export const authApi = {
   /** 账号登录（教师/管理员用；客户端界面走班级登录，学生个人账号已清理不能登录） */
   login: (payload: LoginRequest): Promise<LoginResponse> => api.post(API_PATHS.auth.login, payload),
-  /** 班级账号登录（学生端主入口）：班级码 + 班级密码 */
+  /** 班级账号登录（ClassHelper 班级端主入口）：班级码 + 班级密码 */
   classLogin: (payload: { code: string; password: string }): Promise<LoginResponse> =>
     api.post('/auth/class-login', payload),
   logout: (): Promise<{ loggedOut: boolean }> => api.post(API_PATHS.auth.logout, {}),
-  me: (): Promise<StudentDto> => api.get(API_PATHS.auth.me),
+  me: (): Promise<SessionUser> => api.get(API_PATHS.auth.me),
   /**
    * 修改密码（设置页「账号信息」里的入口）。
    * 服务端同一个接口按会话类型分流：班级账号改的是**班级密码**，教师/管理员改的是本人登录密码 ——
@@ -128,6 +129,24 @@ export const notificationApi = {
 
 export const gradeApi = {
   my: (): Promise<GradeDto[]> => api.get(`${API_PATHS.grades}/my`),
+  /**
+   * 按**学号**查某个学生的成绩明细。
+   * 学生没有账号，因此这是教室机器代学生查本人的通道；是否开放由班级上的
+   * `studentGradeQueryEnabled` 开关决定（关闭时服务端返回 403 并给出原因）。
+   */
+  studentDetail: (studentNo: string): Promise<StudentGradeDetailDto> =>
+    api.get(`${API_PATHS.grades}/student/${encodeURIComponent(studentNo)}`),
+};
+
+/**
+ * ClassHelper 班级端设置：「是否允许按学号查询本班学生成绩明细」。
+ * 与通知显示位置同一套模式 —— 由教室机器自己决定，教师/管理员在 Web 端也能改。
+ */
+export const classGradeQueryApi = {
+  get: (classId: string): Promise<{ studentGradeQueryEnabled: boolean }> =>
+    api.get(`${API_PATHS.classes}/${classId}/student-grade-query`),
+  set: (classId: string, enabled: boolean): Promise<{ studentGradeQueryEnabled: boolean }> =>
+    api.patch(`${API_PATHS.classes}/${classId}/student-grade-query`, { enabled }),
 };
 
 export const dashboardApi = {

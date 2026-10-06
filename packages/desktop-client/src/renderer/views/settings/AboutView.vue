@@ -85,11 +85,11 @@ onMounted(async () => {
             <el-icon><School /></el-icon>
             {{ collapseItems[0].title }}
           </span>
-          <span class="about-extra">班级小助手 v{{ appInfo?.appVersion ?? '-' }}</span>
+          <span class="about-extra">ClassHelper v{{ appInfo?.appVersion ?? '-' }}</span>
         </template>
         <div class="about-section">
           <p class="about-copy">
-            Copyright © 2025-2026 班级小助手
+            Copyright © 2025-2026 ClassHelper
             <br />
             面向班级的课表 · 作业 · 通知 · 成绩信息工具（Web 管理端 + 桌面客户端 + 灵动岛）
           </p>

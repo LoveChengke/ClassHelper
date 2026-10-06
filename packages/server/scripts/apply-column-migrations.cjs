@@ -38,7 +38,52 @@ const COLUMNS = [
     sql: `ALTER TABLE "Class" ADD COLUMN "termWeeks" INTEGER NOT NULL DEFAULT 20`,
     note: '班级教学周数（班主任可调，默认 20）',
   },
+  {
+    table: 'Class',
+    column: 'studentGradeQueryEnabled',
+    sql: `ALTER TABLE "Class" ADD COLUMN "studentGradeQueryEnabled" BOOLEAN NOT NULL DEFAULT true`,
+    note: 'ClassHelper 班级端按学号查成绩的开关（默认开启）',
+  },
+  {
+    table: 'Grade',
+    column: 'levelType',
+    sql: `ALTER TABLE "Grade" ADD COLUMN "levelType" TEXT NOT NULL DEFAULT 'percent'`,
+    note: '成绩等级口径：percent / letter / custom',
+  },
+  {
+    table: 'Grade',
+    column: 'level',
+    sql: `ALTER TABLE "Grade" ADD COLUMN "level" TEXT NOT NULL DEFAULT ''`,
+    note: '成绩等级文本（percent 下由得分率换算，可手改）',
+  },
+  {
+    table: 'IntegrationDevice',
+    column: 'lastHeartbeatAt',
+    sql: `ALTER TABLE "IntegrationDevice" ADD COLUMN "lastHeartbeatAt" DATETIME`,
+    note: 'ClassHelper 班级端最后一次心跳（在线判定看它）',
+  },
+  {
+    table: 'User',
+    column: 'phone',
+    sql: `ALTER TABLE "User" ADD COLUMN "phone" TEXT NOT NULL DEFAULT ''`,
+    note: '教师手机号',
+  },
 ];
+
+/**
+ * ⚠ 本脚本只能补**新增的列**，补不了结构变化。
+ *
+ * 2026-10-06 那版「学生从账号变成名单记录」（`prisma/migrations/20261006120000_add_student_table`）
+ * 是一次真正的表重构：新建 `Student` / `StudentClassTransfer`、把 `Grade`/`HomeworkStatus`/
+ * `NotificationRead` 的外键从 `userId` 换到 `studentId`、删掉 `Enrollment` 与 `ClassTeacher`。
+ * 这些**必须走正式的迁移链路**（`prisma migrate deploy`，安装程序升级时自动执行）：
+ *
+ *   node apply-column-migrations.cjs "<安装目录>/server/dist/lib/db.js"   # 只补列
+ *   pnpm --filter @classhelper/server db:deploy                          # 结构变化走这条
+ *
+ * 只跑本脚本、不跑迁移的库会停在"列有了但表没换"的中间态 —— 下面的列已经能把
+ * 界面撑起来不报错，但学生数据仍留在 `User` 里，属于不可用状态。
+ */
 
 (async () => {
   let prisma;

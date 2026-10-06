@@ -23,7 +23,7 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
 });
 
 /**
- * POST /api/auth/class-login - 班级账号登录（公开，学生端主入口）
+ * POST /api/auth/class-login - 班级账号登录（公开，ClassHelper 班级端主入口）
  *
  * 班级码 + 班级密码 → 以「班级」为主体的 JWT（个人数据按全班读写）。
  * 个人学生账号仍可用 /auth/login 登录（向后兼容，客户端已不再展示该入口）。

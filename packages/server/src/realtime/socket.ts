@@ -52,8 +52,8 @@ export function initRealtime(httpServer: HttpServer): RealtimeServer {
         return;
       }
       const payload = verifyToken(token);
-      // 班级账号（班级设备）：socket.data.user.id 用班级 id，据此加入 user:{classId} 房间，
-      // "叫人"等定向消息因此能直达班级设备（见 calls.service）。
+      // ClassHelper 班级端：socket.data.user.id 用**班级 id**，据此加入 session:{classId} 房间，
+      // 「叫人」等定向消息因此能直达教室机器（见 calls.service）。
       socket.data.user = {
         id: payload.classSession ? (payload.classId ?? payload.sub) : payload.sub,
         username: payload.classSession ? (payload.classCode ?? payload.username) : payload.username,
@@ -70,7 +70,7 @@ export function initRealtime(httpServer: HttpServer): RealtimeServer {
   io.on('connection', (socket) => {
     const user = socket.data.user;
     void (async () => {
-      const rooms = [SOCKET_ROOMS.user(user.id), SOCKET_ROOMS.role(user.role)];
+      const rooms = [SOCKET_ROOMS.session(user.id), SOCKET_ROOMS.role(user.role)];
 
       try {
         const classIds = await getAccessibleClassIds({
@@ -88,11 +88,13 @@ export function initRealtime(httpServer: HttpServer): RealtimeServer {
         logger.warn(`加入班级房间失败（user=${user.id}）`, error);
       }
 
-      await socket.join(user.role === 'STUDENT' ? SOCKET_ROOMS.students : SOCKET_ROOMS.teachers);
-      rooms.push(user.role === 'STUDENT' ? SOCKET_ROOMS.students : SOCKET_ROOMS.teachers);
+      // ClassHelper 班级端归入 students 房间（它代表全班），教师/管理员归入 teachers
+      const audienceRoom = user.role === 'CLASS_DEVICE' ? SOCKET_ROOMS.students : SOCKET_ROOMS.teachers;
+      await socket.join(audienceRoom);
+      rooms.push(audienceRoom);
 
       logger.info(`实时连接建立：${user.name}(${user.role}) sid=${socket.id}`);
-      socket.emit(SOCKET_EVENTS.connected, { userId: user.id, role: user.role, rooms });
+      socket.emit(SOCKET_EVENTS.connected, { sessionId: user.id, role: user.role, rooms });
     })();
 
     // 客户端可显式订阅某个班级（服务端二次校验权限）

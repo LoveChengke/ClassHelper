@@ -1,6 +1,6 @@
 ---
 title: 安装服务端
-description: 用 Windows 安装包、Linux 一键脚本、Docker 或源码把班级小助手服务端跑起来。
+description: 用 Windows 安装包、Linux 一键脚本、Docker 或源码把 ClassHelper 服务端跑起来。
 ---
 
 # 安装服务端
@@ -21,7 +21,7 @@ description: 用 Windows 安装包、Linux 一键脚本、Docker 或源码把班
 ### 生成安装包
 
 安装包不入库（体积大），从 [Releases](https://github.com/LoveChengke/classhelper/releases) 直接下载
-`班级小助手服务端-<版本>-x64-setup.exe` 即可。要自己打：
+`ClassHelper 服务端-<版本>-x64-setup.exe` 即可。要自己打：
 
 ```bash
 pnpm dist:server                    # 首次会执行一次 npm install（约 2 分钟）
@@ -32,7 +32,7 @@ pnpm dist:server -- --reuse-deps    # 迭代打包：复用已装依赖，跳过
 
 | 路径                                                                  | 说明                                        |
 | --------------------------------------------------------------------- | ------------------------------------------- |
-| `releases/server/<版本>/安装包/班级小助手服务端-<版本>-x64-setup.exe` | 安装程序（约 62 MB，NSIS）                  |
+| `releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe` | 安装程序（约 62 MB，NSIS）                  |
 | `releases/server/<版本>/免安装/`                                      | 免安装目录，拷到任意 Windows x64 机器即可跑 |
 
 包内自带 Node 运行时、后端产物、Web 管理端产物、生产依赖、迁移 SQL、随机 `JWT_SECRET` 的 `.env`
@@ -43,7 +43,7 @@ pnpm dist:server -- --reuse-deps    # 迭代打包：复用已装依赖，跳过
 双击安装程序即可，**不需要管理员权限**（当前用户级安装）。
 
 - 安装目录：`%LOCALAPPDATA%\Programs\ClassHelperServer`
-- 静默安装：`"班级小助手服务端-<版本>-x64-setup.exe" /S`
+- 静默安装：`"ClassHelper 服务端-<版本>-x64-setup.exe" /S`
 - 开始菜单：启动服务 / 停止服务 / 重启服务 / 打开管理端 / 使用说明 / 卸载
 - 自动加入当前用户开机自启
 

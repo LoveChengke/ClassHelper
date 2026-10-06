@@ -60,7 +60,7 @@ function createWindow(): BrowserWindow {
     minWidth: 1000,
     minHeight: 540,
     center: true,
-    title: '班级小助手',
+    title: 'ClassHelper',
     // 冒烟验证时不弹窗，避免打扰使用者
     show: !isSmokeTest,
     autoHideMenuBar: true,

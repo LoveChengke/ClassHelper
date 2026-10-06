@@ -1,8 +1,10 @@
 import { Router } from 'express';
-import { sendCreated, sendOk } from '../../lib/http.js';
+import { ApiError, sendCreated, sendOk } from '../../lib/http.js';
 import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
+import * as gradeService from '../grades/grades.service.js';
+import { studentGradeQuerySchema } from '../grades/grades.schemas.js';
 import { authenticateDevice, assertDeviceEnabled, getDevice } from './device-auth.js';
 import {
   ackNotificationSchema,
@@ -70,6 +72,38 @@ router.get('/classisland/class-plan', authenticateDevice(), async (req, res) => 
   sendOk(res, await integrationService.pullClassPlanForDevice(device), '获取课表成功');
 });
 
+/**
+ * GET /api/integrations/classisland/student-grades?studentNo= - 班级端按学号查成绩明细
+ *
+ * 给"插件形态的 ClassHelper 班级端"留的通道：走设备令牌而不是 JWT。
+ * 受**同一个班级开关**约束（`Class.studentGradeQueryEnabled`），与桌面客户端走的是同一条 service。
+ */
+router.get(
+  '/classisland/student-grades',
+  authenticateDevice(),
+  validate({ query: studentGradeQuerySchema }),
+  async (req, res) => {
+    const device = getDevice(req);
+    assertDeviceEnabled(device);
+    const { studentNo } = validatedQuery<{ studentNo?: string }>(req);
+    if (!studentNo) throw ApiError.badRequest('请提供学号（studentNo）');
+    // 设备令牌没有"账号"，构造一个等价于 ClassHelper 班级端的会话载荷
+    const session = {
+      sub: device.classId,
+      username: '',
+      name: '',
+      role: 'CLASS_DEVICE' as const,
+      classId: device.classId,
+      classSession: true,
+    };
+    sendOk(
+      res,
+      await gradeService.getStudentGradeDetail(session, studentNo, device.classId),
+      '获取学生成绩明细成功',
+    );
+  },
+);
+
 /* ================================================================== Web 管理端
  * 用 JWT 鉴权；权限与"课表管理 / 发通知"保持一致，由 service 内二次校验班级维度角色。
  */
@@ -90,6 +124,16 @@ router.get(
     sendOk(res, await integrationService.listDevices(getAuthUser(req), classId), '获取设备列表成功');
   },
 );
+
+/**
+ * GET /api/integrations/classisland/status - **ClassHelper 班级端在线状态**（教师网页）
+ *
+ * 管理员看全部班级；普通教师看自己担任班主任的班级 ∪ 任课的班级。
+ * 每条含：班级、设备名/设备号、在线/离线、最后在线时间、最后心跳时间。
+ */
+router.get('/classisland/status', requireRole('ADMIN', 'TEACHER'), async (req, res) => {
+  sendOk(res, await integrationService.listClassHelperStatus(getAuthUser(req)), '获取在线状态成功');
+});
 
 /** POST /api/integrations/devices - 新建设备并一次性返回明文令牌（管理员或本班班主任） */
 router.post(
@@ -117,6 +161,25 @@ router.patch(
       await integrationService.updateDevice(getAuthUser(req), id, validatedBody<UpdateDeviceInput>(req)),
       '设备已更新',
     );
+  },
+);
+
+/**
+ * POST /api/integrations/devices/:id/request-schedule - 「从教室机器获取一次课表」
+ *
+ * **这是现在取教室课表的唯一入口**（原来的自动回传已默认关闭，见
+ * `IntegrationDevice.syncScheduleToServer`）。Web 端点击前会弹警告对话框，
+ * 说明它会用教室机器的课表覆盖本班现有课表。
+ * 置一个待办标记，插件在下一次心跳看到就立刻把课表推上来。
+ */
+router.post(
+  '/devices/:id/request-schedule',
+  requireRole('ADMIN', 'TEACHER'),
+  validate({ params: deviceIdParamSchema }),
+  async (req, res) => {
+    const { id } = validatedParams<{ id: string }>(req);
+    const result = await integrationService.requestScheduleReport(getAuthUser(req), id);
+    sendOk(res, result, result.nextHeartbeatHint);
   },
 );
 

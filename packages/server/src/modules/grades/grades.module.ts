@@ -9,21 +9,49 @@ import {
   createGradeSchema,
   listGradesQuerySchema,
   statsQuerySchema,
+  studentGradeParamSchema,
+  studentGradeQuerySchema,
+  updateGradeLevelsSchema,
   updateGradeSchema,
   type BulkCreateGradeInput,
   type CreateGradeInput,
   type UpdateGradeInput,
+  type UpdateGradeLevelsInput,
 } from './grades.schemas.js';
 import * as gradeService from './grades.service.js';
 
 const router = Router();
 router.use(authenticate());
 
-/** GET /api/grades/my - 学生查看个人成绩（任意角色都可查自己的） */
+/** GET /api/grades/my - ClassHelper 班级端查看本班成绩（教师/管理员返回空数组） */
 router.get('/my', async (req, res) => {
   const user = getAuthUser(req);
-  sendOk(res, await gradeService.listMyGrades(user), '获取个人成绩成功');
+  sendOk(res, await gradeService.listMyGrades(user), '获取本班成绩成功');
 });
+
+/**
+ * GET /api/grades/student/:studentNo?classId= - 按**学号**查询某学生的成绩明细
+ *
+ * 三类调用方共用这一个接口：
+ * - 教师 / 管理员（Web 端"按学号查成绩"）；
+ * - ClassHelper 班级端（教室机器，学生按学号查自己的明细）；
+ * - 科任老师查自己班的学生。
+ * 班级端需要该班打开 `studentGradeQueryEnabled`，否则 403。
+ */
+router.get(
+  '/student/:studentNo',
+  validate({ params: studentGradeParamSchema, query: studentGradeQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { studentNo } = validatedParams<{ studentNo: string }>(req);
+    const { classId } = validatedQuery<{ classId?: string }>(req);
+    sendOk(
+      res,
+      await gradeService.getStudentGradeDetail(user, studentNo, classId),
+      '获取学生成绩明细成功',
+    );
+  },
+);
 
 /** GET /api/grades/stats?classId=&courseId=&examName= - 成绩统计（图表） */
 router.get(
@@ -37,21 +65,24 @@ router.get(
   },
 );
 
-/** GET /api/grades?classId=&courseId=&userId=&examName= - 成绩列表（教师） */
+/** GET /api/grades?classId=&courseId=&studentId=&examName= - 成绩列表（教师） */
 router.get(
   '/',
   requireRole('ADMIN', 'TEACHER'),
   validate({ query: listGradesQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
-    const query = validatedQuery<{ classId?: string; courseId?: string; userId?: string; examName?: string }>(
-      req,
-    );
+    const query = validatedQuery<{
+      classId?: string;
+      courseId?: string;
+      studentId?: string;
+      examName?: string;
+    }>(req);
     sendOk(res, await gradeService.listGrades(user, query), '获取成绩列表成功');
   },
 );
 
-/** POST /api/grades - 录入单条成绩（广播 grade:updated） */
+/** POST /api/grades - 录入单条成绩（仅自己任教科目） */
 router.post('/', requireRole('ADMIN', 'TEACHER'), validate({ body: createGradeSchema }), async (req, res) => {
   const user = getAuthUser(req);
   sendCreated(
@@ -60,6 +91,23 @@ router.post('/', requireRole('ADMIN', 'TEACHER'), validate({ body: createGradeSc
     '成绩录入成功，已实时推送',
   );
 });
+
+/**
+ * PATCH /api/grades/levels - 批量修改等级
+ *
+ * 两种用法：`items` 逐条指定；或 `classId + examName + levelType` 整批重算。
+ * 逐条改时按每条成绩自己的班级 + 科目判权限。
+ */
+router.patch(
+  '/levels',
+  requireRole('ADMIN', 'TEACHER'),
+  validate({ body: updateGradeLevelsSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const result = await gradeService.updateGradeLevels(user, req.body as UpdateGradeLevelsInput);
+    sendOk(res, result, `已更新 ${result.updated} 条成绩的等级`);
+  },
+);
 
 /** POST /api/grades/bulk - 批量录入 / 导入成绩 */
 router.post(
@@ -73,7 +121,7 @@ router.post(
   },
 );
 
-/** PATCH /api/grades/:id - 修改成绩 */
+/** PATCH /api/grades/:id - 修改成绩（含单个改等级） */
 router.patch(
   '/:id',
   requireRole('ADMIN', 'TEACHER'),

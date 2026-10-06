@@ -312,7 +312,7 @@ function tourTarget(name: string): () => HTMLElement | null {
 const tourSteps = computed(() => [
   {
     target: null,
-    title: '欢迎使用班级小助手',
+    title: '欢迎使用 ClassHelper',
     description:
       '教师与管理员在这里发布课表、作业、通知与成绩，学生通过桌面客户端实时接收。花一分钟认识一下界面。',
   },
@@ -334,7 +334,7 @@ const tourSteps = computed(() => [
   {
     target: tourTarget('conn-tag'),
     title: '实时通道',
-    description: '绿色表示与后端保持实时连接，发布的内容会立刻推送到对应班级的学生端与灵动岛。',
+    description: '绿色表示与后端保持实时连接，发布的内容会立刻推送到对应班级的 ClassHelper 班级端与灵动岛。',
   },
   {
     target: tourTarget('user-chip'),
@@ -361,7 +361,7 @@ const tourSteps = computed(() => [
     >
       <div class="brand">
         <img class="brand-logo" src="/logo.png" alt="" width="24" height="24" />
-        <span class="brand-text">班级小助手</span>
+        <span class="brand-text">ClassHelper</span>
       </div>
       <!-- 激活项的滑动指示器：单个药丸在菜单项之间平移，位置由 syncIndicator() 量出来。
            pointer-events:none 是必需的 —— 它盖在菜单项上，否则会把点击吃掉。 -->
@@ -495,7 +495,7 @@ const tourSteps = computed(() => [
       <div class="ch-sidebar ch-sidebar-drawer">
         <div class="brand">
           <img class="brand-logo" src="/logo.png" alt="" width="24" height="24" />
-          <span class="brand-text">班级小助手</span>
+          <span class="brand-text">ClassHelper</span>
         </div>
         <el-menu :default-active="activeMenu" class="layout-menu" @select="handleMenuSelect">
           <el-menu-item v-for="item in visibleMenuItems" :key="item.path" :index="item.path">

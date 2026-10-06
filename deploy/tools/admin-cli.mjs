@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 班级小助手 · 离线账号工具（随 Linux 包发布，安装在 ${INSTALL_DIR}/tools/admin-cli.mjs）
+ * ClassHelper · 离线账号工具（随 Linux 包发布，安装在 ${INSTALL_DIR}/tools/admin-cli.mjs）
  *
  * 为什么不用 HTTP API 改密码：`classhelper password` 要能在**服务停机**时救急，
  * 而调 API 必须先有一个能登录的账号 —— 管理员忘了密码时就是死锁。
@@ -88,7 +88,7 @@ async function loadServerModules() {
   return { env: env.env, prisma: db.prisma, disconnectPrisma: db.disconnectPrisma, ...password };
 }
 
-/** 目标账号：普通用户按 username，班级账号按 Class.code（学生端登录用的是班级码） */
+/** 目标账号：普通用户按 username，班级账号按 Class.code（ClassHelper 班级端登录用的是班级码） */
 async function resolveTarget(prisma, key) {
   if (key.startsWith('class:')) {
     const code = key.slice('class:'.length).toUpperCase();
@@ -100,7 +100,7 @@ async function resolveTarget(prisma, key) {
   if (!user) return { error: `用户名不存在：${key}`, code: EXIT.NOT_FOUND };
   if (user.role === 'STUDENT') {
     return {
-      error: `学生没有个人账号（${key} 只是名单记录），学生端用「班级码 + 班级密码」登录，请用 --class 改班级密码`,
+      error: `学生没有个人账号（${key} 只是名单记录），ClassHelper 班级端用「班级码 + 班级密码」登录，请用 --class 改班级密码`,
       code: EXIT.NOT_FOUND,
     };
   }
@@ -174,7 +174,7 @@ async function cmdList(modules, asJson) {
   for (const user of users) {
     process.stdout.write(`  ${user.role.padEnd(8)} ${user.username.padEnd(16)} ${user.name}\n`);
   }
-  process.stdout.write('\n班级账号（学生端用「班级码 + 班级密码」登录）：\n');
+  process.stdout.write('\n班级账号（ClassHelper 班级端用「班级码 + 班级密码」登录）：\n');
   for (const item of classes) {
     const state = item.passwordHash ? '已设置' : '⚠ 未设置密码（该班当前无法登录）';
     process.stdout.write(`  ${item.code.padEnd(8)} ${item.name.padEnd(16)} ${state}\n`);

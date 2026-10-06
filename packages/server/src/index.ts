@@ -79,7 +79,7 @@ httpServer.listen(env.port, env.host, () => {
   writePidFile();
   const displayHost = env.host === '0.0.0.0' ? '127.0.0.1' : env.host;
   const webDir = resolveWebDistDir();
-  logger.info(`班级小助手后端已启动：http://${displayHost}:${env.port}${API_PREFIX}`);
+  logger.info(`ClassHelper后端已启动：http://${displayHost}:${env.port}${API_PREFIX}`);
   logger.info(`运行环境：${env.nodeEnv} · 监听：${env.host}:${env.port} · 数据库：${env.databaseProvider}`);
   if (webDir) {
     logger.info(`Web 管理端：http://${displayHost}:${env.port}/（静态目录 ${webDir}）`);

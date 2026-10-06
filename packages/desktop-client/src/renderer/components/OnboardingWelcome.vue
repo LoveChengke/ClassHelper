@@ -17,9 +17,9 @@ const onboarding = useOnboardingStore();
 const steps = [
   {
     icon: 'School',
-    title: '欢迎使用班级小助手',
+    title: '欢迎使用 ClassHelper',
     lines: [
-      '这台电脑将以「班级」的身份使用班级小助手：实时接收课表、作业、通知与成绩。',
+      '这台电脑将以「班级」的身份使用 ClassHelper：实时接收课表、作业、通知与成绩。',
       '第一次使用，先花半分钟看看怎么开始。',
     ],
   },
@@ -127,7 +127,7 @@ onUnmounted(() => {
             <el-icon :size="18"><School /></el-icon>
           </span>
           <div class="onboarding-heading">
-            <h2 class="onboarding-title">班级小助手</h2>
+            <h2 class="onboarding-title">ClassHelper</h2>
             <p class="onboarding-sub">初次启动引导 · 第 {{ index + 1 }} / {{ steps.length }} 步</p>
           </div>
           <el-button link class="onboarding-skip" data-action="skip" @click="finish">跳过引导</el-button>

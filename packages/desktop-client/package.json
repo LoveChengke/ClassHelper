@@ -1,8 +1,8 @@
 {
   "name": "@classhelper/desktop-client",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "private": true,
-  "description": "班级小助手 EXE 客户端（Electron + Vue 3 + Element Plus + Socket.IO + IndexedDB 离线缓存）",
+  "description": "ClassHelper EXE 客户端（Electron + Vue 3 + Element Plus + Socket.IO + IndexedDB 离线缓存）",
   "author": "Class Helper",
   "main": "dist/main/index.js",
   "scripts": {

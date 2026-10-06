@@ -4,12 +4,12 @@ import { ApiError } from './http.js';
 import { hashPassword, verifyPassword } from './password.js';
 
 /**
- * 班级账号（学生端「班级」主体）：
+ * ClassHelper 班级端（ClassHelper 班级端「班级」主体）：
  * - 每个班级有一个**班级码**（唯一、大写字母数字）和**班级密码**（bcrypt）；
- * - 学生端班级设备用「班级码 + 班级密码」登录，拿到 `classSession` 的 JWT；
+ * - 教室机器用「班级码 + 班级密码」登录，拿到 `classSession` 的 JWT（角色 `CLASS_DEVICE`）；
  * - 管理员可在「班级管理」里修改班级码、重置班级密码。
  *
- * 兼容性：个人学生账号（User.username）完全不受影响，仍然是独立账号。
+ * **学生没有账号**：`Student` 只是名单记录，这里与它无关。
  */
 
 /** 班级码：去掉易混淆字符（0/O/1/I），4~16 位大写字母数字 */
@@ -31,7 +31,7 @@ export async function generateClassCode(prefix = ''): Promise<string> {
     const length = Math.max(4, 6 - prefix.length);
     let body = '';
     for (let index = 0; index < length; index += 1) {
-      // 用 CSPRNG 而不是 Math.random()：班级码会作为学生端登录的账号名打印/张贴，
+      // 用 CSPRNG 而不是 Math.random()：班级码会作为 ClassHelper 班级端登录的账号名打印/张贴，
       // 用可预测的 PRNG 生成等于把"半个凭证"送给猜码的人（randomInt 无取模偏差）
       body += CODE_ALPHABET[randomInt(0, CODE_ALPHABET.length)];
     }
@@ -91,18 +91,27 @@ export async function updateClassAccount(
   return { code: updated.code, hasPassword: Boolean(updated.passwordHash) };
 }
 
-/** 班级账号登录：返回班级记录（密码校验在 service 层完成） */
+/** ClassHelper 班级端登录：返回班级记录（密码校验在 service 层完成） */
 export async function findClassForLogin(code: string): Promise<{
   id: string;
   name: string;
   grade: string;
   code: string;
   passwordHash: string | null;
+  studentGradeQueryEnabled: boolean;
 }> {
   const normalized = normalizeClassCode(code);
   const record = await prisma.class.findUnique({
     where: { code: normalized },
-    select: { id: true, name: true, grade: true, code: true, passwordHash: true },
+    select: {
+      id: true,
+      name: true,
+      grade: true,
+      code: true,
+      passwordHash: true,
+      studentGradeQueryEnabled: true,
+      archivedYearId: true,
+    },
   });
   if (!record) throw ApiError.unauthorized('班级码或班级密码错误');
   if (!record.passwordHash) {
@@ -111,6 +120,11 @@ export async function findClassForLogin(code: string): Promise<{
       'CLASS_PASSWORD_NOT_SET',
       '该班级尚未设置班级密码，请联系管理员在「班级管理」中设置',
     );
+  }
+  // 已毕业归档的班级不再允许教室机器登录：继续登进去只会看到一个只读的历史壳子，
+  // 明确拒绝比"能进但没有东西可做"好排查。
+  if (record.archivedYearId) {
+    throw new ApiError(403, 'CLASS_ARCHIVED', '该班级已毕业归档，教室端已停止使用，请联系管理员');
   }
   return record;
 }

@@ -13,7 +13,7 @@ export const createCallSchema = z
     quickPhrase: z.string().trim().max(64).optional(),
     /** 自定义消息（可选；与 quickPhrase 至少填一个） */
     message: z.string().trim().max(200).optional(),
-    /** 紧急叫人：落库 URGENT，学生端无视上课时段立即展开；默认普通（只进队列） */
+    /** 紧急叫人：落库 URGENT，ClassHelper 班级端无视上课时段立即展开；默认普通（只进队列） */
     urgent: z.boolean().optional(),
   })
   .refine((data) => Boolean(data.studentId), { message: '请选择学生', path: ['studentId'] })

@@ -9,7 +9,7 @@ import TableImportDialog from '@/components/TableImportDialog.vue';
  * 教师管理（**仅管理员可见/可用**，与后端 `requireRole('ADMIN')` 对应）。
  *
  * 与「学生管理」保持同一套交互：单个录入 / 表格导入名单 / 编辑 / 修改密码 / 删除。
- * 学生端主体是班级账号，教师账号则决定"谁是班主任、谁能录课表与成绩"，
+ * ClassHelper 班级端主体是班级账号，教师账号则决定"谁是班主任、谁能录课表与成绩"，
  * 属于系统级配置，所以录入权限只给管理员。
  */
 
@@ -32,11 +32,18 @@ async function loadTeachers(): Promise<void> {
 const formVisible = ref(false);
 const formRef = ref<FormInstance>();
 const editingId = ref<string | null>(null);
-const form = reactive({ username: '', name: '', password: '', role: 'TEACHER' as 'TEACHER' | 'ADMIN' });
+const form = reactive({
+  username: '',
+  name: '',
+  phone: '',
+  password: '',
+  role: 'TEACHER' as 'TEACHER' | 'ADMIN',
+});
 const rules: FormRules = {
+  // 教师的 `username` 就是**工号**（也是登录名）—— 界面上统一叫「工号」
   username: [
-    { required: true, message: '请输入登录用户名', trigger: 'blur' },
-    { min: 3, max: 32, message: '用户名 3~32 位', trigger: 'blur' },
+    { required: true, message: '请输入工号', trigger: 'blur' },
+    { min: 3, max: 32, message: '工号 3~32 位', trigger: 'blur' },
     { pattern: /^[A-Za-z0-9_.-]+$/, message: '只能用字母、数字、下划线、点、短横线', trigger: 'blur' },
   ],
   name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
@@ -47,6 +54,7 @@ function openCreate(): void {
   editingId.value = null;
   form.username = '';
   form.name = '';
+  form.phone = '';
   form.password = '';
   form.role = 'TEACHER';
   formVisible.value = true;
@@ -56,6 +64,7 @@ function openEdit(row: UserDto): void {
   editingId.value = row.id;
   form.username = row.username;
   form.name = row.name;
+  form.phone = row.phone ?? '';
   form.password = '';
   form.role = row.role === 'ADMIN' ? 'ADMIN' : 'TEACHER';
   formVisible.value = true;
@@ -71,6 +80,7 @@ async function submitForm(): Promise<void> {
       await teacherApi.update(editingId.value, {
         username: form.username.trim(),
         name: form.name.trim(),
+        phone: form.phone.trim(),
         role: form.role,
       });
       ElMessage.success('教师信息已更新');
@@ -78,6 +88,7 @@ async function submitForm(): Promise<void> {
       await teacherApi.create({
         username: form.username.trim(),
         name: form.name.trim(),
+        phone: form.phone.trim(),
         role: form.role,
         ...(form.password ? { password: form.password } : {}),
       });
@@ -150,13 +161,13 @@ onMounted(loadTeachers);
       <div>
         <h2 class="page-title">教师管理</h2>
         <p class="page-subtitle">
-          录入教师账号（单个录入或导入名单）、修改姓名与角色、修改密码（仅管理员可见）
+          教师是全局账号，<b>工号</b>就是登录名；谁是班主任、谁教哪个班的哪一科，在「班级管理」里配（仅管理员可见）
         </p>
       </div>
       <div class="toolbar">
         <el-input
           v-model="keyword"
-          placeholder="姓名 / 用户名"
+          placeholder="姓名 / 工号"
           clearable
           style="width: 180px"
           @keyup.enter="loadTeachers"
@@ -171,7 +182,10 @@ onMounted(loadTeachers);
     <el-card shadow="never">
       <el-table v-loading="loading" :data="teachers" empty-text="还没有教师账号，点击右上角新建">
         <el-table-column prop="name" label="姓名" width="140" />
-        <el-table-column prop="username" label="用户名" width="180" />
+        <el-table-column prop="username" label="工号" width="160" />
+        <el-table-column prop="phone" label="手机号" width="150">
+          <template #default="{ row }">{{ row.phone || '-' }}</template>
+        </el-table-column>
         <el-table-column label="角色" width="120">
           <template #default="{ row }">
             <el-tag :type="row.role === 'ADMIN' ? 'danger' : 'primary'" effect="plain" size="small">
@@ -197,8 +211,11 @@ onMounted(loadTeachers);
         <el-form-item label="姓名" prop="name">
           <el-input v-model="form.name" placeholder="例如 张老师" />
         </el-form-item>
-        <el-form-item label="用户名" prop="username">
-          <el-input v-model="form.username" placeholder="登录用，例如 teacher3" />
+        <el-form-item label="工号" prop="username">
+          <el-input v-model="form.username" placeholder="登录用，例如 T1001" />
+        </el-form-item>
+        <el-form-item label="手机号">
+          <el-input v-model="form.phone" placeholder="可选" />
         </el-form-item>
         <el-form-item v-if="!editingId" label="初始密码">
           <el-input v-model="form.password" type="password" show-password placeholder="留空使用默认密码" />
@@ -209,7 +226,8 @@ onMounted(loadTeachers);
             <el-radio value="ADMIN">管理员</el-radio>
           </el-radio-group>
           <div class="text-muted" style="width: 100%">
-            管理员可以管理班级、学生、教师与全部课表；普通教师仅能管理自己负责的班级。
+            管理员可以管理班级、学生、教师、归档与全部课表；
+            普通教师只能管自己担任班主任的班级，以及自己任教科目的作业与成绩。
           </div>
         </el-form-item>
       </el-form>

@@ -101,7 +101,7 @@ check(
 
 check(
   '设置页带 [SettingsPageInfo] 且声明了页面 id',
-  /\[SettingsPageInfo\(/.test(settingsPageSource) && /"班级小助手联动"/.test(settingsPageSource),
+  /\[SettingsPageInfo\(/.test(settingsPageSource) && /"ClassHelper 联动"/.test(settingsPageSource),
 );
 check(
   '设置页 XAML 的 x:Class 与代码后置类一致',
@@ -255,6 +255,34 @@ check(
 );
 check('失败信息带上请求 URL（便于定位代理/网关拦截）', /request\.RequestUri/.test(clientSource));
 
+// 3.10 课表同步方向（2026-10-06 反转）：课表以 ClassHelper为准，**服务端 → 教室自动下发**；
+//      「把教室课表传上来」改成 Web 端的一次性人工请求。这几条盯着反转后的契约，别删。
+check(
+  '默认「上报课表到 ClassHelper」关闭、镜像到 ClassIsland 开启（新方向）',
+  /_uploadSchedule\s*=\s*false/.test(settingsSource) && /_mirrorSchedule\s*=\s*true/.test(settingsSource),
+);
+check(
+  '响应 DTO 里有 scheduleRequested（服务端请求立刻上报一次课表）',
+  /scheduleRequested/.test(clientSource),
+);
+check(
+  '收到 scheduleRequested 会补发一次带课表的上报（且不受本机自动上报开关限制）',
+  /ScheduleRequested\s*==\s*true/.test(bridgeSource) &&
+    /forceSchedule:\s*true/.test(bridgeSource),
+);
+check(
+  '服务端请求课表不依赖「自动回传」开关（forceSchedule 或上开关二者取一）',
+  /forceSchedule\s*\|\|\s*_settings\.UploadSchedule/.test(bridgeSource),
+);
+check(
+  '补发课表发生在镜像之前（顺序反了会把刚拿到的课表盖掉）',
+  bridgeSource.indexOf('ScheduleRequested == true') < bridgeSource.indexOf('MirrorScheduleAsync()'),
+);
+check(
+  '课表拉取 DTO 带 weekRanges（管理员逐周配的学期周次区间）',
+  /weekRanges/.test(clientSource) && /TermWeekRangeDto/.test(clientSource),
+);
+
 // 3.9 提醒显示链路：下面几条全是"在真机上跑出来的"，回归时别删
 check(
   '提醒在 UI 线程构造并显示（否则 Avalonia 直接抛 Call from invalid thread）',
@@ -286,7 +314,7 @@ check(
 );
 check(
   '「上报课表」开关关闭时会在日志里说明（避免被当成"上报失败"）',
-  bridgeSource.includes('上报课表到班级小助手') && bridgeSource.includes('开关已关闭'),
+  bridgeSource.includes('上报课表到 ClassHelper') && bridgeSource.includes('开关已关闭'),
 );
 check(
   '提醒轮询独立于上报间隔（老师发完通知不必等一个上报周期）',
@@ -330,7 +358,7 @@ check(
 );
 check(
   '2xx 但不是本服务响应体时给出原因（而不是"成功但无数据 + 空消息"），并限制响应体大小',
-  clientSource.includes('响应不是班级小助手的标准格式') &&
+  clientSource.includes('响应不是 ClassHelper的标准格式') &&
     clientSource.includes('MaxResponseContentBufferSize'),
 );
 check(

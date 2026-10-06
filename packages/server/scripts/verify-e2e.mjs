@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * 端到端联调验证（对应验收标准）：
- *   1. 教师发布通知 -> 学生端 Socket.IO 5 秒内收到
- *   2. 教师发布作业 -> 学生端实时收到，并可标记完成
- *   3. 教师录入成绩 -> 学生端实时收到，且 /grades/my 可查
+ *   1. 教师发布通知 -> ClassHelper 班级端 Socket.IO 5 秒内收到
+ *   2. 教师发布作业 -> ClassHelper 班级端实时收到，并可标记完成
+ *   3. 教师录入成绩 -> ClassHelper 班级端实时收到，且 /grades/my 可查
  *   4. 权限隔离：学生无法访问其他班级数据、无法调用教师接口
  *   5. 课表按周查询可用
  *
@@ -52,7 +52,7 @@ function waitForEvent(socket, event, timeoutMs = TIME_LIMIT_MS) {
 }
 
 async function main() {
-  console.log(`\n=== 班级小助手 端到端验证（${BASE_URL}）===\n`);
+  console.log(`\n=== ClassHelper 端到端验证（${BASE_URL}）===\n`);
 
   // ---------------------------------------------------------------- 0. 健康检查
   const health = await api('/health');
@@ -97,12 +97,12 @@ async function main() {
   record('管理员登录 admin', Boolean(adminToken), `status=${adminLogin.status}`);
   if (!adminToken) process.exit(1);
 
-  // 学生端主体 = 班级：用「班级码 + 班级密码」登录（个人学生账号已停用登录入口）
+  // ClassHelper 班级端主体 = 班级：用「班级码 + 班级密码」登录（个人学生账号已停用登录入口）
   const classesForLogin = await api('/classes', { token: teacherToken });
   const loginClass = classesForLogin.payload?.data?.[0];
   if (!loginClass?.code) {
     record(
-      '学生端班级登录（班级码 + 班级密码 → classSession）',
+      'ClassHelper 班级端班级登录（班级码 + 班级密码 → classSession）',
       false,
       '没有可用班级码，请先执行 pnpm db:seed',
     );
@@ -127,15 +127,19 @@ async function main() {
   const studentToken = studentLogin.payload?.data?.token;
   const studentUser = studentLogin.payload?.data?.user;
   record(
-    '学生端班级登录（班级码 + 班级密码 → classSession）',
+    'ClassHelper 班级端班级登录（班级码 + 班级密码 → classSession）',
     Boolean(studentToken) && studentUser?.classSession === true,
     `code=${loginClass.code} status=${studentLogin.status} classId=${studentUser?.classId ?? studentUser?.id}`,
   );
+  // 学生不是账号：`User` 表里根本没有学生行，所以拿学号当账号登录只可能是"账号不存在"
+  const studentAsAccount = await api('/auth/login', {
+    method: 'POST',
+    body: { username: '202601', password: '123456' },
+  });
   record(
-    '个人学生账号登录已停用（403）',
-    (await api('/auth/login', { method: 'POST', body: { username: 'student01', password: 'student123' } }))
-      .status === 403,
-    'student01 → 403',
+    '学生没有账号：拿学号当账号登录被拒（401）',
+    studentAsAccount.status === 401,
+    `status=${studentAsAccount.status}`,
   );
 
   const wrongPassword = await api('/auth/login', {
@@ -149,7 +153,7 @@ async function main() {
   const classes = myClasses.payload?.data ?? [];
   record('教师获取班级列表', classes.length >= 2, `共 ${classes.length} 个班级`);
 
-  const ownClass = classes.find((item) => item.name?.includes('高一(1)')) ?? classes[0];
+  const ownClass = classes.find((item) => item.name?.includes('2026级1')) ?? classes[0];
   const classId = ownClass?.id;
   if (!classId) {
     record('教师至少管理一个班级', false, '数据为空，请先执行 pnpm db:seed');
@@ -169,14 +173,17 @@ async function main() {
   const teacher2Classes = (await api('/classes', { token: teacher2Token })).payload?.data ?? [];
   /** 本次验证临时创建的班级（收尾统一删除，不污染演示数据） */
   const probeClassIds = [];
+  /** 权限矩阵用例里新建的作业（收尾统一删除） */
+  const tempHomeworkIds = [];
   let foreignClass = teacher2Classes.find((item) => !teacher1ClassIds.has(item.id)) ?? null;
   if (!foreignClass) {
     const created = await api('/classes', {
       method: 'POST',
       token: adminToken,
       body: {
-        name: `权限校验班 ${Date.now()}`,
         grade: '高一',
+        enrollmentYear: new Date().getFullYear(),
+        classIndex: 93,
         code: `PV${Date.now().toString().slice(-6)}`,
         ...(teacher2Id ? { teacherId: teacher2Id } : {}),
       },
@@ -194,6 +201,8 @@ async function main() {
   const classmates = studentList.payload?.data ?? [];
   // 班级会话下没有"当前学生"，目标学生固定取班里第一位（用于成绩/叫人等需要具体学生 id 的用例）
   const targetStudent = classmates[0];
+  /** 同班第二位学生的学号（导入用例里要造「两条不同的学号」） */
+  const classmateTwoNo = classmates[1]?.studentNo ?? '202602';
   record('教师获取学生名单', classmates.length > 0, `共 ${classmates.length} 人`);
 
   const courses = await api(`/courses?classId=${classId}`, { token: teacherToken });
@@ -420,7 +429,7 @@ async function main() {
     });
   });
   record(
-    '学生端 Socket.IO 连接与鉴权',
+    'ClassHelper 班级端 Socket.IO 连接与鉴权',
     Boolean(connected && !connected.error),
     connected?.error ?? `rooms=${connected?.rooms?.length ?? 0}`,
   );
@@ -441,9 +450,9 @@ async function main() {
 
   try {
     const { payload, elapsed } = await notificationWait;
-    record('学生端 5 秒内收到 notification:new', elapsed < TIME_LIMIT_MS, `${elapsed}ms · ${payload?.title}`);
+    record('ClassHelper 班级端 5 秒内收到 notification:new', elapsed < TIME_LIMIT_MS, `${elapsed}ms · ${payload?.title}`);
   } catch (error) {
-    record('学生端 5 秒内收到 notification:new', false, error.message);
+    record('ClassHelper 班级端 5 秒内收到 notification:new', false, error.message);
   }
 
   // ---------------------------------------------------------------- 5. 作业实时推送 + 标记完成
@@ -499,9 +508,9 @@ async function main() {
 
   try {
     const { payload, elapsed } = await homeworkWait;
-    record('学生端 5 秒内收到 homework:new', elapsed < TIME_LIMIT_MS, `${elapsed}ms · ${payload?.title}`);
+    record('ClassHelper 班级端 5 秒内收到 homework:new', elapsed < TIME_LIMIT_MS, `${elapsed}ms · ${payload?.title}`);
   } catch (error) {
-    record('学生端 5 秒内收到 homework:new', false, error.message);
+    record('ClassHelper 班级端 5 秒内收到 homework:new', false, error.message);
   }
 
   const statusUpdate = await api(`/homeworks/${homeworkId}/status`, {
@@ -517,7 +526,7 @@ async function main() {
 
   /* ---------------------------------------------------------------- 5.1 未交名单 */
   const submissions = await api(`/homeworks/${homeworkId}/submissions`, { token: teacherToken });
-  const studentIds = (submissions.payload?.data?.students ?? []).map((item) => item.userId);
+  const studentIds = (submissions.payload?.data?.students ?? []).map((item) => item.studentId);
   record(
     '教师可读取作业提交名单（全班学生 + 完成状态）',
     submissions.status === 200 &&
@@ -531,13 +540,13 @@ async function main() {
   const savedSubmissions = await api(`/homeworks/${homeworkId}/submissions`, {
     method: 'PATCH',
     token: teacherToken,
-    body: { notSubmittedUserIds: [firstStudentId] },
+    body: { notSubmittedStudentIds: [firstStudentId] },
   });
   record(
     '保存未交名单：勾选者标记未交、其余学生自动标记已交',
     savedSubmissions.status === 200 &&
       (savedSubmissions.payload?.data?.notSubmitted ?? []).length === 1 &&
-      savedSubmissions.payload?.data?.notSubmitted?.[0]?.userId === firstStudentId &&
+      savedSubmissions.payload?.data?.notSubmitted?.[0]?.studentId === firstStudentId &&
       savedSubmissions.payload?.data?.completedCount === studentIds.length - 1,
     `status=${savedSubmissions.status} 未交=${(savedSubmissions.payload?.data?.notSubmitted ?? []).length} ` +
       `已完成=${savedSubmissions.payload?.data?.completedCount ?? '-'}/${savedSubmissions.payload?.data?.total ?? '-'}`,
@@ -584,7 +593,7 @@ async function main() {
     body: {
       classId,
       courseId,
-      userId: targetStudent?.id,
+      studentId: targetStudent?.id,
       examName: `联调验证考试 ${new Date().toISOString().slice(0, 10)}`,
       score: 88,
       totalScore: 100,
@@ -596,16 +605,16 @@ async function main() {
     try {
       const { payload, elapsed } = await gradeWait;
       record(
-        '学生端 5 秒内收到 grade:updated',
+        'ClassHelper 班级端 5 秒内收到 grade:updated',
         elapsed < TIME_LIMIT_MS,
         `${elapsed}ms · ${payload?.score}/${payload?.totalScore}`,
       );
     } catch (error) {
-      record('学生端 5 秒内收到 grade:updated', false, error.message);
+      record('ClassHelper 班级端 5 秒内收到 grade:updated', false, error.message);
     }
   } else {
     gradeWait.catch(() => {});
-    record('学生端成绩推送（目标学生非验证账号，跳过等待）', true, '已改用 /grades/my 校验');
+    record('ClassHelper 班级端成绩推送（目标学生非验证账号，跳过等待）', true, '已改用 /grades/my 校验');
   }
 
   const myGrades = await api('/grades/my', { token: studentToken });
@@ -658,23 +667,42 @@ async function main() {
     record('删除课程 DELETE /courses/:id', removedCourse.status === 200, `status=${removedCourse.status}`);
   }
 
-  const assigned = await api(`/classes/${classId}/teachers`, {
-    method: 'POST',
+  // 任课关系 = 班级 + 科目 + 教师，唯一写入口是 PUT /classes/:id/subject-teachers。
+  // 用一个演示数据里没用来录成绩的科目，验证完就还回班主任，避免影响后面的成绩权限用例。
+  const probeSubject = '通用技术';
+  const adminAssignSubject = await api(`/classes/${classId}/subject-teachers`, {
+    method: 'PUT',
     token: adminToken,
-    body: { teacherId: teacher2Login.payload?.data?.user?.id },
+    body: { assignments: [{ subjectName: probeSubject, teacherId: teacher2Login.payload?.data?.user?.id }] },
   });
-  record('分配协作教师', assigned.status === 201, `status=${assigned.status}`);
-  const unassigned = await api(`/classes/${classId}/teachers/${teacher2Login.payload?.data?.user?.id}`, {
-    method: 'DELETE',
+  record(
+    '管理员设置某班某科的任课老师（PUT /subject-teachers）',
+    adminAssignSubject.status === 200 &&
+      (adminAssignSubject.payload?.data ?? []).some(
+        (item) => item.subjectName === probeSubject &&
+          item.teacherId === teacher2Login.payload?.data?.user?.id,
+      ),
+    `status=${adminAssignSubject.status}`,
+  );
+  const restoreSubject = await api(`/classes/${classId}/subject-teachers`, {
+    method: 'PUT',
     token: adminToken,
+    body: { assignments: [{ subjectName: probeSubject, teacherId: ownClass?.teacherId }] },
   });
-  record('取消协作教师', unassigned.status === 200, `status=${unassigned.status}`);
+  record(
+    '任课老师可改回班主任（同一个人既是班主任又是科任，不重复建号）',
+    restoreSubject.status === 200 &&
+      (restoreSubject.payload?.data ?? []).some(
+        (item) => item.subjectName === probeSubject && item.teacherId === ownClass?.teacherId,
+      ),
+    `status=${restoreSubject.status}`,
+  );
 
-  const tempUsername = `e2e_student_${Date.now()}`;
+  const tempUsername = `E2E${Date.now().toString().slice(-8)}`;
   const addedStudent = await api(`/classes/${classId}/students`, {
     method: 'POST',
     token: adminToken,
-    body: { username: tempUsername, name: '联调学生' },
+    body: { studentNo: tempUsername, name: '联调学生' },
   });
   const addedStudentId = addedStudent.payload?.data?.id;
   record('班级添加学生', addedStudent.status === 201, `status=${addedStudent.status}`);
@@ -682,8 +710,10 @@ async function main() {
   if (addedStudentId) {
     const studentListAfter = await api(`/classes/${classId}/students`, { token: teacherToken });
     record(
-      '学生名单包含新加入学生',
-      (studentListAfter.payload?.data ?? []).some((item) => item.id === addedStudentId),
+      '学生名单包含新加入学生（按学号）',
+      (studentListAfter.payload?.data ?? []).some(
+        (item) => item.id === addedStudentId && item.studentNo === tempUsername.toUpperCase(),
+      ),
       `共 ${studentListAfter.payload?.data?.length ?? 0} 人`,
     );
 
@@ -728,7 +758,7 @@ async function main() {
       courseId,
       examName: `联调批量考试 ${new Date().toISOString().slice(0, 10)}`,
       totalScore: 100,
-      items: classmates.slice(0, 3).map((item, index) => ({ userId: item.id, score: 70 + index * 5 })),
+      items: classmates.slice(0, 3).map((item, index) => ({ studentId: item.id, score: 70 + index * 5 })),
     },
   });
   record(
@@ -739,9 +769,13 @@ async function main() {
 
   const gradeStats = await api(`/grades/stats?classId=${classId}`, { token: teacherToken });
   record(
+    // 等级分布不再固定 A~E 五档：等级制（A-D）与自定义等级（优/良/合格）都在用，
+    // 因此断言"有分布且每个档位都有人"，而不是数档位个数。
     '成绩统计 /grades/stats',
-    gradeStats.status === 200 && (gradeStats.payload?.data?.distribution ?? []).length === 5,
-    `平均得分率 ${gradeStats.payload?.data?.averagePercent ?? 0}%`,
+    gradeStats.status === 200 &&
+      (gradeStats.payload?.data?.distribution ?? []).length >= 1 &&
+      (gradeStats.payload?.data?.distribution ?? []).every((item) => typeof item.level === 'string'),
+    `平均得分率 ${gradeStats.payload?.data?.averagePercent ?? 0}% 档位=${(gradeStats.payload?.data?.distribution ?? []).map((item) => item.level).join('/')}`,
   );
 
   const unread = await api('/notifications/unread-count', { token: studentToken });
@@ -931,7 +965,7 @@ async function main() {
       `status=${callByTeacher.status} title="${callTitle}"`,
     );
     record(
-      '普通叫人（默认）不是紧急级别：priority=HIGH，学生端按普通通知排队',
+      '普通叫人（默认）不是紧急级别：priority=HIGH，ClassHelper 班级端按普通通知排队',
       callByTeacher.payload?.data?.priority === 'HIGH',
       `priority=${callByTeacher.payload?.data?.priority ?? '-'}（期望 HIGH）`,
     );
@@ -947,7 +981,7 @@ async function main() {
       },
     });
     record(
-      '紧急叫人（urgent=true → priority=URGENT，学生端无视上课时段立即展开）',
+      '紧急叫人（urgent=true → priority=URGENT，ClassHelper 班级端无视上课时段立即展开）',
       urgentCall.status === 201 && urgentCall.payload?.data?.priority === 'URGENT',
       `status=${urgentCall.status} priority=${urgentCall.payload?.data?.priority ?? '-'}`,
     );
@@ -1013,27 +1047,28 @@ async function main() {
   {
     record('管理员登录（用于权限矩阵校验）', Boolean(adminToken), '已在上文登录');
 
-    // 科任老师：teacher2 是某班的协作（科任）老师。
-    // 同样不依赖演示数据：推断出来的班级不可用（被人工改过权限 / 与外部班级同一个）时现建一个：
-    // teacher1 当班主任 + teacher2 协作，收尾删除。
+    // 科任老师：teacher2 在某班**有任课关系**（Course.teacherId === 他）。
+    // 同样不依赖演示数据：推断出来的班级不可用（被人工改过 / 与外班同一个）时现建一个，
+    // 用 teacher1 当班主任 + 给 teacher2 配一门课，收尾删除。
     let subjectClass = teacher2Classes.find((item) => item.teacherId !== teacher2Id) ?? null;
     if (!subjectClass || subjectClass.id === foreignClass?.id) {
       const created = await api('/classes', {
         method: 'POST',
         token: adminToken,
         body: {
-          name: `科任校验班 ${Date.now()}`,
           grade: '高一',
+          enrollmentYear: new Date().getFullYear(),
+          classIndex: 90,
           code: `SJ${Date.now().toString().slice(-6)}`,
           teacherId: teacher1Id,
         },
       });
       const createdId = created.payload?.data?.id;
       if (createdId) {
-        await api(`/classes/${createdId}/teachers`, {
-          method: 'POST',
+        await api(`/classes/${createdId}/subject-teachers`, {
+          method: 'PUT',
           token: adminToken,
-          body: { teacherId: teacher2Id },
+          body: { assignments: [{ subjectName: '数学', teacherId: teacher2Id }] },
         });
         subjectClass = { id: createdId, name: created.payload?.data?.name ?? '科任校验班' };
         probeClassIds.push(createdId);
@@ -1050,53 +1085,52 @@ async function main() {
       const headCreate = await api('/classes', {
         method: 'POST',
         token: teacherToken,
-        body: { name: '班主任越权班', grade: '高一' },
+        body: { grade: '高一', enrollmentYear: new Date().getFullYear(), classIndex: 91 },
       });
       record('班主任创建班级被拒绝（403）', headCreate.status === 403, `status=${headCreate.status}`);
 
       const subjectCreate = await api('/classes', {
         method: 'POST',
         token: teacher2Token,
-        body: { name: '科任越权班', grade: '高一' },
+        body: { grade: '高一', enrollmentYear: new Date().getFullYear(), classIndex: 92 },
       });
       record('科任老师创建班级被拒绝（403）', subjectCreate.status === 403, `status=${subjectCreate.status}`);
 
       const headDelete = await api(`/classes/${classId}`, { method: 'DELETE', token: teacherToken });
       record('班主任删除班级被拒绝（403）', headDelete.status === 403, `status=${headDelete.status}`);
 
-      const headAssign = await api(`/classes/${classId}/teachers`, {
-        method: 'POST',
+      const headAssign = await api(`/classes/${classId}/subject-teachers`, {
+        method: 'PUT',
         token: teacherToken,
-        body: { teacherId: teacher2Login.payload?.data?.user?.id },
+        body: { assignments: [{ subjectName: '音乐', teacherId: teacher2Login.payload?.data?.user?.id }] },
       });
-      record('班主任分配科任老师被拒绝（403）', headAssign.status === 403, `status=${headAssign.status}`);
+      record('班主任分配任课老师被拒绝（403）', headAssign.status === 403, `status=${headAssign.status}`);
 
-      const subjectAssign = await api(`/classes/${classId}/teachers`, {
-        method: 'POST',
+      const subjectAssign = await api(`/classes/${classId}/subject-teachers`, {
+        method: 'PUT',
         token: teacher2Token,
-        body: { teacherId: teacher2Login.payload?.data?.user?.id },
+        body: { assignments: [{ subjectName: '音乐', teacherId: teacher2Login.payload?.data?.user?.id }] },
       });
       record('科任老师分配人员被拒绝（403）', subjectAssign.status === 403, `status=${subjectAssign.status}`);
 
       // 管理员可以分配（用"先加后删"验证）
-      const adminAssign = await api(`/classes/${classId}/teachers`, {
-        method: 'POST',
+      const adminAssign = await api(`/classes/${classId}/subject-teachers`, {
+        method: 'PUT',
         token: adminToken,
-        body: { teacherId: teacher2Login.payload?.data?.user?.id },
+        body: { assignments: [{ subjectName: '音乐', teacherId: teacher2Login.payload?.data?.user?.id }] },
       });
       record(
-        '管理员分配科任老师成功（201/200）',
-        [200, 201].includes(adminAssign.status),
+        '管理员分配任课老师成功（200）',
+        adminAssign.status === 200,
         `status=${adminAssign.status}`,
       );
-      const adminUnassign = await api(
-        `/classes/${classId}/teachers/${teacher2Login.payload?.data?.user?.id}`,
-        {
-          method: 'DELETE',
-          token: adminToken,
-        },
-      );
-      record('管理员取消科任老师成功（200）', adminUnassign.status === 200, `status=${adminUnassign.status}`);
+      // 解除 = 把该科还回班主任（Course.teacherId 是必填列，不能留空）
+      const adminUnassign = await api(`/classes/${classId}/subject-teachers`, {
+        method: 'PUT',
+        token: adminToken,
+        body: { assignments: [{ subjectName: '音乐', teacherId: ownClass?.teacherId }] },
+      });
+      record('管理员解除任课关系成功（200）', adminUnassign.status === 200, `status=${adminUnassign.status}`);
 
       // 课表：班主任可管理本班，科任老师不可
       if (subjectClassId) {
@@ -1120,16 +1154,59 @@ async function main() {
         );
       }
 
+      // 新规则：**作业按科目授权**。
+      // 科任老师只能布置自己任教科目（Course.teacherId）的作业；
+      // 不指定科目的作业只有班主任与管理员能发 —— 两条都要验到。
+      const subjectCourse = (await api(`/courses?classId=${subjectClassId}`, { token: adminToken }))
+        .payload?.data?.find((item) => item.teacherId === teacher2Id);
       const subjectHomework = await api('/homeworks', {
         method: 'POST',
         token: subjectClassId ? teacher2Token : teacherToken,
         body: {
           classId: subjectClassId,
+          courseId: subjectCourse?.id,
           title: '科任老师布置的作业',
           content: '权限矩阵校验用',
         },
       });
-      record('科任老师可布置作业（201）', subjectHomework.status === 201, `status=${subjectHomework.status}`);
+      record(
+        '科任老师可布置自己任教科目的作业（201）',
+        subjectHomework.status === 201,
+        `status=${subjectHomework.status} 科目=${subjectCourse?.name ?? '-'}`,
+      );
+      if (subjectHomework.payload?.data?.id) {
+        tempHomeworkIds.push(subjectHomework.payload.data.id);
+      }
+      const subjectHomeworkNoCourse = await api('/homeworks', {
+        method: 'POST',
+        token: subjectClassId ? teacher2Token : teacherToken,
+        body: { classId: subjectClassId, title: '科任老师的不指定科目作业', content: '应被拒绝' },
+      });
+      record(
+        '科任老师布置不指定科目的作业被拒绝（403）',
+        subjectHomeworkNoCourse.status === 403,
+        `status=${subjectHomeworkNoCourse.status}`,
+      );
+      // 科任老师改**别人任教科目**的作业同样被拒
+      if (subjectCourse) {
+        const otherCourse = (await api(`/courses?classId=${subjectClassId}`, { token: adminToken }))
+          .payload?.data?.find((item) => item.teacherId !== teacher2Id);
+        const foreignHomework = await api('/homeworks', {
+          method: 'POST',
+          token: teacher2Token,
+          body: {
+            classId: subjectClassId,
+            courseId: otherCourse?.id,
+            title: '科任老师替别人发作业',
+            content: '应被拒绝',
+          },
+        });
+        record(
+          '科任老师给非任教科目布置作业被拒绝（403）',
+          foreignHomework.status === 403,
+          `status=${foreignHomework.status} 科目=${otherCourse?.name ?? '-'}`,
+        );
+      }
       if (subjectHomework.payload?.data?.id) {
         await api(`/homeworks/${subjectHomework.payload.data.id}`, {
           method: 'DELETE',
@@ -1142,7 +1219,7 @@ async function main() {
         token: teacher2Token,
         body: {
           classId: classId,
-          userId: targetStudent?.id,
+          studentId: targetStudent?.id,
           examName: '越权成绩',
           score: 90,
           totalScore: 100,
@@ -1156,7 +1233,7 @@ async function main() {
         token: teacherToken,
         body: {
           classId: classId,
-          userId: targetStudent?.id,
+          studentId: targetStudent?.id,
           examName: '班主任本班成绩',
           score: 90,
           totalScore: 100,
@@ -1177,7 +1254,7 @@ async function main() {
           token: teacherToken,
           body: {
             classId: foreignClass.id,
-            userId: targetStudent?.id,
+            studentId: targetStudent?.id,
             examName: '班主任跨班成绩',
             score: 90,
             totalScore: 100,
@@ -1195,7 +1272,7 @@ async function main() {
         token: adminToken,
         body: {
           classId: classId,
-          userId: targetStudent?.id,
+          studentId: targetStudent?.id,
           examName: '管理员录入成绩',
           score: 88,
           totalScore: 100,
@@ -1438,10 +1515,10 @@ async function main() {
 
   // 8.3 成绩表格导入（CSV 校验 + XLSX 新增/重复/更新 + 错误行提示）
   const gradesCsv = [
-    '用户名,姓名,考试名称,分数,总分,课程',
-    'student01,,期中导入考试,92,100,',
+    '学号,姓名,考试名称,分数,总分,科目',
+    `${targetStudent?.studentNo ?? '202601'},,期中导入考试,92,100,`,
     `,${targetStudent?.name ?? '张同学'},期中导入考试,不是数字,100,`,
-    'unknown-user,,期中导入考试,88,100,',
+    'UNKNOWN-USER,,期中导入考试,88,100,',
   ].join(NL);
   const gradesCsvBase64 = Buffer.from(`\ufeff${gradesCsv}${NL}`, 'utf8').toString('base64');
 
@@ -1490,8 +1567,8 @@ async function main() {
   const XLSX = xlsxNamespace.default ?? xlsxNamespace;
   const xlsxSheet = XLSX.utils.aoa_to_sheet([
     ['学号', '姓名', '考试', '得分', '满分', '科目'],
-    ['student02', '', '期中导入考试', 85, 100, ''],
-    ['student01', '', '期中导入考试', 78, 100, ''],
+    [classmateTwoNo, '', '期中导入考试', 85, 100, ''],
+    [targetStudent?.studentNo ?? '202601', '', '期中导入考试', 78, 100, ''],
   ]);
   const xlsxBook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(xlsxBook, xlsxSheet, '成绩');
@@ -1506,13 +1583,13 @@ async function main() {
     'XLSX 成绩表预览（同义词自动映射 学号/得分）',
     xlsxPreview.status === 200 &&
       xlsxPreview.payload?.data?.totalRows === 2 &&
-      xlsxPreview.payload?.data?.suggestedMapping?.username === '学号' &&
+      xlsxPreview.payload?.data?.suggestedMapping?.studentNo === '学号' &&
       xlsxPreview.payload?.data?.suggestedMapping?.score === '得分',
     `status=${xlsxPreview.status} 映射=${JSON.stringify(xlsxPreview.payload?.data?.suggestedMapping ?? {})}`,
   );
 
   const commitMapping = {
-    username: '学号',
+    studentNo: '学号',
     name: '姓名',
     examName: '考试',
     score: '得分',
@@ -1573,12 +1650,12 @@ async function main() {
       fileName: 'grades.csv',
       contentBase64: gradesCsvBase64,
       mapping: {
-        username: '用户名',
+        studentNo: '学号',
         name: '姓名',
         examName: '考试名称',
         score: '分数',
         totalScore: '总分',
-        courseName: '课程',
+        courseName: '科目',
       },
       mode: 'append',
     },
@@ -1608,9 +1685,9 @@ async function main() {
   );
 
   // 8.4 学生名单导入（仅管理员）+ 数据清理
-  const importedUsername = `imp${Date.now().toString(36).slice(-6)}`;
-  // 学生导入模板已无"初始密码"列（学生没有账号属性）
-  const studentsCsv = ['用户名,姓名', `${importedUsername},导入测试生`, 'bad user,非法用户名'].join(NL);
+  const importedUsername = `IMP${Date.now().toString(36).slice(-6)}`.toUpperCase();
+  // 学生导入模板已无"初始密码"列（学生没有账号属性）；表头是「学号」
+  const studentsCsv = ['学号,姓名', `${importedUsername},导入测试生`, 'bad@user,非法学号'].join(NL);
   const studentsCommit = await api('/imports/table/commit', {
     method: 'POST',
     token: adminToken,
@@ -1619,12 +1696,12 @@ async function main() {
       classId,
       fileName: 'students.csv',
       contentBase64: Buffer.from(`\ufeff${studentsCsv}${NL}`, 'utf8').toString('base64'),
-      mapping: { username: '用户名', name: '姓名' },
+      mapping: { studentNo: '学号', name: '姓名' },
       mode: 'append',
     },
   });
   record(
-    '学生名单导入（新增 1 / 非法用户名进错误行 1）',
+    '学生名单导入（新增 1 / 非法学号进错误行 1）',
     studentsCommit.status === 200 &&
       studentsCommit.payload?.data?.inserted === 1 &&
       studentsCommit.payload?.data?.failed === 1,
@@ -1653,12 +1730,12 @@ async function main() {
       fileName: 'grades.csv',
       contentBase64: gradesCsvBase64,
       mapping: {
-        username: '用户名',
+        studentNo: '学号',
         name: '姓名',
         examName: '考试名称',
         score: '分数',
         totalScore: '总分',
-        courseName: '课程',
+        courseName: '科目',
       },
       mode: 'upsert',
     },
@@ -1672,8 +1749,8 @@ async function main() {
     `status=${teacherGradesCommit.status} 新增=${teacherGradesCommit.payload?.data?.inserted} 更新=${teacherGradesCommit.payload?.data?.updated} 失败=${teacherGradesCommit.payload?.data?.failed}`,
   );
 
-  // teacher2 是高二(3)班的科任老师（班主任是 teacher1）——这才是真正的"科任"场景
-  const subjectOnlyClass = classes.find((item) => item.name?.includes('高二(3)')) ?? null;
+  // teacher2 是2025级3班的科任老师（班主任是 teacher1）——这才是真正的"科任"场景
+  const subjectOnlyClass = classes.find((item) => item.name?.includes('2025级3')) ?? null;
   const subjectGradesImport = await api('/imports/table/commit', {
     method: 'POST',
     token: teacher2Token,
@@ -1683,12 +1760,12 @@ async function main() {
       fileName: 'grades.csv',
       contentBase64: gradesCsvBase64,
       mapping: {
-        username: '用户名',
+        studentNo: '学号',
         name: '姓名',
         examName: '考试名称',
         score: '分数',
         totalScore: '总分',
-        courseName: '课程',
+        courseName: '科目',
       },
       mode: 'upsert',
     },
@@ -1696,7 +1773,7 @@ async function main() {
   record(
     '科任老师导入本班成绩被拒绝（403，需求 7）',
     Boolean(subjectOnlyClass) && subjectGradesImport.status === 403,
-    `班级=${subjectOnlyClass?.name ?? '未找到高二(3)班'} status=${subjectGradesImport.status}`,
+    `班级=${subjectOnlyClass?.name ?? '未找到2025级3班'} status=${subjectGradesImport.status}`,
   );
 
   if (foreignClass) {
@@ -1709,12 +1786,12 @@ async function main() {
         fileName: 'grades.csv',
         contentBase64: gradesCsvBase64,
         mapping: {
-          username: '用户名',
+          studentNo: '学号',
           name: '姓名',
           examName: '考试名称',
           score: '分数',
           totalScore: '总分',
-          courseName: '课程',
+          courseName: '科目',
         },
         mode: 'upsert',
       },
@@ -1749,7 +1826,7 @@ async function main() {
       classId,
       fileName: 'students.csv',
       contentBase64: Buffer.from(`\ufeff${studentsCsv}${NL}`, 'utf8').toString('base64'),
-      mapping: { username: '用户名', name: '姓名' },
+      mapping: { studentNo: '学号', name: '姓名' },
       mode: 'append',
     },
   });
@@ -1774,7 +1851,7 @@ async function main() {
   record('导入的成绩可正常删除（清理验证数据）', gradesCleaned >= 2, `已删除 ${gradesCleaned} 条`);
 
   const roster = await api(`/students?classId=${classId}`, { token: adminToken });
-  const importedStudent = (roster.payload?.data ?? []).find((item) => item.username === importedUsername);
+  const importedStudent = (roster.payload?.data ?? []).find((item) => item.studentNo === importedUsername);
   if (importedStudent) {
     const removedStudent = await api(`/students/${importedStudent.id}`, {
       method: 'DELETE',
@@ -1795,7 +1872,7 @@ async function main() {
     record('时间配置可删除（清理验证数据）', layoutDeleted.status === 200, `status=${layoutDeleted.status}`);
   }
 
-  // ---------------------------------------------------------------- 9. 班级账号（学生端主体 = 班级）
+  // ---------------------------------------------------------------- 9. 班级账号（ClassHelper 班级端主体 = 班级）
   // 设计：班级码 + 班级密码 → classSession 的 JWT；个人数据（作业完成 / 通知已读 / 成绩）
   //      由服务端按"全班"范围读写，个人学生不再是登录主体（个人账号接口仍向后兼容）。
   // 注意：本段会临时改动班级码，结束时必须恢复（否则演示实例会留下 E2E#### 这种随机码）。
@@ -1887,7 +1964,7 @@ async function main() {
   const classGradesWrite = await api('/grades', {
     method: 'POST',
     token: classToken,
-    body: { classId, userId: targetStudent?.id, examName: '班级账号越权成绩', score: 90, totalScore: 100 },
+    body: { classId, studentId: targetStudent?.id, examName: '班级账号越权成绩', score: 90, totalScore: 100 },
   });
   record(
     '班级账号录入成绩被拒绝（403）',
@@ -2020,10 +2097,10 @@ async function main() {
   const classNameGrade = await api('/grades', {
     method: 'POST',
     token: adminToken,
-    body: { classId, userId: targetStudent?.id, examName: '班级总览回归', score: 77, totalScore: 100 },
+    body: { classId, studentId: targetStudent?.id, examName: '班级总览回归', score: 77, totalScore: 100 },
   });
   const classMyGrades = await api('/grades/my', { token: classToken });
-  const gradeStudentIds = new Set((classMyGrades.payload?.data ?? []).map((item) => item.userId));
+  const gradeStudentIds = new Set((classMyGrades.payload?.data ?? []).map((item) => item.studentId));
   record(
     '班级账号查看成绩 = 全班总览',
     classMyGrades.status === 200 &&
@@ -2180,7 +2257,7 @@ async function main() {
 
   // 教师名单表格导入：教师预览 403；管理员预览 + 提交（教师与班级无关，classId 可省略）
   const teacherCsv =
-    '\ufeff用户名,姓名,初始密码,角色\n' +
+    '\ufeff工号,姓名,初始密码,角色\n' +
     `imp_t_${Date.now().toString().slice(-8)},冒烟导入教师,import123456,教师\n`;
   const teacherCsvBase64 = Buffer.from(teacherCsv, 'utf8').toString('base64');
   const importedTeacherUsername = teacherCsv.split('\n')[1]?.split(',')[0] ?? '';
@@ -2202,7 +2279,7 @@ async function main() {
       kind: 'teachers',
       fileName: 'teachers.csv',
       contentBase64: teacherCsvBase64,
-      mapping: { username: '用户名', name: '姓名', password: '初始密码', role: '角色' },
+      mapping: { username: '工号', name: '姓名', password: '初始密码', role: '角色' },
       mode: 'upsert',
     },
   });
@@ -2253,11 +2330,11 @@ async function main() {
   });
   const cascadeTeacherToken = cascadeTeacherLogin.payload?.data?.token;
 
-  // 1) 先让他成为该班科任（这样才有发布权限），发一条通知
-  await api(`/classes/${classId}/teachers`, {
-    method: 'POST',
+  // 1) 先让他成为该班某科的任课老师（这样才有发布通知的权限），发一条通知
+  await api(`/classes/${classId}/subject-teachers`, {
+    method: 'PUT',
     token: adminToken,
-    body: { teacherId: cascadeTeacherId },
+    body: { assignments: [{ subjectName: '美术', teacherId: cascadeTeacherId }] },
   });
   const cascadeNotification = await api('/notifications', {
     method: 'POST',
@@ -2265,10 +2342,11 @@ async function main() {
     body: { classId, title: '级联删除回归', content: '用于验证删除教师不会连带删除已发布内容' },
   });
   const cascadeNotificationId = cascadeNotification.payload?.data?.id;
-  // 2) 解除班级分配：此时他"不在任何班级、名下无课程"，但发布过内容
-  await api(`/classes/${classId}/teachers/${cascadeTeacherId}`, {
-    method: 'DELETE',
+  // 2) 解除任课关系（把该科还回班主任）：此时他"不在任何班级、名下无课程"，但发布过内容
+  await api(`/classes/${classId}/subject-teachers`, {
+    method: 'PUT',
     token: adminToken,
+    body: { assignments: [{ subjectName: '美术', teacherId: ownClass?.teacherId }] },
   });
   // 3) 删除账号应当被拒（409），且那条通知必须还在
   const cascadeDelete = await api(`/teachers/${cascadeTeacherId}`, {
@@ -2303,7 +2381,7 @@ async function main() {
   const teacherCreateClass = await api('/classes', {
     method: 'POST',
     token: teacherToken,
-    body: { name: '越权班级', grade: '高一' },
+    body: { grade: '高一', enrollmentYear: new Date().getFullYear(), classIndex: 94 },
   });
   record(
     '仅管理员可创建班级（教师 403）',
@@ -2316,8 +2394,9 @@ async function main() {
     method: 'POST',
     token: adminToken,
     body: {
-      name: `冒烟班级 ${Date.now()}`,
       grade: '高一',
+      enrollmentYear: new Date().getFullYear(),
+      classIndex: 95,
       code: tempClassCode,
       ...(teacher2 ? { teacherId: teacher2.id } : {}),
     },
@@ -2357,11 +2436,11 @@ async function main() {
   const dbStatus = await api('/database/status', { token: adminToken });
   const dbStatusData = dbStatus.payload?.data ?? {};
   record(
-    '数据库状态（管理员）：已连接且返回 14 张表行数',
+    '数据库状态（管理员）：已连接且返回 15 张表行数',
     dbStatus.status === 200 &&
       dbStatusData.connected === true &&
       Array.isArray(dbStatusData.tables) &&
-      dbStatusData.tables.length === 14 &&
+      dbStatusData.tables.length === 15 &&
       dbStatusData.tables.every((item) => item.count >= 0),
     `provider=${dbStatusData.provider} 延迟=${dbStatusData.latencyMs}ms 版本=${dbStatusData.version} 表=${
       (dbStatusData.tables ?? []).length
@@ -2478,10 +2557,10 @@ async function main() {
     snapshotParsed = null;
   }
   record(
-    '导出快照（JSON 格式正确、14 张表、用户数 > 0）',
+    '导出快照（JSON 格式正确、15 张表、账号数 > 0）',
     dbExport.status === 200 &&
       snapshotParsed?.format === 'classhelper-snapshot' &&
-      Object.keys(snapshotParsed?.data ?? {}).length === 14 &&
+      Object.keys(snapshotParsed?.data ?? {}).length === 15 &&
       (snapshotParsed?.counts?.User ?? 0) > 0,
     `status=${dbExport.status} 格式=${snapshotParsed?.format ?? '-'} 用户=${snapshotParsed?.counts?.User ?? '-'}`,
   );
@@ -2664,6 +2743,169 @@ async function main() {
       updateTeacherForced.payload?.data?.checkedAt === updateData.checkedAt,
     `status=${updateTeacherForced.status} 命中缓存=${updateTeacherForced.payload?.data?.checkedAt === updateData.checkedAt}`,
   );
+
+
+  /* ---------------------------------------------------------------- 13. 学期周次（仅管理员可写） */
+  // 需求：「第几周的周次数据可以由 admin 修改，并对所有 ClassIsland 下发修改」。
+  // 线性推算遇到调休/补课会整体错位，所以支持逐周指定日期区间。
+
+  const termGlobal = await api('/term', { token: adminToken });
+  record(
+    '学期周次：读取全校默认口径',
+    termGlobal.status === 200 &&
+      typeof termGlobal.payload?.data?.currentWeek === 'number' &&
+      Array.isArray(termGlobal.payload?.data?.weeks),
+    `status=${termGlobal.status} 当前第 ${termGlobal.payload?.data?.currentWeek ?? '-'} 周 配置=${termGlobal.payload?.data?.configured}`,
+  );
+
+  const termForTeacher = await api('/term', { token: teacherToken });
+  record(
+    '学期周次：教师可读（课表页要显示"第几周"）',
+    termForTeacher.status === 200,
+    `status=${termForTeacher.status}`,
+  );
+
+  // 用一段**覆盖今天**的区间，验证"当前周次按区间判定"而不是按开学日期线性推算
+  const today = new Date();
+  const pad = (value) => String(value).padStart(2, '0');
+  const dayKey = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const rangeStart = new Date(today.getTime() - 2 * 86400000);
+  const rangeEnd = new Date(today.getTime() + 2 * 86400000);
+  const beforeTerm = (await api('/term', { token: adminToken })).payload?.data;
+
+  const termSaved = await api('/term', {
+    method: 'PUT',
+    token: adminToken,
+    body: {
+      weeks: [
+        { weekNumber: 7, startDate: dayKey(rangeStart), endDate: dayKey(rangeEnd), note: 'e2e 区间回归' },
+      ],
+    },
+  });
+  record(
+    '学期周次：管理员保存逐周区间（PUT /term）',
+    termSaved.status === 200 &&
+      termSaved.payload?.data?.configured === true &&
+      termSaved.payload?.data?.currentWeek === 7,
+    `status=${termSaved.status} 当前第 ${termSaved.payload?.data?.currentWeek ?? '-'} 周（区间覆盖今天应为第 7 周）`,
+  );
+
+  const termOverlap = await api('/term', {
+    method: 'PUT',
+    token: adminToken,
+    body: {
+      weeks: [
+        { weekNumber: 1, startDate: '2026-09-01', endDate: '2026-09-10' },
+        { weekNumber: 2, startDate: '2026-09-05', endDate: '2026-09-14' },
+      ],
+    },
+  });
+  record(
+    '学期周次：区间重叠被拒绝（400，避免"当前第几周"出现歧义）',
+    termOverlap.status === 400,
+    `status=${termOverlap.status} message=${termOverlap.payload?.message ?? ''}`,
+  );
+
+  const termDenied = await api('/term', {
+    method: 'PUT',
+    token: teacherToken,
+    body: { weeks: [{ weekNumber: 1, startDate: '2026-09-01', endDate: '2026-09-07' }] },
+  });
+  record(
+    '学期周次：教师写入被拒绝（403，周次会让全校课表错位）',
+    termDenied.status === 403,
+    `status=${termDenied.status}`,
+  );
+
+  const termAuto = await api('/term/auto', {
+    method: 'POST',
+    token: adminToken,
+    body: { termStartDate: '2026-09-07', maxWeek: 3 },
+  });
+  record(
+    '学期周次：按开学日期一键生成（POST /term/auto）',
+    termAuto.status === 200 &&
+      (termAuto.payload?.data?.weeks ?? []).length === 3 &&
+      termAuto.payload?.data?.weeks?.[0]?.startDate === '2026-09-07' &&
+      termAuto.payload?.data?.weeks?.[2]?.endDate === '2026-09-27',
+    `status=${termAuto.status} 首周=${termAuto.payload?.data?.weeks?.[0]?.startDate} 末周=${termAuto.payload?.data?.weeks?.[2]?.endDate}`,
+  );
+
+  const holidays = await api('/term/holidays', { token: adminToken });
+  record(
+    '学期周次：联网拉取放假安排（机房无外网时 ok=false 属正常结果，不能抛 500）',
+    holidays.status === 200 && typeof holidays.payload?.data?.ok === 'boolean',
+    `status=${holidays.status} ok=${holidays.payload?.data?.ok} 条数=${holidays.payload?.data?.holidays?.length ?? 0}`,
+  );
+
+  // 收尾：还原成纯线性推算，不污染演示数据
+  await api('/term', {
+    method: 'PUT',
+    token: adminToken,
+    body: { termStartDate: beforeTerm?.termStartDate ?? undefined, weeks: [] },
+  });
+  const termRestored = await api('/term', { token: adminToken });
+  record(
+    '学期周次用例收尾：清空逐周配置（回到按开学日期线性推算）',
+    termRestored.payload?.data?.configured === false,
+    `configured=${termRestored.payload?.data?.configured}`,
+  );
+
+  /* ---------------------------------------------------------------- 14. 课表同步方向反转 */
+
+  // 自建一台临时设备（收尾删掉）：不依赖演示库里有没有接入过设备
+  const tempDevice = await api('/integrations/devices', {
+    method: 'POST',
+    token: adminToken,
+    body: { classId, name: 'E2E 课表方向校验设备' },
+  });
+  const tempDeviceId = tempDevice.payload?.data?.device?.id;
+  record(
+    '课表方向：新建设备默认「服务端自动下发、不自动回传」',
+    tempDevice.status === 201 &&
+      tempDevice.payload?.data?.device?.syncScheduleToServer === false &&
+      tempDevice.payload?.data?.device?.mirrorScheduleToClassIsland === true,
+    `status=${tempDevice.status} syncScheduleToServer=${tempDevice.payload?.data?.device?.syncScheduleToServer} mirrorScheduleToClassIsland=${tempDevice.payload?.data?.device?.mirrorScheduleToClassIsland}`,
+  );
+
+  if (tempDeviceId) {
+    const pullRequest = await api(`/integrations/devices/${tempDeviceId}/request-schedule`, {
+      method: 'POST',
+      token: adminToken,
+    });
+    record(
+      '从教室机器获取课表：管理员可发起（POST /request-schedule）',
+      pullRequest.status === 200 && pullRequest.payload?.data?.requested === true,
+      `status=${pullRequest.status} ${pullRequest.payload?.message ?? ''}`,
+    );
+
+    // 置位后再读设备列表应当看到待办（插件下一次心跳看到就会立刻把课表推上来）
+    const afterRequest = await api(`/integrations/devices?classId=${classId}`, { token: adminToken });
+    const requestedDevice = (afterRequest.payload?.data ?? []).find((item) => item.id === tempDeviceId);
+    record(
+      '从教室机器获取课表：待办标记已落库（插件下次心跳会照做）',
+      requestedDevice?.requestScheduleReport === true,
+      `requestScheduleReport=${requestedDevice?.requestScheduleReport}`,
+    );
+
+    // 教师对**别人班**的设备不能发起
+    const deniedPull = await api(`/integrations/devices/${tempDeviceId}/request-schedule`, {
+      method: 'POST',
+      token: teacher2Token,
+    });
+    record(
+      '从教室机器获取课表：非本班教师被拒绝（403）',
+      deniedPull.status === 403,
+      `status=${deniedPull.status}`,
+    );
+
+    // 收尾：删掉临时设备
+    const removedDevice = await api(`/integrations/devices/${tempDeviceId}`, {
+      method: 'DELETE',
+      token: adminToken,
+    });
+    record('课表方向用例收尾：临时设备已删除', removedDevice.status === 200, `status=${removedDevice.status}`);
+  }
 
   socket.close();
 

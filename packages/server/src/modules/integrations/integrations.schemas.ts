@@ -22,9 +22,12 @@ export const createDeviceSchema = z.object({
   classId: z.string().min(1, '请选择班级'),
   name: z.string().trim().max(40).optional(),
   mode: integrationModeSchema.optional(),
-  /** 是否允许插件把 ClassIsland 的课表回传到本服务 */
+  /**
+   * 是否允许插件把 ClassIsland 的课表**自动**回传到本服务。
+   * 默认 **false**（课表以服务端为准）；要取教室的课表用「从教室机器获取课表」这个手动动作。
+   */
   syncScheduleToServer: z.boolean().optional(),
-  /** 是否允许把本班课表镜像回 ClassIsland */
+  /** 是否允许把本班课表镜像回 ClassIsland。默认 **true** —— 这是现在课表同步的主方向。 */
   mirrorScheduleToClassIsland: z.boolean().optional(),
 });
 

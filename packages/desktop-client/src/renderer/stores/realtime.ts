@@ -18,7 +18,7 @@ type RealtimeEventName = keyof ServerToClientEvents;
 type EventHandler = (payload: unknown) => void;
 
 /**
- * 实时通道（学生端）。
+ * 实时通道（ClassHelper 班级端）。
  * 与 Web 管理端使用同一套事件名；收到事件后除了通知用户，
  * 还会把数据写回 IndexedDB，保证断网时看到的是最后同步到的内容。
  */

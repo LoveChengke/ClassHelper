@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# 班级小助手 · 运维命令（Linux）
+# ClassHelper · 运维命令（Linux）
 #
 # 安装位置：<安装目录>/bin/classhelper，并在 /usr/local/bin/classhelper 建软链，
 #           因此任何用户在任何目录都能直接敲 `classhelper`。
@@ -668,7 +668,7 @@ EOF
     return 0
   fi
 
-  printf '%s班级小助手服务端%s v%s\n\n' "$C_BOLD" "$C_RESET" "$(current_version)"
+  printf '%sClassHelper 服务端%s v%s\n\n' "$C_BOLD" "$C_RESET" "$(current_version)"
   printf '  %-10s %s\n' "服务状态" "$([ "$active" = "active" ] && printf '%s运行中%s' "$C_GREEN" "$C_RESET" || printf '%s未运行%s' "$C_RED" "$C_RESET")（开机自启：${enabled}）"
   printf '  %-10s %s\n' "健康探针" "$([ "$healthy" = "yes" ] && printf '%s通过%s' "$C_GREEN" "$C_RESET" || printf '%s无响应%s' "$C_RED" "$C_RESET")"
   printf '  %-10s %s\n' "安装形态" "${MODE}"
@@ -1522,7 +1522,7 @@ EOF
 
 cmd_help() {
   cat <<EOF
-${C_BOLD}班级小助手 · 运维命令${C_RESET}
+${C_BOLD}ClassHelper · 运维命令${C_RESET}
 
 用法：classhelper <子命令> [参数]
 
@@ -1534,7 +1534,7 @@ ${C_BOLD}查看与诊断${C_RESET}
 ${C_BOLD}账号${C_RESET}
   password [用户名]              修改密码（默认 admin）；交互输入、不回显、不进历史
   password --list                列出可登录账号与班级账号（含是否已设密码）
-  password --class <班级码>      修改班级密码（学生端用「班级码 + 班级密码」登录）
+  password --class <班级码>      修改班级密码（ClassHelper 班级端用「班级码 + 班级密码」登录）
 
 ${C_BOLD}备份与恢复${C_RESET}
   backup [--note 说明] [--keep N]    备份配置 + 数据库到 ${BACKUP_DIR}

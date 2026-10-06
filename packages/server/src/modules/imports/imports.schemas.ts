@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-/** 导入类型：成绩 / 学生名单 / 教师名单（仅管理员） */
-export const IMPORT_KINDS = ['grades', 'students', 'teachers'] as const;
+/** 导入类型：成绩 / 学生名单 / 教师名单 / 班级任课老师 */
+export const IMPORT_KINDS = ['grades', 'students', 'teachers', 'classTeachers'] as const;
 
 /** 表格导入：上传的文件（base64）+ 类型 */
 export const tableFileSchema = z.object({
@@ -17,12 +17,17 @@ export const tableFileSchema = z.object({
 
 /** 表格提交：在预览基础上带字段映射、目标班级与写入模式 */
 export const tableCommitSchema = tableFileSchema.extend({
-  /** 目标班级：成绩/学生名单必填；教师名单与班级无关（可省略） */
+  /** 目标班级：成绩/学生名单必填；教师名单与本班任课老师也可用表格里的班级列 */
   classId: z.string().min(1, '请选择班级').optional(),
   /** 列映射：规范字段 → 文件列名（或列索引字符串） */
   mapping: z.record(z.string(), z.string().min(1)),
-  /** append = 仅新增；upsert = 已存在则更新（成绩按 学生+考试+课程，名单按用户名） */
+  /** append = 仅新增；upsert = 已存在则更新（成绩按 学生+考试+课程，名单按学号） */
   mode: z.enum(['append', 'upsert']).default('upsert'),
+  /**
+   * **班级任课老师导入**专用：是否用「工号」去匹配已有教师账号。
+   * 打开时优先按工号匹配（匹配不到就按工号新建账号）；关闭时只按姓名匹配、匹配不到即报错。
+   */
+  useTeacherNo: z.boolean().optional(),
 });
 
 /** ClassIsland 课表时间导入：先校验/预览，再提交 */

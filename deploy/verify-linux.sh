@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# 班级小助手 · Linux 安装与运维链路验收（在**已安装的服务器上**运行）
+# ClassHelper · Linux 安装与运维链路验收（在**已安装的服务器上**运行）
 #
 # 覆盖：安装结果 → 服务可用性 → API 登录 → 改密（含回滚与审计）→ 备份 →
 #       配置读写 → key rotate →（可选）升级 / 回滚 / 卸载
@@ -74,7 +74,7 @@ CURL=(curl -fsS --noproxy '*')
 
 if [ "$ADMIN_PASSWORD_FROM_STDIN" = "1" ]; then IFS= read -r ADMIN_PASSWORD || true; fi
 
-printf '%s班级小助手 · Linux 安装验收%s\n' "$B" "$N"
+printf '%sClassHelper · Linux 安装验收%s\n' "$B" "$N"
 note "安装目录 ${INSTALL_DIR}｜配置 ${CONFIG_FILE}｜端口 ${PORT}"
 
 # ---------------------------------------------------------------- 1. 安装结果

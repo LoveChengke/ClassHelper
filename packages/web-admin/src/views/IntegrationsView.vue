@@ -5,6 +5,7 @@ import {
   CLASSISLAND_NOTIFICATION_CHANNEL_LABELS,
   CLASSISLAND_NOTIFICATION_DEFAULT_DURATION,
   CLASSISLAND_NOTIFICATION_MAX_DURATION,
+  CLASS_HELPER_STATUS_REFRESH_SECONDS,
   CLASSISLAND_TIME_STATE_LABELS,
   NOTIFICATION_PRIORITIES,
   PRIORITY_LABELS,
@@ -12,6 +13,7 @@ import {
   formatDate,
   relativeTime,
   type ClassDto,
+  type ClassHelperStatusDto,
   type ClassIslandNotificationChannel,
   type ClassIslandStateEvent,
   type IntegrationDeviceDto,
@@ -27,7 +29,7 @@ import { useRealtimeStore } from '@/stores/realtime';
  * 两块内容：
  * 1. **设备接入**：为每个班签发设备令牌（`chci_...`），老师把令牌填进教室机器的
  *    ClassIsland 插件设置，插件就会把该机课表/上课状态上报上来，并接收本页下发的提醒；
- * 2. **下发提醒**：把一条提醒推到该班的 ClassIsland 上全屏弹出（学生端通知中心同时留档）。
+ * 2. **下发提醒**：把一条提醒推到该班的 ClassIsland 上全屏弹出（ClassHelper 班级端通知中心同时留档）。
  *
  * 权限与后端对齐：本页只对 ADMIN / TEACHER 开放（路由 meta.roles），
  * 具体到"能不能管这个班"由后端 assertCanManageSchedule / assertCanPublishContent 判定。
@@ -40,6 +42,45 @@ const loading = ref(false);
 const classes = ref<ClassDto[]>([]);
 const devices = ref<IntegrationDeviceDto[]>([]);
 const filter = reactive({ classId: '' });
+
+/* ------------------------------------------------------------ ClassHelper 班级端在线状态
+ *
+ * 需求「教师网页支持查看班级 ClassHelper 在线状态」的落点：
+ * 管理员看全部班级，普通教师看自己担任班主任的班级 ∪ 任课的班级（后端按 classScope 过滤）。
+ * 在线判定统一是"最近 60 秒内有心跳"（共享常量 CLASS_HELPER_ONLINE_WINDOW_MS），
+ * 与设备列表里那个 3 分钟容差的展示窗口是两回事 —— 这里给的是准确口径。
+ */
+const statusList = ref<ClassHelperStatusDto[]>([]);
+const statusLoading = ref(false);
+const statusServerTime = ref<string>('');
+const statusWindowMs = ref(60_000);
+let statusTimer: ReturnType<typeof setInterval> | null = null;
+
+async function loadStatus(): Promise<void> {
+  statusLoading.value = true;
+  try {
+    const result = await integrationApi.classHelperStatus();
+    statusList.value = result.classes;
+    statusServerTime.value = result.serverTime;
+    statusWindowMs.value = result.onlineWindowMs;
+  } finally {
+    statusLoading.value = false;
+  }
+}
+
+/** 在线班级数 / 总数（卡片标题上的概览） */
+const onlineClassCount = computed(() => statusList.value.filter((item) => item.online).length);
+
+/**
+ * 距今多久（按**服务器时间**算，不用本机时钟）。
+ * 教室机器常年不校时，本机与服务器可能差几分钟，用它算"距今"会得出负数或虚高的值。
+ */
+function sinceServer(value: string | null): string {
+  if (!value) return '从未';
+  const base = statusServerTime.value ? new Date(statusServerTime.value).getTime() : Date.now();
+  const diff = base - new Date(value).getTime();
+  return relativeTime(new Date(Date.now() - diff).toISOString());
+}
 
 /** deviceId → 最近一次 socket 推送的实时状态（页面停留期间最新） */
 const liveStates = ref<Record<string, ClassIslandStateEvent>>({});
@@ -217,6 +258,30 @@ async function toggleMirror(device: IntegrationDeviceDto): Promise<void> {
   await loadDevices();
 }
 
+/**
+ * 「从教室机器获取课表」——**现在取教室课表的唯一入口**。
+ *
+ * 自动回传已在 2026-10-06 起默认关闭：它会在老师手排课之后被教室的旧课表悄悄覆盖。
+ * 因此这里做成一次显式的人工动作，并且**点之前必须弹警告**说明后果。
+ */
+async function pullScheduleFromDevice(device: IntegrationDeviceDto): Promise<void> {
+  const confirmed = await ElMessageBox.confirm(
+    [
+      `将从「${device.name}」读取它当前的课表，并覆盖 / 合并到本班的课表。`,
+      '',
+      '本班在 ClassHelper 上手工排过的课可能被改动；教室里删掉或挪动的课会同步过来。',
+      '确认要从教室机器取一次课表吗？',
+    ].join('\n'),
+    '从教室机器获取课表',
+    { type: 'warning', confirmButtonText: '确认获取', cancelButtonText: '取消' },
+  ).catch(() => null);
+  if (!confirmed) return;
+
+  const result = await integrationApi.requestSchedule(device.id);
+  ElMessage.success(result.nextHeartbeatHint);
+  await loadDevices();
+}
+
 async function resetToken(device: IntegrationDeviceDto): Promise<void> {
   const confirmed = await ElMessageBox.confirm(
     `重置后「${device.name}」的旧令牌立即失效，教室机器需要重新填写新令牌。确定继续？`,
@@ -330,18 +395,22 @@ function handleState(payload: unknown): void {
 }
 
 onMounted(async () => {
-  await reload().catch(() => undefined);
+  await Promise.all([reload().catch(() => undefined), loadStatus().catch(() => undefined)]);
   realtime.on(SOCKET_EVENTS.classislandState, handleState);
   // 在线状态是"距今多久"的判断，需要定时重算，否则页面开着时间不会变
   tickTimer = setInterval(() => {
     nowTick.value = Date.now();
   }, 30_000);
+  // ClassHelper 班级端在线状态另有自动刷新（需求：支持手动刷新和自动刷新）
+  statusTimer = setInterval(() => void loadStatus(), CLASS_HELPER_STATUS_REFRESH_SECONDS * 1000);
 });
 
 onUnmounted(() => {
   realtime.off(SOCKET_EVENTS.classislandState, handleState);
   if (tickTimer) clearInterval(tickTimer);
   tickTimer = null;
+  if (statusTimer) clearInterval(statusTimer);
+  statusTimer = null;
 });
 </script>
 
@@ -349,9 +418,9 @@ onUnmounted(() => {
   <div class="page">
     <div class="page-header">
       <div>
-        <h2 class="page-title">ClassIsland 联动</h2>
+        <h2 class="page-title">ClassHelper 联动</h2>
         <p class="page-subtitle">
-          教室机器装上「班级小助手联动」插件后：课表与上课状态会自动上报到这里，这里下发的提醒会在 ClassIsland
+          教室机器装上「ClassHelper 联动」插件后：课表与上课状态会自动上报到这里，这里下发的提醒会在 ClassIsland
           上全屏弹出
         </p>
       </div>
@@ -374,13 +443,83 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- ClassHelper 班级端在线状态（管理员看全部班级；教师看自己班主任/任课的班级） -->
+    <el-card shadow="never" class="mb-16">
+      <template #header>
+        <div class="status-header">
+          <span>
+            ClassHelper 班级端在线状态
+            <el-tag size="small" :type="onlineClassCount > 0 ? 'success' : 'info'" effect="light" class="ml-8">
+              在线 {{ onlineClassCount }} / {{ statusList.length }} 个班
+            </el-tag>
+          </span>
+          <div class="toolbar">
+            <span class="text-muted">
+              判定口径：最近 {{ Math.round(statusWindowMs / 1000) }} 秒内有心跳即为在线 ·
+              每 {{ CLASS_HELPER_STATUS_REFRESH_SECONDS }} 秒自动刷新
+            </span>
+            <el-button size="small" :icon="'Refresh'" :loading="statusLoading" @click="loadStatus">
+              手动刷新
+            </el-button>
+          </div>
+        </div>
+      </template>
+      <el-table :data="statusList" size="small" empty-text="还没有接入 ClassHelper 班级端" max-height="320">
+        <el-table-column prop="className" label="班级" width="140" />
+        <el-table-column label="ClassHelper 设备" min-width="180">
+          <template #default="{ row }">
+            <template v-if="row.devices.length">
+              <div v-for="device in row.devices" :key="device.deviceId" class="device-line">
+                <span>{{ device.deviceName }}</span>
+                <span class="text-muted device-key">{{ device.deviceKey }}</span>
+              </div>
+            </template>
+            <span v-else class="text-muted">未接入</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.online ? 'success' : 'danger'" effect="light">
+              {{ row.online ? '在线' : '离线' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="最后在线" width="140">
+          <template #default="{ row }">
+            {{ sinceServer(row.devices[0]?.lastSeenAt ?? null) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="最后心跳" width="140">
+          <template #default="{ row }">
+            {{ sinceServer(row.devices[0]?.lastHeartbeatAt ?? null) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="版本" min-width="160">
+          <template #default="{ row }">
+            <span v-if="row.devices[0]" class="text-muted">
+              插件 {{ row.devices[0].pluginVersion ?? '-' }} · ClassIsland
+              {{ row.devices[0].classIslandVersion ?? '-' }}
+            </span>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="班级端查成绩" width="130">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.studentGradeQueryEnabled ? 'success' : 'info'" effect="plain">
+              {{ row.studentGradeQueryEnabled ? '已开放' : '已关闭' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
     <el-alert
       v-if="filteredDevices.length === 0"
       type="info"
       show-icon
       :closable="false"
       title="还没有接入 ClassIsland 设备"
-      description="在教室机器的 ClassIsland 上安装「班级小助手联动」插件并启用，然后点右上角「接入新设备」生成设备令牌，填入插件的「设置 → 班级小助手联动」即可。"
+      description="在教室机器的 ClassIsland 上安装「ClassHelper 联动」插件并启用，然后点右上角「接入新设备」生成设备令牌，填入插件的「设置 → ClassHelper 联动」即可。"
     />
 
     <template v-else>
@@ -462,7 +601,7 @@ onUnmounted(() => {
           <el-table-column label="创建时间" width="170">
             <template #default="{ row }">{{ formatDate(row.createdAt) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="290" fixed="right">
+          <el-table-column label="操作" width="360" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="toggleEnabled(row)">
                 {{ row.enabled ? '停用' : '启用' }}
@@ -470,6 +609,7 @@ onUnmounted(() => {
               <el-button link type="primary" @click="toggleMirror(row)">
                 {{ row.mirrorScheduleToClassIsland ? '关镜像' : '开镜像' }}
               </el-button>
+              <el-button link type="success" @click="pullScheduleFromDevice(row)">获取课表</el-button>
               <el-button link type="warning" @click="resetToken(row)">重置令牌</el-button>
               <el-button link type="danger" @click="removeDevice(row)">删除</el-button>
             </template>
@@ -598,7 +738,7 @@ onUnmounted(() => {
         </el-form-item>
         <el-form-item label="同步通知中心">
           <el-switch v-model="notifyForm.saveToNotifications" />
-          <span class="form-hint">同时在班级通知中心留一条（学生端也能事后查看）</span>
+          <span class="form-hint">同时在班级通知中心留一条（ClassHelper 班级端也能事后查看）</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -610,6 +750,24 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.status-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.device-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.device-key {
+  font-size: 12px;
+}
+
 .device-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

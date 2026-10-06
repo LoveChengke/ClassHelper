@@ -1,6 +1,4 @@
 ﻿import { Router } from 'express';
-import { resolveCurrentWeek } from '@classhelper/shared';
-import { env } from '../../config/env.js';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
 import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
@@ -35,7 +33,8 @@ router.get('/grid', validate({ query: gridQuerySchema }), async (req, res) => {
     res,
     await scheduleService.getScheduleGrid(user, {
       classId,
-      week: week ?? resolveCurrentWeek(env.termStartDate),
+      // 不传 week 就取「本班口径」的当前周次（由 service 内按班级配置解析）
+      week,
     }),
     '获取周视图成功',
   );

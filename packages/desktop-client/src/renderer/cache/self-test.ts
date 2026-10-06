@@ -315,7 +315,7 @@ export async function onlineScenario(credentials?: {
   const detail: string[] = [];
 
   try {
-    // 学生端已改为「班级账号」登录：凭据由 scripts/smoke.mjs 通过管理端接口准备并传入。
+    // ClassHelper 班级端已改为「班级账号」登录：凭据由 scripts/smoke.mjs 通过管理端接口准备并传入。
     // 这里**不再回退到种子班级码**（G101/123456 也是真实可用的登录凭据，不能写进安装包）：
     // 没有凭据就明确跳过，由 scripts/smoke.mjs 打印"未能准备班级账号"。
     const code = credentials?.code ?? '';

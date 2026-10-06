@@ -467,7 +467,7 @@ async function openSubmissions(item: HomeworkDto): Promise<void> {
     const result = await homeworkApi.submissions(item.id);
     submissions.value = result.students;
     // 默认沿用服务端已有的未交数据（老师只需改动的部分）
-    notSubmittedIds.value = result.notSubmitted.map((student) => student.userId);
+    notSubmittedIds.value = result.notSubmitted.map((student) => student.studentId);
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '读取未交名单失败');
     submissions.value = [];
@@ -482,7 +482,7 @@ function markAllSubmitted(): void {
 }
 
 function markAllNotSubmitted(): void {
-  notSubmittedIds.value = submissions.value.map((student) => student.userId);
+  notSubmittedIds.value = submissions.value.map((student) => student.studentId);
 }
 
 async function saveSubmissions(): Promise<void> {
@@ -496,7 +496,7 @@ async function saveSubmissions(): Promise<void> {
   try {
     const result = await homeworkApi.saveSubmissions(target.id, notSubmittedIds.value);
     submissions.value = result.students;
-    notSubmittedIds.value = result.notSubmitted.map((student) => student.userId);
+    notSubmittedIds.value = result.notSubmitted.map((student) => student.studentId);
     target.completedCount = result.completedCount;
     ElMessage.success(`未交名单已保存（未交 ${result.notSubmitted.length} / ${result.total} 人）`);
     submissionsVisible.value = false;
@@ -835,7 +835,7 @@ onUnmounted(() => {
       <div v-loading="submissionsLoading" class="submission-list">
         <el-empty v-if="submissions.length === 0 && !submissionsLoading" description="该班还没有学生账号" />
         <el-checkbox-group v-model="notSubmittedIds">
-          <el-checkbox v-for="student in submissions" :key="student.userId" :value="student.userId">
+          <el-checkbox v-for="student in submissions" :key="student.studentId" :value="student.studentId">
             {{ student.name }}
           </el-checkbox>
         </el-checkbox-group>

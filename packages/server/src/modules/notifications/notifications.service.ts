@@ -1,7 +1,7 @@
 import { SOCKET_EVENTS, type NotificationDto } from '@classhelper/shared';
 import {
   assertClassAccess,
-  assertCanPublishContent,
+  assertCanPublishNotification,
   classScopeWhere,
   resolveClassScope,
 } from '../../lib/access.js';
@@ -52,7 +52,7 @@ export async function listNotifications(
     take: 200,
   });
 
-  return notifications.map((item) => toNotificationDto(item, { userIds: personalIds, withStatus: isStaff }));
+  return notifications.map((item) => toNotificationDto(item, { studentIds: personalIds, withStatus: isStaff }));
 }
 
 /**
@@ -66,7 +66,7 @@ export async function createNotification(
   user: TokenPayload,
   input: CreateNotificationInput,
 ): Promise<NotificationDto> {
-  await assertCanPublishContent(user, input.classId);
+  await assertCanPublishNotification(user, input.classId);
 
   const priority = input.priority ?? 'NORMAL';
   if (priority === 'URGENT' && input.confirmDuringClass !== true) {
@@ -96,7 +96,7 @@ export async function createNotification(
     include: { creator: creatorSelect, reads: true },
   });
 
-  const dto = toNotificationDto(created, { userId: user.sub, withStatus: true });
+  const dto = toNotificationDto(created, { withStatus: true });
   emitToClass(created.classId, SOCKET_EVENTS.notificationNew, dto);
 
   // 同一条通知也推到教室的 ClassIsland 上（"老师发通知 → 教室大屏弹出"不该只在联动页生效）。
@@ -152,7 +152,7 @@ async function pushToClassIslandIfEnabled(input: {
 export async function deleteNotification(user: TokenPayload, notificationId: string): Promise<void> {
   const current = await prisma.notification.findUnique({ where: { id: notificationId } });
   if (!current) throw ApiError.notFound('通知不存在');
-  await assertCanPublishContent(user, current.classId);
+  await assertCanPublishNotification(user, current.classId);
   await prisma.notification.delete({ where: { id: notificationId } });
 }
 
@@ -172,15 +172,15 @@ export async function markAsRead(
   // 先过滤已读过的记录再创建：SQLite 下 createMany 不支持 skipDuplicates，
   // 直接 createMany 遇到重复会整体失败。
   const existing = await prisma.notificationRead.findMany({
-    where: { notificationId, userId: { in: personalIds } },
-    select: { userId: true },
+    where: { notificationId, studentId: { in: personalIds } },
+    select: { studentId: true },
   });
-  const have = new Set(existing.map((item) => item.userId));
-  const missing = personalIds.filter((userId) => !have.has(userId));
+  const have = new Set(existing.map((item) => item.studentId));
+  const missing = personalIds.filter((studentId) => !have.has(studentId));
 
   if (missing.length > 0) {
     await prisma.notificationRead.createMany({
-      data: missing.map((userId) => ({ notificationId, userId })),
+      data: missing.map((studentId) => ({ notificationId, studentId })),
     });
   }
 
@@ -201,15 +201,15 @@ export async function markAllAsRead(user: TokenPayload, classId?: string): Promi
   let marked = 0;
   for (const item of pending) {
     const existing = await prisma.notificationRead.findMany({
-      where: { notificationId: item.id, userId: { in: personalIds } },
-      select: { userId: true },
+      where: { notificationId: item.id, studentId: { in: personalIds } },
+      select: { studentId: true },
     });
-    const have = new Set(existing.map((row) => row.userId));
-    const missing = personalIds.filter((userId) => !have.has(userId));
+    const have = new Set(existing.map((row) => row.studentId));
+    const missing = personalIds.filter((studentId) => !have.has(studentId));
     if (missing.length === 0) continue;
 
     await prisma.notificationRead.createMany({
-      data: missing.map((userId) => ({ notificationId: item.id, userId })),
+      data: missing.map((studentId) => ({ notificationId: item.id, studentId })),
     });
     marked += missing.length;
   }

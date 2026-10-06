@@ -54,7 +54,7 @@ public class Plugin : PluginBase
         var application = AppBase.Current;
         if (application is null)
         {
-            Logger?.LogError("班级小助手联动：拿不到 ClassIsland 应用实例，联动未启动");
+            Logger?.LogError("ClassHelper 联动：拿不到 ClassIsland 应用实例，联动未启动");
             return;
         }
 
@@ -72,14 +72,14 @@ public class Plugin : PluginBase
             var lessons = IAppHost.TryGetService<ILessonsService>();
             if (lessons is null)
             {
-                Logger?.LogError("班级小助手联动：拿不到课程服务，联动已停用");
+                Logger?.LogError("ClassHelper 联动：拿不到课程服务，联动已停用");
                 return;
             }
 
             var bridge = IAppHost.TryGetService<BridgeService>();
             if (bridge is null)
             {
-                Logger?.LogError("班级小助手联动：拿不到联动服务，联动已停用");
+                Logger?.LogError("ClassHelper 联动：拿不到联动服务，联动已停用");
                 return;
             }
 
@@ -89,12 +89,12 @@ public class Plugin : PluginBase
             // 应用刚起来时还没有第一个上报点，先主动拉一次未弹出的提醒（离线期间老师发的通知）：
             // 不这么做的话，最长要等一个上报间隔才会弹出来
             _ = bridge.PullPendingAsync();
-            Logger?.LogInformation("班级小助手联动：已接入课程服务（服务器 {Server}）", Settings.ServerUrl);
+            Logger?.LogInformation("ClassHelper 联动：已接入课程服务（服务器 {Server}）", Settings.ServerUrl);
         }
         catch (Exception exception)
         {
             // 联动失败绝不能把 ClassIsland 本体拖下水
-            Logger?.LogError(exception, "班级小助手联动：初始化联动服务失败");
+            Logger?.LogError(exception, "ClassHelper 联动：初始化联动服务失败");
         }
     }
 
@@ -120,7 +120,7 @@ public class Plugin : PluginBase
         {
             // 配置损坏不该拦住插件加载：用默认值继续，原文件保留供排查
             IAppHost.TryGetService<ILogger<Plugin>>()?.LogWarning(exception,
-                "班级小助手联动：读取设置失败，已回退到默认设置（{Path}）", path);
+                "ClassHelper 联动：读取设置失败，已回退到默认设置（{Path}）", path);
         }
 
         var needGenerateKey = string.IsNullOrWhiteSpace(settings.DeviceKey);
@@ -165,7 +165,7 @@ public class Plugin : PluginBase
         catch (Exception exception)
         {
             IAppHost.TryGetService<ILogger<Plugin>>()?.LogWarning(exception,
-                "班级小助手联动：保存设置失败（{Path}）", path);
+                "ClassHelper 联动：保存设置失败（{Path}）", path);
         }
     }
 }

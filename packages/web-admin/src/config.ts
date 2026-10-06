@@ -17,4 +17,4 @@ export const API_BASE_URL =
 export const SOCKET_URL =
   import.meta.env.VITE_SOCKET_URL ?? (servedOverHttp ? window.location.origin : DEFAULT_SERVER_URL);
 
-export const APP_TITLE = '班级小助手 · 管理端';
+export const APP_TITLE = 'ClassHelper · 管理端';

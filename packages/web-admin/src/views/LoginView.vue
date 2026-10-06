@@ -36,7 +36,7 @@ async function submit(): Promise<void> {
       <div class="login-brand">
         <img class="login-logo" src="/logo.png" alt="" width="44" height="44" />
         <div>
-          <h1 class="login-title">班级小助手</h1>
+          <h1 class="login-title">ClassHelper</h1>
           <p class="login-subtitle">Web 管理端 · 教师 / 管理员登录</p>
         </div>
       </div>

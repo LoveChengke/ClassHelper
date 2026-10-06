@@ -4253,7 +4253,7 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
   record('渲染进程挂载（#app 有子节点）', (dom?.appChildren ?? 0) > 0, `children=${dom?.appChildren ?? 0}`);
   record(
     '窗口标题正确',
-    dom?.title === '班级小助手' || (dom?.title ?? '').includes('班级小助手'),
+    dom?.title === 'ClassHelper' || (dom?.title ?? '').includes('ClassHelper'),
     `title=${dom?.title}`,
   );
   record(

@@ -1,4 +1,4 @@
-import type { NotificationPriority, UserRole } from './types.js';
+import type { GradeLevelType, NotificationPriority, StudentGender, StudentStatus, UserRole } from './types.js';
 
 /** API 前缀 */
 export const API_PREFIX = '/api';
@@ -23,7 +23,11 @@ export const API_PATHS = {
   teachers: '/teachers',
   /** 导入：模板下载 / 表格导入 / ClassIsland 课表时间配置 */
   imports: '/imports',
-  /** ClassIsland 联动：设备接入、状态上报、通知下发 */
+  /** 毕业归档：届别档案、归档详情、学年升级（仅管理员） */
+  archives: '/archives',
+  /** 学期周次：逐周日期区间、按开学日期自动生成、联网拉取调休建议（仅管理员） */
+  term: '/term',
+  /** ClassIsland 联动：设备接入、状态上报、通知下发 / ClassHelper 班级端在线状态 */
   integrations: '/integrations',
   /** 数据库管理（仅管理员）：状态/备份/导入导出/一键切换 */
   database: '/database',
@@ -32,14 +36,139 @@ export const API_PATHS = {
   dashboard: '/dashboard/summary',
 } as const;
 
-/** 用户角色 */
-export const USER_ROLES: readonly UserRole[] = ['ADMIN', 'TEACHER', 'STUDENT'];
+/**
+ * 账号角色。
+ *
+ * **没有 STUDENT** —— 学生不是账号，只是班级名单记录（`Student` 表），没有密码、没有登录入口。
+ * `CLASS_DEVICE` = 教室里绑定到某个班的 ClassHelper 班级端。
+ */
+export const USER_ROLES: readonly UserRole[] = ['ADMIN', 'TEACHER', 'CLASS_DEVICE'];
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   ADMIN: '系统管理员',
   TEACHER: '教师',
-  STUDENT: '学生',
+  CLASS_DEVICE: 'ClassHelper 班级端',
 };
+
+/** 教师与管理员（staff）角色 */
+export const STAFF_ROLES: readonly UserRole[] = ['ADMIN', 'TEACHER'];
+
+/* ------------------------------------------------------------------ 班级教师结构 */
+
+/**
+ * 班级内的教师角色：
+ * - `HEAD`    班主任：每个班 1 人（`Class.teacherId`）
+ * - `SUBJECT` 科任老师：按科目配置（`Course.teacherId`，即"班级 + 科目 + 教师"）
+ *
+ * 同一教师可以在同一个班同时是班主任和某科科任老师 —— 系统里只保留**一个**教师账号，
+ * 两处都指向它，权限在 `resolveClassRole()` 里合并，不重复建号、不产生冲突。
+ */
+export const CLASS_TEACHER_ROLES = ['HEAD', 'SUBJECT'] as const;
+
+export type ClassTeacherRole = (typeof CLASS_TEACHER_ROLES)[number];
+
+export const CLASS_TEACHER_ROLE_LABELS: Record<ClassTeacherRole, string> = {
+  HEAD: '班主任',
+  SUBJECT: '科任老师',
+};
+
+/* ------------------------------------------------------------------ 学生名单 */
+
+export const STUDENT_STATUSES: readonly StudentStatus[] = [
+  'active',
+  'graduated',
+  'transferred',
+  'inactive',
+];
+
+export const STUDENT_STATUS_LABELS: Record<StudentStatus, string> = {
+  active: '在读',
+  graduated: '已毕业',
+  transferred: '已转出',
+  inactive: '停用',
+};
+
+/** Element Plus tag 类型（学生状态徽标配色，三端统一） */
+export const STUDENT_STATUS_TAG_TYPES: Record<StudentStatus, 'success' | 'info' | 'warning' | 'danger'> = {
+  active: 'success',
+  graduated: 'info',
+  transferred: 'warning',
+  inactive: 'danger',
+};
+
+export const STUDENT_GENDERS: readonly StudentGender[] = ['', 'MALE', 'FEMALE'];
+
+export const STUDENT_GENDER_LABELS: Record<StudentGender, string> = {
+  '': '未填',
+  MALE: '男',
+  FEMALE: '女',
+};
+
+/* ------------------------------------------------------------------ 班级称呼与届别 */
+
+/** 默认学制（年）：入学年份 + 它 = 毕业年份。高中与初中都是 3 年 */
+export const DEFAULT_SCHOOLING_YEARS = 3;
+
+/**
+ * 班级称呼：`XXXX级X班`（入学年份 + 班号）。
+ *
+ * 用入学年份而不是「高一(1)班」这类写法，是因为后者每年都要改一遍，
+ * 而前者一路跟着这届学生到毕业 —— 升级只改 `Class.grade`，称呼不变。
+ */
+export function formatClassName(enrollmentYear: number, classIndex: number): string {
+  return `${enrollmentYear}级${classIndex}班`;
+}
+
+/** 届别名：`2026 级` */
+export function formatYearLabel(enrollmentYear: number): string {
+  return `${enrollmentYear} 级`;
+}
+
+/** 毕业年份（入学年份 + 学制） */
+export function graduationYearOf(enrollmentYear: number, schoolingYears = DEFAULT_SCHOOLING_YEARS): number {
+  return enrollmentYear + schoolingYears;
+}
+
+/**
+ * 按当前时间推断「本学年的起始年份」：学年在 9 月切换，
+ * 9 月及以后算今年起始，之前算去年起始（8 月及以前仍属上一学年）。
+ */
+export function currentAcademicYearStart(now: Date = new Date()): number {
+  return now.getMonth() >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+}
+
+/* ------------------------------------------------------------------ 成绩等级 */
+
+/** 等级口径可选值：百分制 / 等级制 A-D / 自定义等级 */
+export const GRADE_LEVEL_TYPES: readonly GradeLevelType[] = ['percent', 'letter', 'custom'];
+
+export const GRADE_LEVEL_TYPE_LABELS: Record<GradeLevelType, string> = {
+  percent: '百分制',
+  letter: '等级制（A/B/C/D）',
+  custom: '自定义等级',
+};
+
+export const GRADE_LEVEL_TYPE_HINTS: Record<GradeLevelType, string> = {
+  percent: '按分数录入，等级由得分率自动换算（教师仍可逐条手动改）',
+  letter: '直接给 A / B / C / D，分数可留空',
+  custom: '自己定义等级文本（如 优 / 良 / 合格 / 待提高）',
+};
+
+/** 等级制的默认档位（仅 UI 快捷选项，自定义等级不受限制） */
+export const DEFAULT_LETTER_LEVELS: readonly string[] = ['A', 'B', 'C', 'D'];
+
+/* ------------------------------------------------------------------ ClassHelper 班级端 */
+
+/**
+ * ClassHelper 班级端在线判定窗口（毫秒）。
+ *
+ * 插件默认 60 秒打一次心跳，因此「最近 60 秒内有心跳 = 在线」是最贴合的口径；
+ * 判定与展示（教师网页的「ClassHelper 在线状态」）共用这一个常量，避免两处各写一个数。
+ */
+export const CLASS_HELPER_ONLINE_WINDOW_MS = 60_000;
+
+/** 教师网页「ClassHelper 在线状态」的自动刷新间隔（秒） */
+export const CLASS_HELPER_STATUS_REFRESH_SECONDS = 30;
 
 /** 通知优先级 */
 export const NOTIFICATION_PRIORITIES: readonly NotificationPriority[] = ['LOW', 'NORMAL', 'HIGH', 'URGENT'];
@@ -443,7 +572,7 @@ export const CLASSISLAND_NOTIFICATION_DEFAULT_DURATION = 8;
 export const CLASSISLAND_NOTIFICATION_MAX_DURATION = 120;
 
 /**
- * "叫人"快捷短语（Web 管理端一键选择，学生端灵动岛同步展示）。
+ * "叫人"快捷短语（Web 管理端一键选择，ClassHelper 班级端灵动岛同步展示）。
  * 自定义消息会替换/补全这些短语；`message` 为空时用短语本身。
  */
 export const CALL_QUICK_PHRASES: readonly string[] = [
@@ -466,7 +595,11 @@ export function buildCallTitle(studentName: string, teacherName: string): string
 /** Socket.IO 房间名生成规则：与后端保持一致，客户端订阅时复用 */
 export const SOCKET_ROOMS = {
   class: (classId: string): string => `class:${classId}`,
-  user: (userId: string): string => `user:${userId}`,
+  /**
+   * 会话自身的房间：老师/管理员是账号 id，ClassHelper 班级端是班级 id。
+   * 「叫人」等定向消息发给它。注意**没有"学生房间"** —— 学生不是账号，没有客户端会订阅。
+   */
+  session: (sessionId: string): string => `session:${sessionId}`,
   teacher: (teacherId: string): string => `teacher:${teacherId}`,
   role: (role: UserRole): string => `role:${role}`,
   students: 'students',
@@ -495,9 +628,6 @@ export const DEFAULT_SERVER_URL = 'http://127.0.0.1:4000';
 export const DEFAULT_SERVER_PORT = 4000;
 export const DEFAULT_PAGE_SIZE = 20;
 export const MAX_PAGE_SIZE = 200;
-
-/** 教师与管理员角色集合，便于 RBAC 判断 */
-export const STAFF_ROLES: readonly UserRole[] = ['ADMIN', 'TEACHER'];
 
 /* ------------------------------------------------------------------ 更新检查 */
 
