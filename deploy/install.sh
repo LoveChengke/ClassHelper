@@ -540,6 +540,12 @@ resolve_package_url() {
     sudo bash install.sh --package /tmp/classhelper-server-linux-x64-1.1.2.tar.gz"
     fi
   fi
+  # tag 一律补上 v 前缀：Release 的 tag 是 v1.3.0，而 --version 的用法是 `--version 1.3.0`（不带 v）——
+  # 直接拿 VERSION 去拼就成了 .../download/1.3.0/...，GitHub 按 tag 精确匹配，必然 404
+  # （2026-10-11 实测：`install.sh --version 1.3.0` 下载 404，而 `classhelper upgrade --version 1.3.0` 正常
+  #  —— 因为 classhelper 的 resolve_download 一直有这句，install.sh 漏了）。
+  # 传 `v1.3.0`、`1.3.0`、或者不传（走 latest）三种写法都落在这里。
+  tag="v${tag#v}"
   ver="${tag#v}"
   # 注意这里用 GITHUB_REPO_URL 而不是 GITHUB_RELEASES_PAGE：后者本身已经以 /releases 结尾，
   # 再拼一次就变成 .../releases/releases/download/... （必然 404，实测踩到）。

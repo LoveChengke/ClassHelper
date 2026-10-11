@@ -1099,6 +1099,17 @@ term / dashboard / database / update / permissions / clients / system`。
     CentOS 7 是 2.17 —— 装上去的表现为"服务起来就退出、日志什么都没有"。安装器检测 glibc，
     低于 2.28 时自动改用 unofficial-builds 的 `-glibc-217` 变体。CentOS 7 仍属尽力而为。
 
+    ⑦ **拼下载地址时，tag 必须补 `v` 前缀 —— `--version` 的用法是不带 v 的。**
+    Release 的 tag 是 `v1.3.0`，而安装/升级参数一律写成 `--version 1.3.0`；GitHub 的
+    `/releases/download/<tag>/` 是**按 tag 精确匹配**的（`gh api .../releases/tags/1.3.0` 直接 404），
+    所以中间少一步归一化就会拼出 `.../download/1.3.0/...` → **curl 22 / HTTP 404**。
+    两处拼地址的地方**必须都写** `tag="v${tag#v}"`：`classhelper` 的 `resolve_download()` 一直有这句，
+    而 `install.sh` 的 `resolve_package_url()` 2026-10-11 之前是直接 `local tag="$VERSION"` ——
+    于是同一个版本，`classhelper upgrade --version 1.3.0` 正常、`install.sh --version 1.3.0` 却 404，
+    只在 `deploy/` 内部对不齐，光看代码很难注意到。新增拼地址的地方照抄这句，别各写一套。
+    （注意：`VERSION` 本身**保持不带 v** —— `tag` 是另一个局部变量，装完写进安装目录的 VERSION 文件
+    仍是不带 v 的裸版本号，别把它一起改了。）
+
     两条写这类脚本时的通用坑（本仓库踩过）：**`set -e` 下 `[ cond ] && 可能失败的命令` 会
     在条件为假时……其实不会退出**（bash 对 `&&` 列表里非最后一条失败是豁免的），但
     `A && B` 里 B 失败、以及**用 `$(函数)` 捕获输出时把日志一起捕获**（所以安装器用全局
