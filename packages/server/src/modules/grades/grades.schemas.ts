@@ -98,3 +98,23 @@ export type CreateGradeInput = z.infer<typeof createGradeSchema>;
 export type UpdateGradeInput = z.infer<typeof updateGradeSchema>;
 export type BulkCreateGradeInput = z.infer<typeof bulkCreateGradeSchema>;
 export type UpdateGradeLevelsInput = z.infer<typeof updateGradeLevelsSchema>;
+
+/* ---------------------------------------------------------------- 考试与排名 */
+
+/** GET /api/grades/exams?classId= */
+export const examListQuerySchema = z.object({
+  classId: z.string().min(1),
+});
+
+/** PUT /api/grades/exams —— 设置"这次考试是否把所有科目相加做总分排名" */
+export const setExamSchema = z.object({
+  classId: z.string().min(1),
+  name: z.string().trim().min(1, '考试名不能为空').max(60, '考试名最多 60 个字'),
+  countInTotal: z.boolean(),
+});
+
+/** GET /api/grades/ranking?classId=&examName= */
+export const examRankingQuerySchema = z.object({
+  classId: z.string().min(1),
+  examName: z.string().trim().min(1, '请指定考试名').max(60),
+});

@@ -817,6 +817,31 @@ term / dashboard / database / update / permissions / clients / system`。
     单实例锁秒退（看起来"点了没反应"），安装包也会因"应用正在运行"装不上：先从托盘退出。
     完整性标签（§7 第 7 条）用 `icacls | findstr Mandatory` 一眼可辨，优先排除。
 
+    **还有第三件：安装目录缺文件 —— 症状是"窗口开着但全黑"。**（2026-10-11 实测）
+    Electron 的渲染进程要读 `dxil.dll`（`dxcompiler.dll` 的依赖）、`vk_swiftshader.dll` + `vulkan-1.dll`
+    （软件渲染回退）、`ffmpeg.dll`、`resources/elevate.exe` 这几份**主进程之外的**文件，
+    少任何一个都会让渲染进程起来就崩，表现是 `loadFile` 抛 `ERR_FAILED (-2) ... index.html` +
+    `Renderer process crashed`，而**主进程日志里一切正常**（托盘、灵动岛、更新检查全都照常打印）——
+    于是用户看到的就是"打开一个纯黑窗口，标题栏还是 ClassHelper"。
+    **注意 `installCrashGuard()` 排在 `await loadRenderer()` 之后**，所以这条崩溃路径上
+    连"主窗口渲染进程异常退出"那行都不会打，日志里只有一句 Node 的 UnhandledPromiseRejection。
+
+    排查顺序（都是实测走通过的）：
+    1. 先确认是不是"黑屏"而不是"没窗口"：`tasklist` 里有 `ClassHelper.exe` 但没有可见窗口时，
+       是另一回事（多为 `--hidden` / 托盘）；有窗口且全黑才是缺文件。
+    2. **别信"我看了一眼目录"，要按文件清单比对**：用 7-Zip 直接列安装包里的条目
+       （`7za l <setup.exe>`，bin 在 `.cache/electron-builder/7zip@*/bin/7za.exe`），
+       与安装目录 `find <dir> -type f` 的结果做差集。本次差集正好是上面那 5 个文件。
+    3. 用 `sha256sum <安装目录>/ClassHelper.exe <.cache 里解出来的>/ClassHelper.exe` 确认
+       装的就是当前构建（本次一致），排除"装的是旧版"。
+    4. 想复现/验证修复，直接把这 5 个文件从安装包载荷补回安装目录即可（`7za x` 解出来就是）。
+       **别拿便携版的 `%TEMP%` 解包目录当对照** —— 它是自解压出来的，文件数与安装版可能不同，
+       但只要两边的 `resources/app.asar` 哈希一致，就说明差的是 Electron 运行时文件而不是业务代码。
+
+    为什么值得单独记一条：这次的第一嫌疑（完整性标签、ACL、Chromium 沙箱、`--no-sandbox`、
+    用户配置）**全部试过且全部无关**，真正的原因是安装目录少文件；而没有上面这套比对方法，
+    很容易一路查到 `dist-server.mjs`、`electron-builder.yml` 甚至怀疑产物本身。
+
 43. **Web 端新手引导（`el-tour`）在自动化里的判据有三条坑**（2026-10-02 实测，`verify:web`
     「首次登录展示新手引导且可跳过」踩过）：
     ① **外壳先出现、内容晚一拍** —— `document.querySelector('.el-tour')` 先于步骤卡片渲染成立，
@@ -1349,6 +1374,50 @@ term / dashboard / database / update / permissions / clients / system`。
     `uncaughtException`/`unhandledRejection` 也只在 `isIdle()`（非上课 + 无可见窗口）时才
     `app.relaunch()`；**冒烟模式绝不重启**（会杀掉验证实例）。
     自愈模块在 `packages/desktop-client/src/main/crash-guard.ts`，限流与 `isIdle` 判据别放宽。
+
+78. **课表同步只有两个「一次性动作」，没有"一直同步"的开关。**（2026-10-11 定稿）
+    教室 → 服务端走 `IntegrationDevice.requestScheduleReport`（Web 端「获取课表」），
+    服务端 → 教室走新增的 `requestMirrorSchedule`（「下发课表」）—— 两者都是**待办标记**：
+    Web 端置位，插件在下一次心跳看到就做一次，做完由服务端清标记。
+    插件侧的 `UploadSchedule` / `MirrorSchedule` 两个本机开关**已删除**：定时上报现在只报
+    **运行状态**（当前上什么课），课表只在 `forceSchedule` 时才上传。
+    **为什么改**：原先默认 `ReportIntervalSeconds = 15` + 两个开关都开，等于教室课表每 15 秒被重写一次、
+    服务端每 15 秒 merge + 清理一次幽灵行 —— 老师看到的是"课表被反复删改"（线上实测）。
+    配套：`pullClassPlanForDevice` 拉取成功即清 `requestMirrorSchedule`；插件的
+    `ClassPlanWriter.Apply(…, force: true)` 会**停用**同一天同一单双周相位下冲突的旧课表
+    （只停用不删除，别改成删除）。契约锁在 `verify:classisland-plugin` 的两条断言里。
+
+79. **「客户端」页 = 「ClassIsland 联动」+「客户端设备」合并成的一页。**（2026-10-11）
+    路由 `/clients`（`ClientHubView.vue`）：一个班一张卡片，两条链路的状态放一起，
+    勾选可批量下发课表 / 更新，点卡片进详情。入口权限用 **`classisland:notify`**
+    （默认 ADMIN + TEACHER）而不是 `client:manage`（只给 ADMIN）—— 这一页同时承载
+    「向教室下发提醒」，老师要用；用后者会把教师整个挡在门外。
+    页内按钮再各自按 `device:manage` / `remote:control` / `client:update-push` 显示或禁用。
+    两个旧页面**还留着路由但已从侧栏摘掉**（`meta.hidden: true`，`AdminLayout` 的 `menuItems` 是手写列表）：
+    `IntegrationsView` 留提醒下发与联动步骤，`ClientsView` 留客户端安装包缓存管理
+    （不先把包拉下来就没有版本可下发），从详情抽屉里的两条链接进。
+    **别把这两页删掉或把它们的路由一起摘了**，会丢功能。
+
+80. **考试成绩的"总分"是考试的属性，不是分数的属性。** `Exam`（班级 + 考试名 + `countInTotal`）
+    单独一张表，与 `Grade` 只按名字弱关联（不建外键：成绩删光设置还在，补录时口径不丢）。
+    排名口径一律写在服务端 `modules/grades` 的 `getExamRanking`：**同一学生同一科目只取最高分**
+    （老师补录 / 重考会产生多行，不去重等于"总分多一科"）、并列同名次（1、2、2、4）。
+    客户端「成绩」页的排名与"这次算不算总分"都只是**显示**，两个开关都不在客户端。
+    路由 `/grades/exams`（GET/PUT）与 `/grades/ranking`（GET）**故意不挂权限键** ——
+    班级端的有效权限是空集，挂 `grade:read` 会把教室机器挡在门外；边界在 service 里
+    （`assertClassAccess` + `canQueryStudentGrades`），与按学号查明细同一条。
+
+81. **成绩查询开关（`Class.studentGradeQueryEnabled`）只有教师 / 管理员能改。**
+    原先班级端自己也能改（`updateStudentGradeQuery` 里的 `isClassDevice` 分支），
+    等于把"学校说不给看"变成一台机器说了算；现在班级端只读（客户端那个开关也撤掉了，
+    只显示状态）。**注意别拿"通知显示位置（`Class.notificationChannel`）也是班级端自己改"来类比** ——
+    那个确实是现场偏好，两者不再是一套模式。
+
+82. **全校学期开始日期是 `AppSetting` 的 `term.startDate`，管理员在「学期周次」页直接改。**
+    原先这一级只能来自 `.env` 的 `TERM_START_DATE`，填错了得动文件 + 重启。
+    现在 `loadTermContext()` 的三级回落是「`Class.termStartDate` → 全校设置 → `.env`」，
+    逐周区间仍是「班级 → 全校默认 → 纯线性」。改完 `resolveCurrentWeek` 立刻按新日期算。
+
 
 ## 6. 代码风格
 

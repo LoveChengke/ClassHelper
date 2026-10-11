@@ -115,22 +115,24 @@ const menuItems: MenuItem[] = [
     roles: ['ADMIN', 'TEACHER'],
     permission: 'ai:use',
   },
-  { path: '/integrations', title: 'ClassIsland 联动', icon: 'Connection', roles: ['ADMIN', 'TEACHER'] },
-  {
-    path: '/permissions',
-    title: '权限组',
-    icon: 'Lock',
-    roles: ['ADMIN', 'TEACHER'],
-    permission: 'permission:manage',
-  },
   {
     path: '/clients',
-    title: '客户端设备',
+    title: '客户端',
     icon: 'Monitor',
     // 与「权限组」同样按**生效权限**门控：教师默认没有 client:manage（见 shared/permissions.ts
     // 的默认模板只给 ADMIN），所以这里不能只写 roles —— 被权限组授予后教师也该看见。
+    //
+    // 2026-10-11 起这一项**合并了原来的「ClassIsland 联动」**：两页讲的是同一件事的两半
+    // （同一个教室里，插件管大屏、桌面端管灵动岛），分开只会让人"先想清楚该进哪一页"，
+    // 批量下发更是无从下手。页内按 device:manage / client:update-push / remote:control
+    // 分别显示或禁用按钮，与后端三个接口的权限一一对应。
+    // 门控用 `classisland:notify` 而不是 `client:manage`：这一页同时承载「向教室下发提醒」，
+    // 而那个权限默认给 ADMIN + TEACHER（`client:manage` 只给 ADMIN）。用后者会把教师
+    // 挡在门外，等于把「联动页发提醒」这条老师日常要用的入口一并收走。
+    // 页内的设备管理 / 远控 / 下发更新仍各自要 device:manage / remote:control /
+    // client:update-push，与后端的三个接口一一对应。
     roles: ['ADMIN', 'TEACHER'],
-    permission: 'client:manage',
+    permission: 'classisland:notify',
   },
   {
     path: '/ai-settings',

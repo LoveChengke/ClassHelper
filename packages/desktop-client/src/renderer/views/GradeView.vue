@@ -6,6 +6,8 @@ import {
   formatDate,
   gradeLevel,
   gradePercent,
+  type ExamDto,
+  type ExamRankingDto,
   type GradeDto,
   type StudentGradeDetailDto,
 } from '@classhelper/shared';
@@ -114,16 +116,69 @@ async function loadGrades(): Promise<void> {
   }
 }
 
+/* ------------------------------------------------------------ 考试排名
+ *
+ * 需求：「服务端选择成绩查询可用时，客户端可以直接查看全部，并且自动排名；
+ * 单次考试可选是否把所有科目相加以总分排名，客户端也能看到总分排名和个别单科的排名」。
+ *
+ * 排名**一律由服务端算**（`GET /api/grades/ranking`）：并列名次（1、2、2、4）、
+ * "同一学生同一科补录过多条只取最高分"这些口径写在服务端，三端才不会各算一套。
+ * 是否开放由班级上的 `studentGradeQueryEnabled` 决定（关闭时服务端 403），
+ * 而"这次考试算不算总分"由老师在 Web 端定（`Exam.countInTotal`）——
+ * 客户端只负责显示，两个开关都不在这里。
+ */
+const examList = ref<ExamDto[]>([]);
+const selectedExam = ref('');
+const ranking = ref<ExamRankingDto | null>(null);
+const rankingLoading = ref(false);
+const rankingError = ref('');
+
+async function loadExams(): Promise<void> {
+  const classId = auth.user?.classId;
+  if (!classId) return;
+  try {
+    examList.value = await gradeApi.exams(classId);
+    if (!selectedExam.value && examList.value.length > 0) {
+      // 默认看最近一次：列表按名字排，取最后一条通常就是最新那场考试
+      selectedExam.value = examList.value[examList.value.length - 1]?.name ?? '';
+    }
+    await loadRanking();
+  } catch (error) {
+    rankingError.value = error instanceof Error ? error.message : '获取考试列表失败';
+  }
+}
+
+async function loadRanking(): Promise<void> {
+  const classId = auth.user?.classId;
+  if (!classId || !selectedExam.value) {
+    ranking.value = null;
+    return;
+  }
+  rankingLoading.value = true;
+  rankingError.value = '';
+  try {
+    ranking.value = await gradeApi.ranking(classId, selectedExam.value);
+  } catch (error) {
+    ranking.value = null;
+    rankingError.value = error instanceof Error ? error.message : '获取排名失败';
+  } finally {
+    rankingLoading.value = false;
+  }
+}
+
 function onGradeEvent(): void {
   void loadGrades();
+  void loadExams();
 }
 
 function onRecovered(): void {
   void loadGrades();
+  void loadExams();
 }
 
 onMounted(async () => {
   await loadGrades();
+  await loadExams();
   realtime.on(SOCKET_EVENTS.gradeUpdated, onGradeEvent);
   appStore.onServerRecovered(onRecovered);
 });
@@ -192,6 +247,87 @@ onUnmounted(() => {
             <template #default="{ row }">{{ formatDate(row.publishedAt, true) }}</template>
           </el-table-column>
         </el-table>
+      </template>
+    </el-card>
+
+    <!-- 考试排名：总分榜（老师把这次考试设成"所有科目相加"时才有）+ 单科榜。
+         排名与"算不算总分"都由服务端说了算，这里只显示。 -->
+    <el-card v-if="auth.isClassSession" v-loading="rankingLoading" shadow="never" class="mt-16">
+      <template #header>
+        <div class="ranking-header">
+          <span>考试排名</span>
+          <el-select
+            v-model="selectedExam"
+            placeholder="选择考试"
+            size="small"
+            style="width: 200px"
+            :disabled="examList.length === 0"
+            @change="loadRanking"
+          >
+            <el-option
+              v-for="item in examList"
+              :key="item.name"
+              :label="`${item.name}（${item.gradeCount} 条）`"
+              :value="item.name"
+            />
+          </el-select>
+          <el-button size="small" :icon="'Refresh'" @click="loadRanking">刷新</el-button>
+        </div>
+      </template>
+
+      <el-alert v-if="rankingError" type="warning" :closable="false" show-icon :title="rankingError" />
+      <el-empty
+        v-else-if="examList.length === 0"
+        description="还没有成绩记录，先在 Web 端录入或导入"
+        :image-size="60"
+      />
+      <template v-else-if="ranking">
+        <el-alert v-if="!ranking.countInTotal" type="info" :closable="false" show-icon class="mb-12">
+          <template #title>这次考试没有开启总分排名</template>
+          <template #default>
+            语数外与音体美的分数量纲不同，合不合总分由老师决定 —— 需要总分榜请在 Web 端「成绩录入」
+            页把该次考试的「考试口径」打开。
+          </template>
+        </el-alert>
+
+        <el-table v-if="ranking.countInTotal" :data="ranking.total" size="small" max-height="320">
+          <el-table-column label="总分排名" width="96">
+            <template #default="{ row }">
+              <el-tag :type="row.rank <= 3 ? 'danger' : 'info'" effect="plain" size="small">
+                {{ row.rank }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="studentNo" label="学号" width="110" />
+          <el-table-column prop="studentName" label="姓名" width="110" />
+          <el-table-column label="总分" width="90">
+            <template #default="{ row }">{{ row.score }}</template>
+          </el-table-column>
+          <el-table-column label="科目数" width="90">
+            <template #default="{ row }">{{ row.subjectCount }}</template>
+          </el-table-column>
+        </el-table>
+
+        <el-divider v-if="ranking.countInTotal" content-position="left">单科排名</el-divider>
+        <el-tabs v-if="ranking.subjects.length > 0" type="border-card">
+          <el-tab-pane
+            v-for="subject in ranking.subjects"
+            :key="subject.courseName"
+            :label="subject.courseName"
+          >
+            <el-table :data="subject.rows" size="small" max-height="300">
+              <el-table-column label="名次" width="80">
+                <template #default="{ row }">{{ row.rank }}</template>
+              </el-table-column>
+              <el-table-column prop="studentNo" label="学号" width="110" />
+              <el-table-column prop="studentName" label="姓名" width="110" />
+              <el-table-column label="得分" width="120">
+                <template #default="{ row }">{{ row.score }} / {{ row.totalScore }}</template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+        </el-tabs>
+        <el-empty v-else description="这次考试还没有单科成绩" :image-size="60" />
       </template>
     </el-card>
 
@@ -304,5 +440,15 @@ onUnmounted(() => {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
+}
+
+.ranking-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mb-12 {
+  margin-bottom: 12px;
 }
 </style>

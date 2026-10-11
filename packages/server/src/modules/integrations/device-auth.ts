@@ -42,6 +42,8 @@ export interface DeviceContext {
   enabled: boolean;
   syncScheduleToServer: boolean;
   mirrorScheduleToClassIsland: boolean;
+  /** 是否有一次待办的「下发课表到教室」（Web 端点按钮时置位，拉取成功即清除） */
+  mirrorRequested: boolean;
 }
 
 /** 插件侧路由统一挂这个中间件：解析设备令牌并回查设备记录 */
@@ -61,6 +63,7 @@ export function authenticateDevice(): RequestHandler {
             enabled: true,
             syncScheduleToServer: true,
             mirrorScheduleToClassIsland: true,
+            requestMirrorSchedule: true,
           },
         });
         if (!record) throw ApiError.unauthorized('设备令牌无效，请在「ClassIsland 联动」里重新生成');
@@ -72,6 +75,7 @@ export function authenticateDevice(): RequestHandler {
           enabled: record.enabled,
           syncScheduleToServer: record.syncScheduleToServer,
           mirrorScheduleToClassIsland: record.mirrorScheduleToClassIsland,
+          mirrorRequested: record.requestMirrorSchedule === true,
         };
         req.device = context;
         next();

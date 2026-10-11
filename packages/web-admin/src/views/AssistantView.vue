@@ -10,6 +10,7 @@ import {
   type AiInterpretResult,
   type ApiErrorResponse,
   type ClassDto,
+  type ClassPeriod,
   type CourseDto,
   type NotificationPriority,
   type StudentDto,
@@ -17,6 +18,8 @@ import {
 import { aiApi, callApi, classApi, courseApi, homeworkApi, notificationApi } from '@/api';
 import { useAuthStore } from '@/stores/auth';
 import { useResponsive } from '@/composables/useResponsive';
+import { findClassInSession } from '@/composables/useClassInSession';
+import UrgentClassWarning from '@/components/UrgentClassWarning.vue';
 
 /**
  * AI 助手：**一句话 → 待确认的草稿 → 老师确认后才落库**。
@@ -53,6 +56,20 @@ const result = ref<AiInterpretResult | null>(null);
 /** 发布失败的中文原因（常驻在结果卡片里，不只靠一条会消失的 toast） */
 const publishError = ref('');
 const publishing = ref(false);
+
+/**
+ * 上课时段发布紧急通知的全屏二次确认（3 秒倒计时）。
+ *
+ * **这里曾经缺失**：助手发布走的是既有端点，服务端的 409 `URGENT_DURING_CLASS` 兜底还在，
+ * 但「手动发布页」在提交前会先查一遍上课状态、命中就弹这个全屏警告，而助手这条路径直接提交 ——
+ * 于是老师在上课时用助手发紧急通知**一次警告都没有**（2026-10-11 用户实测反馈）。
+ * 判据与手动页共用 `composables/useClassInSession.ts`，两边必须同时命中才谈得上"一致"。
+ */
+const urgentWarning = reactive({
+  visible: false,
+  period: null as ClassPeriod | null,
+  title: '',
+});
 
 /* -------------------------------------------------------------- 表单 */
 
@@ -247,16 +264,52 @@ async function confirmPublish(): Promise<void> {
   const valid = await formRef.value?.validate().catch(() => false);
   if (!valid) return;
 
+  const action = current.action;
+
+  // 上课时段的紧急通知：先查上课状态，命中就弹全屏二次确认（与手动发布页完全同一条判据）
+  if (action === 'create_notification' && form.priority === 'URGENT') {
+    publishing.value = true;
+    try {
+      const hit = await findClassInSession([form.classId]);
+      if (hit) {
+        urgentWarning.period = hit.period;
+        urgentWarning.title = form.title.trim();
+        urgentWarning.visible = true;
+        return;
+      }
+    } finally {
+      publishing.value = false;
+    }
+  }
+
+  await runPublish(action, false);
+}
+
+/** 真正提交并把结果落到结果卡片上（成功 / 失败两条路都收口在这里） */
+async function runPublish(action: AiInterpretResult['action'], confirmDuringClass: boolean): Promise<void> {
   publishing.value = true;
   publishError.value = '';
   try {
-    await publishOnce(current.action, false);
-    finishSuccess(current.action);
+    await publishOnce(action, confirmDuringClass);
+    finishSuccess(action);
   } catch (error) {
-    await handlePublishError(error, current.action);
+    await handlePublishError(error, action);
   } finally {
     publishing.value = false;
   }
+}
+
+/** 全屏警告里点了「仍然发布」 */
+async function onUrgentConfirmed(): Promise<void> {
+  urgentWarning.visible = false;
+  const current = result.value;
+  if (!current || current.action === 'unknown') return;
+  await runPublish(current.action, true);
+}
+
+function onUrgentCancelled(): void {
+  urgentWarning.visible = false;
+  publishError.value = '已取消：正在上课，紧急通知需要二次确认';
 }
 
 /** 真正落库：复用既有的发布端点（权限断言 / 上课保护 / ClassIsland 推送都在服务端） */
@@ -555,6 +608,15 @@ function goSettings(): void {
         </template>
       </el-card>
     </template>
+
+    <!-- 上课时段发布紧急通知的全屏二次确认（3 秒倒计时）——与手动发布页同一个组件 -->
+    <UrgentClassWarning
+      :visible="urgentWarning.visible"
+      :period="urgentWarning.period"
+      :pending-title="urgentWarning.title"
+      @cancel="onUrgentCancelled"
+      @confirm="onUrgentConfirmed"
+    />
   </div>
 </template>
 

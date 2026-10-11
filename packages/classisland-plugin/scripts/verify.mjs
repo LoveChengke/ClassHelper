@@ -31,6 +31,7 @@ const clientSource = read('src/Interop/ClassHelperClient.cs');
 const settingsPageSource = read('src/Views/BridgeSettingsPage.axaml.cs');
 const settingsPageXaml = read('src/Views/BridgeSettingsPage.axaml');
 const mapperSource = read('src/Services/ScheduleMapper.cs');
+const writerSource = read('src/Services/ClassPlanWriter.cs');
 const settingsSource = read('src/Models/PluginSettings.cs');
 const serverModule = readRepo('packages/server/src/modules/integrations/integrations.module.ts');
 const serverSchemas = readRepo('packages/server/src/modules/integrations/integrations.schemas.ts');
@@ -255,15 +256,24 @@ check(
 );
 check('失败信息带上请求 URL（便于定位代理/网关拦截）', /request\.RequestUri/.test(clientSource));
 
-// 3.10 课表同步方向（2026-10-06 反转）：课表以 ClassHelper为准，**服务端 → 教室自动下发**；
-//      「把教室课表传上来」改成 Web 端的一次性人工请求。这几条盯着反转后的契约，别删。
+// 3.10 课表同步方向（2026-10-11 定稿）：**两个方向都只由 Web 端的一次性动作触发**。
+//      2026-10-06 曾经把它做成"服务端 → 教室自动下发 + 本机两个开关"，但默认 15 秒一轮的
+//      自动上传 + 自动镜像会让服务端与教室里的课表每 15 秒互相覆盖一次，老师看到的是
+//      "课表被反复删改"（2026-10-11 实测）。现在本机没有任何"一直同步"的开关：
+//        · 教室 → 服务端：`scheduleRequested` 一次性待办（Web 端「从教室机器获取课表」）
+//        · 服务端 → 教室：`mirrorRequested` 一次性待办（Web 端「下发课表到教室」，强制替换）
+//      这几条盯着新契约，别删。
 check(
-  '默认「上报课表到 ClassHelper」关闭、镜像到 ClassIsland 开启（新方向）',
-  /_uploadSchedule\s*=\s*false/.test(settingsSource) && /_mirrorSchedule\s*=\s*true/.test(settingsSource),
+  '课表两个方向都改为按需：本机不再有「自动回传 / 自动镜像」开关',
+  !/_uploadSchedule/.test(settingsSource) && !/_mirrorSchedule/.test(settingsSource),
 );
 check(
-  '响应 DTO 里有 scheduleRequested（服务端请求立刻上报一次课表）',
-  /scheduleRequested/.test(clientSource),
+  '定时上报只报运行状态，课表仅在服务端显式请求时上传',
+  /var uploadSchedule = forceSchedule;/.test(bridgeSource),
+);
+check(
+  '响应 DTO 里有 scheduleRequested / mirrorRequested（两个方向的一次性待办）',
+  /scheduleRequested/.test(clientSource) && /mirrorRequested/.test(clientSource),
 );
 check(
   '收到 scheduleRequested 会补发一次带课表的上报（且不受本机自动上报开关限制）',
@@ -271,8 +281,13 @@ check(
     /forceSchedule:\s*true/.test(bridgeSource),
 );
 check(
-  '服务端请求课表不依赖「自动回传」开关（forceSchedule 或上开关二者取一）',
-  /forceSchedule\s*\|\|\s*_settings\.UploadSchedule/.test(bridgeSource),
+  '只有收到 mirrorRequested 才镜像（不再跟着每一次上报走）',
+  /MirrorRequested\s*==\s*true/.test(bridgeSource),
+);
+check(
+  '镜像写入是「强制替换」（停用冲突的旧课表，而不是只留一条警告）',
+  /Apply\(profile, plan, force: true\)/.test(bridgeSource) &&
+    /IsEnabled = false/.test(writerSource),
 );
 check(
   '补发课表发生在镜像之前（顺序反了会把刚拿到的课表盖掉）',

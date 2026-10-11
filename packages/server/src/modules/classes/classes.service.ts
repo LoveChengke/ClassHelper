@@ -592,10 +592,13 @@ export async function getStudentGradeQuery(
 }
 
 /**
- * 设置「是否允许 ClassHelper 班级端按学号查询本班学生成绩明细」。
+ * 设置「是否允许 ClassHelper 班级端查看本班成绩与排名」。
  *
- * 与通知显示位置同一套模式：**班级端自己改**（教室里老师最清楚要不要给学生看），
- * 教师 / 管理员在 Web 端也能改。关闭后班级端查成绩一律 403，教师端不受影响。
+ * **只有教师 / 管理员能改**（需求：「成绩查询由服务端控制，客户端只读」）。
+ * 原先班级端自己也能改这个开关 —— 教室机器能给自己开成绩查询，等于把
+ * "学校说不给看"变成了一台机器说了算；而与它同一套模式的「通知显示位置」
+ * （`Class.notificationChannel`）**仍然由班级端自己改**，那个确实是现场偏好，
+ * 两者别再按"同一个模式"去理解。关闭后班级端查成绩一律 403，教师端不受影响。
  */
 export async function updateStudentGradeQuery(
   user: TokenPayload,
@@ -603,8 +606,8 @@ export async function updateStudentGradeQuery(
   input: UpdateStudentGradeQueryInput,
 ): Promise<{ studentGradeQueryEnabled: boolean }> {
   await assertClassAccess(user, classId);
-  if (!isClassDevice(user) && !isStaff(user)) {
-    throw ApiError.forbidden('只有 ClassHelper 班级端或教师/管理员可以修改成绩查询开关');
+  if (!isStaff(user)) {
+    throw ApiError.forbidden('成绩查询开关由教师/管理员在 Web 端设置，班级端只读');
   }
 
   await prisma.class.update({

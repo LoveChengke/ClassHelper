@@ -183,8 +183,28 @@ router.post(
   },
 );
 
-/** POST /api/integrations/devices/:id/token - 重置令牌（旧令牌立即失效） */
+/**
+ * POST /api/integrations/devices/:id/mirror-schedule - 「下发一次课表到教室」
+ *
+ * 与「获取课表」反方向、同样是一次性动作。插件在下一次心跳看到待办就去拉本班课表，
+ * 并**强制替换**写进 ClassIsland（覆盖老师手排的冲突课表）。
+ *
+ * 为什么要做成按钮而不是后台一直同步：插件原先每 15 秒上报一次、每次上报完还顺手镜像一遍，
+ * 教室课表被反复重写，服务端也每 15 秒 merge + 清理一次幽灵行 —— 老师看到的是
+ * "课表被反复删改"（2026-10-11 实测）。
+ */
 router.post(
+  '/devices/:id/mirror-schedule',
+  requirePermission('device:manage'),
+  validate({ params: deviceIdParamSchema }),
+  async (req, res) => {
+    const { id } = validatedParams<{ id: string }>(req);
+    const result = await integrationService.requestMirrorSchedule(getAuthUser(req), id);
+    sendOk(res, result, result.nextHeartbeatHint);
+  },
+);
+
+/** POST /api/integrations/devices/:id/token - 重置令牌（旧令牌立即失效） */router.post(
   '/devices/:id/token',
   requirePermission('device:manage'),
   validate({ params: deviceIdParamSchema }),

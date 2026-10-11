@@ -41,7 +41,13 @@ public static class ClassPlanWriter
     /// <summary>
     /// 应用服务端下发的课表。
     /// </summary>
-    public static ApplyResult Apply(Profile profile, ClassPlanMirrorDto source)
+    /// <param name="force">
+    /// 「强制更换课表」：同一星期几 + 同一单双周相位下老师还开着别的课表时，**停用**它们，
+    /// 让教室大屏立刻改成以 ClassHelper 下发的这份为准。
+    /// 由 Web 端的「下发课表到教室」按钮触发（服务端那个一次性待办）。
+    /// **只停用不删除** —— 课表内容原样留在档案里，老师随时能在 ClassIsland 里重新启用。
+    /// </param>
+    public static ApplyResult Apply(Profile profile, ClassPlanMirrorDto source, bool force = false)
     {
         var result = new ApplyResult();
         if (source.Entries.Count == 0 || source.TimeLayouts.Count == 0)
@@ -132,7 +138,9 @@ public static class ClassPlanWriter
             profile.ClassPlans[planId] = plan;
             result.PlanNames.Add(planName);
 
-            // 冲突提示：同一星期几 + 同一单双周相位下老师还开着别的课表
+            // 冲突处理：同一星期几 + 同一单双周相位下老师还开着别的课表。
+            // ClassIsland 在同一个时间点上只会用一份**启用**的课表，所以"强制更换"就是把冲突的
+            // 那份停用 —— 教室大屏上立刻显示成 ClassHelper 下发的这一份。
             var conflicts = profile.ClassPlans
                 .Where(pair => pair.Key != planId
                                && pair.Value.IsEnabled
@@ -140,13 +148,22 @@ public static class ClassPlanWriter
                                && pair.Value.TimeRule.WeekDay == group.WeekDay
                                && pair.Value.TimeRule.WeekCountDivTotal == group.WeekCountDivTotal
                                && pair.Value.TimeRule.WeekCountDiv == group.WeekCountDiv)
-                .Select(pair => pair.Value.Name)
                 .ToList();
             if (conflicts.Count > 0)
             {
-                result.Warnings.Add(
-                    $"星期 {group.WeekDay} 已有启用的课表（{string.Join("、", conflicts)}），" +
-                    "两者重叠时以 ClassHelper同步的课表为准");
+                var names = string.Join("、", conflicts.Select(pair => pair.Value.Name));
+                if (force)
+                {
+                    foreach (var pair in conflicts) pair.Value.IsEnabled = false;
+                    result.Warnings.Add(
+                        $"星期 {group.WeekDay} 原有的课表（{names}）已停用，教室显示改以 ClassHelper 下发的课表为准" +
+                        "（只停用、未删除，可在 ClassIsland 的课表面板里重新启用）");
+                }
+                else
+                {
+                    result.Warnings.Add(
+                        $"星期 {group.WeekDay} 已有启用的课表（{names}），两者重叠时以 ClassHelper 同步的课表为准");
+                }
             }
         }
 

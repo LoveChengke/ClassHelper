@@ -125,12 +125,27 @@ function syncIndicator(): void {
     return;
   }
   const rect = active.getBoundingClientRect();
+
+  /**
+   * 「看得见」不等于「宽高 > 0」。
+   *
+   * 分组（`.el-sub-menu`）收起时，Element Plus 是把它那个 `<ul>` 的**高度**动画到 0，
+   * 再配 `overflow: hidden` 把内容裁掉 —— 子项**自身的 rect 仍在原位**（布局压根没变）。
+   * 不补这一条，底片就会停在那个已经被裁掉的子项上：用户看到的是"设置分组收起来了，
+   * 但选择块还留在那儿"（2026-10-11 反馈，图一那个空的蓝块就是它）。
+   * 判据取"子项是否落在父 `<ul>` 的可见高度里"，收起动画过程中也成立（逐帧为假）。
+   */
+  const listRect = active.parentElement?.getBoundingClientRect();
+  const insideList =
+    !listRect ||
+    (listRect.height > 0.5 && rect.top >= listRect.top - 0.5 && rect.bottom <= listRect.bottom + 0.5);
+
   indicator.value = {
     x: rect.left - boxRect.left,
     y: rect.top - boxRect.top,
     width: rect.width,
     height: rect.height,
-    visible: rect.width > 0 && rect.height > 0,
+    visible: rect.width > 0 && rect.height > 0 && insideList,
   };
 }
 
@@ -142,6 +157,16 @@ const indicatorStyle = computed(() => ({
 }));
 
 let asideObserver: ResizeObserver | null = null;
+
+/**
+ * 分组（`.el-sub-menu`）展开 / 收起的观察器。
+ *
+ * 为什么 `asideObserver` 不够：收起分组改的是它内部 `<ul>` 的**高度**，`.aside` 与 `.menu`
+ * 这两个盒子的尺寸都不变（栏宽没动、滚动容器也还是那么高），于是 ResizeObserver 收不到回调，
+ * 底片就停在刚才那个子项的位置上（见 `syncIndicator()` 里那段注释）。
+ * 直接观察每个分组的 `<ul>`，它的高度一动就重新量。
+ */
+let submenuObserver: ResizeObserver | null = null;
 let indicatorFrame = 0;
 
 /**
@@ -205,6 +230,15 @@ onMounted(() => {
   if (aside && typeof ResizeObserver !== 'undefined') {
     asideObserver = new ResizeObserver(scheduleIndicatorSync);
     asideObserver.observe(aside);
+
+    // 分组的展开 / 收起（见 submenuObserver 的注释）；等一拍再挂，确保 el-menu 已经把
+    // 各分组的 <ul> 渲染出来 —— onMounted 这一刻子组件的菜单项可能还没落位
+    void nextTick(() => {
+      submenuObserver = new ResizeObserver(scheduleIndicatorSync);
+      document
+        .querySelectorAll<HTMLElement>('.aside.ch-nav .el-sub-menu > .el-menu')
+        .forEach((el) => submenuObserver?.observe(el));
+    });
   }
 });
 
@@ -217,6 +251,8 @@ onUnmounted(() => {
   menuScroller = null;
   asideObserver?.disconnect();
   asideObserver = null;
+  submenuObserver?.disconnect();
+  submenuObserver = null;
 });
 
 // 路由变化后菜单的 active 类由 Element Plus 更新，等一拍再量

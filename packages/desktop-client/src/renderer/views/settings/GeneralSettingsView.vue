@@ -167,9 +167,7 @@ async function resetPhrases(): Promise<void> {
  * 里手动禁用了它，这时候配置写着 true 也不该显示成已开启。
  */
 const autoLaunch = ref(false);
-const autoUpdate = ref(true);
 const savingLaunch = ref(false);
-const savingUpdate = ref(false);
 
 /** 服务端联动状态（心跳上报 / 目标版本 / 待安装版本） */
 const agent = ref<ClientAgentStatus | null>(null);
@@ -202,7 +200,6 @@ const lastErrorText = computed(() => agent.value?.lastError?.trim() || '无');
 async function loadLaunchSettings(): Promise<void> {
   if (!window.desktop?.getConfig) return;
   const config = await window.desktop.getConfig();
-  autoUpdate.value = config.autoUpdate !== false;
   autoLaunch.value = (await window.desktop.getAutoLaunch?.()) ?? config.autoLaunch === true;
   const info = await window.desktop.getAppInfo?.().catch(() => null);
   if (info?.appVersion) appVersion.value = info.appVersion;
@@ -227,52 +224,7 @@ async function toggleAutoLaunch(value: string | number | boolean): Promise<void>
   }
 }
 
-async function toggleAutoUpdate(value: string | number | boolean): Promise<void> {
-  if (!window.desktop?.saveConfig) return;
-  const wanted = value === true;
-  autoUpdate.value = wanted;
-  savingUpdate.value = true;
-  try {
-    // 注意：必须传纯布尔值 —— 跨 contextBridge 传响应式对象会在进入 preload 前就被结构化克隆拒绝
-    const saved = await window.desktop.saveConfig({ autoUpdate: wanted });
-    autoUpdate.value = saved.autoUpdate !== false;
-    ElMessage.success(wanted ? '已开启自动更新' : '已关闭自动更新（仍可在「关于」页手动更新）');
-  } catch (error) {
-    autoUpdate.value = !wanted;
-    ElMessage.error(error instanceof Error ? error.message : '保存自动更新设置失败');
-  } finally {
-    savingUpdate.value = false;
-  }
-}
-
-/* ------------------------------------------------------------ 关怀模式 / 开发者模式 */
-
-/**
- * 关怀模式（需求 14）：放大**正文与控件**字号。
- *
- * 这里只挂 `<html>.care-mode` 类并落盘，放大规则全在 `styles/index.css` 末尾那个集中覆盖块里
- * （`--ch-font-scale` + 少数几个常用类），不在 JS 里逐个元素改字号。
- *
- * 开关直接读 ui store 的状态，**不用本地 ref 复制一份**：侧栏、路由守卫、主题页读的都是它，
- * 复制就会出现"两个开关各说各话"。`ui.init()` 在首屏渲染前已从主进程配置恢复过。
- *
- * 关于"与助手联动"：开启关怀模式会放大 AI 助手的按钮 —— 这条联动**只存在于 Web 管理端**，
- * 本客户端目前没有助手入口，所以这里不放大任何按钮，也不为了"看起来对称"去造一个入口。
- */
-const savingCareMode = ref(false);
-
-async function toggleCareMode(value: string | number | boolean): Promise<void> {
-  const wanted = value === true;
-  savingCareMode.value = true;
-  try {
-    await ui.setCareMode(wanted);
-    ElMessage.success(wanted ? '已开启关怀模式：正文与控件字号已放大' : '已关闭关怀模式');
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '保存关怀模式设置失败');
-  } finally {
-    savingCareMode.value = false;
-  }
-}
+/* ------------------------------------------------------------ 开发者模式 */
 
 /**
  * 开发者模式（需求 10）：显示调试页面与详细日志，仅排查问题时打开。
@@ -448,13 +400,15 @@ onBeforeUnmount(() => {
                 <strong>不上课且窗口已隐藏 5 分钟后</strong>
                 进行，下载随时可能发生。
               </p>
-              <p class="text-muted">服务端可以统一要求更新，关掉它只会把安装推迟到手动处理。</p>
+              <!--
+                这里**刻意没有开关**（需求：「客户端无权选择是否要自动更新」）。
+                教室机器是统一的投放终端，版本一致性由管理员在服务端「客户端设备」页决定；
+                留一个本地开关只会让"为什么这台还没升"变成无解的排查题。
+                客户端配置里的 `autoUpdate` 仍然照读（`autoUpdate !== false` 才自动装），
+                因为服务端下发的是一台机器的目标版本，不是"允许不允许更新"。
+              -->
+              <p class="text-muted">更新由管理员在服务端统一推送，教室机器不提供本地开关。</p>
             </div>
-            <el-switch
-              :model-value="autoUpdate"
-              :loading="savingUpdate"
-              @update:model-value="toggleAutoUpdate"
-            />
           </div>
           <div class="toolbar mt-12">
             <el-button @click="openLogDir">打开日志目录</el-button>
@@ -464,23 +418,13 @@ onBeforeUnmount(() => {
 
         <el-card shadow="never" class="mt-12">
           <template #header><span>显示与调试</span></template>
-          <div class="switch-row">
-            <div class="switch-main">
-              <span>关怀模式</span>
-              <p class="text-muted">
-                放大正文与控件字号（页面标题、表格、表单、卡片标题一起变大）；圆角、投影与侧栏宽度等几何尺寸保持原样，侧栏图标导轨也不放大。
-              </p>
-              <p class="text-muted">
-                「开启后同时放大 AI 助手按钮」这一条只在 Web 管理端生效 —— 本客户端目前没有助手入口。
-              </p>
-            </div>
-            <el-switch
-              :model-value="ui.careMode"
-              :loading="savingCareMode"
-              data-test="care-mode-switch"
-              @update:model-value="toggleCareMode"
-            />
-          </div>
+          <!--
+            关怀模式**只保留在 Web 管理端**（需求：「客户端无需关怀模式」）。
+            客户端是投在教室大屏上的固定界面，字号由「外观」页的看板/岛设置管，
+            再来一套全站放大只会和那些设置互相打架，所以这里不再提供开关。
+            `stores/ui.ts` 与 `styles/index.css` 里的那套管道暂时保留（配置里还有这个字段，
+            删掉会让老 config.json 反序列化时多一条归一化分支），但界面上不再暴露。
+          -->
           <div class="switch-row">
             <div class="switch-main">
               <span>开发者模式</span>

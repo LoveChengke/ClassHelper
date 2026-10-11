@@ -35,8 +35,7 @@
                 <Button Content="立即上报" Command="{Binding ReportCommand}" IsEnabled="{Binding !Bridge.Busy}" />
                 <Button Content="检查连接" Command="{Binding TestCommand}" IsEnabled="{Binding !Bridge.Busy}" />
                 <Button Content="拉取待提醒" Command="{Binding PullCommand}" IsEnabled="{Binding !Bridge.Busy}" />
-                <Button Content="重建档案课表" Command="{Binding MirrorCommand}"
-                        IsEnabled="{Binding Settings.MirrorSchedule}" />
+                <Button Content="重建档案课表" Command="{Binding MirrorCommand}" IsEnabled="{Binding !Bridge.Busy}" />
             </StackPanel>
 
             <!-- 状态 -->
@@ -50,33 +49,13 @@
             </Border>
 
             <!-- 同步 -->
-            <TextBlock Margin="0 24 0 0" Text="同步内容"
+            <TextBlock Margin="0 24 0 0" Text="课表同步"
                        Theme="{StaticResource SubtitleTextBlockStyle}" />
             <TextBlock Margin="0 6 0 12" TextWrapping="Wrap"
-                       Text="课表以「合并」方式写入 ClassHelper：同一星期、同一时间的课目会被更新，不会产生重复行。" />
-
-            <fa:SettingsExpander Header="自动上报课表到 ClassHelper"
-                                 Description="把 ClassIsland 里启用的课表**自动**同步给 ClassHelper。默认关闭：课表以 ClassHelper 为准，自动回传会在老师手排课之后被教室的旧课表悄悄覆盖。要取教室的课表，请在 Web 端点「从教室机器获取课表」——那是一次显式的人工请求，与本开关无关。">
-                <fa:SettingsExpander.IconSource>
-                    <ci:FluentIconSource Glyph="&#xE8A5;" />
-                </fa:SettingsExpander.IconSource>
-                <fa:SettingsExpander.Footer>
-                    <ToggleSwitch IsChecked="{Binding Settings.UploadSchedule, Mode=TwoWay}" />
-                </fa:SettingsExpander.Footer>
-            </fa:SettingsExpander>
-
-            <fa:SettingsExpander Header="把班级课表镜像回 ClassIsland"
-                                 Description="反方向同步：把 ClassHelper上排好的课表写回 ClassIsland，会新建一份以「ClassHelper-」开头的档案课表，不会修改老师原有的课表。">
-                <fa:SettingsExpander.IconSource>
-                    <ci:FluentIconSource Glyph="&#xE8F1;" />
-                </fa:SettingsExpander.IconSource>
-                <fa:SettingsExpander.Footer>
-                    <ToggleSwitch IsChecked="{Binding Settings.MirrorSchedule, Mode=TwoWay}" />
-                </fa:SettingsExpander.Footer>
-            </fa:SettingsExpander>
+                       Text="课表的两个方向都是按需的，由 Web 端「ClassIsland 联动」页的两个按钮触发，本机不再提供「一直同步」的开关：「从教室机器获取课表」把 ClassIsland 里启用的课表合并进 ClassHelper；「下发课表到教室」把 ClassHelper 排好的课表写回 ClassIsland，并把同一天同一单双周相位下冲突的旧课表停用（只停用、不删除，可在 ClassIsland 的课表面板里重新启用）。" />
 
             <fa:SettingsExpander Header="自动上报"
-                                 Description="应用启动、课表变化以及每隔一段时间各上报一次；关闭后只能用上面的「立即上报」手动触发。">
+                                 Description="应用启动、课程事件以及每隔一段时间各上报一次**运行状态**（现在上什么课、ClassIsland 版本等）。课表不在这条路径上 —— 它只由 Web 端「从教室机器获取课表」按需拉取。关闭后只能用上面的「立即上报」手动触发。">
                 <fa:SettingsExpander.IconSource>
                     <ci:FluentIconSource Glyph="&#xE895;" />
                 </fa:SettingsExpander.IconSource>

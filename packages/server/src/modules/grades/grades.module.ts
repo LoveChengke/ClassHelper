@@ -7,7 +7,10 @@ import { defineModule } from '../module.types.js';
 import {
   bulkCreateGradeSchema,
   createGradeSchema,
+  examListQuerySchema,
+  examRankingQuerySchema,
   listGradesQuerySchema,
+  setExamSchema,
   statsQuerySchema,
   studentGradeParamSchema,
   studentGradeQuerySchema,
@@ -62,6 +65,54 @@ router.get(
     const user = getAuthUser(req);
     const query = validatedQuery<{ classId?: string; courseId?: string; examName?: string }>(req);
     sendOk(res, await gradeService.getGradeStats(user, query), '获取成绩统计成功');
+  },
+);
+
+/**
+ * GET /api/grades/exams?classId= - 某班出现过的考试（含"是否计入总分"）
+ *
+ * **刻意不挂权限键**：ClassHelper 班级端要用它列出可选考试（班级端的有效权限是空集，
+ * 挂 `grade:read` 会把教室机器挡在门外）。边界在 service 里：`assertClassAccess` + 班级开关。
+ */
+router.get(
+  '/exams',
+  validate({ query: examListQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { classId } = validatedQuery<{ classId: string }>(req);
+    sendOk(res, await gradeService.listExams(user, classId), '获取考试列表成功');
+  },
+);
+
+/** PUT /api/grades/exams - 设置"这次考试是否把所有科目相加做总分排名"（教师/管理员） */
+router.put(
+  '/exams',
+  requirePermission('grade:write'),
+  validate({ body: setExamSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const body = req.body as { classId: string; name: string; countInTotal: boolean };
+    sendOk(
+      res,
+      await gradeService.setExamCountInTotal(user, body.classId, body.name, body.countInTotal),
+      body.countInTotal ? '已设为：这次考试按总分排名' : '已设为：这次考试不排总分',
+    );
+  },
+);
+
+/**
+ * GET /api/grades/ranking?classId=&examName= - 一次考试的单科榜与总分榜
+ *
+ * 同样不挂权限键（班级端要看），边界在 service 里 —— 与按学号查明细共用
+ * `canQueryStudentGrades`：班级端受按班开关控制，教师端不受影响。
+ */
+router.get(
+  '/ranking',
+  validate({ query: examRankingQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { classId, examName } = validatedQuery<{ classId: string; examName: string }>(req);
+    sendOk(res, await gradeService.getExamRanking(user, classId, examName), '获取考试排名成功');
   },
 );
 

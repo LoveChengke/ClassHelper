@@ -241,6 +241,7 @@ model Class {
   homeworks     Homework[]
   notifications Notification[]
   grades        Grade[]
+  exams         Exam[]
   timeLayouts   TimeLayout[]
   integrationDevices IntegrationDevice[]
   classIslandPushes  ClassIslandPush[]
@@ -465,11 +466,23 @@ model IntegrationDevice {
   /// 「从教室机器取一次课表」改成 Web 端的手动动作（点击前会弹警告），
   /// 因为自动回传会在老师手排课之后被教室的旧课表悄悄覆盖。
   syncScheduleToServer        Boolean   @default(false)
-  /// 是否允许把本班课表镜像回 ClassIsland（由插件执行）。**默认开启** —— 这是现在的主方向。
+  /// 是否允许把本班课表镜像回 ClassIsland（由插件执行）。
+  ///
+  /// **2026-10-11 起含义收窄为"允许下发"**：不再是"自动同步的主方向" —— 插件以前每 15 秒
+  /// 上报一次、每次上报完都顺手镜像一遍（`MirrorSchedule` 开着时），教室的课表被反复重写；
+  /// 现在镜像只由 `requestMirrorSchedule` 这个一次性待办触发，这里只表示"这台设备接不接受下发"。
   mirrorScheduleToClassIsland Boolean   @default(true)
   /// 待办的「立即上报一次课表」请求：Web 端点「从教室机器获取课表」时置位，
   /// 插件在下一次心跳看到它就把当前课表推上来并清除标记。
   requestScheduleReport       Boolean   @default(false)
+  /// 待办的「立即下发一次课表」请求：Web 端点「下发课表到教室」时置位，
+  /// 插件在下一次心跳看到它就去拉本班课表并**强制替换**写进 ClassIsland，
+  /// 拉取成功即由服务端清除标记（见 `pullClassPlanForDevice`）。
+  ///
+  /// 为什么要一次性待办而不是"开关"：教室机常常离线，一个实时下发的长连接握手不值得，
+  /// 而后台定时镜像会与老师在教室本地做的调整互相打架（2026-10-11 实测：
+  /// 插件每 15 秒重写一遍课表，服务端那边看起来就是课表被反复删改）。
+  requestMirrorSchedule       Boolean   @default(false)
   classIslandVersion String?
   pluginVersion      String?
   /// 最后一次**带运行状态**的上报时间
@@ -695,4 +708,28 @@ model AiAudit {
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
+}
+
+/// 一次考试（月考 / 期中考…）在本班的设置。
+///
+/// 需求：「单次考试在导入成绩时可选是否将所有科目相加以总分排名，客户端也能看到总分排名」。
+/// `Grade.examName` 是自由文本，服务端光看它不知道这次考试算不算总分，而客户端要显示总分榜
+/// 就必须知道 —— 于是按「班级 + 考试名」记一条。
+///
+/// 与 `Grade` 是**弱关联**（两边只按名字匹配，不建外键）：成绩删光也不会连带删掉设置，
+/// 补录同一场考试时设置还在；反过来留一条没有成绩的设置是无害的。
+model Exam {
+  id      String @id @default(cuid())
+  classId String
+  /// 考试名，与 `Grade.examName` 同口径（如「第一次月考」）
+  name    String
+  /// 是否把所有科目（本次考试已录入的）相加做总分排名
+  countInTotal Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  class Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, name])
+  @@index([classId])
 }

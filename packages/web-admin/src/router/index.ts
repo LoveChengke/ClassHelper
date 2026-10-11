@@ -88,8 +88,10 @@ const routes: RouteRecordRaw[] = [
         path: 'integrations',
         name: 'integrations',
         component: () => import('@/views/IntegrationsView.vue'),
-        // 与后端 requireRole('ADMIN','TEACHER') 对齐：这一页含"班级端在线状态"，教师要看自己的班
-        meta: { title: 'ClassHelper 联动', icon: 'Connection', roles: ['ADMIN', 'TEACHER'] },
+        // **已从侧栏摘掉**（2026-10-11 合并进「客户端」）：设备管理与课表下发都搬到那一页了，
+        // 这里只保留少数还没搬过去的东西（提醒下发、联动步骤说明），从「客户端 → 详情」进。
+        // 路由留着而不是删掉，是为了不把功能一起丢掉；`meta.hidden` 让侧栏不显示它。
+        meta: { title: 'ClassIsland 联动（旧）', icon: 'Connection', roles: ['ADMIN', 'TEACHER'], hidden: true },
       },
       {
         path: 'ai-settings',
@@ -116,12 +118,24 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'clients',
         name: 'clients',
+        component: () => import('@/views/ClientHubView.vue'),
+        // 「客户端」= 原来的「ClassIsland 联动」+「客户端设备」合并后的一页（2026-10-11）：
+        // 一个班一张卡片，两条链路的状态放在一起，勾选可批量下发课表 / 更新，点卡片进详情。
+        //
+        // 门控与侧栏菜单保持一致：`classisland:notify`（默认 ADMIN + TEACHER）——
+        // 这一页同时承载「向教室下发提醒」，教师要用；设备管理类按钮在页内按
+        // device:manage / client:update-push / remote:control 各自显示或禁用，
+        // 与后端三个接口的权限一一对应（前端隐藏不等于权限）。
+        meta: { title: '客户端', icon: 'Monitor', permission: 'classisland:notify' },
+      },
+      {
+        path: 'client-devices',
+        name: 'client-devices',
         component: () => import('@/views/ClientsView.vue'),
-        // 这一页同样**按生效权限**门控：远控关机、统一下发更新都是高危操作，
-        // 后端三个接口分别要 client:manage / client:update-push / remote:control，
-        // 但教师默认三个都没有（见 shared/permissions.ts 的默认模板），所以这里用
-        // 最基础的 client:manage 当入口门禁，页面内的按钮再各自按权限显示/禁用。
-        meta: { title: '客户端设备', icon: 'Monitor', permission: 'client:manage' },
+        // **已从侧栏摘掉**（2026-10-11 合并进「客户端」）：设备清单、远控、下发更新都在新页里，
+        // 这里只留新版还没搬过去的部分（客户端安装包缓存管理 —— 不先把包拉下来，就没有版本可下发）。
+        // 从「客户端 → 详情 → 安装包与设备记录」进。
+        meta: { title: '安装包与设备记录', icon: 'Monitor', permission: 'client:manage', hidden: true },
       },
     ],
   },

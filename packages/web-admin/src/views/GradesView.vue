@@ -64,6 +64,48 @@ const averagePercent = computed(() => {
 
 const examOptions = computed(() => [...new Set(grades.value.map((item) => item.examName))]);
 
+/* ------------------------------------------------------------ 考试口径（计入总分）
+
+ * 需求：「单次考试（如月考、期中考），在导入成绩时可选是否将所有科目相加以总分排名，
+ * 客户端也可查看到总分排名和个别单科的排名」。
+ *
+ * 语数外 150 分、音体美 100 分，量纲不一样，"这次考试要不要合总分"是学校口径 ——
+ * 所以按「班级 + 考试名」存一条（服务端 `Exam` 表），客户端据它决定显不显示总分榜。
+ * 开关就摆在导入按钮旁边：老师导完一次考试，顺手就能把口径定下来。
+ */
+const examCountInTotal = ref(false);
+const examSaving = ref(false);
+
+async function loadExamFlag(): Promise<void> {
+  if (!filter.classId || !filter.examName) {
+    examCountInTotal.value = false;
+    return;
+  }
+  const list = await gradeApi.listExams(filter.classId).catch(() => []);
+  examCountInTotal.value = list.find((item) => item.name === filter.examName)?.countInTotal === true;
+}
+
+async function setExamCountInTotal(value: boolean): Promise<void> {
+  if (!filter.classId || !filter.examName) return;
+  examSaving.value = true;
+  try {
+    const saved = await gradeApi.setExam({
+      classId: filter.classId,
+      name: filter.examName,
+      countInTotal: value,
+    });
+    examCountInTotal.value = saved.countInTotal;
+  } catch {
+    // 失败时回读真实值，避免开关停在一个假状态上（拦截器已经弹过原因）
+    await loadExamFlag();
+  } finally {
+    examSaving.value = false;
+  }
+}
+
+// 换了班级或考试就重新读一次口径（加载成绩的 watch 只管列表）
+watch(() => [filter.classId, filter.examName], () => void loadExamFlag(), { immediate: true });
+
 async function loadClasses(): Promise<void> {
   classes.value = await classApi.list();
   if (!filter.classId && classes.value.length > 0) filter.classId = classes.value[0]?.id ?? '';
@@ -448,6 +490,26 @@ onUnmounted(() => {
       班主任若不教这一科，同样改不了这一科（不指定科目的内容归班主任与管理员）。
     </el-alert>
 
+    <!-- 考试口径：这次考试要不要把所有科目相加做总分排名（按「班级 + 考试名」记，
+         客户端据此显示总分榜）。导入成绩时顺手就能定下来。 -->
+    <el-card v-if="canManageGrades && filter.classId && filter.examName" shadow="never" class="mt-12">
+      <div class="toolbar">
+        <span class="exam-label">考试口径</span>
+        <el-tag effect="plain">{{ filter.examName }}</el-tag>
+        <el-switch
+          :model-value="examCountInTotal"
+          :loading="examSaving"
+          data-test="exam-count-in-total"
+          active-text="所有科目相加，排总分榜"
+          inactive-text="只排单科，不合总分"
+          @change="(value: string | number | boolean) => setExamCountInTotal(value === true)"
+        />
+        <span class="exam-hint">
+          语数外 150 分、音体美 100 分不是一个量纲，合不合总分由这里决定；客户端会按这个设置显示总分榜
+        </span>
+      </div>
+    </el-card>
+
     <el-row :gutter="12">
       <el-col :xs="24" :md="6">
         <div class="stat-card">
@@ -772,5 +834,14 @@ onUnmounted(() => {
   color: var(--ch-text-muted);
   padding-left: 90px;
   margin-top: -6px;
+}
+
+.exam-label {
+  font-weight: 600;
+}
+
+.exam-hint {
+  color: var(--el-text-color-secondary);
+  font-size: var(--el-font-size-extra-small);
 }
 </style>

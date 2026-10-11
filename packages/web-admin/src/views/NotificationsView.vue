@@ -19,8 +19,9 @@ import {
   type NotificationPriority,
   type StudentDto,
 } from '@classhelper/shared';
-import { callApi, classApi, notificationApi, scheduleApi } from '@/api';
+import { callApi, classApi, notificationApi } from '@/api';
 import { useRealtimeStore } from '@/stores/realtime';
+import { findClassInSession } from '@/composables/useClassInSession';
 import UrgentClassWarning from '@/components/UrgentClassWarning.vue';
 
 const realtime = useRealtimeStore();
@@ -227,20 +228,9 @@ async function openCreate(): Promise<void> {
 }
 
 /**
- * 上课时段检查：多班发布时逐班查询（GET /api/schedules/current?classId=...），
- * 任一班级正在上课就需要二次确认；返回命中的班级与时段。
+ * 上课时段检查见 `composables/useClassInSession.ts`（大模型助手那条发布路径也用它，
+ * 判据只留一份，别在这里再写一遍）。
  */
-async function findClassInSession(
-  classIds: string[],
-): Promise<{ classId: string; period: ClassPeriod | null } | null> {
-  const results = await Promise.all(
-    classIds.map(async (classId) => {
-      const status = await scheduleApi.classStatus(classId).catch(() => null);
-      return status?.inClass ? { classId, period: status.current } : null;
-    }),
-  );
-  return results.find((item) => item !== null) ?? null;
-}
 
 async function submitForm(): Promise<void> {
   const valid = await formRef.value?.validate().catch(() => false);

@@ -1,6 +1,6 @@
 {
   "name": "class-helper",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "private": true,
   "description": "ClassHelper - 班级信息管理系统（Web 管理端 + 后端服务 + 桌面客户端）",
   "packageManager": "pnpm@11.8.0",

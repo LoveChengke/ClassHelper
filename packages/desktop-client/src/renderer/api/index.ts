@@ -4,6 +4,8 @@ import {
   type ClassDto,
   type ClassIslandNotificationChannel,
   type CourseDto,
+  type ExamDto,
+  type ExamRankingDto,
   type HomeworkDaysDto,
   type DashboardSummary,
   type GradeDto,
@@ -136,6 +138,15 @@ export const gradeApi = {
    */
   studentDetail: (studentNo: string): Promise<StudentGradeDetailDto> =>
     api.get(`${API_PATHS.grades}/student/${encodeURIComponent(studentNo)}`),
+  /** 本班出现过的考试（含"这次考试算不算总分"） */
+  exams: (classId: string): Promise<ExamDto[]> => api.get(`${API_PATHS.grades}/exams`, { classId }),
+  /**
+   * 一次考试的单科榜与总分榜。
+   * 总分榜只在老师把这次考试设为"所有科目相加排名"时才有内容；
+   * 整条通道与按学号查明细共用同一个按班开关（关闭时服务端 403）。
+   */
+  ranking: (classId: string, examName: string): Promise<ExamRankingDto> =>
+    api.get(`${API_PATHS.grades}/ranking`, { classId, examName }),
 };
 
 /**

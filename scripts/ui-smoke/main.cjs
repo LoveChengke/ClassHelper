@@ -40,7 +40,9 @@ const MENU_ITEMS = [
   { label: '作业发布', path: '/homeworks' },
   { label: '通知发布', path: '/notifications' },
   { label: '成绩录入', path: '/grades' },
-  { label: 'ClassIsland 联动', path: '/integrations' },
+  // 2026-10-11 起「ClassIsland 联动」与「客户端设备」合并成这一项；
+  // 门控是 `classisland:notify`（默认 ADMIN + TEACHER），所以教师也看得见。
+  { label: '客户端', path: '/clients' },
 ];
 
 /** 教师端必须隐藏的入口（前端隐藏 + 后端 403，双重保障） */
@@ -1116,18 +1118,72 @@ async function main() {
       : `原因=${removedUnified?.reason ?? '-'}`,
   );
 
-  // 7.85 ClassIsland 联动页：班主任为本班签发设备令牌 → 页面下发提醒表单可用 → 收尾删除设备
-  //      （这条链路是"老师在 Web 端发提醒 → 教室里 ClassIsland 全屏弹出"的入口，必须真实点得动）
-  const integrationUi = await win.webContents.executeJavaScript(`(async () => {
+  // 7.84 「客户端」页（合并了原来的「ClassIsland 联动」与「客户端设备」）：
+  //      侧栏点得进、班级卡片渲染出来、两个批量按钮在
+  const hubUi = await win.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
-      (node.textContent ?? '').trim().startsWith('ClassIsland 联动'),
+      (node.textContent ?? '').trim().startsWith('客户端'),
     );
-    if (!menu) return { ok: false, reason: '教师端看不到「ClassIsland 联动」入口' };
+    if (!menu) return { ok: false, reason: '教师端看不到「客户端」入口' };
     menu.click();
     const deadline = Date.now() + 6000;
+    while (Date.now() < deadline && location.pathname !== '/clients') await sleep(80);
+    if (location.pathname !== '/clients') return { ok: false, reason: '点击后没有跳到 /clients' };
+    await sleep(1200);
+    const title = (document.querySelector('.page-title')?.textContent ?? '').trim();
+    const buttons = Array.from(document.querySelectorAll('button')).map((node) => (node.textContent ?? '').trim());
+    const cards = document.querySelectorAll('.class-card').length;
+    // 详情抽屉：点第一张卡的「详情」，抽屉里应有两条链路的表格
+    const detail = Array.from(document.querySelectorAll('.class-card .card-foot button')).find((node) =>
+      (node.textContent ?? '').trim() === '详情',
+    );
+    if (detail) {
+      detail.click();
+      await sleep(900);
+    }
+    const drawer = document.querySelector('.el-drawer');
+    const drawerText = (drawer?.textContent ?? '').trim();
+    const close = document.querySelector('.el-drawer__close-btn');
+    if (close) close.click();
+    await sleep(400);
+    return {
+      ok: true,
+      title,
+      cards,
+      hasBatchMirror: buttons.includes('批量下发课表'),
+      hasBatchUpdate: buttons.includes('批量下发更新'),
+      hasNotify: buttons.includes('下发提醒'),
+      drawerOpened: Boolean(drawer),
+      drawerHasBothSides: drawerText.includes('ClassIsland 教室端') && drawerText.includes('ClassHelper 客户端'),
+      path: location.pathname,
+    };
+  })()`);
+  record(
+    '「客户端」页（合并 ClassIsland 联动 + 客户端设备）：卡片渲染 + 批量下发 + 详情抽屉',
+    Boolean(hubUi?.ok) &&
+      hubUi?.title === '客户端' &&
+      hubUi?.cards > 0 &&
+      hubUi?.hasBatchMirror === true &&
+      hubUi?.drawerOpened === true &&
+      hubUi?.drawerHasBothSides === true,
+    `path=${hubUi?.path ?? '-'} 标题=${hubUi?.title ?? '-'} 卡片=${hubUi?.cards ?? 0} ` +
+      `批量下发课表=${hubUi?.hasBatchMirror ? '有' : '无'} 抽屉=${hubUi?.drawerOpened ? '开' : '未开'} ` +
+      `两端清单都在=${hubUi?.drawerHasBothSides ? '是' : '否'}` +
+      `${hubUi?.reason ? ` 原因=${hubUi.reason}` : ''}`,
+  );
+
+  // 7.85 ClassIsland 联动页：班主任为本班签发设备令牌 → 页面下发提醒表单可用 → 收尾删除设备
+  //      （这条链路是"老师在 Web 端发提醒 → 教室里 ClassIsland 全屏弹出"的入口，必须真实点得动）
+  //      这一页 2026-10-11 起**从侧栏摘掉**（常用动作合并进「客户端」），路由还在，
+  //      所以这里用 history 直接过去，后面几条断言仍然盯着这页本身。
+  const integrationUi = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    history.pushState({}, '', '/integrations');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    const deadline = Date.now() + 6000;
     while (Date.now() < deadline && location.pathname !== '/integrations') await sleep(80);
-    if (location.pathname !== '/integrations') return { ok: false, reason: '点击后没有跳到 /integrations' };
+    if (location.pathname !== '/integrations') return { ok: false, reason: '没能跳到 /integrations（旧版联动页）' };
     await sleep(900);
 
     const buttons = Array.from(document.querySelectorAll('button')).map((node) => (node.textContent ?? '').trim());

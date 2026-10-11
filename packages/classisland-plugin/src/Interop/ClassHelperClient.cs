@@ -88,6 +88,15 @@ public class ReportSettingsDto
     /// 现在是默认关闭的；而这是一次显式的人工请求，看到就要照做。
     /// </summary>
     [JsonPropertyName("scheduleRequested")] public bool ScheduleRequested { get; set; }
+
+    /// <summary>
+    /// 服务端请求**下发一次课表到教室**（老师在 Web 端点了「下发课表到教室」）。
+    ///
+    /// 与 <see cref="ScheduleRequested"/> 反方向，同样是一次性待办：看到就拉本班课表并
+    /// **强制替换**写进 ClassIsland；拉取成功时由服务端清除标记。
+    /// 没有"后台定时镜像"那条路径了 —— 那会让教室课表被反复重写（见 BridgeService 的说明）。
+    /// </summary>
+    [JsonPropertyName("mirrorRequested")] public bool MirrorRequested { get; set; }
 }
 
 public class ReportResultDto

@@ -11,6 +11,7 @@ import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
 import { MAX_TERM_WEEK, loadTermContext, resolveCurrentWeek } from '../../lib/term.js';
+import { SETTING_KEYS, setSetting } from '../../lib/settings.js';
 import { emitToClass } from '../../realtime/bus.js';
 import { SOCKET_EVENTS } from '@classhelper/shared';
 import { notifyScheduleChanged } from '../integrations/integrations.service.js';
@@ -109,6 +110,13 @@ export async function updateTermWeeks(user: TokenPayload, input: UpdateTermWeeks
       ? [prisma.class.update({ where: { id: scope }, data: { termStartDate: input.termStartDate } })]
       : []),
   ]);
+
+  // 全校默认没有"班级记录"可以挂开学日期，写进全局设置（`term.startDate`）。
+  // 需求：「服务端可设置学期开始日期，以保证当前周次正确，管理员也可以随时纠正」——
+  // 原先这一级只能来自 `.env`，改一次要动文件 + 重启。
+  if (input.termStartDate && !scope) {
+    await setSetting(SETTING_KEYS.termStartDate, input.termStartDate);
+  }
 
   logger.info(
     `学期周次已更新：范围=${scope || '全校默认'} 周数=${input.weeks.length} 由 ${user.name} 执行`,

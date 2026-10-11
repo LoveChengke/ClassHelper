@@ -910,6 +910,66 @@ export interface GradeDto {
   className?: string | null;
 }
 
+/**
+ * 一次考试（月考 / 期中考…）在本班的设置。
+ *
+ * 需求：「单次考试在导入成绩时可选是否将所有科目相加以总分排名，客户端也能看到总分排名」。
+ * `Grade.examName` 是自由文本，服务端光看它不知道这次考试算不算总分，所以单独记一条。
+ */
+export interface ExamDto {
+  id: string;
+  classId: string;
+  name: string;
+  /** 是否把所有科目（本次考试已录入的）相加做总分排名 */
+  countInTotal: boolean;
+  /** 本次考试已录入的成绩条数 —— 老师据此判断"要不要算总分" */
+  gradeCount: number;
+}
+
+/** 排名表里的一行（单科或总分） */
+export interface ExamRankRow {
+  studentId: string;
+  studentNo: string;
+  studentName: string;
+  /** 得分（总分榜里是各科之和） */
+  score: number;
+  /** 这一科的满分；总分榜里是各科满分之和（仅供参考） */
+  totalScore: number;
+  /** 名次，从 1 开始；并列同名次（1、2、2、4） */
+  rank: number;
+}
+
+/** 单科排名 */
+export interface ExamSubjectRanking {
+  courseId: string | null;
+  courseName: string;
+  rows: ExamRankRow[];
+}
+
+/**
+ * 一次考试的排名结果（单科 + 总分）。
+ *
+ * 总分榜只在 `countInTotal` 为 true 时才有内容 —— 语数外与音体美的分数量纲不同，
+ * 加不加是学校的口径，不能由程序默认替它决定。
+ */
+export interface ExamRankingDto {
+  classId: string;
+  className: string;
+  examName: string;
+  countInTotal: boolean;
+  subjects: ExamSubjectRanking[];
+  /** 总分榜（同一学生各科相加）；countInTotal 为 false 时是空数组 */
+  total: Array<{
+    studentId: string;
+    studentNo: string;
+    studentName: string;
+    score: number;
+    /** 参与相加的科目数，便于识别"只录了两科也上榜"的情况 */
+    subjectCount: number;
+    rank: number;
+  }>;
+}
+
 export interface CreateGradeRequest {
   classId: string;
   courseId?: string | null;
@@ -1473,9 +1533,15 @@ export interface ClassIslandReportResult {
     enabled: boolean;
     /**
      * 服务端请求插件**立刻上报一次课表**（Web 端点了「从教室机器获取课表」）。
-     * 独立于 `syncScheduleToServer`：那个开关管的是"要不要自动回传"。
+     * 两个课表方向都只由这类一次性待办触发，本机没有"自动回传 / 自动镜像"的开关。
      */
     scheduleRequested?: boolean;
+    /**
+     * 服务端请求插件**下发一次课表到教室**（Web 端点了「下发课表到教室」）。
+     * 插件看到就去拉本班课表并**强制替换**写进 ClassIsland（停用同一天同一单双周相位下
+     * 冲突的旧课表，只停用不删除）；拉取成功时由服务端清除这个待办。
+     */
+    mirrorRequested?: boolean;
   };
   /** 尚未在 ClassIsland 上确认过的一条提醒（插件可立即弹出） */
   pendingNotification?: ClassIslandPushNotification | null;

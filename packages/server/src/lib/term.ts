@@ -5,6 +5,7 @@ import {
 } from '@classhelper/shared';
 import { env } from '../config/env.js';
 import { prisma } from './db.js';
+import { SETTING_KEYS, getSetting } from './settings.js';
 
 export { MAX_TERM_WEEK };
 
@@ -40,21 +41,30 @@ export function resolveCurrentWeek(now: Date = new Date(), context?: TermWeekCon
  * 取出某个班的周次口径。
  *
  * 优先级：班级自己的逐周区间 → 全校默认的逐周区间 → 纯线性推算。
- * 开学日期同理：`Class.termStartDate` 优先，没配就用全局 `TERM_START_DATE`。
+ * 开学日期同理：`Class.termStartDate` → 全校设置（`term.startDate`，管理员在「学期周次」页改）
+ * → `.env` 的 `TERM_START_DATE` 兜底。中间那一级是 2026-10-11 加的：原先只有 `.env`，
+ * 管理员改一次开学日期得动文件 + 重启，填错了只能靠运维。
  *
  * @param classId 不传/空串表示**只看全校默认**（管理员在「学期周次」页编辑默认口径时就是这种调用）
  */
 export async function loadTermContext(classId?: string | null): Promise<TermWeekContext> {
-  const globalWeeks = await prisma.termWeek.findMany({
-    where: { classId: '' },
-    orderBy: { weekNumber: 'asc' },
-    select: { weekNumber: true, startDate: true, endDate: true },
-  });
+  const [globalWeeks, settingStart] = await Promise.all([
+    prisma.termWeek.findMany({
+      where: { classId: '' },
+      orderBy: { weekNumber: 'asc' },
+      select: { weekNumber: true, startDate: true, endDate: true },
+    }),
+    getSetting(SETTING_KEYS.termStartDate),
+  ]);
   if (!classId) {
-    // 全校默认没有"班级记录"可以存开学日期，因此**第 1 周的起始日就是它**
+    // 全校默认没有"班级记录"可以存开学日期，因此按「显式设置 → 第 1 周的起始日 → .env」回落
     // （管理员点「按开学日期生成」时，第 1 周就是从那天开始的）
     const firstGlobal = globalWeeks.find((item) => item.weekNumber === 1)?.startDate;
-    return { termStartDate: firstGlobal || env.termStartDate, weeks: globalWeeks, maxWeek: MAX_TERM_WEEK };
+    return {
+      termStartDate: settingStart || firstGlobal || env.termStartDate,
+      weeks: globalWeeks,
+      maxWeek: MAX_TERM_WEEK,
+    };
   }
 
   const [cls, classWeeks] = await Promise.all([
@@ -73,7 +83,7 @@ export async function loadTermContext(classId?: string | null): Promise<TermWeek
   // 班级的逐周区间若覆盖了第 1 周，开学日期就以它为准（管理员改周次时最直观）
   const firstWeekStart = weeks.find((item) => item.weekNumber === 1)?.startDate;
   return {
-    termStartDate: cls?.termStartDate || firstWeekStart || env.termStartDate,
+    termStartDate: cls?.termStartDate || firstWeekStart || settingStart || env.termStartDate,
     weeks,
     maxWeek: cls?.termWeeks && cls.termWeeks > 0 ? cls.termWeeks : MAX_TERM_WEEK,
   };

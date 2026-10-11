@@ -238,10 +238,12 @@ async function findDeviceOrFail(id: string): Promise<{
   classId: string;
   name: string;
   enabled: boolean;
+  /** 「下发课表到教室」要按它判断这台设备接不接受下发（见 requestMirrorSchedule） */
+  mirrorScheduleToClassIsland: boolean;
 }> {
   const record = await prisma.integrationDevice.findUnique({
     where: { id },
-    select: { id: true, classId: true, name: true, enabled: true },
+    select: { id: true, classId: true, name: true, enabled: true, mirrorScheduleToClassIsland: true },
   });
   if (!record) throw ApiError.notFound('设备不存在或已被删除');
   return record;
@@ -305,10 +307,43 @@ export async function requestScheduleReport(
   };
 }
 
-/** 重置令牌：旧令牌立即失效（插件侧需要重新填写） */
-export async function resetDeviceToken(
+/**
+ * 「**下发一次课表到教室**」的待办（Web 端手动动作）。
+ *
+ * 与 `requestScheduleReport` 对称：服务端没有反向通道去催插件，所以只置一个标记，
+ * 插件在下一次心跳看到 `settings.mirrorRequested = true` 就去拉本班课表、
+ * **强制替换**写进 ClassIsland（见插件侧 `ClassPlanWriter` 的 force 语义）。
+ *
+ * 为什么要改成手动（2026-10-11）：插件原先每 15 秒上报一次、每次上报完还顺手镜像一遍
+ * （插件侧的 `MirrorSchedule` 开关），教室课表被反复重写、服务端也每 15 秒 merge + 清理
+ * 一次幽灵行 —— 老师看到的是"课表被反复删改"。两个方向现在都只由点击触发。
+ */
+export async function requestMirrorSchedule(
   user: TokenPayload,
   deviceId: string,
+): Promise<{ requested: boolean; deviceName: string; nextHeartbeatHint: string }> {
+  const current = await findDeviceOrFail(deviceId);
+  await assertCanManageSchedule(user, current.classId);
+  if (!current.enabled) throw ApiError.badRequest('该设备已停用，请先启用后再下发课表');
+  if (!current.mirrorScheduleToClassIsland) {
+    throw ApiError.badRequest('这台设备没有开启「允许下发课表」，请先在设备设置里打开');
+  }
+
+  await prisma.integrationDevice.update({
+    where: { id: deviceId },
+    data: { requestMirrorSchedule: true },
+  });
+  logger.info(`已请求向设备下发课表：${current.name}（classId=${current.classId}）由 ${user.name} 发起`);
+  return {
+    requested: true,
+    deviceName: current.name,
+    nextHeartbeatHint: '教室机器会在下一次心跳（约 1 分钟内）拉取并强制替换教室课表',
+  };
+}
+
+/** 重置令牌：旧令牌立即失效（插件侧需要重新填写） */
+export async function resetDeviceToken(
+  user: TokenPayload,  deviceId: string,
 ): Promise<IntegrationDeviceTokenDto> {
   const current = await findDeviceOrFail(deviceId);
   await assertCanManageSchedule(user, current.classId);
@@ -649,6 +684,9 @@ export async function applyReport(
       // 注意它**独立于** syncScheduleToServer —— 后者是"允许自动回传"，现在默认关闭，
       // 但管理员显式点"获取课表"时仍然应当能取到。
       scheduleRequested: scheduleRequested,
+      // 「下发一次课表到教室」的待办（反方向）。插件看到就去拉本班课表并强制替换，
+      // 拉取成功时由 `pullClassPlanForDevice` 清除标记 —— 与上面那条对称。
+      mirrorRequested: device.mirrorRequested,
     },
     pendingNotification: pending,
   };
@@ -754,6 +792,17 @@ export async function pullClassPlanForDevice(device: DeviceContext): Promise<{
   // 周次口径按**本班**算：管理员可以给每个班单独配开学日期与逐周区间（调休、错峰开学）
   const termContext = await loadTermContext(device.classId);
   const week = resolveCurrentWeek(now, termContext);
+
+  // 「下发一次课表」的待办到这里就算完成：插件已经来拉了，拿到就会写进 ClassIsland。
+  // **必须清掉** —— 不清的话每次心跳都会重新下发一遍，又变回"一直下发"，
+  // 而这正是老师反映"课表被反复删改"的源头。
+  if (device.mirrorRequested) {
+    await prisma.integrationDevice.update({
+      where: { id: device.deviceId },
+      data: { requestMirrorSchedule: false },
+    });
+    logger.info(`课表下发待办已完成：${device.name}（classId=${device.classId}）`);
+  }
 
   const classRecord = await prisma.class.findUnique({
     where: { id: device.classId },

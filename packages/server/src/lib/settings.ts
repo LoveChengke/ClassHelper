@@ -19,6 +19,15 @@ export const SETTING_KEYS = {
   aiApiKey: 'ai.apiKey',
   /** 追加到系统提示词末尾的学校自定义要求（可空） */
   aiSystemPromptExtra: 'ai.systemPromptExtra',
+  /**
+   * 全校学期开始日期（`YYYY-MM-DD`，本地日期）。
+   *
+   * 需求：「服务端可设置学期开始日期，以保证当前周次正确，管理员也可以随时纠正」。
+   * 原先它只能来自 `.env` 的 `TERM_START_DATE`（改一次要动文件 + 重启），
+   * 于是"开学日期填错了"这种事只能靠运维；现在管理员在「学期周次」页直接改，立即生效。
+   * 班级自己的 `Class.termStartDate` 仍然优先（见 `lib/term.ts` 的三级回落）。
+   */
+  termStartDate: 'term.startDate',
 } as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS];

@@ -4,6 +4,9 @@ import {
   gradeLevel,
   gradePercent,
   normalizeStudentNo,
+  type ExamDto,
+  type ExamRankingDto,
+  type ExamSubjectRanking,
   type GradeDto,
   type GradeLevelType,
   type GradeStats,
@@ -14,12 +17,14 @@ import {
   assertClassAccess,
   classScopeWhere,
   isClassDevice,
+  isStaff,
   resolveClassScope,
   resolveUserClassRole,
 } from '../../lib/access.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
+import { logger } from '../../lib/logger.js';
 import { toGradeDto, toStudentBrief } from '../../lib/mappers.js';
 import { parseOptionalDate } from '../../lib/schemas.js';
 import { resolvePersonalIds } from '../../lib/session.js';
@@ -472,4 +477,191 @@ async function assertCourseInClass(courseId: string, classId: string): Promise<v
   const course = await prisma.course.findUnique({ where: { id: courseId }, select: { classId: true } });
   if (!course) throw ApiError.badRequest('课程不存在');
   if (course.classId !== classId) throw ApiError.badRequest('该课程不属于所选班级');
+}
+
+/* ---------------------------------------------------------------- 考试与排名 */
+
+/**
+ * 列出某班出现过的考试名（`Grade.examName` 的去重），并带上"是否计入总分"。
+ *
+ * 以**成绩行**为准而不是以 `Exam` 表为准：老师可能先导了成绩才开始管口径，
+ * 只列 `Exam` 会让刚导进去的那次考试在界面上根本找不到。
+ */
+export async function listExams(user: TokenPayload, classId: string): Promise<ExamDto[]> {
+  await assertClassAccess(user, classId);
+  const [groups, exams] = await Promise.all([
+    prisma.grade.groupBy({ by: ['examName'], where: { classId }, _count: { _all: true } }),
+    prisma.exam.findMany({
+      where: { classId },
+      select: { id: true, name: true, countInTotal: true },
+    }),
+  ]);
+  const byName = new Map(exams.map((item) => [item.name, item]));
+  return groups
+    .map((group) => {
+      const row = byName.get(group.examName);
+      return {
+        id: row?.id ?? '',
+        classId,
+        name: group.examName,
+        countInTotal: row?.countInTotal ?? false,
+        gradeCount: group._count._all,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+}
+
+/**
+ * 设置「这次考试要不要把所有科目相加做总分排名」。仅教师 / 管理员。
+ *
+ * 为什么要单独一个开关：语数外的 150 分和音体美的 100 分不是一个量纲，
+ * "这次考试要不要合总分"是学校的口径，程序不能替它默认决定 ——
+ * 而客户端要显示总分榜就必须知道，所以按「班级 + 考试名」存一条（`Exam` 表）。
+ */
+export async function setExamCountInTotal(
+  user: TokenPayload,
+  classId: string,
+  name: string,
+  countInTotal: boolean,
+): Promise<ExamDto> {
+  await assertClassAccess(user, classId);
+  if (!isStaff(user)) throw ApiError.forbidden('只有教师/管理员可以设置考试口径');
+
+  const row = await prisma.exam.upsert({
+    where: { classId_name: { classId, name } },
+    create: { classId, name, countInTotal },
+    update: { countInTotal },
+  });
+  const gradeCount = await prisma.grade.count({ where: { classId, examName: name } });
+  logger.info(`考试口径：班级=${classId} 考试=${name} 计入总分=${countInTotal} 由 ${user.name} 设置`);
+  return { id: row.id, classId, name, countInTotal, gradeCount };
+}
+
+/** 并列名次：分数相同的取同一名次，下一个名次跳过（1、2、2、4） */
+function assignRanks<T extends { score: number }>(
+  rows: T[],
+  rankOf: (row: T) => number,
+): Array<T & { rank: number }> {
+  const sorted = [...rows].sort((a, b) => rankOf(b) - rankOf(a));
+  let lastScore: number | null = null;
+  let lastRank = 0;
+  return sorted.map((row, index) => {
+    const score = rankOf(row);
+    const rank = lastScore !== null && score === lastScore ? lastRank : index + 1;
+    lastScore = score;
+    lastRank = rank;
+    return { ...row, rank };
+  });
+}
+
+/**
+ * 一次考试的排名（单科 + 总分）。
+ *
+ * 单科榜按 `courseId` 分组；成绩行里 `courseId` 可能为 null（没挂科目的成绩），
+ * 那种归到「未关联课程」一栏，不并进任何科目。
+ *
+ * 总分榜只在 `Exam.countInTotal` 为 true 时才算 —— 见 `setExamCountInTotal` 的说明。
+ * 合计时**按科目去重**：同一个学生同一个科目在一次考试里有多行（老师补录过）时只取最高分，
+ * 否则"补录一条"会变成"总分多一科"，排名直接失真。
+ *
+ * 班级端受 `Class.studentGradeQueryEnabled` 控制（与按学号查明细同一条边界）。
+ */
+export async function getExamRanking(
+  user: TokenPayload,
+  classId: string,
+  examName: string,
+): Promise<ExamRankingDto> {
+  await assertClassAccess(user, classId);
+  const classRecord = await prisma.class.findUnique({
+    where: { id: classId },
+    select: { name: true, studentGradeQueryEnabled: true },
+  });
+  if (!classRecord) throw ApiError.notFound('班级不存在');
+
+  const classRole = await resolveUserClassRole(user, classId);
+  const allowed = canQueryStudentGrades({
+    classRole,
+    // 老库补列时的默认值是 true（开箱可用），所以 null/undefined 都按开启处理
+    gradeQueryEnabled: classRecord.studentGradeQueryEnabled ?? true,
+  });
+  if (!allowed) throw ApiError.forbidden('本班未开放成绩查询，请联系老师开启');
+
+  const [grades, exam] = await Promise.all([
+    prisma.grade.findMany({
+      where: { classId, examName },
+      include,
+      orderBy: [{ publishedAt: 'desc' }],
+    }),
+    prisma.exam.findUnique({
+      where: { classId_name: { classId, name: examName } },
+      select: { countInTotal: true },
+    }),
+  ]);
+
+  // 同一个学生同一科目只留最高分（补录 / 重考的场景）
+  const best = new Map<string, GradeDto>();
+  for (const grade of grades.map(toGradeDto)) {
+    const key = `${grade.studentId}|${grade.courseId ?? ''}`;
+    const current = best.get(key);
+    if (!current || grade.score > current.score) best.set(key, grade);
+  }
+  const unique = [...best.values()];
+
+  const byCourse = new Map<string, { courseId: string | null; courseName: string; rows: GradeDto[] }>();
+  for (const grade of unique) {
+    const key = grade.courseId ?? '__none__';
+    const entry = byCourse.get(key) ?? {
+      courseId: grade.courseId,
+      courseName: grade.course?.name ?? '未关联课程',
+      rows: [],
+    };
+    entry.rows.push(grade);
+    byCourse.set(key, entry);
+  }
+
+  const subjects: ExamSubjectRanking[] = [...byCourse.values()]
+    .map((entry) => ({
+      courseId: entry.courseId,
+      courseName: entry.courseName,
+      rows: assignRanks(entry.rows, (row) => gradePercent(row.score, row.totalScore)).map((row) => ({
+        studentId: row.studentId,
+        studentNo: row.student?.studentNo ?? '',
+        studentName: row.student?.name ?? '',
+        score: row.score,
+        totalScore: row.totalScore,
+        rank: row.rank,
+      })),
+    }))
+    .sort((a, b) => a.courseName.localeCompare(b.courseName, 'zh-Hans-CN'));
+
+  const countInTotal = exam?.countInTotal === true;
+  let total: ExamRankingDto['total'] = [];
+  if (countInTotal) {
+    const sum = new Map<
+      string,
+      { studentId: string; studentNo: string; studentName: string; score: number; subjectCount: number }
+    >();
+    for (const grade of unique) {
+      const entry = sum.get(grade.studentId) ?? {
+        studentId: grade.studentId,
+        studentNo: grade.student?.studentNo ?? '',
+        studentName: grade.student?.name ?? '',
+        score: 0,
+        subjectCount: 0,
+      };
+      entry.score += grade.score;
+      entry.subjectCount += 1;
+      sum.set(grade.studentId, entry);
+    }
+    total = assignRanks([...sum.values()], (row) => row.score);
+  }
+
+  return {
+    classId,
+    className: classRecord.name,
+    examName,
+    countInTotal,
+    subjects,
+    total,
+  };
 }

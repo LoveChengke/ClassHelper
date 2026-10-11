@@ -17,11 +17,11 @@ public class PluginSettings : ObservableObject
     private string _deviceKey = "";
     private bool _autoReport = true;
     private int _reportIntervalSeconds = 60;
-    // 同步方向（2026-10-06 起）：课表以 ClassHelper为准，**服务端 → 教室自动下发**；
-    // 「把教室课表传上去」改为 Web 端的一次性人工动作（点之前会弹警告）。
-    // 自动回传会悄悄盖掉老师刚手排的课，所以默认关闭。
-    private bool _uploadSchedule = false;
-    private bool _mirrorSchedule = true;
+    // 课表同步（2026-10-11 起）：**两个方向都只由 Web 端的一次性动作触发** ——
+    // 「从教室机器获取课表」与「下发课表到教室」，都走服务端的一个待办标记。
+    // 原先这里有两个开关（自动回传 / 自动镜像），默认 15 秒一轮，结果是服务端与教室里
+    // 的课表每 15 秒互相覆盖一次，老师看到的就是"课表被反复删改"。
+    // 定时上报现在**只报运行状态**（当前上什么课），不带课表。
     private bool _receiveNotifications = true;
     private int _notificationDurationSeconds = 8;
     private int _notificationPollSeconds = 10;
@@ -74,33 +74,6 @@ public class PluginSettings : ObservableObject
     {
         get => _reportIntervalSeconds;
         set => SetProperty(ref _reportIntervalSeconds, Math.Clamp(value, 15, 3600));
-    }
-
-    /// <summary>
-    /// 是否把 ClassIsland 的课表**自动**同步到 ClassHelper。
-    ///
-    /// **默认关闭**：课表以 ClassHelper为准，教室这边改完课表不会自己传上去
-    /// （否则老师刚在 ClassHelper上排好的课会被教室的旧课表悄悄覆盖）。
-    /// 要取教室的课表，请在 Web 端点「从教室机器获取课表」——那是一次显式的人工请求，
-    /// 与本开关无关（见 <c>ReportSettingsDto.ScheduleRequested</c>）。
-    /// 关闭后仍会上报"当前上什么课"的状态。
-    /// </summary>
-    public bool UploadSchedule
-    {
-        get => _uploadSchedule;
-        set => SetProperty(ref _uploadSchedule, value);
-    }
-
-    /// <summary>
-    /// 是否把 ClassHelper上排好的课表镜像回 ClassIsland
-    /// （新建一份名为「ClassHelper-&lt;班级名&gt;」的档案课表，不覆盖老师原有的课表）。
-    ///
-    /// **默认开启**：这是现在课表同步的主方向。
-    /// </summary>
-    public bool MirrorSchedule
-    {
-        get => _mirrorSchedule;
-        set => SetProperty(ref _mirrorSchedule, value);
     }
 
     /// <summary>

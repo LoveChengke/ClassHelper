@@ -42,6 +42,8 @@ import {
   type DatabaseConnectionTestDto,
   type DatabaseStatusDto,
   type DatabaseSwitchJobDto,
+  type ExamDto,
+  type ExamRankingDto,
   type GradeDto,
   type GradeLevelType,
   type GradeStats,
@@ -298,6 +300,14 @@ export const gradeApi = {
   /** 按**学号**查某个学生的成绩明细（教师端"按学号查成绩"） */
   studentDetail: (studentNo: string, classId?: string): Promise<StudentGradeDetailDto> =>
     api.get(`${API_PATHS.grades}/student/${encodeURIComponent(studentNo)}`, classId ? { classId } : undefined),
+  /** 某班出现过的考试（含"是否计入总分"） */
+  listExams: (classId: string): Promise<ExamDto[]> => api.get(`${API_PATHS.grades}/exams`, { classId }),
+  /** 设置"这次考试是否把所有科目相加做总分排名" */
+  setExam: (payload: { classId: string; name: string; countInTotal: boolean }): Promise<ExamDto> =>
+    api.put(`${API_PATHS.grades}/exams`, payload),
+  /** 一次考试的单科榜与总分榜 */
+  ranking: (params: { classId: string; examName: string }): Promise<ExamRankingDto> =>
+    api.get(`${API_PATHS.grades}/ranking`, params),
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.grades}/${id}`),
 };
 
@@ -513,6 +523,15 @@ export const integrationApi = {
    */
   requestSchedule: (id: string): Promise<{ requested: boolean; deviceName: string; nextHeartbeatHint: string }> =>
     api.post(`${API_PATHS.integrations}/devices/${id}/request-schedule`, {}),
+  /**
+   * 「**下发一次课表到教室**」：置一个待办，插件在下一次心跳拉取本班课表并写进 ClassIsland，
+   * 同时把同一天同一单双周相位下冲突的旧课表**停用**（只停用、不删除）。
+   *
+   * 与 `requestSchedule` 反方向、同样是一次性动作 —— 课表同步不再有"一直同步"的开关
+   * （那会让教室课表被反复重写，见 AGENTS.md §5 第 59 条与插件侧说明）。
+   */
+  mirrorSchedule: (id: string): Promise<{ requested: boolean; deviceName: string; nextHeartbeatHint: string }> =>
+    api.post(`${API_PATHS.integrations}/devices/${id}/mirror-schedule`, {}),
   /** 把一条提醒下发到该班的 ClassIsland 设备（ClassIsland 上全屏弹出） */
   notify: (payload: SendClassIslandNotificationRequest): Promise<SendClassIslandNotificationResult> =>
     api.post(`${API_PATHS.integrations}/classisland/notify`, payload),

@@ -206,10 +206,16 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
         }
     }
 
-    /// <summary>发起一次上报（事件驱动：已有上报在跑时直接丢弃本次，避免事件风暴打出并发请求）。</summary>
+    /// <summary>
+    /// 发起一次**仅状态**的上报（定时器与课程事件都走这里）。
+    ///
+    /// 刻意不带课表：课表只在服务端显式点「从教室机器获取课表」时上传（见 <see cref="ReportAsync"/>
+    /// 的 <c>forceSchedule</c>）。原先每次上报都带全量课表、默认 15 秒一次，服务端于是每 15 秒
+    /// merge + 清理一次幽灵行 —— 老师看到的就是"课表被反复删改"（2026-10-11 实测）。
+    /// </summary>
     public void RequestReport(string reason)
     {
-        _ = ReportAsync(reason);
+        _ = ReportAsync(reason, includeSchedule: false);
     }
 
     /// <summary>
@@ -251,17 +257,14 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
 
             var entryCount = 0;
             var layoutCount = 0;
-            // 开关关着时也要留下原因：否则日志只有"上报成功：仅状态"，
-            // 用户会以为"服务端拿不到 ClassIsland 课表"是插件坏了。
-            // forceSchedule：服务端显式点了「从教室机器获取课表」——这是一次人工请求，
-            // 不受本机「自动上报课表」开关影响（见下方 ReportSettingsDto.ScheduleRequested）
-            var uploadSchedule = forceSchedule || _settings.UploadSchedule;
+            // 课表**只在服务端显式请求时**上传：没有"本机自动回传"这条路径了
+            // （原先由本机 `UploadSchedule` 开关决定，默认开 + 定时 15 秒 = 服务端课表被反复 merge）。
+            // forceSchedule：服务端点了「从教室机器获取课表」，这是一次人工请求。
+            var uploadSchedule = forceSchedule;
 
             if (includeSchedule && !uploadSchedule)
             {
-                _logger.LogInformation(
-                    "ClassHelper 联动：本机设置里「上报课表到 ClassHelper」是关闭的，本次只上报状态；" +
-                    "需要把教室课表同步到 ClassHelper请打开该开关，或在 Web 端点「从教室机器获取课表」");
+                _logger.LogInformation("ClassHelper 联动：本次只上报运行状态；课表由 Web 端点「从教室机器获取课表」时才会拉取");
             }
 
             if (includeSchedule && uploadSchedule && profile is not null)
@@ -337,8 +340,12 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
                 _ = ReportAsync("服务端请求课表", includeSchedule: true, forceSchedule: true);
             }
 
-            if (_settings.MirrorSchedule)
+            // 只有服务端点了「下发课表到教室」才镜像。原先跟着**每一次上报**走（本机 MirrorSchedule
+            // 开关 + 默认 15 秒周期），教室的课表被反复重写 —— 与服务端那边的 merge/清理叠在一起，
+            // 就是老师反馈的"课表一直在变"。现在是一次性待办，拉取成功由服务端清标记。
+            if (data.Settings?.MirrorRequested == true)
             {
+                _logger.LogInformation("ClassHelper 联动：服务端请求下发课表，正在拉取并强制替换教室课表…");
                 await MirrorScheduleAsync().ConfigureAwait(false);
             }
 
@@ -449,7 +456,7 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
             // **把整个档案写成半截 JSON**（老师的课表/科目全丢，只能靠 .bak 兜底）。
             var outcome = await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                var applied = ClassPlanWriter.Apply(profile, plan);
+                var applied = ClassPlanWriter.Apply(profile, plan, force: true);
                 if (!applied.Applied)
                 {
                     return applied;
@@ -507,7 +514,7 @@ public sealed class BridgeService : INotifyPropertyChanged, IDisposable
     /* ---------------------------------------------------------------- 内部实现 */
 
     /// <summary>插件版本（与 manifest.yml / csproj 保持一致）。</summary>
-    private const string PluginVersion = "1.3.0.0";
+    private const string PluginVersion = "1.3.1.0";
 
     /// <summary>ClassIsland 版本读不到时不该让上报失败（开发版可能为 null）。</summary>
     private static string SafeAppVersion()
