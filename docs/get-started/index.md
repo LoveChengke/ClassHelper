@@ -30,7 +30,7 @@ ClassHelper不是一个单机软件，它由四部分组成，**必须先有服�
 
 - **看界面**：本页文档里各处嵌的都是实机截图，比如[灵动岛](../app/island.md)、[课表](../app/schedules.md)。
 - **本地跑一套演示数据**：装好 Node 20.19+ 与 pnpm 之后，
-  `pnpm install && pnpm build:shared && pnpm db:seed && pnpm dev` 会在本机拉起一套带演示班级的后端与
+  `pnpm install && pnpm build:shared && pnpm db:seed && pnpm dev` 会在本地拉起一套带演示班级的后端与
   Web 管理端（详见[安装服务端](server.md#从源码跑开发模式)）。
 
 ## 装完之后呢

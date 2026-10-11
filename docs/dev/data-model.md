@@ -141,7 +141,7 @@ add_permission_groups_and_clients
 ## 开发时的模型改动
 
 1. 改 `schema.prisma`；
-2. 在 `prisma/migrations/` 下加一个迁移目录（本机用
+2. 在 `prisma/migrations/` 下加一个迁移目录（用
    `pnpm --filter @classhelper/server db:deploy` 应用，**别用 `pnpm db:migrate`** ——
    它在 Windows 上不可靠）。要改已有表结构而不只是加列时，可以先用
    `pnpm exec prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`

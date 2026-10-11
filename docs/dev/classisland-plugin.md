@@ -112,14 +112,17 @@ pnpm verify:classisland-plugin   # 静态契约校验（不需要 .NET，不需�
 
 ## 部署到教室机器
 
+把编出来的 DLL 覆盖到这台机器的 ClassIsland 数据目录（默认 `%USERPROFILE%\ClassIsland\data`，
+便携版则是安装目录下的 `data\`）。ClassIsland **运行时会锁住 DLL，必须先完全退出它**：
+
 ```powershell
 # 1) 完全退出 ClassIsland（它会锁住 DLL）
 Get-Process ClassIsland.Desktop | Stop-Process -Force
 # 2) 覆盖插件 DLL（**不要覆盖 Settings.json**，那里存着服务器地址与设备令牌）
 Copy-Item packages\classisland-plugin\bin\Release\ClassHelper.ClassIslandPlugin.dll `
-          D:\Classisland\data\Plugins\classhelper.classisland.bridge\ -Force
+          "$env:USERPROFILE\ClassIsland\data\Plugins\classhelper.classisland.bridge\" -Force
 # 3) 重新启动
-Start-Process D:\Classisland\ClassIsland.exe -WorkingDirectory D:\Classisland
+Start-Process "$env:USERPROFILE\ClassIsland\ClassIsland.exe"
 ```
 
 改配置要在 **ClassIsland 退出时**改：运行中改会被内存里的副本随时回写覆盖。

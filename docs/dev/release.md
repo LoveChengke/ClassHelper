@@ -191,8 +191,8 @@ gh workflow run release-linux-server.yml -f tag=v1.1.3 -f attach=true
 > **CI 是按 tag 的 ref 检出源码的。** 发完版又发现构建脚本（或任何影响出包的代码）要修时，
 > **光推 master 不够** —— CI 仍会拿旧 tag 的源码跑，得把 tag 挪到修复后的提交：
 > `git tag -f v<版本> <提交> && git push --force origin v<版本>`，tag 一变会自动重跑。
-> 1.3.0 实测踩过：tag 指的那个提交里打包脚本有个 bug，CI 红了、Release 上少一个 Linux 包，
-> 而本地 `pnpm dist:server` 一直是绿的（Windows 侧走另一条分支）。
+> 别拿「Windows 侧绿不绿」当判据：`pnpm dist:server` 走的是另一条分支，
+> Linux 那一步红的时候本地完全看不出来。
 >
 > 另外，本页第 8 步的「官网与文档站」是**另一条**流水线（master 推送触发）——
 > 它绿不代表 Linux 包出来了，推完 tag 要去 `gh run list --limit 5` 看一眼。

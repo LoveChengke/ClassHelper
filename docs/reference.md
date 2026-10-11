@@ -19,13 +19,12 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
                                   └──── 老师下发的提醒 ◄────────┘
 ```
 
-> 本文是 ClassHelper的**完整参考**：功能行为、接口契约、验收证据与已知问题都在这里，是功能口径的权威来源。
+> 本文是 ClassHelper的**完整参考**：功能行为、接口契约与已知问题都在这里，是功能口径的权威来源。
 > 面向「第一次打开仓库」的展示型介绍在 [README](https://github.com/LoveChengke/classhelper/blob/master/README.md)；按读者分组的引导式文档在文档站（本目录）。
-> 工程约定（改代码前必读）与本机踩坑在 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md)；生产部署在
+> 贡献者需要的工程约定在 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md)；生产部署在
 > [production.md](management/production.md)；切换数据库在 [mysql.md](management/mysql.md)。
 > 文中的**文件路径均相对仓库根目录**（`packages/…`、`scripts/…`），只有目录链接是相对本文的。
-> **改动交付形态 / 新增功能后请一并更新本文**；文中计数均标注实测日期，条目数由脚本自行统计，
-> 不要写死容易过期的总数。
+> **改动交付形态 / 新增功能后请一并更新本文**；条目数由脚本自行统计，不要写死容易过期的总数。
 
 ## 目录
 
@@ -75,9 +74,9 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 | ClassIsland 联动插件 | `packages/classisland-plugin` | .NET 8 / C#，装在教室的 ClassIsland 上（上报课表与上课状态、弹提醒） | 教室机器（独立于 pnpm workspace） |
 | 官网                 | `website/`                    | 纯 HTML / CSS / JS 的静态页面，**没有构建步骤**                              | 展示与说明（`node website/serve.mjs` 本地预览） |
 
-**设计取舍（与原始提示词的两处偏差，已与用户确认）**：
+**两处技术选型取舍**：
 
-1. 桌面客户端采用 **Electron + Vue 3**（而非 Avalonia/FluentAvalonia）——需求正文 90% 的内容
+1. 桌面客户端采用 **Electron + Vue 3**（而非 Avalonia/FluentAvalonia）——需求里的绝大部分内容
    （Socket.IO Client、Pinia、IndexedDB 离线缓存、electron-builder）都基于 Electron；
 2. 数据库**先用 SQLite（libSQL 内嵌）跑通，并支持切到 MySQL**：`docs/management/mysql.md` 给出切换步骤，
    `deploy/` 同时提供 MySQL 版与 SQLite 版 Compose。
@@ -95,8 +94,7 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 
 > 这些产物**都不入库**（`releases/` 已 gitignore + eslint ignore）。三个打包脚本**直接输出**到
 > `releases/<组件>/<版本>/`，每个版本目录下按 `安装包/`（交付物）、`构建中间/`（可重新生成）分层，
-> 历史版本原样保留。**没有免安装目录**：组装/解包出来的那一份只是中间物，脚本打完就删 ——
-> 详见 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) §4。
+> 历史版本原样保留。**没有免安装目录**：组装/解包出来的那一份只是中间物，脚本打完就删。
 
 四种部署形态按场景选（Linux 完整步骤见 [docs/management/linux-deploy.md](management/linux-deploy.md)，
 其余见 [docs/management/production.md](management/production.md)）：
@@ -119,7 +117,7 @@ curl -fsSL -o /tmp/classhelper-install.sh https://raw.githubusercontent.com/Love
 > 参数接在最后即可，例如先只体检（不需要 root、不改动系统）：把末尾换成
 > `sudo bash /tmp/classhelper-install.sh --check`。
 > **别写成 `bash -c "$(curl …)" --check`**：`bash -c '代码' 第一个参数` 里那个参数会变成 `$0`
-> 而不是 `$1`，脚本收不到（实测踩到：想体检却走进了交互式安装）。
+> 而不是 `$1`，脚本收不到（想体检却会走进交互式安装）。
 
 ## 3. 快速开始
 
@@ -167,7 +165,8 @@ pnpm build:desktop
 pnpm verify:desktop
 ```
 
-> Electron 二进制**不会**随 `pnpm install` 自动下载，缺失时先手动装一次（见 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) §7 第 5 条）。
+> Electron 二进制**不会**随 `pnpm install` 自动下载，缺失时先手动装一次
+> （见 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) §7 第 5 条）。
 
 客户端首次启动会带上默认服务器地址 `http://127.0.0.1:4000`，输入**班级码 + 班级密码**
 （种子数据：`G101` / `123456`）即可进入班级。想验证「断网可查看缓存」：登录并浏览若干页面后停掉后端
@@ -184,7 +183,7 @@ pnpm verify:desktop
 
 ### 默认账号与种子数据
 
-`pnpm db:seed` 会清空业务表并写入一套完整演示数据（计数由种子脚本自己打印，**2026-10-06 实测**：
+`pnpm db:seed` 会清空业务表并写入一套完整演示数据（计数由种子脚本自己打印：
 账号 3 / 在读班级 3 / 学生 15 / 课程 54（每班 18 科）/ 课表 93 / 作业 16 / 通知 13 / 成绩 90 /
 调班历史 2 / 已归档届别 1）：
 
@@ -233,8 +232,8 @@ pnpm verify:desktop
 | `pnpm lint` / `pnpm lint:fix`                 | ESLint 检查 / 自动修复                                                              |
 | `pnpm format` / `pnpm format:check`           | Prettier 格式化 / 检查（`format:check` 在 master 基线上本就失败，只检查改过的文件） |
 | `pnpm db:generate`                            | 生成 Prisma Client（输出到 `packages/server/src/generated/prisma`）                 |
-| `pnpm db:migrate`                             | 创建并应用迁移（`prisma migrate dev`；本机不可靠，用 db:deploy）                    |
-| `pnpm --filter @classhelper/server db:deploy` | 应用已有迁移（**本机推荐**；根 scripts 里没有 `db:deploy`）                         |
+| `pnpm db:migrate`                             | 创建并应用迁移（`prisma migrate dev`；在 Windows 上不可靠，用 db:deploy）           |
+| `pnpm --filter @classhelper/server db:deploy` | 应用已有迁移（**推荐**；根 scripts 里没有 `db:deploy`）                             |
 | `pnpm db:seed` / `pnpm db:reset`              | 写入种子数据 / 重置并重播种子                                                       |
 | `pnpm db:studio`                              | 打开 Prisma Studio                                                                  |
 | `pnpm db:switch:mysql` / `db:switch:sqlite`   | 改写 `schema.prisma` 的 provider（无第二份 schema）                                 |
@@ -809,8 +808,8 @@ MySQL 的连接测试 / 建表 / 写入依赖随包内置的 `@prisma/adapter-ma
 >   打包末尾会做一次**运行时裁剪**（删掉 Prisma 为其它数据库方言准备的查询编译器副本等死载荷，
 >   见 `scripts/dist-server.mjs` 的 `pruneRuntime()`），组装出来的运行时 469MB → 335MB
 >   （这份运行时现在只是中间物，打完安装程序即删）。
-> - 真实切换（SQLite→MySQL）已在本机用完整子进程链路实测（快照 728 行逐表一致）；e2e 只覆盖校验分支
->   （同库 400 / 非法 provider 422 / 目标库非空拒绝），避免测试改写 `.env`。
+> - e2e 只覆盖校验分支（同库 400 / 非法 provider 422 / 目标库非空拒绝），避免测试改写 `.env`；
+>   真实切换走的子进程链路已完整验证（快照 728 行逐表一致）。
 
 ### 4.10 更新检查
 
@@ -963,7 +962,8 @@ MySQL 的连接测试 / 建表 / 写入依赖随包内置的 `@prisma/adapter-ma
 | 命令种类         | 关机 / 重启 / 注销 / 锁屏（`CLIENT_COMMAND_KINDS` + `CLIENT_COMMAND_LABELS`）    |
 | 新命令取代旧命令 | 同一台机器未回执的旧命令会被自动撤销（先关机后重启不会排队执行）                |
 | 回执             | `POST /clients/commands/:id/ack`，body 里的 `deviceKey` 既是身份也是护栏（班级端令牌全班共用），且**幂等** |
-| 二次确认         | 客户端执行前必须在界面上二次确认；回执里带成功 / 失败原因                       |
+| 二次确认         | 客户端执行前必须在界面上二次确认（**默认选中「取消」**，**60 秒未确认按取消处理**）；回执里带成功 / 失败原因 |
+| 上次指令         | 「客户端」页的详情表显示最近一条命令的结果（已执行 / 本机取消 / 已过期 / 待执行）——排"点了没反应"先看它 |
 
 **安装包由服务端中继下发**（教室机器常常没有外网，Web 端的 CSP 也不允许直连 GitHub）：
 
@@ -1163,14 +1163,14 @@ class-helper/
 | --------- | -------------------------------------------------------------------- | ---------------------------------------------------------- |
 | 包管理    | pnpm workspace                                                       | 11.8.0                                                     |
 | 语言      | TypeScript                                                           | 5.9.3（`typescript-eslint` 要求 < 6.1，因此未用 7.x）      |
-| 后端      | Node.js + Express                                                    | ≥ 20.19（本机 24.19） / 5.2                                |
+| 后端      | Node.js + Express                                                    | ≥ 20.19 / 5.2                                |
 | ORM       | Prisma + driver adapter                                              | 7.10（+ `@prisma/adapter-libsql`，切 MySQL 用 `-mariadb`） |
 | 实时      | Socket.IO                                                            | 4.8                                                        |
 | 认证      | jsonwebtoken + bcryptjs                                              | 9.0 / 3.0                                                  |
 | 校验      | zod                                                                  | 4.6                                                        |
 | Web 端    | Vue + Vite + Element Plus + Pinia + Vue Router + Axios               | 3.5 / 8.3 / 2.14 / 4.0 / 5.3 / 1.20                        |
 | 客户端    | Electron + Vue + Element Plus + Pinia + Socket.IO Client + IndexedDB | 44.3 / 3.5 / 2.14 / 4.0 / 4.8                              |
-| 插件      | .NET 8 / C# + Avalonia（ClassIsland 插件 API 2.0）                   | net8.0（本机 SDK 8.0.425）                                 |
+| 插件      | .NET 8 / C# + Avalonia（ClassIsland 插件 API 2.0）                   | net8.0                                 |
 | 打包      | electron-builder（nsis / portable）+ NSIS                            | 26.15                                                      |
 | Lint/格式 | ESLint 10 + typescript-eslint 8 + eslint-plugin-vue 10；Prettier 3   | —                                                          |
 
@@ -1467,7 +1467,7 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 | 灵动岛 | **刻意只有单调缓动**（曲线取自同一套令牌，但不用弹簧）：岛的形变由主进程缓动窗口尺寸，任何过冲都会让"开合"看起来在震动（冒烟逐帧断言）。悬停微交互关在 `@media (hover: hover)` 里，避免触摸屏上"幽灵 hover"粘住按钮 |
 | 降低动态效果 | 全站 `prefers-reduced-motion` 降级（**加载指示旋除外** —— 停掉会让界面看着像卡死） |
 
-三条**别踩**的约定（都对应实测过的坑，详见 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) §5 第 61 条）：
+三条**别踩**的约定（详见 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) §5 第 61 条）：
 路由层**不要**包 `<transition mode="out-in">`；Vue 的 `<transition>` 一律显式给 `:duration`；
 `position: fixed` 的整屏层与"自己量尺寸"的元素不要叠位移类动画。
 
@@ -1492,7 +1492,7 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 
 > ⚠️ 改令牌时**只改值**。别对样式表跑"把 `#303133` 全量替换成 `var(--ch-text)`"这类批量替换 ——
 > 它会把令牌**定义本身**也换掉（`--ch-text: #303133` → `--ch-text: var(--ch-text)`），
-> 自定义属性一旦自引用就整条失效、解析成空串，全站文字颜色静默回落成继承色（实测踩过）。
+> 自定义属性一旦自引用就整条失效、解析成空串，全站文字颜色静默回落成继承色。
 
 ## 6. 验收
 
@@ -1500,7 +1500,7 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 
 | 验收项                                                        | 结果 | 证据                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ------------------------------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 教师 Web 端发布通知，ClassHelper 班级端 5 秒内收到                        | ✅   | `verify:e2e`：`notification:new` 实测 30–50ms 到达（要求 < 5 秒）                                                                                                                                                                                                                                                                                                                                                                                     |
+| 教师 Web 端发布通知，ClassHelper 班级端 5 秒内收到                        | ✅   | `verify:e2e`：`notification:new` 到达耗时 30–50ms（要求 < 5 秒）                                                                                                                                                                                                                                                                                                                                                                                     |
 | 教师发布作业，学生能查看并标记完成                            | ✅   | `homework:new` 实时到达，`PATCH /homeworks/:id/status` 200 且列表回显 `completed=true`                                                                                                                                                                                                                                                                                                                                                                |
 | 教师录入成绩，学生能查看个人成绩                              | ✅   | `grade:updated` 实时到达，`/grades/my` 返回记录；批量录入与统计接口通过                                                                                                                                                                                                                                                                                                                                                                               |
 | 学生能查看课表，支持按周切换                                  | ✅   | `/schedules/grid?week=1` 返回周视图条目，`week` 过滤 `weekStart ≤ week ≤ weekEnd`，单双周按第 1 周 = 单周过滤                                                                                                                                                                                                                                                                                                                                         |
@@ -1517,7 +1517,7 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 | **灵动岛收起后始终可再次打开**                                | ✅   | `verify:desktop`：收起后胶囊常驻、「收起态点击可再次展开」、「空闲细缝态保持可交互」                                                                                                                                                                                                                                                                                                                                                                  |
 | **触摸屏触摸灵动岛可展开（希沃白板）**                        | ⏳   | 触摸模式下窗口贴合岛体 + 始终接收输入；`verify:desktop` 断言「窗口 = 岛体 + 2×阴影留白、`interactive=true`、退出后恢复固定包围盒」。**真机（触摸屏）需人工复验**                                                                                                                                                                                                                                                                                      |
 | 叫人（老师点名，分紧急 / 普通两级）                           | ✅   | `verify:e2e` 8 项（普通 HIGH / 紧急 URGENT）+ `verify:desktop`「紧急叫人上课也立即展开」「普通叫人上课只进队列、下课弹出」                                                                                                                                                                                                                                                                                                                            |
-| 成绩 / 名单表格导入（xlsx·xls·csv）                           | ✅   | 模板下载 + 预览映射 + 重复处理 + 行号级错误：`verify:e2e` 覆盖 20 余项，`verify:web` 弹窗实测                                                                                                                                                                                                                                                                                                                                                         |
+| 成绩 / 名单表格导入（xlsx·xls·csv）                           | ✅   | 模板下载 + 预览映射 + 重复处理 + 行号级错误：`verify:e2e` 覆盖 20 余项，`verify:web` 弹窗走通                                                                                                                                                                                                                                                                                                                                                         |
 | ClassIsland 时间配置导入（覆盖 / 合并 / 回滚）                | ✅   | 合法 200、非法 400 `IMPORT_INVALID` 且原配置仍在、merge 覆盖与保留行为符合预期                                                                                                                                                                                                                                                                                                                                                                        |
 | 安装版覆盖升级自动补迁移                                      | ✅   | 真实旧库升级日志：`升级安装：已应用 N 个迁移文件，跳过 M 个已存在对象`，新表自动建好                                                                                                                                                                                                                                                                                                                                                                  |
 | ClassHelper 班级端主体 = 班级（班级码 + 班级密码登录）                    | ✅   | `verify:e2e` 班级账号 19 项：登录 / 错误密码 401 / 跨班 403 / 发布 403 / 班级码重复 400 / 密码重置 / 班级码用后还原                                                                                                                                                                                                                                                                                                                                   |
@@ -1532,9 +1532,9 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 | **登录页无示例内容**                                          | ✅   | `verify:web`（管理端）与 `verify:desktop`（客户端）都断言登录页正文 / 占位符不含 `演示 / 示例 / admin123 / teacher123 / G101`                                                                                                                                                                                                                                                                                                                         |
 | **新手引导（首启弹出 + 随时重看）**                           | ✅   | Web 管理端：首次登录弹出 `el-tour` 聚焦引导，头像菜单「使用引导」重看（`verify:web`）；客户端：首启六步向导，登录页 / 设置页可重看（`verify:desktop`）                                                                                                                                                                                                                                                                                                |
 | **客户端设置改版（分组侧栏 / 深色模式 / 关于页）**            | ✅   | `verify:desktop`：「侧边栏点击导航」适配「学习 / 设置」分组；「主题切换与侧边栏折叠（真实点击、写回配置）」——`html.dark` 翻转 + 折叠宽度 200→64 + 双双落盘；「关于页渲染」含 configPath                                                                                                                                                                                                                                                               |
-| **数据库管理（仅管理员：状态 / 备份 / 导入导出 / 一键切换）** | ✅   | `verify:e2e` 13 项：状态与全部数据表行数、教师全端点 403、连接测试（当前库可达 / 不可达 MySQL ok=false）、**Redis 主库 422**、切换校验分支（同库 400）、备份 → 快照导入 → 备份恢复 roundtrip（临时数据被清除）、定时配置校验、SQLite 文件下载；**切换子进程链路真机实测**：快照 728 行 → generate → db push → apply-snapshot 逐表一致；`verify:web`：数据库管理页（仅管理员）状态卡与备份表渲染                                                           |
-| **更新检查（服务端 / Web 端 / 客户端）**                      | ✅   | `verify:e2e` 4 项：未登录 401、管理员结构完整且本机版本取自 package.json、教师可查但 `force` 仅管理员生效、健康检查暴露版本号与模块清单（含 update 模块）；`verify:desktop` 4 项：IPC 返回结构正确（无外网时降级 `ok=false` 且带原因）、结果带缓存、冒烟模式跳过启动自动检查、关于页出现「检查更新」；`verify:web`：「顶栏用户菜单 → 弹窗给出结论并可关闭」。**真机联网实测**：`GET /api/update/check` → `ok=true`、`latestVersion=1.0.0`、5 个附件、更新说明 1358 字 |
-| **其他页面发通知也会联动 ClassIsland**                        | ✅   | `verify:classisland`：「通知发布页发的通知也会推送」「叫人也会推送」；2026-09-27 在真机（ClassIsland 2.1.0.1 + 本插件）上实测过，当时的抓图留在 `docs/screenshots/classisland/`                                                                                                                                                                                                                                                                                        |
+| **数据库管理（仅管理员：状态 / 备份 / 导入导出 / 一键切换）** | ✅   | `verify:e2e` 13 项：状态与全部数据表行数、教师全端点 403、连接测试（当前库可达 / 不可达 MySQL ok=false）、**Redis 主库 422**、切换校验分支（同库 400）、备份 → 快照导入 → 备份恢复 roundtrip（临时数据被清除）、定时配置校验、SQLite 文件下载；**切换子进程链路已完整走通**：快照 728 行 → generate → db push → apply-snapshot 逐表一致；`verify:web`：数据库管理页（仅管理员）状态卡与备份表渲染                                                           |
+| **更新检查（服务端 / Web 端 / 客户端）**                      | ✅   | `verify:e2e` 4 项：未登录 401、管理员结构完整且版本取自 package.json、教师可查但 `force` 仅管理员生效、健康检查暴露版本号与模块清单（含 update 模块）；`verify:desktop` 4 项：IPC 返回结构正确（无外网时降级 `ok=false` 且带原因）、结果带缓存、冒烟模式跳过启动自动检查、关于页出现「检查更新」；`verify:web`：「顶栏用户菜单 → 弹窗给出结论并可关闭」 |
+| **其他页面发通知也会联动 ClassIsland**                        | ✅   | `verify:classisland`：「通知发布页发的通知也会推送」「叫人也会推送」；抓图留在 `docs/screenshots/classisland/`                                                                                                                                                                                                                                                                                        |
 | **作业按天查看（日期选择器 + 有作业日期高亮）**               | ✅   | `verify:e2e`：`assignDate` 默认服务器当天、`?date=` 只返回该天、`/homeworks/days` 返回有作业日期、非法日期 422                                                                                                                                                                                                                                                                                                                                        |
 | **支持在客户端录入作业（含自定义快捷短语）**                  | ✅   | `verify:e2e`：班级账号录入 201（归属班主任）、跨班 403；客户端录入弹窗 + 「设置 → 通用」管理短语                                                                                                                                                                                                                                                                                                                                                      |
 | **提醒弹在哪个端由客户端自行选择**                            | ✅   | 客户端「设置 → 提醒」三选一（`verify:desktop`：设置页真实点击 → 写回本地配置）；服务端按班级设置决定是否推送（`verify:classisland`：`client` 时通知与联动页下发都被跳过）                                                                                                                                                                                                                                                                             |
@@ -1543,53 +1543,15 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 | 能成功打包 Windows EXE                                        | ✅   | `-x64-setup.exe` / `-x64-portable.exe`（见 [7. 打包与交付](#7-打包与交付)）                                                                                                                                                                                                                                                                                                                                                    |
 | 提供完整 README（启动、构建、打包、默认账号）                 | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、数据库、打包与常见问题                                                                                                                                                                                                                                                                                                                                                                        |
 
-### 6.2 最近一次实测
+### 6.2 怎么自己跑一遍
 
-| 验证                                                                                         | 结果                                                                                         |
-| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `pnpm verify:e2e`（后端 + 实时 + RBAC + 上课时段 + 导入 + 班级账号 + 数据库管理 + 更新检查） | **190/190** ✅（2026-10-05 实测）                                                            |
-| `pnpm verify:desktop`（客户端冒烟，不弹窗）                                                  | **107/107** ✅ + **89/89** ✅（2026-10-06 实测，0 失败）                                     |
-| `pnpm verify:web`（Web 管理端真实点击回归）                                                  | **32/33**（2026-10-06 实测；未过的 1 项是既有脆弱用例「课表科目为全校统一目录」，见下）      |
-| `pnpm verify:classisland`（设备令牌 / 上报 / 提醒下发与回执 / 镜像契约）                     | **42/42** ✅（2026-10-05 实测）                                                              |
-| `pnpm verify:classisland-plugin`（插件静态契约）                                             | **68/68** ✅                                                                                 |
-| `pnpm typecheck` / `pnpm lint` / `pnpm check:icons`                                          | 全过 ✅（lint 0 error **0 warning**）                                                        |
-| `pnpm build:desktop`（含产物凭据门禁 `check-bundle-secrets`）                                | 通过 ✅（61 个产物文件里无种子凭据字面量）                                                   |
-| `pnpm verify:packaged --exe …`（对打包副本复验）                                             | **105/105** ✅ + **89/89** ✅（2026-10-05 实测，0 失败）                                     |
-| 裁剪后的服务端运行时（起服务 → 登录查表 → `prisma generate` → `tsc` → `db push`）            | 通过 ✅（2026-10-05 实测，建出 14 张表；详见 AGENTS.md §8）                                  |
-| 插件 `dotnet` 编译（`pnpm build:classisland-plugin`）                                        | 0 错误 ✅（1 条预期内的 Avalonia `AVLN3001` 警告）                                           |
-| 数据库切换子进程链路（快照 → generate → db push → 写入目标库）                               | ✅ 实测：728 行逐表一致（users / schedules / grades 抽查一致）                               |
-| `pnpm dist:server`（服务端安装包 + Web 端）                                                  | ✅ 打出 ~62MB 安装程序（随包内置切换链路所需的 prisma CLI 与 tsc，并在打包末尾做运行时裁剪） |
-| 安装程序完整生命周期（静默安装 → 启动 → 卸载）                                               | 通过 ✅（安装到 `%LOCALAPPDATA%\Programs`，卸载干净）                                        |
-| 便捷版（单文件）解包启动                                                                     | 通过 ✅（wrapper + 多个进程，主窗口正常）                                                    |
-| Docker / Nginx 部署样例                                                                      | 文件已提供；本机无 Docker 未实测 ⚠️                                                         |
-| Linux 一键安装 + `classhelper` 运维命令（`deploy/install.sh` / `deploy/classhelper` / `pnpm dist:server:linux`） | 脚本与文档已交付，本地静态检查通过（`bash -n`、ESLint 0 error）；**Linux 实机验收待做** ⚠️（清单见 [linux-deploy.md](management/linux-deploy.md) §10，`deploy/verify-linux.sh` 可自动跑）。2026-10-06 用交叉构建出了 1.1.2 的包并核对过内容（sha256 自洽、顶层目录与 `--strip-components=1` 对得上、`.cross-built` 标记在位、包内是新图标），但**没在 Linux 上跑过** —— 正式发布仍走 CI |
-
-### 6.3 已知的时序 / 环境相关用例
-
-这些用例**不是回归**，遇到时先看条件，别急着改代码（完整清单见 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) 的「已知脆弱用例」表）：
-
-- **`verify:desktop` 的「真实通知链路」「灵动岛标为已读」等 3 项**：要求**当前不在上课时段**。
-  若种子课表恰有课正在进行，客户端会**正确地**把普通通知暂存到下课（见 [4.6](#46-上课时段策略)），
-  这三项就会红（日志里会写 `客户端判定上课中=true` / `正在上 XXX`）。2026-10-02 那次 99/102 即为此因，
-  2026-10-06 09:27（种子里的「政治 08:55–09:40」正在上）那次 104/107 同因。
-- **`verify:e2e` 的「上课状态接口（at=周一 08:10）」**：种子把周一第 1 节限制在第 1 周，且用例把 `2026-09-07`
-  当第 1 周 —— `.env` 的 `TERM_START_DATE` 对齐到 `2026-09-07` 即全绿。
-- **`verify:web` 的「课表科目为全校统一目录」**：种子给每个班建满了全部科目，下拉里没有可自动建课的「统一科目」分组。
-- **灵动岛交互 / 动画 / 截图留档几个用例在 AI 会话里会间歇性失败**：置顶透明小窗的 rAF 被限流、形变采样抓不到帧，
-  属时序敏感；**先原样重跑一次再动手改代码**。
-- **跑验证脚本大面积报「登录失败 / 401」**：先核对本机 `teacher1` 的密码 —— 本机实测被改成了 `123456`，
-  不是种子默认的 `teacher123`（原因见 AGENTS.md §7 第 51 条）。三套脚本各有各的传参方式：
-
-  | 脚本              | 覆盖凭据的方式                                                                                            |
-  | ----------------- | --------------------------------------------------------------------------------------------------------- |
-  | `verify:desktop`  | `set "ELECTRON_SMOKE_USER=teacher1" && set "ELECTRON_SMOKE_PASSWORD=123456" && pnpm verify:desktop`       |
-  | `verify:packaged` | 同上（`ELECTRON_SMOKE_*`）                                                                                |
-  | `verify:web`      | `set "UI_SMOKE_USER=teacher1" && set "UI_SMOKE_PASS=123456" && pnpm verify:web`（另有 `UI_SMOKE_ADMIN*`） |
-  | `verify:e2e`      | **不支持环境变量**（口令硬编码在脚本里），需先确认本机种子口令或用临时副本（见 AGENTS.md §7 第 51 条）    |
+上面那张表的证据全部来自仓库里的验收脚本 —— 五套脚本怎么跑、覆盖什么、哪些用例是脆弱的、
+失败了怎么判断是不是真回归，见[验收与测试](dev/testing.md)。条目数由脚本自行统计并打印，
+不要在文档里写死容易过期的总数。
 
 ## 7. 打包与交付
 
-### 体积与性能（2026-10-05 优化后实测）
+### 体积与性能（优化后）
 
 | 产物 / 指标                         | 优化前               | 优化后       | 做了什么                                                                                                                                  |
 | ----------------------------------- | -------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1606,7 +1568,7 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 > 没有做的事，以及为什么：Element Plus 仍全量引入（按需引入要改所有视图的样式引入方式与 locale 配置，
 > 收益约 200 到 350KB JS，风险不成比例）；服务端静态资源不做预压缩；客户端不再删 GPU 回退组件
 > （dxcompiler / swiftshader / d3dcompiler，共约 37MB 未压缩，教室老显卡与虚拟机靠它们）。
-> 详见 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) 的 §5 第 53 至 56 条与 §7 第 23 条。
+> 详见 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) 的 §5 第 53 至 56 条。
 
 ### 客户端（Windows EXE）
 
@@ -1619,8 +1581,7 @@ pnpm dist:win     # nsis 安装包 + portable 单文件（需联网下载 NSIS �
 `ELECTRON_BUILDER_BINARIES_MIRROR`，可用环境变量覆盖）；构建缓存固定到仓库内 `.cache/`；
 用 `--config.directories.output` 把输出目录覆盖成 `releases/client/<版本>/`，打包成功后再把
 electron-builder 的原始布局整理成 `安装包/`、`构建中间/`，并把 `win-unpacked/`（约 323MB 的中间物）
-删掉；收尾把交付物完整性标签改成 Medium（Low 标签会导致装不上 / 双击没反应，
-见 [8. 常见问题](#8-常见问题)）。
+删掉。
 
 **只有两个交付物**，都落在 `releases/client/<版本>/安装包/`：`-x64-setup.exe`（NSIS 安装程序）
 与 `-x64-portable.exe`（自解压单文件，双击即用）。解包目录 `win-unpacked/` 只是生成这两个 exe 的
@@ -1628,14 +1589,14 @@ electron-builder 的原始布局整理成 `安装包/`、`构建中间/`，并�
 `tidyArtifacts()` 就排在最后。
 
 > **把修复交付到「已安装的客户端」**：`pnpm dist:win` 只产出 `releases/client/<版本>/` 里的两个安装包。
-> 若学生机上是**安装版**（例如装在 `D:\class\@classhelperdesktop-client`），只更新 release 而不同步安装目录，
+> 若学生机上是**安装版**（例如装在 `%LOCALAPPDATA%\Programs\ClassHelper`），只更新 release 而不同步安装目录，
 > 用户打开的还是旧 `resources/app.asar`，会出现「改了但界面不生效」。两个可行做法：
 >
 > ```powershell
 > # 做法一（推荐）：直接跑新安装包覆盖升级。用户配置在 %APPDATA%，不受影响。
 > #   静默：releases\client\<版本>\安装包\ClassHelper-<版本>-x64-setup.exe /S
-> #   再实测**装好那个副本**真的带上了修复（packaged=true）
-> pnpm verify:packaged --exe "D:\class\@classhelperdesktop-client\ClassHelper.exe"
+> #   再对**装好那个副本**跑一次冒烟，确认真的带上了修复（packaged=true）
+> pnpm verify:packaged --exe "%LOCALAPPDATA%\Programs\ClassHelper\ClassHelper.exe"
 >
 > # 做法二：要按文件覆盖（例如只换 app.asar），先让 portable 自解压出一份再拷
 > #   便携版双击后会解到 %TEMP% 下的一个随机目录，从那里 robocopy 即可。
@@ -1644,14 +1605,14 @@ electron-builder 的原始布局整理成 `安装包/`、`构建中间/`，并�
 > 注意路径变了：`dist-win.mjs` 不再在 releases 里留解包目录，
 > 所以 `packages\desktop-client\release\win-unpacked` 这个旧路径已经不存在了。
 
-最近一次打包实测（产物不入库）：
+各产物的体积（产物不入库）：
 
-| 产物                                              | 大小   | 冒烟结果                                                             |
-| ------------------------------------------------- | ------ | -------------------------------------------------------------------- |
-| 服务端安装程序（内置 Node + Web 端）              | ~62MB  | ✅ 静默安装（升级保留 `.env` 与数据库）→ 自动建库建号 → 服务就绪     |
-| `releases/client/<版本>/安装包/…-portable.exe`    | ~99MB  | ✅ 打包后冒烟全绿，`packaged: true`，退出码 0                        |
-| `releases/client/<版本>/安装包/…-setup.exe`       | ~99MB  | ✅ 构建成功，已嵌入自定义图标                                        |
-| `releases/classisland-plugin/<版本>/…cipx`        | ~88KB  | ✅ 全量编译通过（1 警告 0 错误），包内 DLL 哈希与 `bin/Release` 一致 |
+| 产物                                           | 大小  |
+| ---------------------------------------------- | ----- |
+| 服务端安装程序（内置 Node + Web 端）           | ~62MB |
+| `releases/client/<版本>/安装包/…-portable.exe` | ~99MB |
+| `releases/client/<版本>/安装包/…-setup.exe`    | ~99MB |
+| `releases/classisland-plugin/<版本>/…cipx`     | ~88KB |
 
 ### ClassIsland 插件
 
@@ -1727,8 +1688,8 @@ node website/serve.mjs        # http://127.0.0.1:5180，只是本地预览用
 展示图统一放在 `docs/images/` —— 文档站、README 与官网吃的是**同一份文件**，
 重新采集的完整命令（含目录与清理）写在[验收与测试](dev/testing.md)的「截图留档」一节。
 
-两个环境变量在 `smoke.ts` 里是**默认值为洋红**的开关：冒烟平时故意用洋红主题色把验证实例的岛
-和用户自己的岛区分开（见 AGENTS.md §5 第 38 条），采集留档图时才换成产品默认外观。
+两个环境变量在 `smoke.ts` 里是**默认值为洋红**的开关：冒烟平时故意用洋红主题色，把验证实例的岛
+与真实客户端区分开（见 AGENTS.md §5 第 38 条），采集留档图时才换成产品默认外观。
 
 > 采集脚本会把窗口**真的弹在屏幕上**（和 `verify:web` / `verify:desktop` 一样），跑的时候别动键鼠。
 > 客户端留档会**临时停掉 CSS 动画**再截图：窗口被遮挡时 Chromium 冻结动画，页面入场动画的起始帧是
@@ -1737,30 +1698,22 @@ node website/serve.mjs        # http://127.0.0.1:5180，只是本地预览用
 
 ## 8. 常见问题
 
-**开发环境的坑请直接看 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) §7「本机环境已知坑」** —— 那里是本仓库唯一维护这些内容的
-地方（含命令坑、代理与 TLS、Low 完整性标签、makensis 临时目录、ClassIsland 路径与日志编码、AI 会话里跑
-Electron 验证等）。这里只列最常被问到的几条：
+**开发与构建环境的坑不在本文维护** —— 统一记在仓库根的
+[AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) §7（命令坑、代理与 TLS、
+makensis 临时目录、ClassIsland 路径与日志编码等）。这里只列最常被问到的几条：
 
-1. **客户端装不上 / 便捷版双击没反应 / 应用一闪就没（0x80000003）**
-   现象：安装程序报「拒绝访问」，便捷版双击毫无反应，装上了也启动即退且不写日志。
-   原因：**交付物被打了 Low 完整性标签**（本仓库目录树带此标签、可继承，在仓库内构建就会继承）——
-   带 Low 标签的 exe 会被 Windows 降级运行，写不进 `%LOCALAPPDATA%` / `%TEMP%`；即使装上，Chromium 的
-   子进程（AppContainer，完整性更低）也读不到这些文件而秒崩。
-   处置：`pnpm dist:win` 收尾已自动改成 Medium；手工补救与排查命令见 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) §7 第 7 条。
-   **别把安装测试装进仓库目录里**（会在那儿又继承 Low，看起来像「装完还是坏的」）。
-
-2. **文件传输 / 上传报「服务器内部错误：request entity too large」？**
+1. **文件传输 / 上传报「服务器内部错误：request entity too large」？**
    表格导入的文件上限是 **8MB**（请求体 12MB），超限应返回 413 `IMPORT_TOO_LARGE` 与中文提示。
    若看到英文的英文兜底错误，说明该异常没被 `middleware/error.ts` 映射，属 bug。
 
-3. **`pnpm db:deploy` 在根目录不存在**
+2. **`pnpm db:deploy` 在根目录不存在**
    根 `package.json` 只声明了 `db:generate / db:migrate / db:seed / db:reset / db:studio`。
    正确写法：`pnpm --filter @classhelper/server db:deploy`。
 
-4. **`pnpm db:seed` 报 `Cannot find module '.../@classhelper/shared/dist/index.js'`**
+3. **`pnpm db:seed` 报 `Cannot find module '.../@classhelper/shared/dist/index.js'`**
    `packages/shared` 还没构建（它产出 `dist`，三端与 seed 都依赖）。先 `pnpm build:shared`。
 
-5. **后端改了代码不生效？** `tsx src/index.ts` 不热载 —— 用 `pnpm dev:server`（watch），或重启服务端。
+4. **后端改了代码不生效？** `tsx src/index.ts` 不热载 —— 用 `pnpm dev:server`（watch），或重启服务端。
    切换数据库之后**必须重启**才会连新库。
 
 ## 9. 后续可选增强

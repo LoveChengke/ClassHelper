@@ -53,21 +53,22 @@ pnpm build && pnpm verify:web
 | `verify:web`「课表科目为全校统一目录」                    | 种子给每个班建满了全部科目，下拉里就没有可自动建课的「统一科目」分组                                                                             |
 | `verify:desktop`「课表今天时间轴」                        | 凌晨约 00:00–03:00 时「已结束」探针被夹紧成 0 长度而被过滤                                                                                       |
 | `verify:desktop`「作业看板全屏自适应」                    | 演示数据某天有 6 条长作业、而冒烟窗口只有约 543px 高时，缩放被下限 0.45 钳住 → 必然溢出                                                          |
-| 岛交互 / 岛动画 / 岛截图留档                              | **AI 会话里会间歇性失败**：置顶透明小窗的 rAF 被限流、形变采样抓不到帧。**先原样重跑一次再动手改**                                               |
+| 岛交互 / 岛动画 / 岛截图留档                              | 窗口被遮挡或跑在远程会话里时会间歇性失败：置顶透明小窗的 rAF 被限流、形变采样抓不到帧。**先原样重跑一次再动手改**                                |
 
 ## 大面积报「登录失败 / 401」时
 
-先核对本机 `teacher1` 的密码 —— 本机实测可能被改成了 `123456`，不是种子默认的 `teacher123`
-（原因是「修改密码」弹窗留空会落到默认初始密码）。**处理方式是用环境变量传实际凭据，不要去改数据。**
+先确认演示账号的**当前**口令。种子脚本硬编码的是 `teacher123`，但「修改密码」弹窗留空会落到
+默认初始密码（`DEFAULT_TEACHER_PASSWORD`，默认 `123456`），任何一次误操作都会把它改掉 ——
+而**两个演示账号不一定一起漂**，所以不能简单地全局替换。
 
-两个演示账号的口令**不一定一起漂**，所以不能简单地全局替换。
+**处理方式是用环境变量传实际凭据，不要去改数据。**
 
-| 脚本              | 覆盖凭据的方式                                                                                                                |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `verify:desktop`  | `set "ELECTRON_SMOKE_USER=teacher1" && set "ELECTRON_SMOKE_PASSWORD=123456" && pnpm verify:desktop`                           |
-| `verify:packaged` | 同上（`ELECTRON_SMOKE_*`）                                                                                                    |
-| `verify:web`      | `set "UI_SMOKE_USER=teacher1" && set "UI_SMOKE_PASS=123456" && pnpm verify:web`（另有 `UI_SMOKE_ADMIN*`）                     |
-| `verify:e2e`      | **不支持环境变量**，需用临时副本替换（且副本必须放在 `packages/server/scripts/` 里，否则 `import 'socket.io-client'` 会失败） |
+| 脚本              | 覆盖凭据的方式                                                                                                                                              |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `verify:desktop`  | `set "ELECTRON_SMOKE_USER=teacher1" && set "ELECTRON_SMOKE_PASSWORD=123456" && pnpm verify:desktop`                                                         |
+| `verify:packaged` | 同上（`ELECTRON_SMOKE_*`）                                                                                                                                  |
+| `verify:web`      | `set "UI_SMOKE_USER=teacher1" && set "UI_SMOKE_PASS=123456" && pnpm verify:web`（另有 `UI_SMOKE_ADMIN*`）                                                   |
+| `verify:e2e`      | **不支持环境变量**（口令硬编码在脚本里），需自己用改过口令的临时副本跑；副本必须放在 `packages/server/scripts/` 里，否则 `import 'socket.io-client'` 会失败 |
 
 ## 冒烟会真的动你的屏幕
 

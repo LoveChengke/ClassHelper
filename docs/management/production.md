@@ -2,12 +2,12 @@
 
 本文档覆盖三种上线形态，按适用场景选择：
 
-| 形态                  | 适用场景                                     | 产物                                                     | 本机验证情况                           |
-| --------------------- | -------------------------------------------- | -------------------------------------------------------- | -------------------------------------- |
-| **A. Windows 安装包** | 学校机房、教师办公电脑（单机即完整系统）     | `releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe` | ✅ 已完整实测（静默安装/启停/卸载/UI） |
-| **B. Docker + MySQL** | 云服务器、多终端共享一套数据（推荐长期方案） | `deploy/Dockerfile` + `deploy/docker-compose.yml`        | ⚠️ 文件已提供，本机无 Docker 未实测    |
-| **C. Linux 原生部署** | 已有 Linux 服务器（systemd，SQLite 或 MySQL） | [`deploy/install.sh`](https://github.com/LoveChengke/classhelper/blob/master/deploy/install.sh) + `classhelper` 运维命令             | ⚠️ 本机无 Linux，实机验收见 [linux-deploy.md](linux-deploy.md) §10 |
-| **D. 手动部署**       | 已有 Node 环境的服务器、需要自定义           | 在仓库里构建后直接跑（见第四节）                          | ✅ 已实测（163 项端到端）    |
+| 形态                  | 适用场景                                     | 产物                                                     | 验证状态                                                |
+| --------------------- | -------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------- |
+| **A. Windows 安装包** | 学校机房、教师办公电脑（单机即完整系统）     | `releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe` | ✅ 已验证（静默安装 / 启停 / 卸载 / UI）                |
+| **B. Docker + MySQL** | 云服务器、多终端共享一套数据（推荐长期方案） | `deploy/Dockerfile` + `deploy/docker-compose.yml`        | ⚠️ 文件已提供，尚未实机验证                             |
+| **C. Linux 原生部署** | 已有 Linux 服务器（systemd，SQLite 或 MySQL） | [`deploy/install.sh`](https://github.com/LoveChengke/classhelper/blob/master/deploy/install.sh) + `classhelper` 运维命令             | ⚠️ 实机验收清单见 [linux-deploy.md](linux-deploy.md) §10 |
+| **D. 手动部署**       | 已有 Node 环境的服务器、需要自定义           | 在仓库里构建后直接跑（见第四节）                          | ✅ 已验证（端到端验收通过）                             |
 
 ---
 
@@ -101,8 +101,8 @@ uninstall-service.cmd   :: 删除计划任务
 
 ## 二、Docker + MySQL（形态 B，云部署推荐）
 
-> 本机没有 Docker，因此这套文件未在本机实测；结构经过与已验证的产物对照（依赖清单、
-> 目录布局、迁移方式与服务端完全一致）。
+> 这套文件与已验证的产物结构一致（依赖清单、目录布局、迁移方式与服务端完全相同），
+> 但**尚未在真实 Docker 环境跑过**。第一次上线请先在测试机走一遍。
 
 ```bash
 cp deploy/.env.example deploy/.env
@@ -392,7 +392,7 @@ pnpm --filter @classhelper/server start      # 或 node packages/server/dist/ind
 
 ## 八、性能与容量参考
 
-- 单机 SQLite 形态适合**单校规模**（数千用户、每天数百次写操作），实测 62 项接口与实时推送全部达标。
+- 单机 SQLite 形态适合**单校规模**（数千用户、每天数百次写操作），接口与实时推送均已通过端到端验收。
 - 多校区 / 高并发建议切 MySQL，并横向扩容服务端（Socket.IO 需要配置 Redis adapter 才能多实例广播，
   当前为单实例广播；如需多实例请参考 `packages/server/src/realtime/socket.ts` 引入 `@socket.io/redis-adapter`）。
 - 静态资源已设置 immutable 长缓存 + gzip；Web 管理端为 SPA，首屏包体约 900 KB（gzip 约 290 KB），

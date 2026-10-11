@@ -1,6 +1,6 @@
 # WinIsland 视觉设计系统（Design Token 规格）
 
-来源：`D:\classhelper\.cache\winisland-ref\WinIsland-master`（只读 checkout）。
+来源：[WinIsland](https://github.com/WinIslandProject/WinIsland) 的源码（`WinIsland-master`，只读 checkout）。
 所有数值均取自代码常量，标注了「常量名 = 值 @ 文件」。未在代码中找到的项明确写「未找到」。
 
 关键前提：**岛内所有几何尺寸都乘以 `compact_scale`（默认 1.0）或 `expanded_scale`（默认 1.0）**，

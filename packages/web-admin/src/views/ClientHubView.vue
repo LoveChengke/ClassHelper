@@ -11,6 +11,7 @@ import {
   relativeTime,
   type ClassDto,
   type ClassHelperStatusDto,
+  type ClientCommandDto,
   type ClientCommandKind,
   type ClientDeviceDto,
   type IntegrationDeviceDto,
@@ -280,8 +281,27 @@ async function pushUpdateToClass(): Promise<void> {
   await loadAll();
 }
 
-async function sendCommand(kind: ClientCommandKind): Promise<void> {
-  const current = detail.value;
+/** 命令种类的中文名。包一层是因为表格插槽里的 `row` 是 any，直接索引常量表过不了类型检查 */
+function commandLabel(command: ClientCommandDto): string {
+  return CLIENT_COMMAND_LABELS[command.kind] ?? command.kind;
+}
+
+/**
+ * 一条远控命令"现在究竟怎么样了"。
+ *
+ * 待执行的那条会在**取消 / 超时**之后从 `pendingCommand` 里消失，界面上不留痕迹 ——
+ * 而最常见的两种"点了没反应"恰恰是：本机没人确认（客户端 60 秒自动按取消）与设备当时离线。
+ * 服务端把最近一条也返回（`lastCommand`），这里把它翻成一句人话。
+ */
+function commandStateText(command: ClientCommandDto): string {  if (command.result) return command.result;
+  if (command.ackedAt) return '已执行';
+  if (command.expiresAt && Date.parse(command.expiresAt) < Date.now()) {
+    return '已过期 —— 下达时机器不在线（命令有效期 10 分钟）';
+  }
+  return '待执行（等这台机器的下一次心跳）';
+}
+
+async function sendCommand(kind: ClientCommandKind): Promise<void> {  const current = detail.value;
   if (!current || current.clients.length === 0) return;
   const label = CLIENT_COMMAND_LABELS[kind];
   await ElMessageBox.confirm(
@@ -295,7 +315,10 @@ async function sendCommand(kind: ClientCommandKind): Promise<void> {
     kind,
     note: `由 ${auth.user?.name ?? '管理员'} 下达`,
   });
-  ElMessage.success(`已下发：成功 ${result.succeeded} / 共 ${result.total} 台`);
+  ElMessage.success(
+    `已下发：成功 ${result.succeeded} / 共 ${result.total} 台 —— ` +
+      '机器上会弹出默认选中「取消」的确认框，60 秒内没人点「确认执行」就按取消处理（详情表里能看到结果）',
+  );
   await loadAll();
 }
 
@@ -577,6 +600,14 @@ onUnmounted(() => {
               </template>
             </el-table-column>
             <el-table-column prop="stateNote" label="状态说明" min-width="140" />
+            <el-table-column label="上次指令" min-width="200">
+              <template #default="{ row }">
+                <span v-if="!row.lastCommand" class="row-value muted">—</span>
+                <span v-else>
+                  {{ commandLabel(row.lastCommand) }} · {{ commandStateText(row.lastCommand) }}
+                </span>
+              </template>
+            </el-table-column>
             <el-table-column label="操作" width="90" fixed="right">
               <template #default="{ row }">
                 <el-button link type="danger" :disabled="!canManageDevices" @click="removeClient(row)">

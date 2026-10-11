@@ -1901,6 +1901,14 @@ export interface ClientDeviceDto {
   online: boolean;
   /** 该设备当前待执行（未回执、未撤销、未过期）的命令；没有则 null */
   pendingCommand: ClientCommandDto | null;
+  /**
+   * **最近一条**远控命令（不管什么状态），用于回答「我刚点了锁屏，怎么没反应？」。
+   *
+   * 待执行的那条在取消 / 超时之后就从 `pendingCommand` 里消失了，Web 端于是一片空白 ——
+   * 而最常见的两种失败恰恰是"本机没人确认（60 秒自动取消）"和"设备当时离线"。
+   * 把结果摆出来，老师才知道该去哪儿补上那一下确认。
+   */
+  lastCommand?: ClientCommandDto | null;
   createdAt: string;
   updatedAt: string;
 }

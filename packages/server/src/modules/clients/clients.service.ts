@@ -209,9 +209,22 @@ export async function listDevices(options: { classId?: string } = {}): Promise<C
     if (!pendingByDevice.has(command.deviceId)) pendingByDevice.set(command.deviceId, command);
   }
 
+  // 「最近一条命令」：待执行的那条在取消 / 超时之后就从 pendingCommand 里消失了，
+  // Web 端于是看不出"我刚点的锁屏到底怎么了"。取最近 500 条（够覆盖一次批量下发）按设备分组。
+  const recent = (await prisma.clientCommand.findMany({
+    where: { deviceId: { in: rows.map((row) => row.id) } },
+    orderBy: { createdAt: 'desc' },
+    take: 500,
+  })) as unknown as CommandRow[];
+  const lastByDevice = new Map<string, CommandRow>();
+  for (const command of recent) {
+    if (!lastByDevice.has(command.deviceId)) lastByDevice.set(command.deviceId, command);
+  }
+
   return rows.map((row) => {
     const heartbeat = row.lastHeartbeatAt;
     const pending = pendingByDevice.get(row.id);
+    const last = lastByDevice.get(row.id);
     return {
       id: row.id,
       classId: row.classId,
@@ -228,6 +241,7 @@ export async function listDevices(options: { classId?: string } = {}): Promise<C
       stateNote: row.stateNote,
       online: Boolean(heartbeat && now.getTime() - heartbeat.getTime() < CLIENT_ONLINE_WINDOW_MS),
       pendingCommand: pending ? toCommandDto(pending) : null,
+      lastCommand: last ? toCommandDto(last) : null,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };

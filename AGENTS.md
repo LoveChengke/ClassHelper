@@ -1320,6 +1320,18 @@ term / dashboard / database / update / permissions / clients / system`。
     然后 `POST /api/clients/commands/:id/ack`（body 带 `deviceKey`，服务端据此校验归属，重复回执幂等）。
     同一台机器上**同一条命令只弹一次**（内存去重），回执失败只暂存重试、不重复弹窗。
 
+    **`executeCommand()` 必须显式监听子进程的 `error` 事件**（2026-10-11 修）：
+    `spawn` 找不到可执行文件 / 没权限时**不抛异常**，而是在 next tick 发一个异步 `error` 事件 ——
+    只包 `try/catch` 会一路走到 `return { ok: true }`，回执写着"已下达系统命令"，机器却纹丝不动。
+    现在等 200ms 的窗口确认没立刻报错，失败如实回执。
+
+    **「点了没反应」必须看得出来**：命令被取消 / 过期后就从 `pendingCommand` 里消失，Web 端原本一片空白，
+    而最常见的两种失败恰恰是"本机没人确认（60 秒自动取消）"与"下达时机器离线"。
+    所以 `GET /clients/devices` 一并返回 `lastCommand`（最近一条，不论状态），
+    「客户端」页把它翻成一句人话（`ClientHubView` 的 `commandStateText`）。
+    排查这类反馈时先看这一列，再看那台机器的**客户端版本**是否 ≥ 1.3.0 ——
+    远控命令的处理（`client-agent.ts`）是 1.3.0 才有的，旧客户端连心跳都不发。
+
 70. **客户端安装包由服务端下载并缓存，教室机不直连 GitHub。** 原因有两条：Web 端 CSP
     （`connect-src 'self' ws wss …`）不允许浏览器直连 GitHub，而教室机常常根本没有外网。
     所以 `POST /api/update/client/fetch` 由**服务端**下载到 `<serverRoot>/../data/client-releases/<版本>/`

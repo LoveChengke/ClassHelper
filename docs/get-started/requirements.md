@@ -64,7 +64,7 @@ ldd --version | head -1
 | 教室机器 / 老师电脑也要用 | 客户端与管理端填服务器的**局域网 IP**（如 `http://192.168.1.10:4000`），防火墙放行 4000 |
 | 公网访问                  | 前面加 Nginx / Caddy 反代并启用 HTTPS，见[生产部署指南](../management/production.md)    |
 
-> **别用代理**。本机自测时用 `curl.exe --noproxy '*'`，PowerShell 用 `-NoProxy`；
+> **别用代理**。自测时用 `curl.exe --noproxy '*'`，PowerShell 用 `-NoProxy`；
 > 教室机器上如果开了系统代理，填服务端地址后可能拿到代理返回的 404。插件里对本地 / 内网地址做了强制直连，
 > 但浏览器与客户端本身不会绕过。
 

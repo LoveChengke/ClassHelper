@@ -224,7 +224,7 @@ pnpm dev                                               # 后端 4000 + Web 端 5
 | 教师           | `teacher1`      | `teacher123` |
 | ClassHelper 班级端（班级） | 班级码 `G101`   | `123456`     |
 
-- [AGENTS.md](AGENTS.md) —— 工程约定与本机踩坑，**改代码前先读它**
+- [AGENTS.md](AGENTS.md) —— 工程约定与开发环境注意事项，**改代码前先读它**
 - [docs/reference.md](docs/reference.md) —— 完整参考（功能行为、接口、验收记录）
 - [docs/dev/architecture.md](docs/dev/architecture.md) —— 架构总览
 

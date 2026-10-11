@@ -317,7 +317,22 @@ async function executeCommand(kind: ClientCommandKind): Promise<{ ok: boolean; r
 
   try {
     // detached + unref：不能等它退出（关机/注销会把本进程一起带走）
-    spawn(plan.file, plan.args, { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    const child = spawn(plan.file, plan.args, { detached: true, stdio: 'ignore', windowsHide: true });
+    /**
+     * **必须监听 `error` 事件**：`spawn` 找不到可执行文件（或没权限）时不是抛异常，而是在
+     * next tick 上发一个 `error` 事件 —— 只包 `try/catch` 的话，这种情况会一路走到
+     * `return { ok: true }`，回执写着"已下达系统命令"，Web 端看起来一切正常，机器却纹丝不动。
+     * 等一个很短的窗口（200ms）确认没有立刻报错；真执行成功时子进程本来也要跑一会儿。
+     */
+    const failure = await new Promise<string | null>((resolve) => {
+      child.once('error', (error) => resolve(error.message));
+      setTimeout(() => resolve(null), 200);
+    });
+    child.unref();
+    if (failure) {
+      logger.warn(`远控命令「${CLIENT_COMMAND_LABELS[kind] ?? kind}」无法执行：${failure}`);
+      return { ok: false, result: failure };
+    }
     return { ok: true, result: '已下达系统命令' };
   } catch (error) {
     return { ok: false, result: error instanceof Error ? error.message : String(error) };

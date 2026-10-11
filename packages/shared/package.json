@@ -1,6 +1,6 @@
 {
   "name": "@classhelper/shared",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "private": true,
   "description": "ClassHelper - 三端共享的类型、常量与工具函数",
   "type": "module",

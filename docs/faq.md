@@ -7,24 +7,6 @@ description: 装不上、连不上、改了不生效——最常被问到的那�
 
 ## 安装与启动
 
-### 客户端装不上 / 便捷版双击没反应 / 应用一闪就没了
-
-**现象**：安装程序报「拒绝访问」，便捷版双击毫无反应，装上了也启动即退且不写日志
-（退出码 `0x80000003`）。
-
-**原因**：交付物被打了 **Low 完整性标签**。带 Low 标签的 exe 会被 Windows 降级运行：
-写不进 `%LOCALAPPDATA%` / `%TEMP%`；即使装上，Chromium 的子进程（完整性更低）也读不到这些文件而秒崩。
-
-**处置**：从 [Releases](https://github.com/LoveChengke/classhelper/releases) 下载的官方包不受影响
-（打包脚本收尾会自动修正标签）。自己构建时如果碰到，用：
-
-```cmd
-icacls <产物目录> /setintegritylevel Medium /T /C
-```
-
-判据是 `icacls <exe> | findstr Mandatory` 里出现 `Low`。
-另外**别把安装测试装进仓库目录里** —— 在那里又会继承 Low。
-
 ### 双击客户端"点了没反应"
 
 **关窗只是隐藏到托盘，进程还在。** 再双击 EXE 会被单实例锁秒退（看起来像没反应），
@@ -148,8 +130,8 @@ Linux 上跑 `sudo classhelper doctor` 有专门一条断言盯着这个软链�
 
 ## 还没解决？
 
-- 开发环境的坑（命令、代理与 TLS、完整性标签、ClassIsland 路径与日志编码……）
-  都记在仓库的 [`AGENTS.md`](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) 里；
+- **开发与构建环境**的问题（命令、代理与 TLS、ClassIsland 路径与日志编码……）
+  记在仓库的 [`AGENTS.md`](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) 里；
 - 功能行为的权威说明在[完整参考](reference.md)；
 - 都不是的话，去 [Issues](https://github.com/LoveChengke/classhelper/issues) 提一个，
   附上版本号（Web 端顶栏 / 客户端「设置 → 关于」里都有）和日志。
