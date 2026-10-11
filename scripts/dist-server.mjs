@@ -797,6 +797,11 @@ function packLinuxTarball() {
   fs.rmSync(LINUX_TARBALL, { force: true });
   const topDir = path.basename(staging); // tar 里套一层目录，安装器用 --strip-components=1 展开
   log(`打包 ${path.relative(root, LINUX_TARBALL)} ...`);
+  // 交付目录**必须自己建**：staging 挪到 .cache/ 之后，`releases/server/<版本>/linux-x64/`
+  // 不再是谁的父目录，没有这一句 tar 会以
+  // `tar (child): ...tar.gz: Cannot open: No such file or directory` 退出码 2 直接失败
+  // （Windows 侧有 buildInstaller() 里的 mkdirSync(INSTALLER_DIR)，Linux 侧原先靠 staging 顺带创建）。
+  fs.mkdirSync(path.dirname(LINUX_TARBALL), { recursive: true });
   // GNU tar 在 Windows 路径上有两个坑（Linux 上路径没有盘符、没有反斜杠，永远踩不到，
   // 只有交叉构建会碰到）：
   //   ① `-f F:\...tar.gz` 里的**盘符冒号**会被当成 `主机:路径` 的远程归档写法，

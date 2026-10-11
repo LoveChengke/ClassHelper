@@ -1043,6 +1043,14 @@ term / dashboard / database / update / permissions / clients / system`。
     并加 `--force-local`。该选项在 Linux 上无害（本地路径本来就该走本地分支），因此无条件加上、
     不做平台分支 —— **Linux 上路径没有盘符，这个坑在 CI 与真机上永远复现不了**，只在交叉构建时现形。
 
+    还有一条**两边都会踩**的：**交付目录必须自己 `mkdir`，别指望谁来顺带创建它。**
+    `releases/server/<版本>/linux-x64/` 曾经是 staging（`linux-x64/classhelper-server-linux-x64/`）的父目录，
+    2026-10-11 把 staging 挪进 `.cache/server-staging/` 之后它就没有创建者了，`tar -czf <那里>/…`
+    直接报 `tar (child): …tar.gz: Cannot open: No such file or directory`、退出码 2 ——
+    **Windows 侧踩不到**（`buildInstaller()` 里有 `mkdirSync(INSTALLER_DIR)`），本地 `pnpm dist:server`
+    永远绿的，只有 CI 上那一次 `pnpm dist:server:linux` 才会红（v1.3.0 实测，run 38109984623）。
+    现在 `packLinuxTarball()` 开头显式建目录，别再把这句删掉。
+
     ⑤ **密码永远走 stdin，命令行一律不接受密码；调用服务端模块的工具必须压掉它的 stdout 噪声。**
     `classhelper password` 用 `read -s` 优先读 `/dev/tty`、无 tty 回退 stdin（这样既能交互，
     也能被验收脚本用管道喂 —— 都不进 history/ps）。输入循环**必须有界**：stdin 结束时 `read`
