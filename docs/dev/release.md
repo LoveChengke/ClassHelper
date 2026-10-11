@@ -19,6 +19,21 @@ description: 改版本号、跑验收、打安装包、发 GitHub Release、发�
 | 要给别人一份新安装包                    | 只在自己机器上跑             |
 | 插件单独发补丁（只动插件第 4 段版本号） | —                            |
 
+## 每次发版必须一起交付的四样东西
+
+打安装包只是其中一件。**少一样都算「发到一半」**：
+
+| #  | 交付物            | 落在哪                                                             | 怎么做                                                       |
+| -- | ----------------- | ------------------------------------------------------------------ | ------------------------------------------------------------ |
+| ①  | **更新日志**      | GitHub Release 的正文                                               | 手写，草稿放 `releases/ReleaseNotes-<版本>.md`，用 `--notes-file` 发布。别只挂自动生成的列表 |
+| ②  | **Linux 服务端包** | Release 上的 `classhelper-server-linux-x64-<版本>.tar.gz`           | tag 推上去由 CI 构建；**推完去 Actions 确认没红**（见第 7 步）  |
+| ③  | **文档**          | `docs/reference.md`（功能说明 + 验收对照表）与相关章节                | 新增功能补对应小节；改交付形态一并改第 2 章 / 第 7 章          |
+| ④  | **官网与 README** | `website/index.html`、`website/download.html`、`README.md`          | 新功能补进官网功能块与 README 功能清单；版本号由脚本覆盖       |
+
+更新日志的骨架（照 1.2.0 / 1.3.0 那两份写）：
+**一句话定位 → 分节讲功能 → ⚠️ 升级须知（含会自动应用的迁移）→ 验收表 → 产物表**。
+验收表里**只写真跑过的数字**，没跑就直说没跑，不要照抄上一版的。
+
 ## 版本号写在哪（14 处 / 12 个文件）
 
 同一个版本号分散在 14 个落点上，**手工改必然漏一处**，而漏掉的那处不会报错：
@@ -143,7 +158,7 @@ cp "releases/client/$V/安装包/"*-x64-portable.exe ".cache/release-staging/Cla
 cp "releases/server/$V/安装包/"*-x64-setup.exe    ".cache/release-staging/ClassHelper-$V-x64-server-setup.exe"
 cp "releases/classisland-plugin/$V/安装包/ClassHelper.ClassIslandPlugin.cipx" .cache/release-staging/
 
-gh release create v$V --title "v$V" --generate-notes
+gh release create v$V --title "ClassHelper v$V（<一句话定位>）" --notes-file "releases/ReleaseNotes-$V.md"
 gh release upload v$V .cache/release-staging/* "releases/SHA256SUMS-$V.txt" --clobber
 ```
 
@@ -172,6 +187,15 @@ gh release upload v$V .cache/release-staging/* "releases/SHA256SUMS-$V.txt" --cl
 ```bash
 gh workflow run release-linux-server.yml -f tag=v1.1.3 -f attach=true
 ```
+
+> **CI 是按 tag 的 ref 检出源码的。** 发完版又发现构建脚本（或任何影响出包的代码）要修时，
+> **光推 master 不够** —— CI 仍会拿旧 tag 的源码跑，得把 tag 挪到修复后的提交：
+> `git tag -f v<版本> <提交> && git push --force origin v<版本>`，tag 一变会自动重跑。
+> 1.3.0 实测踩过：tag 指的那个提交里打包脚本有个 bug，CI 红了、Release 上少一个 Linux 包，
+> 而本地 `pnpm dist:server` 一直是绿的（Windows 侧走另一条分支）。
+>
+> 另外，本页第 8 步的「官网与文档站」是**另一条**流水线（master 推送触发）——
+> 它绿不代表 Linux 包出来了，推完 tag 要去 `gh run list --limit 5` 看一眼。
 
 ### 8. 官网与文档站
 

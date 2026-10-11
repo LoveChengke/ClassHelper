@@ -432,7 +432,9 @@ pnpm verify:packaged --exe "releases/client/<版本>/安装包/ClassHelper-<版�
 git add -A && git commit -m "chore(release): <版本>" && git push origin master
 
 # ⑦ 开 Release（gh release create 会创建并推送 tag，从而触发 Linux 包的 CI；见下）
-gh release create v<版本> --title "v<版本>" --generate-notes
+#    正文用手写的更新日志，别只留 --generate-notes 的自动列表（见「每次发版必须一起交付的四样东西」）
+gh release create v<版本> --title "ClassHelper v<版本>（<一句话定位>）" \
+  --notes-file releases/ReleaseNotes-<版本>.md
 gh release upload v<版本> \
   releases/client/<版本>/安装包/*.exe \
   releases/classisland-plugin/<版本>/安装包/*.cipx \
@@ -477,6 +479,36 @@ gh workflow run release-linux-server.yml -f tag=v<版本> -f attach=true
 
 **已发布的版本号不要复用**：客户端把它记进「忽略此版本」，两端各有 30 分钟缓存 ——
 同号换内容会让「检查更新」永久失灵。要修就 `pnpm version:bump patch` 发新号。
+
+#### 每次发版必须一起交付的四样东西
+
+`pnpm dist:all` 只产出安装包。**每次版本迭代都要把这四样一起做掉**，少一样都算「发到一半」：
+
+| #  | 交付物        | 落在哪                                                       | 怎么做                                                                                                     |
+| -- | ------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| ①  | **更新日志**  | GitHub Release 的正文                                         | 手写，草稿放 `releases/ReleaseNotes-<版本>.md`（与它描述的产物同一层），用 `gh release create/edit --notes-file` 发布。**不要**只挂 `--generate-notes` 的自动列表 |
+| ②  | **Linux 服务端包** | Release 上的 `classhelper-server-linux-x64-<版本>.tar.gz` | tag 推上去由 `release-linux-server.yml` 构建；**推完必须去 Actions 确认没红**                              |
+| ③  | **文档**      | `docs/reference.md`（功能说明 + 验收对照表）与相关章节          | 新增功能补对应小节；改交付形态一并改 §2 / §7 与 `docs/dev/*`                                               |
+| ④  | **官网与 README** | `website/index.html`（功能块）、`website/download.html`（兜底版本号）、`README.md`（功能清单） | 新功能补进功能块 / 清单；页面里的版本号由 `pnpm version:bump` 覆盖，不用手写                                |
+
+更新日志的骨架照 1.2.0 / 1.3.0 那两份：**一句话定位 → 分节讲功能 → ⚠️ 升级须知（含自动应用的迁移）→
+验收表 → 产物表**。验收表里**只写真跑过的数字**，没跑就直说没跑，别照抄上一版的。
+
+**② 有个很容易漏的坑：CI 是按 tag 的 ref 检出源码的**（`actions/checkout` 的
+`ref: ${{ steps.ref.outputs.tag }}`）。所以发完版又发现构建脚本（或任何影响出包的代码）要修时，
+**光推 master 不够** —— CI 仍会拿旧 tag 的源码跑，必须把 tag 挪到修复后的提交：
+
+```bash
+git tag -f v<版本> <修复后的提交> && git push --force origin v<版本>
+```
+
+tag 一变会自动重跑。v1.3.0 实测踩过：tag 指的那个提交里 `dist-server.mjs` 有个 bug
+（见 §5 第 59 条 ④），CI 红了、Release 上少一个 Linux 包，而本地完全看不出来 ——
+Windows 侧走的是另一条分支，`pnpm dist:server` 一直绿。
+
+**推完 tag 去 `gh run list --limit 5` 看一眼。** `发布官网与文档站`（master 推送触发）与
+`发布 Linux 服务端安装包`（tag 推送触发）是两条独立流水线，**前者绿不代表后者出来了**；
+失败用 `gh run view <id>` 定位到具体是哪一步。
 
 #### 官网与文档站怎么发布
 
