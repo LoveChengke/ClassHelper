@@ -7,7 +7,7 @@
 | **A. Windows 安装包** | 学校机房、教师办公电脑（单机即完整系统）     | `releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe` | ✅ 已完整实测（静默安装/启停/卸载/UI） |
 | **B. Docker + MySQL** | 云服务器、多终端共享一套数据（推荐长期方案） | `deploy/Dockerfile` + `deploy/docker-compose.yml`        | ⚠️ 文件已提供，本机无 Docker 未实测    |
 | **C. Linux 原生部署** | 已有 Linux 服务器（systemd，SQLite 或 MySQL） | [`deploy/install.sh`](https://github.com/LoveChengke/classhelper/blob/master/deploy/install.sh) + `classhelper` 运维命令             | ⚠️ 本机无 Linux，实机验收见 [linux-deploy.md](linux-deploy.md) §10 |
-| **D. 手动部署**       | 已有 Node 环境的服务器、需要自定义           | `pnpm dist:server` 的免安装目录                          | ✅ 免安装目录已实测（163 项端到端）    |
+| **D. 手动部署**       | 已有 Node 环境的服务器、需要自定义           | 在仓库里构建后直接跑（见第四节）                          | ✅ 已实测（163 项端到端）    |
 
 ---
 
@@ -22,10 +22,13 @@ pnpm dist:server -- --reuse-deps   # 迭代打包：复用已安装依赖，跳�
 
 产物：
 
-| 路径                                                                    | 说明                                            |
-| ----------------------------------------------------------------------- | ----------------------------------------------- |
-| `releases/server/<版本>/免安装/`                                        | 免安装目录，可直接拷到任意 Windows x64 机器运行 |
-| `releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe`   | 安装程序（约 62 MB，NSIS）                      |
+| 路径                                                                    | 说明                       |
+| ----------------------------------------------------------------------- | -------------------------- |
+| `releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe` | 安装程序（约 62 MB，NSIS） |
+
+> 组装出来的运行时（内置 Node + 生产依赖 + 后端与 Web 产物，约 335 MB）是打安装包的中间物，
+> 落在 `.cache/server-staging/<版本>/`，脚本打完就删 —— 交付目录里只留安装程序。
+> 需要在有 Node 的机器上手动跑，见第四节。
 
 打包内容：内置 **Node 运行时**（目标机无需安装 Node.js）、后端产物、Web 管理端产物、
 生产依赖（真实目录，非软链）、迁移 SQL、`.env`（随机 JWT 密钥）、启停脚本。
@@ -38,7 +41,8 @@ pnpm dist:server -- --reuse-deps   # 迭代打包：复用已安装依赖，跳�
 - 静默安装：`"ClassHelper 服务端-1.2.0-x64-setup.exe" /S`
 - 开始菜单：启动服务 / 停止服务 / 重启服务 / 打开管理端 / 使用说明 / 卸载
 - 桌面：`ClassHelper 服务端.lnk`（打开管理端）
-- 自动加入当前用户开机自启（`HKCU\...\CurrentVersion\Run`）
+- **开机自启动可选**：安装向导的组件页里勾选（默认勾选），装完之后还能在管理端「系统设置」里随时开关
+  （`GET/PUT /api/system/autostart`）；勾选时写的是 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\ClassHelperServer`
 - 卸载信息注册到「应用和功能」
 
 安装完成后服务会自动启动并完成首次初始化：
@@ -274,20 +278,26 @@ sudo bash /tmp/verify-linux.sh --full --package /tmp/classhelper-server-linux-x6
 
 ## 四、手动部署（形态 D）
 
+目标机已有 Node.js（≥ 20.19）时，不需要任何安装包，直接在仓库里构建后跑：
+
 ```bash
 pnpm install
 pnpm build:shared
 pnpm --filter @classhelper/server build
 pnpm --filter @classhelper/web-admin build
-pnpm dist:server -- --reuse-deps      # 得到 releases/server/<版本>/免安装/ 免安装目录
 ```
 
-把该目录拷贝到目标机，编辑 `.env`（端口、数据库、密钥、跨域），然后：
+按目标机的实际情况写好 `packages/server/.env`（端口、数据库、密钥、跨域），然后：
 
-```cmd
-start.cmd      :: Windows
-# 或直接：node server/dist/index.js   （Linux/macOS 用系统 node，见上面的形态 C）
+```bash
+pnpm --filter @classhelper/server start      # 或 node packages/server/dist/index.js
 ```
+
+> 想把这份构建结果整体拷到另一台机器，就自己带上这四样：
+> `packages/server/dist`、`packages/server/node_modules`（含 `src/generated/prisma`）、
+> `packages/web-admin/dist`（服务端按 `web/` 静态托管）、以及 `packages/shared/dist`。
+> `pnpm dist:server` 组装的正是这套东西，只是它现在把结果当中间物用、打完即删 ——
+> 需要留档时把 `.cache/server-staging/<版本>/win/` 在打包过程中拷出来即可。
 
 数据库初始化二选一：
 

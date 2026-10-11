@@ -37,7 +37,7 @@ class-helper/
 │   ├── generate-icons.mjs       # 启动 Electron 跑 icons/render.cjs（= pnpm icons）
 │   ├── icons/render.cjs         # 把 classhelper.png 重采样成各端图标（CommonJS）
 │   ├── version.mjs              # 版本号单一来源的读写与一致性校验（= pnpm version:*）
-│   ├── dist-server.mjs          # 服务端 + Web 管理端打包（免安装目录 + NSIS 安装程序）
+│   ├── dist-server.mjs          # 服务端 + Web 管理端打包（组装运行时 → NSIS 安装程序）
 │   ├── verify-packaged.mjs      # 对打包后 / 已安装的客户端 EXE 复跑冒烟
 │   ├── lib/                     # electron-env / node-runtime / smoke-class
 │   ├── nsis/server-installer.nsi# 安装程序脚本模板（版本号由 dist-server 注入）
@@ -66,7 +66,7 @@ class-helper/
     ├── shared/                  # 三端共享：类型契约、常量、权限矩阵、动效令牌、工具函数
     │   └── src/{types,constants,permissions,motion,island-layout,utils,index}.ts
     ├── server/                  # 后端服务
-    │   ├── prisma/schema.prisma # 数据模型（14 个 model，只有一份，切库改 provider）
+    │   ├── prisma/schema.prisma # 数据模型（24 个 model，只有一份，切库改 provider）
     │   ├── prisma/migrations/   # 迁移历史（10 个）
     │   ├── prisma/seed.ts       # 种子数据（会清空业务表后重建演示数据）
     │   ├── scripts/             # verify-e2e.mjs / verify-classisland.mjs / apply-column-migrations.cjs
@@ -105,9 +105,10 @@ class-helper/
 后端每个功能是一个独立目录，统一契约：
 
 ```ts
-// packages/server/src/modules/registry.ts（当前 15 个模块）
+// packages/server/src/modules/registry.ts（当前 21 个模块）
 export const apiModules: ApiModule[] = [
   authModule,
+  aiModule, // 大模型助手（只解析不落库，见 docs/dev/api.md）
   classesModule,
   coursesModule,
   schedulesModule,
@@ -119,9 +120,14 @@ export const apiModules: ApiModule[] = [
   gradesModule,
   studentsModule,
   teachersModule,
+  archivesModule,
+  termModule,
   dashboardModule,
   databaseModule, // 数据库管理（仅管理员）
-  updateModule, // 更新检查（服务端唯一出网请求）
+  updateModule, // 更新检查 + 客户端安装包缓存与统一下发
+  permissionsModule, // 权限组管理
+  clientsModule, // 客户端设备心跳 / 远控命令
+  systemModule, // 开发者模式 / 开机自启 / 运行诊断
 ].filter((module) => module.enabled !== false);
 ```
 
@@ -138,7 +144,8 @@ export const apiModules: ApiModule[] = [
 | 约定                         | 为什么                                                                                                       |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | **统一响应与校验**           | 用 `lib/http.ts` 的 `sendOk/sendCreated`，用 `middleware/validate.ts` 挂 zod，错误交给 `middleware/error.ts` |
-| **权限判在服务层**           | 路由只做角色过滤，班级维度的判断用 `lib/access.ts` 断言 —— 前端隐藏 ≠ 权限                                   |
+| **功能级准入看权限键**       | 路由挂 `requirePermission('…')` / `requireAnyPermission(…)`，角色只是默认模板（`ROLE_DEFAULT_PERMISSIONS`）—— 见 `docs/dev/permissions.md` |
+| **权限判在服务层**           | 权限组只管功能级；班级维度与科目维度仍用 `lib/access.ts` 的断言（`assertCanManageSubjectContent` 等），**权限组不可覆盖** —— 前端隐藏 ≠ 权限 |
 | **周一为新一周的第一天**     | 周次口径唯一：`resolveCurrentWeek(TERM_START_DATE, now, MAX_TERM_WEEK)`                                      |
 | **作业按 `assignDate` 归类** | 用 `createdAt`（UTC）会在晚上把作业算到第二天                                                                |
 | **新增实时事件要改三处**     | 服务端 bus/socket、Web 端订阅、客户端订阅（灵动岛也依赖）                                                    |

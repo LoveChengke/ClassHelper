@@ -95,6 +95,12 @@
   --el-border-color-lighter: rgba(0, 0, 0, 0.05);
   --el-fill-color-blank: transparent;
   --el-font-size-base: 13px;
+
+  /* 关怀模式的字号倍率（需求 14）。
+   * 平时恒为 1：它只作为「当前有没有放大」的单一事实来源，方便 JS 侧读取与断言，
+   * 真正的放大规则集中在文件末尾的 `html.care-mode` 块里（那里才是覆盖点，
+   * 且**刻意只动字号**——圆角 / 阴影 / 侧栏宽度等几何令牌一律不碰）。 */
+  --ch-font-scale: 1;
 }
 
 /* ---------------------------------------------------------------- 深色主题 */
@@ -945,4 +951,62 @@ textarea {
 
 ::view-transition-new(root) {
   z-index: 2;
+}
+
+/* ------------------------------------------------------------ 关怀模式（需求 14）
+ *
+ * 给视力不佳的用户把**正文与控件**整体放大一档（约 +15%）。由 `stores/ui.ts` 的
+ * `applyCareMode()` 在首屏渲染前按 `config.careMode` 给 `<html>` 挂/摘 `.care-mode` 类。
+ *
+ * 三条刻意的边界，改这个块之前先读：
+ *
+ * 1. **只放大字号，不动几何。** 圆角（`--ch-radius-*`）、阴影（`--ch-shadow-*`）、
+ *    卡片内边距、侧栏宽度一律不碰 —— 放大字号已经会让文字换行，再动几何就是"另一个主题"，
+ *    而且 `verify:desktop` 的多条断言量的是像素几何。
+ * 2. **侧栏导轨（`.ch-nav`）的条目字号不在这里放大。** §5 第 49 条那套"折叠成图标导轨"
+ *    的硬要求（导轨宽度、条目高度、折叠态文字必须既无宽度又透明）是按固定几何量出来的，
+ *    动导航条目字号会让折叠态文字重新占宽而断言变红。导航的可见标签保持原字号。
+ * 3. **用 `html.care-mode` 而不是 `:root`**：特异性 (0,1,1) 高于普通类选择器，
+ *    能稳定压过上面那些 `.page-title` / `.el-card__header` 等单类规则，不必写 `!important`。
+ *    深色主题无关 —— 这里一条颜色都没写。
+ */
+html.care-mode {
+  /* 放大倍率放在这里，下面的覆盖全部由它算出来 —— 想再调一档只改这一个数 */
+  --ch-font-scale: 1.15;
+  /* 覆盖 Element Plus 的基准字号：按钮、输入框、下拉、分页、消息框等控件都跟着它走
+     （基准值是 :root 里的 13px，见上面的 Element Plus 变量对齐） */
+  --el-font-size-base: calc(13px * var(--ch-font-scale));
+}
+
+/* 页面标题与副标题（`views/*` 的通用页头） */
+html.care-mode .page-title {
+  font-size: calc(20px * var(--ch-font-scale));
+}
+
+html.care-mode .page-subtitle {
+  font-size: calc(12.5px * var(--ch-font-scale));
+}
+
+/* 卡片标题 / 折叠面板标题（这两处在上面被显式写成 13.5px，必须逐条覆盖） */
+html.care-mode .el-card__header,
+html.care-mode .el-collapse-item__header {
+  font-size: calc(13.5px * var(--ch-font-scale));
+}
+
+/* 表格：表头与单元格一起放大，行高由内容自然撑开（不设固定 height） */
+html.care-mode .el-table {
+  font-size: calc(13px * var(--ch-font-scale));
+}
+
+html.care-mode .el-table th.el-table__cell {
+  font-size: calc(12.5px * var(--ch-font-scale));
+}
+
+/* 表单里 Element Plus 自己的标签/说明文字（默认跟着 --el-font-size-base，
+ * 但 `.el-form-item__label` 在部分页面被行内样式压过，这里统一一档更稳） */
+html.care-mode .el-form-item__label,
+html.care-mode .el-descriptions__label,
+html.care-mode .el-descriptions__content,
+html.care-mode .el-message-box__message {
+  font-size: calc(13px * var(--ch-font-scale));
 }

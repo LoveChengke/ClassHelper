@@ -2,12 +2,12 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
-import { STORAGE_KEYS } from '@classhelper/shared';
+import { STORAGE_KEYS, type PermissionKey, type UserRole } from '@classhelper/shared';
 import { authApi } from '@/api';
 import UpdateCheckDialog from '@/components/UpdateCheckDialog.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
-import { useUiStore } from '@/stores/ui';
+import { useUiStore, CARE_SCALE_DEFAULT, CARE_SCALE_MAX, CARE_SCALE_MIN } from '@/stores/ui';
 import { useResponsive } from '@/composables/useResponsive';
 import { useThemeReveal } from '@/composables/motion';
 import { APP_TITLE } from '@/config';
@@ -32,6 +32,49 @@ function handleThemeToggle(event: MouseEvent): void {
   revealThemeChange(event, () => ui.toggleTheme());
 }
 
+/* ---------------------------------------------------------------- 侧栏折叠 */
+
+/**
+ * 顶栏左侧的汉堡按钮（仅桌面端；≤768px 侧栏已经收进抽屉，用的是另一个 `nav-toggle`）。
+ *
+ * 它**只改一个布尔值**：栏宽、文字的淡出、图标位置、行高、滚动条全都交给
+ * `styles/index.css` 里 `.ch-nav.is-collapsed …` 那一段（那里有完整推导）——
+ * 模板里没有任何 `v-if` 增删菜单项，折叠才是连续的收拢动画而不是"重排一下"。
+ *
+ * 缓动刻意与桌面客户端同一套参数（`--nav-dur` / `--nav-ease`，AGENTS.md §5 第 49 条）：
+ * 这里不要换成 EASE_OUT 之类的"起步快"曲线 —— 两端观感要一致，且自动化会量到中间态。
+ */
+const collapseLabel = computed(() => (ui.sidebarCollapsed ? '展开菜单' : '收起菜单'));
+
+/* ---------------------------------------------------------------- 关怀模式 */
+
+/**
+ * 关怀模式的入口放在顶栏的 `el-popover` 里，**不放进用户下拉菜单**：
+ * 下拉菜单点一下（甚至点里面的滑块）就会收起，滑块根本拖不动。
+ * 气泡里的开关与滑块都不是"点一下就走"的控件，放在气泡里正好。
+ */
+/** 放大倍数按百分比显示（1.2 → 120%），比裸小数好读 */
+const careScalePercent = computed(() => `${Math.round(ui.careScale * 100)}%`);
+
+/** el-switch 的 payload 是 `boolean | string | number` 的联合（active-value 可自定义），这里收口 */
+function handleCareModeChange(value: boolean | string | number): void {
+  ui.setCareMode(value === true);
+}
+
+/** el-slider 单值模式发 `number`、范围模式发 `number[]`，这里只接单值 */
+function handleCareScaleChange(value: number | number[]): void {
+  ui.setCareScale(Array.isArray(value) ? (value[0] ?? CARE_SCALE_DEFAULT) : value);
+}
+
+/* -------------------------------------------------------------- AI 助手入口 */
+
+/** 顶栏的 AI 助手快捷入口：与侧栏菜单项同一道**生效权限**门控（默认管理员与教师都有） */
+const canUseAssistant = computed(() => auth.can('ai:use'));
+
+function openAssistant(): void {
+  void router.push('/assistant');
+}
+
 /**
  * 菜单项与可见角色（与后端 `@classhelper/shared/permissions` 矩阵保持一致）：
  * - 班级管理 / 学生管理 / 教师管理：仅管理员（班主任与科任老师都没有班级增删改与人员分配权限）
@@ -41,8 +84,20 @@ function handleThemeToggle(event: MouseEvent): void {
  * - 作业 / 通知：所有教师
  * - ClassIsland 联动：管理员 + 教师（设备令牌按班签发，页面内再按"能否管理该班"控制按钮）
  * - 数据库管理：仅管理员（备份/恢复/导入导出/一键切换是最高危操作，后端同样 requireRole('ADMIN')）
+ * - 权限组管理 / 客户端设备：`roles` 只是粗筛（管理员 + 教师），真正的门控是**生效权限**
+ *   （`permission:manage` / `client:manage`）—— 教师被某个权限组授予它之后同样该看见
+ *   （见 `visibleMenuItems`）
  */
-const menuItems = [
+interface MenuItem {
+  path: string;
+  title: string;
+  icon: string;
+  roles: UserRole[];
+  /** 可选的**生效权限**门控：有值时还要 `auth.can()` 通过才显示（角色判不出来这一层） */
+  permission?: PermissionKey;
+}
+
+const menuItems: MenuItem[] = [
   { path: '/dashboard', title: '仪表盘', icon: 'Odometer', roles: ['ADMIN', 'TEACHER'] },
   { path: '/classes', title: '班级管理', icon: 'School', roles: ['ADMIN'] },
   { path: '/students', title: '学生管理', icon: 'User', roles: ['ADMIN'] },
@@ -51,13 +106,57 @@ const menuItems = [
   { path: '/homeworks', title: '作业发布', icon: 'Notebook', roles: ['ADMIN', 'TEACHER'] },
   { path: '/notifications', title: '通知发布', icon: 'Bell', roles: ['ADMIN', 'TEACHER'] },
   { path: '/grades', title: '成绩录入', icon: 'Trophy', roles: ['ADMIN', 'TEACHER'] },
+  {
+    path: '/assistant',
+    title: 'AI 助手',
+    icon: 'MagicStick',
+    // `ai:use` 默认给 ADMIN + TEACHER（教师用一句话发布作业/通知/叫人），
+    // 但仍走**生效权限**细筛：管理员把 ai:use 从某个权限组收回后这里就该消失。
+    roles: ['ADMIN', 'TEACHER'],
+    permission: 'ai:use',
+  },
   { path: '/integrations', title: 'ClassIsland 联动', icon: 'Connection', roles: ['ADMIN', 'TEACHER'] },
+  {
+    path: '/permissions',
+    title: '权限组',
+    icon: 'Lock',
+    roles: ['ADMIN', 'TEACHER'],
+    permission: 'permission:manage',
+  },
+  {
+    path: '/clients',
+    title: '客户端设备',
+    icon: 'Monitor',
+    // 与「权限组」同样按**生效权限**门控：教师默认没有 client:manage（见 shared/permissions.ts
+    // 的默认模板只给 ADMIN），所以这里不能只写 roles —— 被权限组授予后教师也该看见。
+    roles: ['ADMIN', 'TEACHER'],
+    permission: 'client:manage',
+  },
+  {
+    path: '/ai-settings',
+    title: '大模型设置',
+    icon: 'Setting',
+    // 与「权限组」「客户端设备」同一道门控：只有 ai:manage（默认仅管理员）才看得见，
+    // 页面里的配置读写也要求它（教师访问会 403）。
+    roles: ['ADMIN', 'TEACHER'],
+    permission: 'ai:manage',
+  },
   { path: '/database', title: '数据库管理', icon: 'Coin', roles: ['ADMIN'] },
 ];
 
-/** 当前账号可见的菜单（班级/学生管理仅管理员可见） */
+/**
+ * 当前账号可见的菜单。
+ *
+ * 两道筛子：`roles` 是粗筛（角色级，与后端 `requireRole` 对齐），`permission` 是细筛
+ * （生效权限级）——「权限组」必须走后者：教师被权限组授予 `permission:manage` 后
+ * 角色还是 TEACHER，靠 `roles` 判断不出来。管理员在 `can()` 里短路为 true，
+ * 所以这里不会因为权限还没拉回来而少显示一项。
+ */
 const visibleMenuItems = computed(() =>
-  menuItems.filter((item) => (auth.role ? item.roles.includes(auth.role) : false)),
+  menuItems.filter((item) => {
+    if (!auth.role || !item.roles.includes(auth.role)) return false;
+    return !item.permission || auth.can(item.permission);
+  }),
 );
 
 /** 高亮当前菜单：直接比较路由路径，避免依赖路由名 */
@@ -96,24 +195,52 @@ function asideElement(): HTMLElement | null {
 }
 
 const indicator = ref({ x: 0, y: 0, width: 0, height: 0, visible: false });
+/** 指示器的裁剪框 = 菜单**视口**（滚动容器自身），滚动时激活项滚出去就跟着被裁掉 */
+const indicatorClip = ref({ top: 0, left: 0, width: 0, height: 0 });
+
+/** 菜单滚动容器：桌面侧栏里的 .el-menu（小屏是抽屉里的另一个 el-menu，没有指示器） */
+function menuScroller(): HTMLElement | null {
+  return asideElement()?.querySelector<HTMLElement>('.layout-menu') ?? null;
+}
 
 function syncIndicator(): void {
   const aside = asideElement();
-  const active = aside?.querySelector<HTMLElement>('.el-menu-item.is-active');
-  if (!aside || !active) {
+  const scroller = menuScroller();
+  const active = scroller?.querySelector<HTMLElement>('.el-menu-item.is-active');
+  if (!aside || !scroller || !active) {
     indicator.value = { ...indicator.value, visible: false };
     return;
   }
   const asideRect = aside.getBoundingClientRect();
+  const box = scroller.getBoundingClientRect();
+  /*
+   * 以菜单视口为基准量，而不是以整个侧栏为基准。
+   *
+   * 菜单列是可滚动的（见 .layout-menu 的 overflow）：量侧栏的话，激活项被滚出视口后
+   * 指示器会"贴"到品牌区/页脚上。裁剪框跟着菜单视口，指示器就只在菜单里可见。
+   */
+  indicatorClip.value = {
+    top: box.top - asideRect.top,
+    left: box.left - asideRect.left,
+    width: box.width,
+    height: box.height,
+  };
   const rect = active.getBoundingClientRect();
   indicator.value = {
-    x: rect.left - asideRect.left,
-    y: rect.top - asideRect.top,
+    x: rect.left - box.left,
+    y: rect.top - box.top,
     width: rect.width,
     height: rect.height,
     visible: rect.width > 0 && rect.height > 0,
   };
 }
+
+const indicatorClipStyle = computed(() => ({
+  top: `${indicatorClip.value.top}px`,
+  left: `${indicatorClip.value.left}px`,
+  width: `${indicatorClip.value.width}px`,
+  height: `${indicatorClip.value.height}px`,
+}));
 
 const indicatorStyle = computed(() => ({
   width: `${indicator.value.width}px`,
@@ -124,6 +251,11 @@ const indicatorStyle = computed(() => ({
 
 let asideObserver: ResizeObserver | null = null;
 let indicatorFrame = 0;
+let scrollerEl: HTMLElement | null = null;
+let scrollSettleTimer = 0;
+/** 正在跟随滚动：这期间关掉过渡，否则每帧都重新起一段 397ms 的弹簧，看起来"慢吞吞地追" */
+const indicatorFollowing = ref(false);
+const SCROLL_SETTLE_MS = 140;
 
 /**
  * 把测量推迟到下一帧再跑。
@@ -142,12 +274,38 @@ function scheduleIndicatorSync(): void {
 }
 
 /**
+ * 滚动菜单时**同步**量一次（不走 rAF 版）：滚动本身已经在合成器上跑，
+ * 再隔一帧读数会看到指示器明显落后于菜单。
+ */
+function handleMenuScroll(): void {
+  syncIndicator();
+  indicatorFollowing.value = true;
+  window.clearTimeout(scrollSettleTimer);
+  scrollSettleTimer = window.setTimeout(() => {
+    indicatorFollowing.value = false;
+  }, SCROLL_SETTLE_MS);
+}
+
+/** 绑定/解绑菜单滚动监听（小屏没有侧栏，切回来时要重新绑） */
+function bindMenuScroller(): void {
+  const next = menuScroller();
+  if (next === scrollerEl) return;
+  scrollerEl?.removeEventListener('scroll', handleMenuScroll);
+  scrollerEl = next;
+  scrollerEl?.addEventListener('scroll', handleMenuScroll, { passive: true });
+}
+
+/**
  * 首次测量放在 onMounted（而不是 nextTick）：子组件先于父组件挂载完成，
  * 此刻 `.el-menu-item.is-active` 已在文档里，量完再让浏览器首帧绘制 ——
  * 于是指示器**第一次出现就是正确位置**，不会从左上角滑过去。
  */
 onMounted(() => {
+  // 生效权限（`GET /permissions/me`）：菜单里的「权限组」要等它回来才显示。
+  // 失败不阻塞布局（store 内已静默吞掉），管理员在 can() 里短路、不受这一拍影响。
+  void auth.ensurePermissions();
   syncIndicator();
+  bindMenuScroller();
   const aside = asideElement();
   if (aside && typeof ResizeObserver !== 'undefined') {
     asideObserver = new ResizeObserver(scheduleIndicatorSync);
@@ -158,6 +316,9 @@ onMounted(() => {
 onUnmounted(() => {
   if (indicatorFrame) cancelAnimationFrame(indicatorFrame);
   indicatorFrame = 0;
+  window.clearTimeout(scrollSettleTimer);
+  scrollerEl?.removeEventListener('scroll', handleMenuScroll);
+  scrollerEl = null;
   asideObserver?.disconnect();
   asideObserver = null;
 });
@@ -182,6 +343,11 @@ watch(
 
 watch(isMobile, (mobile) => {
   if (!mobile) drawerVisible.value = false;
+  // 侧栏是按 v-if 挂载/卸载的：从抽屉切回常驻侧栏后，新的 .el-menu 需要重新绑滚动监听
+  void nextTick(() => {
+    syncIndicator();
+    bindMenuScroller();
+  });
 });
 
 /**
@@ -351,12 +517,13 @@ const tourSteps = computed(() => [
 
 <template>
   <el-container class="layout">
-    <!-- 桌面/平板：常驻深色侧边栏 -->
+    <!-- 桌面/平板：常驻深色侧边栏（折叠成 64px 图标导轨，见样式里的 .ch-nav.is-collapsed） -->
     <el-aside
       v-if="!isMobile"
       ref="asideRef"
-      width="210px"
-      class="layout-aside ch-sidebar"
+      :width="ui.sidebarCollapsed ? 'var(--ch-aside-collapsed-width)' : 'var(--ch-aside-width)'"
+      class="layout-aside ch-sidebar ch-nav"
+      :class="{ 'is-collapsed': ui.sidebarCollapsed }"
       data-tour="side-nav"
     >
       <div class="brand">
@@ -364,10 +531,22 @@ const tourSteps = computed(() => [
         <span class="brand-text">ClassHelper</span>
       </div>
       <!-- 激活项的滑动指示器：单个药丸在菜单项之间平移，位置由 syncIndicator() 量出来。
+           外层裁剪框贴着**菜单视口**（菜单列可滚动，激活项滚出去时指示器要一起被裁掉），
            pointer-events:none 是必需的 —— 它盖在菜单项上，否则会把点击吃掉。 -->
-      <div class="nav-indicator" :style="indicatorStyle" aria-hidden="true" />
+      <div class="nav-indicator-clip" :style="indicatorClipStyle" aria-hidden="true">
+        <div
+          class="nav-indicator"
+          :class="{ 'is-following': indicatorFollowing }"
+          :style="indicatorStyle"
+        />
+      </div>
       <el-menu :default-active="activeMenu" class="layout-menu" @select="handleMenuSelect">
-        <el-menu-item v-for="item in visibleMenuItems" :key="item.path" :index="item.path">
+        <el-menu-item
+          v-for="item in visibleMenuItems"
+          :key="item.path"
+          :index="item.path"
+          :title="ui.sidebarCollapsed ? item.title : undefined"
+        >
           <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.title }}</span>
         </el-menu-item>
@@ -389,6 +568,26 @@ const tourSteps = computed(() => [
           >
             <el-icon :size="20"><Menu /></el-icon>
           </button>
+          <!--
+            桌面：同一个位置的汉堡按钮负责把侧栏收成图标导轨。
+            图标方向跟着**当前状态**走（展开时给「收起」、折叠时给「展开」），
+            文案同步进 aria-label 与 title，鼠标悬停时能看出这一下会做什么。
+          -->
+          <button
+            v-else
+            type="button"
+            class="nav-toggle"
+            :aria-label="collapseLabel"
+            :aria-expanded="ui.sidebarCollapsed ? 'false' : 'true'"
+            :title="collapseLabel"
+            data-test="nav-collapse-toggle"
+            @click="ui.toggleSidebar()"
+          >
+            <el-icon :size="20">
+              <Expand v-if="ui.sidebarCollapsed" />
+              <Fold v-else />
+            </el-icon>
+          </button>
           <span class="header-title">{{ isMobile ? currentTitle : APP_TITLE }}</span>
           <el-tag v-if="!isMobile" :type="connectionType" size="small" effect="light" data-tour="conn-tag">
             <span class="header-conn">{{ connectionText }}</span>
@@ -409,6 +608,76 @@ const tourSteps = computed(() => [
         </div>
 
         <div class="header-right">
+          <!--
+            AI 助手快捷入口：与侧栏「AI 助手」菜单项同一道门控。
+            关怀模式打开时挂 .care-emphasis（字号写在 styles/index.css 的关怀模式块里，
+            这里不写死数值）—— 这就是需求里"关怀模式下助手入口更大更醒目"那条。
+          -->
+          <el-tooltip
+            v-if="canUseAssistant"
+            content="AI 助手：一句话发布作业 / 通知 / 叫人"
+            placement="bottom"
+          >
+            <el-button
+              class="assistant-entry"
+              :class="{ 'care-emphasis': ui.careMode }"
+              text
+              circle
+              aria-label="打开 AI 助手"
+              data-test="assistant-entry"
+              @click="openAssistant"
+            >
+              <el-icon><MagicStick /></el-icon>
+            </el-button>
+          </el-tooltip>
+
+          <!--
+            关怀模式。入口刻意放在 el-popover 而不是用户下拉菜单里：
+            下拉菜单点一下（甚至点里面的滑块）就会收起，滑块根本拖不动（见脚本里的注释）。
+          -->
+          <el-popover placement="bottom-end" :width="264" trigger="click" popper-class="care-popover">
+            <template #reference>
+              <button
+                type="button"
+                class="nav-toggle care-toggle"
+                :class="{ 'is-on': ui.careMode }"
+                :aria-pressed="ui.careMode ? 'true' : 'false'"
+                aria-label="关怀模式"
+                title="关怀模式"
+                data-test="care-toggle"
+              >
+                <el-icon :size="18"><ZoomIn /></el-icon>
+              </button>
+            </template>
+            <div class="care-panel">
+              <div class="care-panel-row">
+                <span class="care-panel-title">关怀模式</span>
+                <el-switch
+                  :model-value="ui.careMode"
+                  aria-label="关怀模式"
+                  @update:model-value="handleCareModeChange"
+                />
+              </div>
+              <p class="care-panel-desc">放大正文字号与控件，方便不习惯默认字号的老师。</p>
+              <div class="care-panel-row">
+                <span class="care-panel-label">放大倍数</span>
+                <span class="care-panel-value">{{ careScalePercent }}</span>
+              </div>
+              <el-slider
+                :model-value="ui.careScale"
+                :min="CARE_SCALE_MIN"
+                :max="CARE_SCALE_MAX"
+                :step="0.05"
+                :disabled="!ui.careMode"
+                aria-label="放大倍数"
+                @update:model-value="handleCareScaleChange"
+              />
+              <p class="care-panel-desc">
+                100% 是原始大小，最大 150%。关掉关怀模式后字号立即恢复，倍数会记住。
+              </p>
+            </div>
+          </el-popover>
+
           <!--
             主题切换。与桌面客户端同一套（圆形揭示由 useThemeReveal 提供）。
             注意 `.header-right` 必须是 flex 容器：Element Plus 给 `.el-button` 的是
@@ -559,6 +828,12 @@ const tourSteps = computed(() => [
   flex-direction: column;
   /* 导航指示器（.nav-indicator）的定位父级 */
   position: relative;
+  /*
+   * 折叠只过渡**栏宽**：宽度是唯一在变的东西，其余（文字淡出、图标位置、行高）
+   * 都在 styles/index.css 的 .ch-nav.is-collapsed 段里各自声明过渡。
+   * 时长/缓动用 --nav-dur / --nav-ease —— 与桌面客户端同一套参数，改一处两端同步。
+   */
+  transition: width var(--nav-dur) var(--nav-ease);
 }
 
 .brand {
@@ -590,9 +865,35 @@ const tourSteps = computed(() => [
   border-right: none;
   background: transparent;
   flex: 1;
+  /*
+   * 菜单列**自己滚动**（这是"小屏状态下菜单无法上下滑动"的修法）：
+   * - `min-height: 0` 是关键：flex 项默认 `min-height: auto`，永远不小于内容高度，
+   *   于是 overflow 永不生效、超出的菜单项被直接裁掉；
+   * - 小屏抽屉里 `.el-drawer__body` 是 `overflow: hidden`，滚动只能由这一列承担，
+   *   否则抽屉一关一开就只剩上半截菜单能点。
+   * 滚动条做细一点、半透明：深色侧栏上一条系统浅色滚动条太扎眼。
+   */
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
   --el-menu-text-color: #cbd5e1;
   --el-menu-hover-bg-color: rgba(255, 255, 255, 0.08);
   --el-menu-active-color: #ffffff;
+}
+
+.layout-menu::-webkit-scrollbar {
+  width: 6px;
+}
+
+.layout-menu::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+}
+
+.layout-menu::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /*
@@ -615,6 +916,17 @@ const tourSteps = computed(() => [
 }
 
 /*
+ * 导航指示器的裁剪框：贴着菜单视口（.layout-menu 的 border box）。
+ * 菜单列可以滚动，激活项滚出视口后指示器必须跟着被裁掉，否则它会画到品牌区/页脚上。
+ */
+.nav-indicator-clip {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/*
  * 导航指示器：一个跟着激活项平移的药丸。宽高与位移由 syncIndicator() 量出来后内联下发，
  * 这里只负责外观与过渡。
  *
@@ -625,7 +937,6 @@ const tourSteps = computed(() => [
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 0;
   border-radius: var(--ch-radius-sm);
   background: #409eff;
   /* 必须穿透：它盖在菜单项上，否则点击会被它吃掉 */
@@ -636,6 +947,11 @@ const tourSteps = computed(() => [
     width var(--ch-spring-layout-dur) var(--ch-spring-layout),
     height var(--ch-spring-layout-dur) var(--ch-spring-layout),
     opacity var(--ch-dur-fast) var(--ch-ease-out);
+}
+
+/* 滚动跟随期间关掉过渡：每帧重起一段 397ms 弹簧会变成"慢吞吞地追" */
+.nav-indicator.is-following {
+  transition: none;
 }
 
 .layout-header {
@@ -704,6 +1020,37 @@ const tourSteps = computed(() => [
   color: var(--ch-text);
 }
 
+/*
+ * 关怀模式按钮：关掉时与主题按钮同款（安静的文字色），开启时用主色 + 淡底标出"正在生效"。
+ * 纯图标按钮必须靠这点颜色区分状态，否则用户看不出自己刚点开过什么。
+ */
+.care-toggle {
+  color: var(--ch-text-muted);
+}
+
+.care-toggle:hover {
+  color: var(--ch-text);
+}
+
+.care-toggle.is-on {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+/* 悬停时同样要保持"已开启"的底色（.nav-toggle:hover 的特异度更低，不会覆盖到这里） */
+.care-toggle.is-on:hover {
+  background: var(--el-color-primary-light-8);
+}
+
+/* AI 助手快捷入口：与主题按钮同款文字色；关怀模式下由全局的 .care-emphasis 放大字号 */
+.assistant-entry {
+  color: var(--ch-text-muted);
+}
+
+.assistant-entry:hover {
+  color: var(--ch-text);
+}
+
 .user-chip {
   display: flex;
   align-items: center;
@@ -758,5 +1105,54 @@ const tourSteps = computed(() => [
 .ch-nav-drawer .el-drawer__body {
   padding: 0;
   overflow: hidden;
+}
+
+/*
+ * 关怀模式气泡的排版。
+ *
+ * 放在**全局块**里是必需的：el-popover 的内容被 teleport 到 body 上，
+ * 组件级 scoped 样式（带 data-v 属性选择器）一个都选不中它 —— 与上面 .ch-sidebar 同一个理由。
+ * 字号一律引用 --el-font-size-* 且圆角/投影走 --ch-* 令牌：关怀模式打开时这一块自己也会跟着放大，
+ * 不需要在这里再写一份 calc。
+ */
+.care-popover {
+  border-radius: var(--ch-radius-md);
+  box-shadow: var(--ch-shadow-md);
+}
+
+.care-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.care-panel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.care-panel-title {
+  font-size: var(--el-font-size-base);
+  font-weight: 600;
+}
+
+.care-panel-label {
+  color: var(--ch-text-secondary);
+  font-size: var(--el-font-size-small);
+}
+
+.care-panel-value {
+  color: var(--el-color-primary);
+  font-size: var(--el-font-size-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.care-panel-desc {
+  margin: 0;
+  color: var(--ch-text-muted);
+  font-size: var(--el-font-size-extra-small);
+  line-height: 1.5;
 }
 </style>

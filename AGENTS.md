@@ -118,10 +118,13 @@ website/                     产品官网（**纯静态、无构建步骤**，�
                                -x64-server-setup.exe），它们是离线兜底链接的唯一依据。
 packages/shared/src/         types.ts / constants.ts / permissions.ts / motion.ts / utils.ts / index.ts
 packages/server/
-  prisma/schema.prisma       数据模型（16 个 model，无 enum、无 @db.*；连接串在 prisma.config.ts）
-  prisma/migrations/         16 个迁移（到 add_schedule_source 为止是旧模型；之后 6 个是
+  prisma/schema.prisma       数据模型（24 个 model，无 enum、无 @db.*；连接串在 prisma.config.ts）
+  prisma/migrations/         17 个迁移（到 add_schedule_source 为止是旧模型；之后 6 个是
                              2026-10-06 的角色与权限重构：add_student_table / add_student_grade_query /
-                             add_grade_level / add_classhelper_heartbeat / add_archives / add_term_weeks）
+                             add_grade_level / add_classhelper_heartbeat / add_archives / add_term_weeks；
+                             最后 1 个是 2026-10-10 的 add_permission_groups_and_clients：
+                             权限组 3 表 + AppSetting + 客户端设备/命令/安装包 + AiAudit +
+                             Notification.assignDate + User.careMode）
   prisma/seed.ts             种子数据（会清空业务表后重建演示数据）
   prisma.config.ts           Prisma 7 配置：schema / migrations / seed / 连接串
   scripts/verify-e2e.mjs     后端端到端验收（条数由脚本统计，2026-10-06 实测 205 项）
@@ -134,10 +137,12 @@ packages/server/
                              password schemas session term version(读 package.json) web-static
   src/middleware/            auth validate error security
   src/realtime/              socket.ts（房间）+ bus.ts（事件总线）
-  src/modules/               17 个功能模块 + registry.ts + module.types.ts
-                             （含 archives 毕业归档、term 学期周次）
-packages/web-admin/src/      api stores router layouts views(14) components(5) composables styles config.ts
-                             （含 ArchivesView 毕业归档、TermWeeksView 学期周次）
+  src/modules/               21 个功能模块 + registry.ts + module.types.ts
+                             （含 archives 毕业归档、term 学期周次、permissions 权限组、
+                               clients 客户端心跳与远控、system 开发者模式/开机自启、ai 大模型助手）
+packages/web-admin/src/      api stores router layouts views(18) components(5) composables styles config.ts
+                             （含 ArchivesView 毕业归档、TermWeeksView 学期周次、PermissionsView 权限组、
+                               ClientsView 客户端设备、AssistantView/aiSettingsView 大模型助手）
 packages/desktop-client/
   src/main/                  主进程：index / config（含作业短语与看板偏好）/ ipc / island / tray / update / logger / smoke
   src/preload/               contextBridge 白名单桥（index.ts + island.ts，**不暴露 ipcRenderer 本体**）
@@ -163,8 +168,8 @@ packages/classisland-plugin/ .NET 8 插件（独立于 pnpm workspace，不参�
 
 | 项               | 状态                                                                                                                                                                       |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Node             | **v24.19.0**（`D:\nodejs\node.exe`；要求 ≥ 20.19，Prisma 7 硬性要求）                                                                                                      |
-| pnpm             | 11.8.0（`packageManager` 锁定 11.8.0），宿主就是上面这个 node                                                                                                              |
+| Node             | **v22.15.0**（`D:\Node.js\node.exe`；根 `engines` 要求 ≥ 20.19，Prisma 7 的 engine 约束是 `^20.19 \|\| ^22.12 \|\| >=24.0`，v22.15 都满足）                                                  |
+| pnpm             | 11.8.0（`packageManager` 锁定 11.8.0）。本机可用的本体在 `C:\Users\hck16\AppData\Local\node\corepack\v1\pnpm\11.8.0\bin\pnpm.cjs`；PATH 里那个 `pnpm.ps1` 是 DSH 桌面端的转发壳，**别绕它**（见下） |
 | npm registry     | `https://registry.npmjs.org/`（仓库内无 `.npmrc`，取全局配置）                                                                                                             |
 | 依赖             | 已装（707 包，`pnpm install` 实测 2m45s）                                                                                                                                  |
 | 后端 `.env`      | 已由 `.env.example` 生成（**gitignored**），`JWT_SECRET` 为本机随机值，`TERM_START_DATE=2026-09-07`                                                                        |
@@ -179,6 +184,43 @@ packages/classisland-plugin/ .NET 8 插件（独立于 pnpm workspace，不参�
 
 > **旧文档里的 `F:\classisland` / `F:\data` 已失效**：本机只有 `C:` 与 `D:`，`F:` 盘不存在。
 > 另有一份旧副本在 `C:\Users\胡\Desktop\classisland`（数据在它自己的 `data/` 下，2026-09-18 用过），当前以 `D:\Classisland` 为准。
+
+#### AI 会话里跑 pnpm：别撞上 DSH 的转发壳（2026-10-11 实测）
+
+在 DSH 的 shell 工具里直接写 `pnpm xxx` 会拿到
+`pnpm.ps1 : Node.js runtime not found. Please run DeepSeek Harness Desktop to install it first.`，
+而同一台机器上人在普通终端里跑得好好的。原因与绕过办法：
+
+- PATH 里排在前面的是 **DSH 桌面端的转发壳** `C:\Users\hck16\AppData\Local\deepseek-harness\bin\pnpm.ps1`
+  （`.cmd` 同理）。它有两道会挡住的判据：① 认 `$env:DSH_NODE` / PATH 上的 `node`，
+  **但要求 `major ≥ 24` 或 `22.19+`**，本机的 `v22.15.0` 卡在门外；
+  ② 它自己的兜底 `%APPDATA%\dsh-tauri\runtime\node.exe` 与 bundled pnpm
+  `%APPDATA%\dsh-tauri\dependencies\pnpm\bin\pnpm.cjs` **本机都不存在**。
+- **正确解法是喂给这个壳两个环境变量**（它自己就认这两个覆盖开关，见 shim 第 10、52 行），
+  把 `node` 与 `pnpm` 都指到本机真实的那份，然后就**照常写 `pnpm xxx`**：
+
+  ```powershell
+  $env:DSH_NODE     = 'D:\Node.js\node.exe'
+  $env:DSH_PNPM_BIN = 'C:\Users\hck16\AppData\Local\node\corepack\v1\pnpm\11.8.0\bin\pnpm.cjs'
+  pnpm typecheck      # 与人在终端里跑完全等价
+  pnpm build:shared
+  ```
+
+  - `DSH_NODE` 必须是**绝对路径**：壳拿到它就不再走"发现 PATH 上的 node 再卡版本"那段。
+  - `DSH_PNPM_BIN` 是**本体 .cjs 的路径**（不是目录，也不是 `pnpm.ps1`）；壳会 `& $node $pnpmBin @args`
+    直接执行它。它同时替掉那条会失败的 `pnpmBin` 存在性检查。
+  - **`pnpm` 的嵌套调用**（`typecheck` = `build:shared && pnpm -r --no-bail typecheck`）靠这两个变量就够了：
+    子进程继承同一份环境，于是又落进同一个壳、又被同一对覆盖接住。
+  - **这三条都是踩过的坑**（同一个会话里依次试错，前两条各失败一次）：
+    - 不要用 `DSH_PNPM`，那是"用户 pnpm 的可执行路径"：壳转发给它时**仍然先过 ② 的版本门槛**，
+      而且**残留的 `DSH_PNPM` 会污染后面所有调用**——它与 `DSH_PNPM_BIN` 同时存在时壳会转发进
+      corepack 的 `pnpm.ps1`，那个壳又把它重置回不存在的 bundled 路径，于是原本能跑的
+      `typecheck` 报出 `[pnpm] pnpm not found`。要么别设，要么先 `Remove-Item Env:DSH_PNPM`。
+    - 也不要用 `node <pnpm.cjs> <script>` 绕开壳：只在**不带嵌套调用**的脚本上凑效
+      （`check:icons` / `lint` 能用），`typecheck` 这类内部还要再 `pnpm -r` 的会二次翻车。
+- 反过来说：本机 **Node v22.15.0 够用**（根 `engines` ≥ 20.19，Prisma 7 允许 `^22.12`），
+  不需要为了跑命令去装 v24；上面那条 `runtime not found` 纯粹是壳的版本门槛，不是环境不满足要求。
+
 
 ### 从零重建环境（本机实测可行的顺序）
 
@@ -251,7 +293,7 @@ pnpm build:classisland-plugin
 | `pnpm verify:packaged`                                    | 对**打包后/已安装**的客户端 EXE 跑同一套冒烟（`--exe` 指定路径）                                      |
 | `pnpm verify:classisland`                                 | ClassIsland 联动链路（设备令牌 / 上报 / 提醒下发与回执 / 镜像契约 / 幽灵行清理；实测 44 项）          |
 | `pnpm verify:classisland-plugin`                          | 插件静态契约校验（清单一致性 / 注册完整性 / C# DTO ↔ 服务端 zod 与路由 / 已修复坑的护栏；实测 74 项） |
-| `pnpm dist:server` / `dist:win` / `dist:dir` / `dist:all` | 打包服务端安装程序 / 客户端安装包 / 免安装目录 / 全部                                                 |
+| `pnpm dist:server` / `dist:win` / `dist:all`              | 打包服务端安装程序 / 客户端安装包 / 全部                                                              |
 | `pnpm dist:server:linux`                                  | 打包 **Linux 服务端安装包**（`classhelper-server-linux-x64-<版本>.tar.gz` + `.sha256`）—— 见 §5 第 59 条 |
 | `pnpm icons`                                              | 从 `build/classhelper.png` 派生全部图标（PWA / favicon / 托盘 / 安装包 / 插件 / 官网 / 文档站 / 界面内品牌标） |
 | `pnpm version:check`                                      | 逐处列出并比对 14 个落点的版本号，不一致即 exit 1（见 §4.4「版本迭代」）                              |
@@ -281,19 +323,36 @@ pnpm build:classisland-plugin
 releases/
   client/<版本>/
     安装包/      ClassHelper-<版本>-x64-setup.exe / -portable.exe（+ .blockmap）
-    免安装/      electron-builder 的 win-unpacked 内容
     构建中间/    builder-*.yml、*.nsis.7z
   server/<版本>/
     安装包/      ClassHelper 服务端-<版本>-x64-setup.exe
-    免安装/      classhelper-server 免安装目录（含 .env、node.exe、data/、logs/）
-    linux-x64/   classhelper-server-linux-x64-<版本>.tar.gz + .sha256 + 同内容解包目录
+    linux-x64/   classhelper-server-linux-x64-<版本>.tar.gz + .sha256
     构建中间/    server-installer.generated.nsi
   classisland-plugin/<版本>/
     安装包/      ClassHelper.ClassIslandPlugin.cipx
-    免安装/      ClassHelper.ClassIslandPlugin/（解压即用，丢进 Plugins 目录即可加载）
     checksums.md
   SHA256SUMS-<版本>.txt    跨组件哈希清单（人读，由发布流程维护）
 ```
+
+**`releases/` 里只放交付物，不放"解包出来的那一份"。** 这条是硬约定，2026-10-11 统一过一遍：
+
+| 曾经有的目录 | 它是什么 | 现在 |
+| --- | --- | --- |
+| `client/<版本>/免安装/` | electron-builder 的 `win-unpacked`（约 323MB） | 只在打包过程中存在，生成两个 exe 后由 `tidyArtifacts()` 删除 |
+| `server/<版本>/免安装/` | `pnpm dist:server` 组装的运行时（约 335MB） | 组装到 `.cache/server-staging/<版本>/win/`，打完 NSIS 即删 |
+| `server/<版本>/linux-x64/classhelper-server-linux-x64/` | tar.gz 的解包留档（约 265MB） | 打完 tar.gz 即删（内容与 tar 完全一样） |
+| `classisland-plugin/<版本>/免安装/` | `.cipx` 的解压副本 | 不再产出（`.cipx` 本身就是 zip，解压即用） |
+
+理由：这些都是 300MB 量级的**中间物**，而且长得跟交付物一样像"该拷走的东西" ——
+五个客户端版本 + 七个服务端版本堆下来就是 4.8GB，其中 3.4GB 是重复的中间物。
+`-portable.exe` 是自解压单文件，服务端安装程序内置 Node，**用户侧一个解包目录都不需要**。
+需要临时看一眼解包内容时，直接解压 portable，或按下面那张表的路径去 `.cache/` 找。
+（三个脚本仍会把 `构建中间/` 留在版本目录里 —— `builder-*.yml`、`*.nsis.7z`、
+`server-installer.generated.nsi`，那是每个版本几 KB 的打包脚本与元数据，**保留**。
+实测 8 个版本目录合计约 50 KB。）
+
+**Linux 包同理**：`.tar.gz` 旁边的同名解包目录（约 265MB）已不再保留，需要看内容就
+`tar -xzf` 一份到 `.cache/` 里（见 §5 第 59 条 ④ 的命名约定）。
 
 版本号取自根 `package.json`（插件用 `manifest.yml` 的前三段，与产品版本对齐）；
 重新打包只清**当前版本目录**里的产物，历史版本原样保留 —— 所以同版本多次构建留下的
@@ -302,14 +361,20 @@ releases/
 ```bash
 pnpm dist:server          # 服务端 Windows（首次会跑一次 npm install；重试可加 --reuse-deps 跳过）
 pnpm dist:server:linux    # Linux 安装包（**必须在 Linux 上跑**，见 §5 第 59 条 ④）
-pnpm dist:win             # 客户端：安装包 + 免安装目录；dist:dir 只出免安装目录
+pnpm dist:win             # 客户端：安装包 + 便携版
 pnpm dist:classisland-plugin
 ```
 
 `dist-win.mjs` 用 `--config.directories.output` 覆盖 electron-builder 自己的输出目录，打包成功后
-再把原始布局整理成上面的分层（`win-unpacked/` → `免安装/`、`*.exe` → `安装包/`、`*.yml` → `构建中间/`）；
+再把原始布局整理成上面的分层（`*.exe` → `安装包/`、`*.yml` → `构建中间/`），**最后删掉 `win-unpacked/`**；
 显式传 `-c.directories.output=<路径>` 时不再覆盖，整理以传入路径为准。
-**交付物的完整性标签修正（§7 第 7 条）也挂在这条收尾链路上，别把 `tidyArtifacts` 之后的
+两条别动的顺序约束：
+- **删 `win-unpacked` 必须排在整理之后**：portable 目标就是拿这份解包结果做自解压包，
+  提前删会让 `-portable.exe` 直接失败。
+- **输出目录的完整性标签要在打包前压回 Low**：上一轮收尾把它标成 Medium 之后，7za（自身带 Low）
+  读不动那些目录，pack 时报 `cannot open file ... Access is denied`（实测踩过）。
+
+**交付物的完整性标签修正（§7 第 7 条）挂在收尾链路上，别把 `tidyArtifacts` 之后的
 `normalizeIntegrityLabel(destDir)` 拆掉。**
 
 ### 版本迭代（每一次 releases，不是每一次提交）
@@ -359,7 +424,8 @@ pnpm build && pnpm verify:web
 
 # ④ 打安装包（产物落在 releases/<组件>/<版本>/）
 pnpm dist:all
-pnpm verify:packaged --exe "releases/client/<版本>/免安装/ClassHelper.exe"
+# 对**打包后的副本**复验：便携版就是自解压单文件，直接拿它当被测副本最省事
+pnpm verify:packaged --exe "releases/client/<版本>/安装包/ClassHelper-<版本>-x64-portable.exe"
 
 # ⑤ 整理跨组件哈希清单 releases/SHA256SUMS-<版本>.txt（人读；Linux 那一行由 CI 合并进来）
 # ⑥ 提交并推上去
@@ -446,9 +512,9 @@ https://lovechengke.github.io/ClassHelper/docs/     ← 文档站（docfx 构建
 ## 5. 架构硬约定（改代码前必须知道）
 
 1. **模块注册表是唯一入口。** 服务端每个功能是 `src/modules/<name>/`（`*.module.ts` 路由、
-   `*.schemas.ts` zod 校验、`*.service.ts` 业务）。当前 17 个：`auth / classes / courses / schedules /
+   `*.schemas.ts` zod 校验、`*.service.ts` 业务）。当前 21 个：`auth / classes / courses / schedules /
 homeworks / notifications / calls / imports / integrations / grades / students / teachers / archives /
-term / dashboard / database / update`。
+term / dashboard / database / update / permissions / clients / system`。
    新增/下线功能**只改 `src/modules/registry.ts`**（加一行 / 改 `enabled: false`），不要动 `app.ts`。
 2. **统一响应与校验。** 用 `src/lib/http.ts` 的 `sendOk / sendCreated / …` 返回，用
    `middleware/validate.ts` 挂 zod schema；错误交给 `middleware/error.ts`，不要各写一套。
@@ -1149,6 +1215,90 @@ term / dashboard / database / update`。
     联网拉取调休建议（`GET /api/term/holidays`）**只给建议、不改数据**，且
     **机房无外网时 `ok:false` 是正常结果**，失败结果同样进缓存（否则断网点一次要白等一个超时）。
 
+67. **功能级准入看「权限键」，角色只是默认模板（2026-10 权限组重构）。**
+    路由上挂 `requirePermission('…')`（AND）/ `requireAnyPermission(…)`，键目录在
+    `packages/shared/src/permissions.ts`（`PERMISSION_KEYS` 39 键 / `PERMISSION_LABELS` /
+    `PERMISSION_CATEGORIES` / `PERMISSION_DEFAULT_ROLES` / `ROLE_DEFAULT_PERMISSIONS`）。
+    有效权限由 `packages/server/src/lib/permissions.ts` 的 `loadEffectivePermissions()` 算：
+    ADMIN=全集且 `permission:manage`/`system:manage` 不可剥夺；CLASS_DEVICE=空集（不受分组影响）；
+    有分组=并集（**可以比角色默认更少**，这就是"能收权"）；无分组=角色默认模板。
+    它**每请求实时查库**（不缓存），所以改完分组立刻生效。
+    **不可松的边界**：权限组只管功能/路由级；班级维度的科目规则（`assertCanManageSubjectContent`）
+    故意不可被权限组覆盖，否则「班主任布置别人科目作业」的老 bug 会从新路长回来。
+    Web 端门控是「`meta.roles` 粗筛 + `meta.permission` 细筛」（`beforeEach` 里
+    `await auth.ensurePermissions()` 再 `auth.can(key)`，不通过 fail-closed），
+    权限矩阵与生效规则见 `docs/dev/permissions.md`。
+
+68. **客户端设备身份是 `deviceKey`，它不接受外部改写。** 客户端配置里的 `deviceKey` 是首次启动生成的
+    UUID，服务端按它 upsert `ClientDevice`；`saveConfig()` **拒绝**渲染进程改写它（改了就等于换一台机器），
+    退出登录走 `clearConfig()` 时也**保留**它（连同 `autoLaunch`/`autoUpdate`/`developerMode`/`careMode`
+    与待安装的更新记录）。上报走「客户端定时拉」而不是服务端推：
+    `POST /api/clients/heartbeat`（30 秒一次，首报延迟 3 秒），响应里带回「目标版本 + 一条待执行命令」；
+    在线判定窗口 `CLIENT_ONLINE_WINDOW_MS`=90 秒。三条边界：**没有 token 就不上报**（未登录静默跳过）、
+    **401/403 退避 5 分钟**、**冒烟默认不上报**（要验这条链路才设 `ELECTRON_SMOKE_CLIENT_AGENT=1`）。
+
+69. **远控命令要两端各确认一次，而且客户端**必须**回执。** 服务端 `POST /api/clients/commands` 只对
+    `remote:control`（默认仅 ADMIN）开放，动作限 `shutdown`/`restart`/`logoff`/`lock`，有效期
+    `CLIENT_COMMAND_EXPIRE_MS`=10 分钟；客户端收到后弹**默认选中「取消」**的对话框（60 秒未确认按取消处理），
+    执行只支持 Windows（`shutdown.exe /s|/r /t 0`、`/l`、`rundll32 user32.dll,LockWorkStation`），
+    然后 `POST /api/clients/commands/:id/ack`（body 带 `deviceKey`，服务端据此校验归属，重复回执幂等）。
+    同一台机器上**同一条命令只弹一次**（内存去重），回执失败只暂存重试、不重复弹窗。
+
+70. **客户端安装包由服务端下载并缓存，教室机不直连 GitHub。** 原因有两条：Web 端 CSP
+    （`connect-src 'self' ws wss …`）不允许浏览器直连 GitHub，而教室机常常根本没有外网。
+    所以 `POST /api/update/client/fetch` 由**服务端**下载到 `<serverRoot>/../data/client-releases/<版本>/`
+    并登记 sha256+size，`GET /api/update/client/download/:version` **故意不挂权限键**（班级端要能下载）。
+    版本号一律先用 `^[0-9A-Za-z._-]+$` 校验（防路径穿越）。客户端自动安装的三条护栏：
+    **没有 sha256 就拒收**、**必须等到"非上课 + 主窗口隐藏满 `CLIENT_UPDATE_IDLE_MS`（5 分钟）"**、
+    冒烟模式**永不安装**。
+
+71. **通知与作业一样按「所属日期」归档，批量发布在服务端做。** `Notification.assignDate` 与
+    `Homework.assignDate` 同口径（`dayKeyLocal()`，禁止 UTC 切片）；列表支持 `date`/`from`/`to`/`createdBy`，
+    另有 `GET /notifications/days` 与 `/notifications/creators` 供"按天/按发布人归档"的界面用。
+    批量走 `POST /notifications/bulk` 与 `POST /homeworks/bulk`：**单班失败不影响整批**
+    （逐班返回 `BulkPublishClassResult`），作业的 `subjectName` 跨班**按名匹配**已有课程，
+    **找不到就整班记失败，绝不自动建课**（自动建课会把创建者写成任课老师，等于越权改任教关系）。
+
+72. **大模型助手只解析、不落库。** `POST /api/ai/interpret` 返回的是**待确认**的结构化动作
+    （`create_homework` / `create_notification` / `call_student` / `unknown` + `params` + `preview`），
+    真正落库由前端确认后调**既有**端点 —— 于是权限断言、上课时段紧急通知保护、ClassIsland 推送全部自动复用。
+    模型给的 `params` **必须用与手动入口同一份 zod 再校验一次**（模型输出不可信）。
+    API Key 用 `packages/server/src/lib/secrets.ts` 的 AES-256-GCM（密钥由 `JWT_SECRET` 经 scrypt 派生）
+    加密后存 `AppSetting`，**只进不出**（GET 只回 `hasApiKey` 与尾 4 位）。
+    `provider='mock'` 是离线确定性解析，**自动化验收一律用它**（§5 第 52 条：不许访问外网）；
+    每次解析写一条 `AiAudit`（不含密钥）。
+
+73. **开发者模式是服务端的一个内存缓存开关。** 真值存在 `AppSetting`（键 `system.developerMode`），
+    但热路径（错误中间件）不可能每请求查库，所以 `packages/server/src/lib/settings.ts` 用
+    `isDeveloperMode()` / `refreshDeveloperMode()` 缓存它：**启动时刷一次、管理员改设置时更新**。
+    开启后只多做一件事：500 的 `ApiError` 在 `details` 里附 `error.stack`（见 `middleware/error.ts`）。
+    `GET /api/system/diagnostics` **绝不回传任何密钥**。开关与诊断接口都要求 `system:manage`。
+
+74. **开机自启动必须"可选择 + 运行期可改"。** 安装器只负责**默认值**：
+    Windows 在 `scripts/nsis/server-installer.nsi` 里是**组件页上一个独立的 Section**（默认勾选），
+    Linux 在 `deploy/install.sh`；装完之后一律走 `GET/PUT /api/system/autostart`
+    （Windows 改 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\ClassHelperServer`，
+    Linux `systemctl enable/disable classhelper`）。**非安装形态（开发机 / 免安装目录 / 容器）必须返回
+    `supported:false` 并说明原因** —— 别往开发机的注册表里写自启项。
+
+75. **服务端菜单回缩与关怀模式：折叠只用 CSS，放大只动字号。** 侧栏折叠**不要用 `el-menu` 的
+    `:collapse`**（它会重建 DOM，与桌面客户端侧栏踩过的坑同源），而是 CSS 收拢宽度 + 折叠态文字
+    「既无宽度又不透明」；覆盖 Element Plus 缩进时要**照抄它自己的选择器形状**（0-5-0/0-6-0），
+    写低特异度的选择器会静默失效。关怀模式（`html.care-mode` + `--ch-font-scale`）只放大**正文字号与控件**，
+    **不动任何几何令牌**（圆角/阴影/侧栏宽），否则桌面客户端侧栏导轨的折叠几何断言会红。
+
+76. **客户端上线补弹离线期间收到的消息只做一次。** 起点（`localStorage` 的
+    `classhelper.offlineSince`）**只在"可达 → 不可达"的边界写**（不在每次失败上覆盖，否则窗口被无限推迟），
+    恢复时按起点筛未读通知、取**最近 5 条**并按时间升序推给灵动岛，推完清起点（同一次离线只弹一次）。
+    **冒烟模式直接跳过**：冒烟会反复断开/恢复网络，补弹会与注入的合成通知互相打乱队列，
+    把既有的条数/顺序/列表高度断言变成随机红。
+
+77. **客户端崩溃自愈只在"没在上课、没人看着"时才重启进程。** `render-process-gone` 与
+    `unresponsive`（超 10 秒）先**静默重建主窗口**（10 分钟内最多 3 次），
+    `uncaughtException`/`unhandledRejection` 也只在 `isIdle()`（非上课 + 无可见窗口）时才
+    `app.relaunch()`；**冒烟模式绝不重启**（会杀掉验证实例）。
+    自愈模块在 `packages/desktop-client/src/main/crash-guard.ts`，限流与 `isIdle` 判据别放宽。
+
 ## 6. 代码风格
 
 - **TypeScript ESM + NodeNext**：`package.json` 全是 `"type": "module"`，相对导入**必须带 `.js` 后缀**
@@ -1226,12 +1376,17 @@ term / dashboard / database / update`。
    判据与修法（都是实测过的）：
 
    ```bash
-   # 判据：看交付物（以及 node_modules/electron/dist）有没有 Low 标签
-   icacls packages\desktop-client\release\win-unpacked\ClassHelper.exe | findstr Mandatory
+   # 判据：看交付物（以及 node_modules/electron/dist）有没有 Low 标签。
+   #   **正常状态是"没有 Mandatory Label 这一行"**（= 默认 Medium）；出现
+   #   `Mandatory Label\Low Mandatory Level` 才是坏的那个。所以别去找"是不是 Medium"。
+   #   目标就是下面这两个 exe —— 中间物 win-unpacked 打完就删了（§4「交付产物归集」）。
+   icacls "releases\client\<版本>\安装包\ClassHelper-<版本>-x64-setup.exe" | findstr Mandatory
+   icacls "releases\client\<版本>\安装包\ClassHelper-<版本>-x64-portable.exe" | findstr Mandatory
    # 修法：把交付物改成 Medium。dist-win.mjs 收尾会自动做，手工补救用：
-   icacls packages\desktop-client\release /setintegritylevel Medium /T /C
+   icacls "releases\client\<版本>" /setintegritylevel Medium /T /C
    # 目录自身要还原成继承，否则下次构建时自带 Low 标签的 7za / makensis 写不进去
-   icacls packages\desktop-client\release /setintegritylevel "(OI)(CI)Low"
+   #（这一步 dist-win.mjs 现在在**打包前**就做了，见 §4）
+   icacls "releases\client\<版本>" /setintegritylevel "(OI)(CI)Low"
    ```
 
    连带的三条经验：**归档内部的载荷标签无所谓**（装到仓库外得到的是默认 Medium 文件），
@@ -1294,11 +1449,12 @@ term / dashboard / database / update`。
     同一个排查动作 —— 先把 `TEMP` 指到仓库内一个**真实存在的 Windows 绝对路径**再重试：
     - `pnpm dist:server` 报 `Internal compiler error #12345: error creating mmap the size of N`：模板用了
       `SetCompressor /SOLID lzma`，makensis 会在 **`%TEMP%` 所在的盘**建一个上百 MB 的 mmap 临时文件，盘紧就失败
-      （免安装目录其实已生成好，只是最后一步打不出安装包）。加 `--reuse-deps` 还能跳过依赖安装。
+      （组装出来的运行时其实已经落在 `.cache/server-staging/<版本>/win/`，只是最后一步打不出安装包）。
+      加 `--reuse-deps` 还能跳过依赖安装。
     - `pnpm dist:win` 报 `!tempfile: Unable to create temporary file!` / `Error in macro _Switch`：**不是空间不足**，
       而是 Git Bash 里 `TEMP=TMP=/tmp` —— makensis 是原生程序，把 `/tmp` 当成「当前盘根下的 tmp」解析成
       `D:\tmp`，该目录不存在。`/c` 有 79G、`/d` 有 124G 也会照样失败（2026-09-30 实测）。
-      `win-unpacked` 与 `*.nsis.7z` 此时都已生成（整理进 `安装包/`、`免安装/` 的那一步在打包
+      `win-unpacked` 与 `*.nsis.7z` 此时都已生成（整理进 `安装包/`、删 `win-unpacked/` 的那一步在打包
       成功之后才跑，失败时还没执行），**只需重跑，不必重建前端**：
 
       ```bash
@@ -1412,12 +1568,15 @@ Start-Process D:\Classisland\ClassIsland.exe -WorkingDirectory D:\Classisland
 并用 `pnpm verify:packaged --exe "<客户端路径>"` 对**打包后的副本**复验 ——
 开发产物通过不等于用户机器上的副本通过。
 
-**改过 `pruneRuntime()`（§5 第 55 条）时，还要对免安装目录本身跑一遍**（开发形态跑通不代表裁剪后跑通）。
-从 `releases/server/<版本>/免安装/` 起，用**自带的 node.exe**：
+**改过 `pruneRuntime()`（§5 第 55 条）时，还要对裁剪后的产物本身跑一遍**（开发形态跑通不代表裁剪后跑通）。
+产物有两处现成的，**都带裁剪**：装好的服务端 `%LOCALAPPDATA%\Programs\ClassHelperServer`，
+或打包过程中的组装目录 `.cache/server-staging/<版本>/win/`（`dist-server.mjs` 在成功收尾时会删掉它，
+所以要么在打包失败时留用、要么临时注掉那一步 `fs.rmSync(staging, ...)`）。
+从那一层起，用**自带的 node.exe**：
 
 ```bash
 # ① 起服务：探针通 + 能真实查表（AUTO_MIGRATE 会建库；PORT 用环境变量避开开发端口）
-cd releases/server/<版本>/免安装 && PORT=4100 ./node.exe server/dist/index.js
+cd %LOCALAPPDATA%\Programs\ClassHelperServer && set PORT=4100 && node.exe server/dist/index.js
 curl.exe -s --noproxy '*' http://127.0.0.1:4100/healthz
 curl.exe -s --noproxy '*' -X POST http://127.0.0.1:4100/api/auth/login \
   -H "content-type: application/json" -d '{"username":"admin","password":"admin123"}'
@@ -1437,3 +1596,48 @@ DATABASE_PROVIDER=sqlite DATABASE_URL="file:./prune-test.db" \
 这里的目标是脚本刚建出来的空临时库，不是真实数据。）
 
 自测本地接口记得绕过代理（见 §7 第 1 条）。
+
+---
+
+## 9. 工作区维护（2026-10-11 整理留档）
+
+工作区会随着每次发版慢慢长胖，而且长得**很像正经产物**。这一节记录清理的结论与边界，
+下次觉得"盘要满了"直接照这里做，不要临场发挥。
+
+### 这次删了什么、留了什么
+
+| | 内容 | 量 |
+| --- | --- | --- |
+| 删 | `releases/**/免安装/`（客户端 4 版 + 服务端 4 版 + 插件 4 版） | 2.57 GB |
+| 删 | `releases/server/{0.1.0,1.0.0,1.0.0-重构建20261005}`（旧产品名"班级小助手"时期的孤立目录） | 204 MB |
+| 删 | `releases/server/{1.1.0,1.1.2}/linux-x64/classhelper-server-linux-x64/`（tar.gz 的解包留档） | 530 MB |
+| 删 | `releases/server/1.1.2/安装包/班级小助手服务端-1.1.2-x64-setup.exe`（改名前的重复包） | 62 MB |
+| 删 | `.cache/` 里的草稿：smoke 日志与 JSON、`ui-smoke-profile`、`pages`、`tmp`、截图目录、`ci-*.html/css`、`beui-*`、`release-notes-*`、一次性脚本、`dev.db.bak-*` | 276 MB |
+| 删 | 根目录 `ClassHelper video.cachedbg3.log`（0 字节）、`.acl-recovery/`（沙箱 ACL 修复的一次性备份） | ~0 |
+| 删 | `packages/classisland-plugin/{bin,obj,cipx}`（构建产物，gitignored，重跑即生成） | 1.1 MB |
+| **留** | `.cache/{nuget,npm-cache,dotnet-home,mingit}`（工具缓存，按用户要求一个都不删） | 2.4 GB |
+
+合计释放 **约 3.7 GB**，`releases/` 从 4.8 GB 降到 1.4 GB，其余是安装包本体。
+
+### 边界（别删过界）
+
+- **`releases/` 里的安装包本体与 `SHA256SUMS-*.txt` 一律留着**：每个都在 GitHub Release 上有对应资产
+  （v1.0.0 无 Linux 包，v1.1.0/v1.2.0 有），删了要重新下载才能对齐哈希。
+- **`.cache/{nuget,npm-cache,dotnet-home,mingit}` 不删** —— 它们是工具缓存，删了要重新下载；
+  `dotnet-home` 里还有 docfx（`pnpm docs:build` 依赖）。
+- **`packages/*/dist` 与 `packages/server/src/generated` 不删**：删了要重跑构建 + `db:generate`，
+  而且 `verify:*` 全部要重新准备前置产物。
+- **`.cache/dev.db.bak-*` 这类"带日期的备份"删之前想一下**：本次删掉的是 2026-10-06 的
+  `dev.db` 快照，演示数据可用 `pnpm db:reset` 重建，所以算草稿。别把 `packages/server/prisma/` 下的库当草稿。
+- **`.zcode/plans/` 与 `.claude/`** 是历史工具目录，内容已过时但不占空间，留着即可。
+
+### 怎么不重新长回来
+
+产出侧已经改成"只留交付物"（§4「交付产物归集」的硬约定）。另外接手时要清楚：
+
+- **别把 `--reuse-deps` 的复用目录当成产物找回**：服务端的组装中间物现在在
+  `.cache/server-staging/<版本>/`，打完 `dist-server.mjs` 就会删掉它；想留一份能直接跑的副本，
+  就在打包过程中拷出来（或直接跑 `pnpm --filter @classhelper/server start`）。
+- **别在 `releases/` 下留"临时跑一下"的东西**：需要看解包内容就解压 `-portable.exe` 到 `%TEMP%`。
+- 判断某个目录能不能删，就问一句：**"它能不能用仓库里的脚本一条命令重建？"** 能就删。
+

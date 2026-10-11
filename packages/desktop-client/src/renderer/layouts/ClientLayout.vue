@@ -25,9 +25,9 @@ const ui = useUiStore();
  *
  * - **一级项**：课表 / 作业 / 通知 / 成绩 —— 直接铺在侧栏上，**不再套「学习」分组**。
  *   分组标题白占一行、还得多点一次展开，折叠成图标导轨时尤其明显（用户要求拆掉）。
- * - **分组**：只剩「设置」（通用 / 外观 / 灵动岛 / 提醒 / 账号 / 关于，各自是独立路由）。
- *   6 个子项平铺太长，保留分组与"默认只展开当前路由所在分组"。折叠后是图标导轨，
- *   分组子项与一级项一样以图标列出（见 styles/index.css 的折叠态规则）。
+ * - **分组**：只剩「设置」（通用 / 外观 / 灵动岛 / 提醒 / 账号 / 关于，各自是独立路由；
+ *   开发者模式下再多一个「开发者」）。6 个子项平铺太长，保留分组与"默认只展开当前路由所在分组"。
+ *   折叠后是图标导轨，分组子项与一级项一样以图标列出（见 styles/index.css 的折叠态规则）。
  *
  * 顶栏左侧汉堡按钮把整栏收成图标导轨（状态持久化在主进程配置里）。
  */
@@ -38,20 +38,38 @@ const primaryItems = [
   { path: '/grades', title: '成绩', icon: 'Trophy' },
 ];
 
-const menuGroups = [
+/** 「设置」分组的常规子项（顺序即侧栏顺序） */
+const settingItems = [
+  { path: '/settings/general', title: '通用', icon: 'Tools' },
+  { path: '/settings/appearance', title: '外观', icon: 'Brush' },
+  { path: '/settings/island', title: '灵动岛', icon: 'MagicStick' },
+  { path: '/settings/reminder', title: '提醒', icon: 'AlarmClock' },
+  { path: '/settings/account', title: '账号', icon: 'UserFilled' },
+  { path: '/settings/about', title: '关于', icon: 'InfoFilled' },
+];
+
+/**
+ * 菜单分组（**computed**：子项随开发者模式变化，见下）。
+ *
+ * 「开发者」（需求 10）只在 `ui.developerMode === true` 时出现 —— 它是个排查问题的入口
+ * （版本/日志/更新/DevTools），常驻只会让教室机器上的使用者点进一个看不懂的页面。
+ *
+ * 图标用 `Connection`：新增图标必须同时进 `renderer/icons.ts` 的注册表，
+ * 而那是本任务范围外的文件 —— 所以**只用已注册图标**（`scripts/check-icons.mjs`
+ * 会在构建前拦下未注册的名字）。
+ *
+ * 折叠成图标导轨后多一行图标：开启开发者模式是用户自己的选择，默认关闭 ⇒
+ * 冒烟（默认配置）里的导轨几何与"不出现滚动条"断言不受影响。
+ */
+const menuGroups = computed(() => [
   {
     title: '设置',
     icon: 'Setting',
-    items: [
-      { path: '/settings/general', title: '通用', icon: 'Tools' },
-      { path: '/settings/appearance', title: '外观', icon: 'Brush' },
-      { path: '/settings/island', title: '灵动岛', icon: 'MagicStick' },
-      { path: '/settings/reminder', title: '提醒', icon: 'AlarmClock' },
-      { path: '/settings/account', title: '账号', icon: 'UserFilled' },
-      { path: '/settings/about', title: '关于', icon: 'InfoFilled' },
-    ],
+    items: ui.developerMode
+      ? [...settingItems, { path: '/settings/developer', title: '开发者', icon: 'Connection' }]
+      : settingItems,
   },
-];
+]);
 
 /* -------------------------------------------------------------- 导航指示器 */
 
@@ -70,18 +88,46 @@ const menuGroups = [
  */
 const indicator = ref({ x: 0, y: 0, width: 0, height: 0, visible: false });
 
+/**
+ * 底片的**裁剪框**：与 `.menu` 的滚动视口逐像素重合。
+ *
+ * 底片挂在 `.aside` 上，而菜单项是在 `.menu` 里滚动的（`.menu` 是 `flex:1 + min-height:0 +
+ * overflow-y:auto`，设置组展开时内容约 606px 会超过窗口高度）。激活项被滚出视口时，
+ * 底片会跟着它跑到品牌区或页脚上 —— 套一层视口大小的 `overflow:hidden`，
+ * 就是让底片"只在菜单看得见的地方存在"。
+ */
+const clipStyle = ref<Record<string, string>>({
+  top: '0px',
+  left: '0px',
+  width: '0px',
+  height: '0px',
+});
+
 function syncIndicator(): void {
   const aside = document.querySelector<HTMLElement>('.aside.ch-nav');
-  const active = aside?.querySelector<HTMLElement>('.el-menu-item.is-active');
-  if (!aside || !active) {
+  const scroller = aside?.querySelector<HTMLElement>('.menu') ?? null;
+  if (!aside || !scroller) {
     indicator.value = { ...indicator.value, visible: false };
     return;
   }
   const asideRect = aside.getBoundingClientRect();
+  const boxRect = scroller.getBoundingClientRect();
+  // 底片的坐标一律相对「菜单视口」，不再相对 `.aside` —— 裁剪框把两者的原点对齐了
+  clipStyle.value = {
+    top: `${boxRect.top - asideRect.top}px`,
+    left: `${boxRect.left - asideRect.left}px`,
+    width: `${boxRect.width}px`,
+    height: `${boxRect.height}px`,
+  };
+  const active = scroller.querySelector<HTMLElement>('.el-menu-item.is-active');
+  if (!active) {
+    indicator.value = { ...indicator.value, visible: false };
+    return;
+  }
   const rect = active.getBoundingClientRect();
   indicator.value = {
-    x: rect.left - asideRect.left,
-    y: rect.top - asideRect.top,
+    x: rect.left - boxRect.left,
+    y: rect.top - boxRect.top,
     width: rect.width,
     height: rect.height,
     visible: rect.width > 0 && rect.height > 0,
@@ -115,6 +161,32 @@ function scheduleIndicatorSync(): void {
 }
 
 /**
+ * 菜单内部滚动：底片要**当帧**跟上，而且这一路上不能走过渡动画。
+ *
+ * 两点都和"滚动是连续手势"有关：
+ * 1. 不能用 `scheduleIndicatorSync()`（rAF 推后一帧）—— 快速滚动时底片会肉眼可见地落后；
+ *    滚动事件本身在布局之后派发，在这里同步量一次不会再插入一次强制布局。
+ * 2. 不能走 `.nav-indicator` 的 LAYOUT 弹簧（397ms）—— 那是"切换菜单项"的动画参数，
+ *    用在滚动上就成了"底片慢吞吞地追菜单项"。所以滚动期间挂 `is-following` 关掉过渡，
+ *    停手 140ms 后恢复，下一次点菜单项照样有滑动动画。
+ */
+const SCROLL_SETTLE_MS = 140;
+
+let menuScroller: HTMLElement | null = null;
+let scrollSettleTimer = 0;
+const indicatorFollowing = ref(false);
+
+function handleMenuScroll(): void {
+  if (!indicatorFollowing.value) indicatorFollowing.value = true;
+  if (scrollSettleTimer) window.clearTimeout(scrollSettleTimer);
+  scrollSettleTimer = window.setTimeout(() => {
+    scrollSettleTimer = 0;
+    indicatorFollowing.value = false;
+  }, SCROLL_SETTLE_MS);
+  syncIndicator();
+}
+
+/**
  * 首次测量放在 `onMounted`：子组件先于父组件挂载完成，此刻 `.el-menu-item.is-active`
  * 已在文档里，量完再让浏览器首帧绘制 —— 指示器第一次出现就是正确位置，不会从左上角滑过去。
  *
@@ -125,6 +197,11 @@ function scheduleIndicatorSync(): void {
 onMounted(() => {
   syncIndicator();
   const aside = document.querySelector<HTMLElement>('.aside.ch-nav');
+  if (aside) {
+    // 菜单自己的滚动容器：翻菜单时底片必须跟着走（用户反馈的「上下滑动时项目选择块不移动」）
+    menuScroller = aside.querySelector<HTMLElement>('.menu');
+    menuScroller?.addEventListener('scroll', handleMenuScroll, { passive: true });
+  }
   if (aside && typeof ResizeObserver !== 'undefined') {
     asideObserver = new ResizeObserver(scheduleIndicatorSync);
     asideObserver.observe(aside);
@@ -134,6 +211,10 @@ onMounted(() => {
 onUnmounted(() => {
   if (indicatorFrame) cancelAnimationFrame(indicatorFrame);
   indicatorFrame = 0;
+  if (scrollSettleTimer) window.clearTimeout(scrollSettleTimer);
+  scrollSettleTimer = 0;
+  menuScroller?.removeEventListener('scroll', handleMenuScroll);
+  menuScroller = null;
   asideObserver?.disconnect();
   asideObserver = null;
 });
@@ -172,7 +253,7 @@ const activeMenu = computed(() => route.path);
 
 /** 当前路由所属的分组标题（用于"只默认展开所在分组"，与 ClassIsland 一致） */
 const activeGroupTitle = computed(() => {
-  const group = menuGroups.find((item) => item.items.some((entry) => route.path === entry.path));
+  const group = menuGroups.value.find((item) => item.items.some((entry) => route.path === entry.path));
   // 落在**一级项**（课表/作业/通知/成绩）上没有所属分组 —— 返回 null，别拿某个组的名字顶上去
   return group?.title ?? null;
 });
@@ -190,7 +271,7 @@ const openedGroups = ref<string[]>(activeGroupTitle.value ? [activeGroupTitle.va
 watch(
   () => route.path,
   async (path) => {
-    const group = menuGroups.find((item) => item.items.some((entry) => path === entry.path));
+    const group = menuGroups.value.find((item) => item.items.some((entry) => path === entry.path));
     if (!group) return;
     // 展开当前组（不主动关闭用户已展开的其它组）
     await nextTick();
@@ -215,7 +296,7 @@ function go(name: string): void {
 /** 开发期自检：菜单路径必须存在于路由表中 */
 if (import.meta.env.DEV) {
   const knownPaths = new Set(router.getRoutes().map((item) => item.path));
-  for (const group of menuGroups) {
+  for (const group of menuGroups.value) {
     for (const item of group.items) {
       if (!knownPaths.has(item.path)) {
         console.error(`[ClientLayout] 菜单项未注册对应路由：${item.path}`);
@@ -301,8 +382,16 @@ onUnmounted(() => {
         <span class="brand-text">ClassHelper</span>
       </div>
       <!-- 激活项的滑动指示器：单个底片在菜单项之间平移，位置由 syncIndicator() 量出来。
-           pointer-events:none 是必需的 —— 它盖在菜单项上，否则会把点击吃掉。 -->
-      <div class="nav-indicator" :style="indicatorStyle" aria-hidden="true" />
+           外层 .nav-indicator-clip 与 .menu 的视口重合（overflow:hidden），
+           把"跟着菜单滚出视口"的底片裁掉，不让它盖到品牌区/页脚上。
+           两层都 pointer-events:none —— 底片盖在菜单项上，否则会把点击吃掉。 -->
+      <div class="nav-indicator-clip" :style="clipStyle" aria-hidden="true">
+        <div
+          class="nav-indicator"
+          :class="{ 'is-following': indicatorFollowing }"
+          :style="indicatorStyle"
+        />
+      </div>
       <el-menu
         ref="menuRef"
         :default-active="activeMenu"
@@ -445,6 +534,18 @@ onUnmounted(() => {
 }
 
 /*
+ * 指示器的裁剪框：位置与尺寸每帧由 syncIndicator() 量成"与 .menu 视口重合"。
+ * 少了它，激活项被滚出菜单视口时底片会跑到品牌区/页脚上（用户反馈「上下滑动时
+ * 项目选择块不移动」的那次修复里一起加的）。
+ */
+.nav-indicator-clip {
+  position: absolute;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/*
  * 导航指示器：一个跟着激活项平移的底片，承载了原先"激活项底色 + 左侧强调条"两件事。
  *
  * 位置与尺寸都由 syncIndicator() 量出来后内联下发，这里只负责外观与过渡。
@@ -459,7 +560,6 @@ onUnmounted(() => {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 0;
   border-radius: var(--ch-radius-control);
   background: var(--ch-accent-soft);
   /* 必须穿透：它盖在菜单项上，否则点击会被它吃掉 */
@@ -470,6 +570,14 @@ onUnmounted(() => {
     width var(--ch-spring-layout-dur) var(--ch-spring-layout),
     height var(--ch-spring-layout-dur) var(--ch-spring-layout),
     opacity var(--ch-dur-fast) var(--ch-ease-out);
+}
+
+/*
+ * 菜单滚动期间（含停手后的 140ms）关掉过渡：滚动是连续手势，底片要"贴在"菜单项上一起走，
+ * 而不是每帧都启动一次 397ms 的弹簧去追。松手后恢复，点菜单项照样有滑动动画。
+ */
+.nav-indicator.is-following {
+  transition: none;
 }
 
 /* 左侧强调条（原有观感，现在跟着底片一起滑） */

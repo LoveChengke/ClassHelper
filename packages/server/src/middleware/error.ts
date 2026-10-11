@@ -3,6 +3,7 @@ import { ZodError } from 'zod';
 import type { ApiErrorResponse } from '@classhelper/shared';
 import { ApiError } from '../lib/http.js';
 import { logger } from '../lib/logger.js';
+import { isDeveloperMode } from '../lib/settings.js';
 import { env } from '../config/env.js';
 
 function sendError(
@@ -36,7 +37,21 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
 
   if (error instanceof ApiError) {
     if (error.status >= 500) logger.error(error.message, error.details);
-    sendError(res, error.status, error.message, error.code, error.details);
+    /**
+     * 开发者模式：把 `error.stack` 一并回传，否则"服务端 500"在浏览器里只有一句中文，
+     * 排查时还得去服务器上翻日志。**500 才带**、且只在管理员显式打开开发者模式时生效
+     * （开关见 `modules/system`），普通用户看到的东西一个字段都不多。
+     */
+    const withStack =
+      isDeveloperMode() && error.status >= 500 && error.stack
+        ? {
+            ...(error.details && typeof error.details === 'object'
+              ? (error.details as Record<string, unknown>)
+              : { details: error.details }),
+            stack: error.stack,
+          }
+        : error.details;
+    sendError(res, error.status, error.message, error.code, withStack);
     return;
   }
 

@@ -149,25 +149,14 @@ if (!fs.existsSync(cipxFile)) {
 // 归集到 releases/classisland-plugin/<版本>/（与客户端、服务端交付产物同一约定；releases/ 不入库）。
 // 只清理**当前版本**目录，历史版本原样保留 —— 原先这里是 rmSync 整个组件目录，重打一次就把
 // 上一版的留档抹掉了（插件版本是四段 <产品版本>.0，目录名取前三段与产品版本对齐）。
+// 产物只有 `安装包/*.cipx` + `checksums.md`：**.cipx 本身就是个 zip**，解压即用的那份
+// 「免安装目录」与它内容完全一样，纯属重复留档，已不再产出。
 const pluginVersion = manifestVersion.split('.').slice(0, 3).join('.');
 const versionDir = path.join(releasesRoot, pluginVersion);
 const installerDir = path.join(versionDir, '安装包');
-const portableDir = path.join(versionDir, '免安装', 'ClassHelper.ClassIslandPlugin');
 fs.rmSync(installerDir, { recursive: true, force: true });
-fs.rmSync(path.dirname(portableDir), { recursive: true, force: true });
+fs.rmSync(path.join(versionDir, '免安装'), { recursive: true, force: true });
 fs.mkdirSync(installerDir, { recursive: true });
-fs.mkdirSync(portableDir, { recursive: true });
-
-// 免安装目录：解压即用，直接放进 ClassIsland 的 Plugins 目录也能加载
-for (const name of fs.readdirSync(outputDir)) {
-  const from = path.join(outputDir, name);
-  if (!fs.statSync(from).isFile()) continue;
-  // 依赖清单与调试符号对加载没影响，但会让老师误以为"要装一堆东西"，因此只带最小集合
-  if (!['ClassHelper.ClassIslandPlugin.dll', 'manifest.yml', 'icon.png', 'README.md'].includes(name)) {
-    continue;
-  }
-  fs.copyFileSync(from, path.join(portableDir, name));
-}
 
 for (const file of fs.readdirSync(cipxDir)) {
   // .cipx 是插件包本体，校验清单跟着版本目录走
@@ -177,4 +166,3 @@ for (const file of fs.readdirSync(cipxDir)) {
 
 log(`插件包已归集到 ${path.relative(repoRoot, versionDir)}`);
 for (const file of fs.readdirSync(installerDir)) log(`  安装包/${file}`);
-for (const file of fs.readdirSync(portableDir)) log(`  免安装/ClassHelper.ClassIslandPlugin/${file}`);

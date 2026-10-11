@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, requireRole } from '../../middleware/auth.js';
+import { authenticate, requirePermission } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -25,20 +25,30 @@ router.use(authenticate());
  */
 
 /** GET /api/teachers?keyword= - 教师列表（教师管理页 + 分配协作教师时使用） */
-router.get('/', requireRole('ADMIN'), validate({ query: listTeachersQuerySchema }), async (req, res) => {
-  const { keyword } = validatedQuery<{ keyword?: string }>(req);
-  sendOk(res, await teacherService.listTeachers(keyword), '获取教师列表成功');
-});
+router.get(
+  '/',
+  requirePermission('teacher:manage'),
+  validate({ query: listTeachersQuerySchema }),
+  async (req, res) => {
+    const { keyword } = validatedQuery<{ keyword?: string }>(req);
+    sendOk(res, await teacherService.listTeachers(keyword), '获取教师列表成功');
+  },
+);
 
 /** POST /api/teachers - 录入教师账号（仅管理员） */
-router.post('/', requireRole('ADMIN'), validate({ body: createTeacherSchema }), async (req, res) => {
-  sendCreated(res, await teacherService.createTeacher(req.body as CreateTeacherInput), '教师账号创建成功');
-});
+router.post(
+  '/',
+  requirePermission('teacher:manage'),
+  validate({ body: createTeacherSchema }),
+  async (req, res) => {
+    sendCreated(res, await teacherService.createTeacher(req.body as CreateTeacherInput), '教师账号创建成功');
+  },
+);
 
 /** PATCH /api/teachers/:id - 编辑教师（姓名 / 用户名 / 角色） */
 router.patch(
   '/:id',
-  requireRole('ADMIN'),
+  requirePermission('teacher:manage'),
   validate({ params: idParamSchema, body: updateTeacherSchema }),
   async (req, res) => {
     const { id } = validatedParams<{ id: string }>(req);
@@ -49,7 +59,7 @@ router.patch(
 /** POST /api/teachers/:id/reset-password - 重置教师密码 */
 router.post(
   '/:id/reset-password',
-  requireRole('ADMIN'),
+  requirePermission('teacher:manage'),
   validate({ params: idParamSchema, body: resetTeacherPasswordSchema }),
   async (req, res) => {
     const { id } = validatedParams<{ id: string }>(req);
@@ -59,11 +69,16 @@ router.post(
 );
 
 /** DELETE /api/teachers/:id - 删除教师账号（有班级职责/课程时拒绝，见 service） */
-router.delete('/:id', requireRole('ADMIN'), validate({ params: idParamSchema }), async (req, res) => {
-  const { id } = validatedParams<{ id: string }>(req);
-  await teacherService.deleteTeacher(id);
-  sendOk(res, { id }, '教师账号已删除');
-});
+router.delete(
+  '/:id',
+  requirePermission('teacher:manage'),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const { id } = validatedParams<{ id: string }>(req);
+    await teacherService.deleteTeacher(id);
+    sendOk(res, { id }, '教师账号已删除');
+  },
+);
 
 export const teachersModule = defineModule({
   name: 'teachers',

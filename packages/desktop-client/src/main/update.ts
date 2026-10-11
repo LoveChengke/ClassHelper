@@ -10,6 +10,7 @@ import {
   type UpdateAssetDto,
   type UpdateInfo,
 } from '@classhelper/shared';
+import { UPDATE_AVAILABLE_CHANNEL } from './channels.js';
 import { getConfig, saveConfig } from './config.js';
 import { logger } from './logger.js';
 
@@ -25,8 +26,8 @@ import { logger } from './logger.js';
  * 客户端没有这个限制，按用户选择**直连 GitHub**。两边归一化出的 `UpdateInfo` 结构一致。
  */
 
-/** 主进程 → 渲染进程：发现新版本（渲染进程据此弹一次性提示） */
-export const UPDATE_AVAILABLE_CHANNEL = 'classhelper:update:available';
+/** 主进程 → 渲染进程：发现新版本（渲染进程据此弹一次性提示）；定义在叶子模块 `channels.ts` */
+export { UPDATE_AVAILABLE_CHANNEL };
 
 /** 启动后多久自动查一次：等窗口与登录流程就绪，也不跟首屏请求抢带宽 */
 const STARTUP_DELAY_MS = 5_000;

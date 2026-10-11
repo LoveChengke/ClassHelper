@@ -1,8 +1,17 @@
 import { Router } from 'express';
-import { sendOk } from '../../lib/http.js';
-import { authenticate, getAuthUser } from '../../middleware/auth.js';
+import { sendCreated, sendOk, ApiError } from '../../lib/http.js';
+import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
+import { validate, validatedBody, validatedParams } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
+import * as clientReleases from './client-releases.service.js';
 import * as updateService from './update.service.js';
+import {
+  clientReleaseVersionParamSchema,
+  fetchClientReleaseSchema,
+  registerClientReleaseSchema,
+  type FetchClientReleaseInput,
+  type RegisterClientReleaseInput,
+} from './update.schemas.js';
 
 const router = Router();
 router.use(authenticate());
@@ -24,6 +33,86 @@ router.get('/check', async (req, res) => {
   const force = req.query.force === '1' && user.role === 'ADMIN';
   sendOk(res, await updateService.checkForUpdates({ force }), '更新检查完成');
 });
+
+/* ------------------------------- 客户端安装包的服务端缓存（统一下发更新的基础） */
+
+/**
+ * GET /api/update/client/releases - 服务端已缓存了哪些客户端版本
+ *
+ * 教室机器没有外网，所以"统一推送更新"必须有这一层中继：服务端替它们把安装包拉下来，
+ * 客户端再从 `/client/download/:version` 取。
+ */
+router.get('/client/releases', requirePermission('client:manage'), async (_req, res) => {
+  sendOk(res, await clientReleases.listReleases(), '获取安装包列表成功');
+});
+
+/**
+ * POST /api/update/client/fetch - 让服务端从 GitHub 下载某个版本的客户端安装包并登记
+ *
+ * 服务端（Node）不受浏览器 CSP 约束，这是唯一能"一键代下"的地方；
+ * 下不动（学校出口没有外网）时退回 `POST /client/releases` 手工登记。
+ */
+router.post(
+  '/client/fetch',
+  requirePermission('client:update-push'),
+  validate({ body: fetchClientReleaseSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const input = validatedBody<FetchClientReleaseInput>(req);
+    sendCreated(res, await clientReleases.fetchReleaseFromGithub(user.sub, input), '安装包已下载并登记');
+  },
+);
+
+/**
+ * POST /api/update/client/releases - 登记一份已经放进磁盘的安装包
+ *
+ * 文件要求放在 `<serverRoot>/../data/client-releases/<版本>/` 下（文件名默认按发布约定推导）。
+ * 这条路径也是自动化验收用的：不需要外网、不需要传 100MB 二进制。
+ */
+router.post(
+  '/client/releases',
+  requirePermission('client:update-push'),
+  validate({ body: registerClientReleaseSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const input = validatedBody<RegisterClientReleaseInput>(req);
+    sendCreated(res, await clientReleases.registerRelease(user.sub, input), '安装包已登记');
+  },
+);
+
+/** DELETE /api/update/client/releases/:version - 删除缓存（元数据 + 磁盘文件） */
+router.delete(
+  '/client/releases/:version',
+  requirePermission('client:update-push'),
+  validate({ params: clientReleaseVersionParamSchema }),
+  async (req, res) => {
+    const { version } = validatedParams<{ version: string }>(req);
+    sendOk(res, await clientReleases.deleteRelease(version), '安装包已删除');
+  },
+);
+
+/**
+ * GET /api/update/client/download/:version - 下载安装包（客户端自动更新走它）
+ *
+ * **故意不挂权限键**：下载方是教室里的班级端会话（角色 CLASS_DEVICE，权限集为空），
+ * 它代表那个班；真正的保护是"必须已登录 + 限流中间件"。
+ * `res.download` 自带 Content-Length / Range 支持，不需要另写流式助手。
+ */
+router.get(
+  '/client/download/:version',
+  validate({ params: clientReleaseVersionParamSchema }),
+  async (req, res) => {
+    const { version } = validatedParams<{ version: string }>(req);
+    const found = await clientReleases.resolveReleaseFile(version);
+    if (!found) throw ApiError.notFound('服务端没有缓存这个版本的安装包');
+    res.download(found.file, found.fileName, (error) => {
+      if (error) {
+        // 客户端中途取消下载也会走到这里，只记日志，不要往已发出的响应里再写东西
+        res.locals.downloadError = error instanceof Error ? error.message : String(error);
+      }
+    });
+  },
+);
 
 export const updateModule = defineModule({
   name: 'update',

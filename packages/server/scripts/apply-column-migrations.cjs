@@ -68,6 +68,18 @@ const COLUMNS = [
     sql: `ALTER TABLE "User" ADD COLUMN "phone" TEXT NOT NULL DEFAULT ''`,
     note: '教师手机号',
   },
+  {
+    table: 'User',
+    column: 'careMode',
+    sql: `ALTER TABLE "User" ADD COLUMN "careMode" BOOLEAN NOT NULL DEFAULT false`,
+    note: '关怀模式（大字版界面）',
+  },
+  {
+    table: 'Notification',
+    column: 'assignDate',
+    sql: `ALTER TABLE "Notification" ADD COLUMN "assignDate" TEXT NOT NULL DEFAULT ''`,
+    note: '通知所属日期（本地日期 YYYY-MM-DD，按天归档用）',
+  },
 ];
 
 /**

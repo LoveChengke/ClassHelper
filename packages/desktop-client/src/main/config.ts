@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, safeStorage } from 'electron';
@@ -44,6 +45,20 @@ interface PersistedConfig {
   sidebarCollapsed?: boolean;
   /** 用户选择「忽略此版本」的版本号（向后兼容：旧配置没有该字段视为没忽略过任何版本） */
   ignoredUpdateVersion?: string;
+  /** 本机设备标识（向后兼容：旧配置没有该字段时首次读取生成并落盘，之后永不变） */
+  deviceKey?: string;
+  /** 是否开机自启（向后兼容：旧配置没有该字段视为关闭 —— 由用户在设置页自己打开） */
+  autoLaunch?: boolean;
+  /** 是否接受服务端统一下发的自动更新（向后兼容：旧配置没有该字段视为开启） */
+  autoUpdate?: boolean;
+  /** 开发者模式：日志调到 debug 级 + 设置里多出「开发者」页（向后兼容：旧配置没有该字段视为关闭） */
+  developerMode?: boolean;
+  /** 关怀模式：整体放大正文与控件字号，供视力不佳的用户使用（向后兼容：旧配置没有该字段视为关闭） */
+  careMode?: boolean;
+  /** 已下载待安装的更新版本（空串 = 无；跨重启保留） */
+  pendingUpdateVersion?: string;
+  /** 已下载待安装的安装包绝对路径（空串 = 无；跨重启保留） */
+  pendingUpdateFile?: string;
 }
 
 const DEFAULT_CONFIG: PersistedConfig = {
@@ -59,6 +74,13 @@ const DEFAULT_CONFIG: PersistedConfig = {
   theme: 'light',
   sidebarCollapsed: false,
   ignoredUpdateVersion: '',
+  deviceKey: '',
+  autoLaunch: false,
+  autoUpdate: true,
+  developerMode: false,
+  careMode: false,
+  pendingUpdateVersion: '',
+  pendingUpdateFile: '',
 };
 
 /** 主题白名单：非法值一律回落浅色 */
@@ -203,6 +225,15 @@ function readPersistedFromDisk(): PersistedConfig {
       sidebarCollapsed: parsed.sidebarCollapsed === true,
       ignoredUpdateVersion:
         typeof parsed.ignoredUpdateVersion === 'string' ? parsed.ignoredUpdateVersion : '',
+      deviceKey: typeof parsed.deviceKey === 'string' ? parsed.deviceKey : '',
+      autoLaunch: parsed.autoLaunch === true,
+      // 默认开启：老配置文件里没有这个字段时按"接受服务端统一下发的更新"处理
+      autoUpdate: parsed.autoUpdate !== false,
+      developerMode: parsed.developerMode === true,
+      careMode: parsed.careMode === true,
+      pendingUpdateVersion:
+        typeof parsed.pendingUpdateVersion === 'string' ? parsed.pendingUpdateVersion : '',
+      pendingUpdateFile: typeof parsed.pendingUpdateFile === 'string' ? parsed.pendingUpdateFile : '',
     };
   } catch {
     return { ...DEFAULT_CONFIG };
@@ -356,7 +387,50 @@ function toDesktopConfig(state: ConfigCache): DesktopStoredConfig {
     theme: normalizeTheme(persisted.theme),
     sidebarCollapsed: persisted.sidebarCollapsed === true,
     ignoredUpdateVersion: persisted.ignoredUpdateVersion ?? '',
+    deviceKey: ensureDeviceKey(persisted),
+    autoLaunch: persisted.autoLaunch === true,
+    autoUpdate: persisted.autoUpdate !== false,
+    developerMode: persisted.developerMode === true,
+    careMode: persisted.careMode === true,
+    pendingUpdateVersion: persisted.pendingUpdateVersion ?? '',
+    pendingUpdateFile: persisted.pendingUpdateFile ?? '',
   };
+}
+
+/**
+ * `crypto.randomUUID()`：Node 18+ / Chromium 里都有，但**不能假设它一定存在**
+ * （打包后的运行时或某些受限环境里 `crypto.randomUUID` 为 undefined，直接调用会抛）。
+ * 兜底用时间戳 + 随机字节拼一个同形状的 UUID v4。
+ */
+function generateDeviceKey(): string {
+  try {
+    if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  } catch {
+    // 落到下面的兜底
+  }
+  const hex = crypto.randomBytes(16).toString('hex');
+  return (
+    `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(12, 15)}` +
+    `-a${hex.slice(15, 18)}-${hex.slice(18, 30)}`
+  );
+}
+
+/**
+ * 设备标识：**首次读取时生成并落盘，之后永不变**（它是这台机器在服务端的身份，
+ * 服务端按 `deviceKey` upsert 设备记录，换了它就等于换了一台机器）。
+ *
+ * 为什么放在这里生成：`getConfig()` 是所有读取路径的唯一出口（主进程各处 + 渲染进程 IPC），
+ * 且此时必然已经过了 `app.setPath('userData', …)`（见 `loadCache()` 的懒初始化说明），
+ * 写的就是当前 profile 的 config.json。落盘走既有的 120ms 合并窗口，退出时 `flushConfigSync()` 兜底。
+ */
+function ensureDeviceKey(persisted: PersistedConfig): string {
+  const existing = typeof persisted.deviceKey === 'string' ? persisted.deviceKey.trim() : '';
+  if (existing) return existing;
+  const created = generateDeviceKey();
+  persisted.deviceKey = created;
+  scheduleWrite(persisted);
+  logger.info(`已为本机生成设备标识（服务端据此识别这台电脑）：${created}`);
+  return created;
 }
 
 /** 读取配置（token 已解密），供渲染进程使用 */
@@ -407,6 +481,30 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
   if (typeof patch.ignoredUpdateVersion === 'string') {
     persisted.ignoredUpdateVersion = patch.ignoredUpdateVersion;
   }
+  if (patch.autoLaunch !== undefined) {
+    persisted.autoLaunch = patch.autoLaunch === true;
+  }
+  if (patch.autoUpdate !== undefined) {
+    persisted.autoUpdate = patch.autoUpdate === true;
+  }
+  if (patch.developerMode !== undefined) {
+    persisted.developerMode = patch.developerMode === true;
+  }
+  if (patch.careMode !== undefined) {
+    persisted.careMode = patch.careMode === true;
+  }
+  // 待安装的更新只由主进程的 auto-update 模块写入；渲染进程传进来也照收（退出登录/重置走 clearConfig）
+  if (typeof patch.pendingUpdateVersion === 'string') {
+    persisted.pendingUpdateVersion = patch.pendingUpdateVersion;
+  }
+  if (typeof patch.pendingUpdateFile === 'string') {
+    persisted.pendingUpdateFile = patch.pendingUpdateFile;
+  }
+  // deviceKey **不接受外部改写**：它是这台机器在服务端的身份，改了服务端就会当成一台新机器
+  // （旧记录永远停在上一次心跳、新记录从零开始）。要重置身份只能手工删掉 config.json 里的该字段。
+  if (typeof patch.deviceKey === 'string' && patch.deviceKey && patch.deviceKey !== persisted.deviceKey) {
+    logger.warn('忽略对设备标识（deviceKey）的改写：它是这台机器在服务端的身份，不允许变更');
+  }
   if (patch.token !== undefined) {
     const encrypted = encryptToken(patch.token);
     persisted.token = encrypted.token;
@@ -419,9 +517,27 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
   return toDesktopConfig(state);
 }
 
-/** 清空为默认配置（退出登录 / 重置）。立即落盘：它对应退出登录，不该被合并窗口延迟 */
+/**
+ * 清空为默认配置（退出登录 / 重置）。立即落盘：它对应退出登录，不该被合并窗口延迟。
+ *
+ * **保留"这台机器"的身份与本地开关**：`deviceKey`（服务端按它识别设备，换了就等于换一台机器）、
+ * 开机自启 / 自动更新 / 开发者模式 / 关怀模式，以及已下载待安装的更新记录 —— 退出登录不该在服务端
+ * 多出一台陌生设备，也不该把用户刚打开的开关悄悄关回默认值。
+ */
 export function clearConfig(): DesktopStoredConfig {
-  const state: ConfigCache = { config: { ...DEFAULT_CONFIG }, token: null };
+  const current = cache?.config ?? DEFAULT_CONFIG;
+  const kept: PersistedConfig = {
+    ...DEFAULT_CONFIG,
+    deviceKey: current.deviceKey ?? '',
+    autoLaunch: current.autoLaunch === true,
+    autoUpdate: current.autoUpdate !== false,
+    developerMode: current.developerMode === true,
+    careMode: current.careMode === true,
+    pendingUpdateVersion: current.pendingUpdateVersion ?? '',
+    pendingUpdateFile: current.pendingUpdateFile ?? '',
+  };
+  ensureDeviceKey(kept);
+  const state: ConfigCache = { config: kept, token: null };
   cache = state;
   scheduleWrite(state.config, true);
   return toDesktopConfig(state);

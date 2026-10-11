@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -25,13 +25,18 @@ router.use(authenticate());
  */
 
 /** GET /api/archives - 届别列表 */
-router.get('/', requireRole('ADMIN'), validate({ query: listArchivesQuerySchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  sendOk(res, await archiveService.listArchivedYears(user), '获取届别列表成功');
-});
+router.get(
+  '/',
+  requirePermission('archive:manage'),
+  validate({ query: listArchivesQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    sendOk(res, await archiveService.listArchivedYears(user), '获取届别列表成功');
+  },
+);
 
 /** GET /api/archives/summary - 归档页顶部汇总 + 可归档的届别建议 */
-router.get('/summary', requireRole('ADMIN'), async (req, res) => {
+router.get('/summary', requirePermission('archive:manage'), async (req, res) => {
   sendOk(
     res,
     {
@@ -43,16 +48,21 @@ router.get('/summary', requireRole('ADMIN'), async (req, res) => {
 });
 
 /** GET /api/archives/:id - 某届详情（班级 + 毕业生 + 转出的学生） */
-router.get('/:id', requireRole('ADMIN'), validate({ params: idParamSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { id } = validatedParams<{ id: string }>(req);
-  sendOk(res, await archiveService.getArchivedYearDetail(user, id), '获取届别详情成功');
-});
+router.get(
+  '/:id',
+  requirePermission('archive:manage'),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { id } = validatedParams<{ id: string }>(req);
+    sendOk(res, await archiveService.getArchivedYearDetail(user, id), '获取届别详情成功');
+  },
+);
 
 /** GET /api/archives/:id/classes/:classId/content - 归档班级的作业与通知（只读） */
 router.get(
   '/:id/classes/:classId/content',
-  requireRole('ADMIN'),
+  requirePermission('archive:manage'),
   validate({ params: archiveClassParamSchema, query: archivedContentQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -67,19 +77,29 @@ router.get(
 );
 
 /** POST /api/archives - 执行毕业归档（按届别整届归档） */
-router.post('/', requireRole('ADMIN'), validate({ body: createArchiveSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const result = await archiveService.createArchive(user, validatedBody(req));
-  sendCreated(res, result, `${result.name} 已归档，共 ${result.classCount} 个班级`);
-});
+router.post(
+  '/',
+  requirePermission('archive:manage'),
+  validate({ body: createArchiveSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const result = await archiveService.createArchive(user, validatedBody(req));
+    sendCreated(res, result, `${result.name} 已归档，共 ${result.classCount} 个班级`);
+  },
+);
 
 /** DELETE /api/archives/:id - 撤销归档（管理员误操作的退路，不删任何数据） */
-router.delete('/:id', requireRole('ADMIN'), validate({ params: idParamSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { id } = validatedParams<{ id: string }>(req);
-  await archiveService.deleteArchive(user, id);
-  sendOk(res, { id }, '已撤销归档，班级与学生回到在读状态');
-});
+router.delete(
+  '/:id',
+  requirePermission('archive:manage'),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { id } = validatedParams<{ id: string }>(req);
+    await archiveService.deleteArchive(user, id);
+    sendOk(res, { id }, '已撤销归档，班级与学生回到在读状态');
+  },
+);
 
 export const archivesModule = defineModule({
   name: 'archives',

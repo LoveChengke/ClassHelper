@@ -1,7 +1,7 @@
 ﻿import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -58,7 +58,7 @@ router.get('/current', validate({ query: classStatusQuerySchema }), async (req, 
 /** POST /api/schedules - 新增课表 */
 router.post(
   '/',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('schedule:write'),
   validate({ body: createScheduleSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -73,7 +73,7 @@ router.post(
 /** PATCH /api/schedules/:id - 修改课表 */
 router.patch(
   '/:id',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('schedule:write'),
   validate({ params: idParamSchema, body: updateScheduleSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -89,7 +89,7 @@ router.patch(
 /** DELETE /api/schedules/:id - 删除课表 */
 router.delete(
   '/:id',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('schedule:write'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);

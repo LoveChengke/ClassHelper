@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -26,7 +26,7 @@ router.get('/', validate({ query: listCoursesQuerySchema }), async (req, res) =>
 /** POST /api/courses - 新增课程 */
 router.post(
   '/',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('schedule:write'),
   validate({ body: createCourseSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -37,7 +37,7 @@ router.post(
 /** PATCH /api/courses/:id - 修改课程 */
 router.patch(
   '/:id',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('schedule:write'),
   validate({ params: idParamSchema, body: updateCourseSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -49,7 +49,7 @@ router.patch(
 /** DELETE /api/courses/:id - 删除课程 */
 router.delete(
   '/:id',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('schedule:write'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);

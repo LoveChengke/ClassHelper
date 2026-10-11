@@ -1,7 +1,15 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import { ROLE_LABELS, STORAGE_KEYS, type LoginRequest, type LoginResponse, type SessionUser } from '@classhelper/shared';
-import { authApi } from '@/api';
+import {
+  ROLE_LABELS,
+  STORAGE_KEYS,
+  hasPermission,
+  type LoginRequest,
+  type LoginResponse,
+  type PermissionKey,
+  type SessionUser,
+} from '@classhelper/shared';
+import { authApi, permissionApi } from '@/api';
 
 /**
  * 会话主体。
@@ -25,12 +33,62 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<SessionUser | null>(readStoredUser());
   const loading = ref(false);
 
+  /**
+   * 当前账号的**生效权限**（`GET /api/permissions/me`）。
+   *
+   * 只用来决定"入口显不显示"，**不是**另一套权限规则（AGENTS.md §5 第 3 条）——
+   * 真正的拦截始终在服务端。页面刷新后这里是空的，由 `AdminLayout` 挂载时调
+   * {@link ensurePermissions} 补上。
+   */
+  const permissions = ref<PermissionKey[]>([]);
+  /** 生效权限是否来自权限组（false = 没有任何组，走角色默认模板） */
+  const permissionsFromGroups = ref(false);
+  const permissionsLoaded = ref(false);
+
   const isAuthenticated = computed(() => Boolean(token.value));
   const role = computed(() => user.value?.role ?? null);
   const isStaff = computed(() => role.value === 'ADMIN' || role.value === 'TEACHER');
   const isAdmin = computed(() => role.value === 'ADMIN');
   const displayName = computed(() => user.value?.name ?? '未登录');
   const roleLabel = computed(() => (role.value ? ROLE_LABELS[role.value] : '未登录'));
+
+  /**
+   * 是否有某个生效权限。
+   *
+   * 管理员**短路为 true**：服务端 `loadEffectivePermissions` 对 ADMIN 直接给全集，
+   * 而权限是异步拉的 —— 不短路的话，管理员刚进页面时侧栏会先缺几项再补上（可见闪烁），
+   * 且 `/permissions/me` 偶发失败会把管理员挡在本来就有的功能之外。
+   */
+  function can(key: PermissionKey): boolean {
+    if (isAdmin.value) return true;
+    return hasPermission(permissions.value, key);
+  }
+
+  /**
+   * 拉取生效权限（幂等，`force` 用于权限改完之后刷新）。
+   *
+   * 失败**不抛出**：拿不到权限时 `can()` 保持 false（即"少显示几个入口"），
+   * 不要因此卡住路由或让整页渲染不出来；错误提示由 http.ts 的响应拦截器负责。
+   */
+  async function ensurePermissions(force = false): Promise<void> {
+    if (!token.value) return;
+    if (permissionsLoaded.value && !force) return;
+    try {
+      const mine = await permissionApi.me();
+      permissions.value = mine.permissions;
+      permissionsFromGroups.value = mine.fromGroups;
+      permissionsLoaded.value = true;
+    } catch {
+      // 见上方注释：静默失败，保持"未加载"（下次调用还会重试）
+    }
+  }
+
+  /** 清掉权限缓存（换账号 / 退出登录时必须调用，否则会沿用上一个账号的权限） */
+  function resetPermissions(): void {
+    permissions.value = [];
+    permissionsFromGroups.value = false;
+    permissionsLoaded.value = false;
+  }
 
   function persist(): void {
     if (token.value) localStorage.setItem(STORAGE_KEYS.token, token.value);
@@ -40,6 +98,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function setSession(payload: LoginResponse): void {
+    resetPermissions();
     token.value = payload.token;
     user.value = { ...payload.user };
     persist();
@@ -73,6 +132,7 @@ export const useAuthStore = defineStore('auth', () => {
   function clear(): void {
     token.value = null;
     user.value = null;
+    resetPermissions();
     persist();
   }
 
@@ -80,12 +140,17 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     user,
     loading,
+    permissions,
+    permissionsFromGroups,
+    permissionsLoaded,
     isAuthenticated,
     isStaff,
     isAdmin,
     role,
     displayName,
     roleLabel,
+    can,
+    ensurePermissions,
     login,
     logout,
     fetchProfile,

@@ -1,8 +1,13 @@
 import {
   API_PATHS,
+  type AiAuditDto,
+  type AiInterpretResult,
+  type AiSettingsDto,
+  type ApiErrorResponse,
   type ArchivedClassContentDto,
   type ArchivedYearDetailDto,
   type ArchivedYearDto,
+  type AssignUserGroupsRequest,
   type ClassDetailDto,
   type ClassDto,
   type AutoTermWeeksRequest,
@@ -10,15 +15,25 @@ import {
   type ClassPlanImportResultDto,
   type ClassPlanPreviewDto,
   type ClassStatusDto,
+  type ClientDeviceDto,
+  type ClientPushResult,
+  type ClientReleaseDto,
   type CourseDto,
   type CreateArchiveRequest,
-  type CreateClassRequest,
   type CreateCallRequest,
+  type CreateClassRequest,
+  type CreateClientCommandRequest,
   type CreateCourseRequest,
   type CreateGradeRequest,
   type CreateHomeworkRequest,
+  type BulkCreateHomeworkRequest,
+  type BulkCreateNotificationRequest,
+  type BulkPublishResult,
+  type NotificationCreatorsDto,
+  type NotificationDaysDto,
   type CreateIntegrationDeviceRequest,
   type CreateNotificationRequest,
+  type CreatePermissionGroupRequest,
   type CreateScheduleRequest,
   type CreateStudentRequest,
   type DashboardSummary,
@@ -38,8 +53,13 @@ import {
   type IntegrationDeviceTokenDto,
   type LoginRequest,
   type LoginResponse,
+  type MyPermissionsDto,
   type NotificationDto,
   type PaginatedResult,
+  type PermissionCatalogDto,
+  type PermissionGroupDto,
+  type PermissionMemberDto,
+  type PushClientUpdateRequest,
   type ScheduleDto,
   type ScheduleWeekView,
   type SendClassIslandNotificationRequest,
@@ -50,16 +70,20 @@ import {
   type StudentStatus,
   type StudentTransferDto,
   type SubjectTeacherDto,
+  type SystemDiagnosticsDto,
+  type SystemSettingsDto,
   type TableImportPreview,
   type TableImportResult,
   type TermWeeksDto,
   type TimeLayoutDto,
   type TimeLayoutImportResult,
   type TimeLayoutParsePreview,
+  type UpdateAiSettingsRequest,
   type UpdateClassAccountRequest,
   type UpdateClassRequest,
   type UpdateInfo,
   type UpdateIntegrationDeviceRequest,
+  type UpdatePermissionGroupRequest,
   type UpdateStudentRequest,
   type UpdateTermWeeksRequest,
   type UserDto,
@@ -131,6 +155,22 @@ export const courseApi = {
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.courses}/${id}`),
 };
 
+/**
+ * 从「同名课程已存在」的失败里取出那门已有课程的 id。
+ *
+ * 服务端对 `POST /courses` 做了 (班级 + 科目名) 去重（返回 409 `COURSE_EXISTS` +
+ * `details.courseId`），因为课程创建会把创建者写成任课老师 —— 若放行同名第二门课，
+ * 谁都能借"新建科目"把自己变成别人的科目的老师，绕过科目维度的写权限。
+ * 前端拿到这个 id 就**复用既有课程**：权限判定随即回到"你是不是这门课的老师"，
+ * 该 403 的地方就 403（而不是悄悄多出一门归属自己的同名课）。
+ */
+export function courseIdFromExistsError(error: unknown): string | null {
+  const data = (error as { response?: { data?: ApiErrorResponse } })?.response?.data;
+  if (!data || data.code !== 'COURSE_EXISTS') return null;
+  const details = data.details as { courseId?: unknown } | null | undefined;
+  return typeof details?.courseId === 'string' ? details.courseId : null;
+}
+
 /* ------------------------------------------------------------------ 课表 */
 
 export const scheduleApi = {
@@ -163,6 +203,9 @@ export const homeworkApi = {
     api.get(`${API_PATHS.homeworks}/days`, params),
   detail: (id: string): Promise<HomeworkDto> => api.get(`${API_PATHS.homeworks}/${id}`),
   create: (payload: CreateHomeworkRequest): Promise<HomeworkDto> => api.post(API_PATHS.homeworks, payload),
+  /** 一次给多个班级布置同一份作业（服务端逐班判定并返回逐班结果） */
+  bulkCreate: (payload: BulkCreateHomeworkRequest): Promise<BulkPublishResult> =>
+    api.post(`${API_PATHS.homeworks}/bulk`, payload),
   update: (id: string, payload: Partial<CreateHomeworkRequest>): Promise<HomeworkDto> =>
     api.patch(`${API_PATHS.homeworks}/${id}`, payload),
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.homeworks}/${id}`),
@@ -181,9 +224,35 @@ export const notificationApi = {
     priority?: string;
     unreadOnly?: boolean;
     keyword?: string;
+    /** 只看某一天（YYYY-MM-DD，按通知所属日期 assignDate） */
+    date?: string;
+    /** 日期区间（含边界） */
+    from?: string;
+    to?: string;
+    /** 只看某位发布人 */
+    createdBy?: string;
   }): Promise<NotificationDto[]> => api.get(API_PATHS.notifications, params),
+  /** 按天归档：有通知的日期 + 当天条数 */
+  days: (params: {
+    classId?: string;
+    priority?: string;
+    createdBy?: string;
+    from?: string;
+    to?: string;
+  }): Promise<NotificationDaysDto> => api.get(`${API_PATHS.notifications}/days`, params),
+  /** 按发布人归档：发布人 + 各人的通知条数 */
+  creators: (params: {
+    classId?: string;
+    priority?: string;
+    date?: string;
+    from?: string;
+    to?: string;
+  }): Promise<NotificationCreatorsDto> => api.get(`${API_PATHS.notifications}/creators`, params),
   create: (payload: CreateNotificationRequest): Promise<NotificationDto> =>
     api.post(API_PATHS.notifications, payload),
+  /** 一次给多个班级发同一条通知（服务端逐班判定并返回逐班结果） */
+  bulkCreate: (payload: BulkCreateNotificationRequest): Promise<BulkPublishResult> =>
+    api.post(`${API_PATHS.notifications}/bulk`, payload),
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.notifications}/${id}`),
   unreadCount: (classId?: string): Promise<{ count: number }> =>
     api.get(`${API_PATHS.notifications}/unread-count`, classId ? { classId } : undefined),
@@ -503,4 +572,152 @@ export const updateApi = {
   /** @param force 绕过服务端缓存；仅管理员生效 */
   check: (force = false): Promise<UpdateInfo> =>
     api.get(`${API_PATHS.update}/check${force ? '?force=1' : ''}`),
+};
+
+/* ------------------------------------------------------------------ 权限组与用户权限 */
+
+/**
+ * 权限组管理（服务端 `modules/permissions`）。
+ *
+ * 权限生效规则：**有权限组时取各组的并集**（因此也能用来收回权限），
+ * 没有任何组时回落到角色默认模板；管理员固定拥有全集，班级端不受权限组影响。
+ *
+ * 除 `me` 之外，本组接口都要求当前账号有 `permission:manage`（否则服务端 403）。
+ */
+export const permissionApi = {
+  /** 当前账号的生效权限（任何登录账号都能读自己这一份） */
+  me: (): Promise<MyPermissionsDto> => api.get(`${API_PATHS.permissions}/me`),
+  /** 权限目录：全部键 / 中文名 / 分类 / 各键的默认角色 / 管理员不可剥夺的键 */
+  catalog: (): Promise<PermissionCatalogDto> => api.get(`${API_PATHS.permissions}/catalog`),
+  listGroups: (): Promise<PermissionGroupDto[]> => api.get(`${API_PATHS.permissions}/groups`),
+  createGroup: (payload: CreatePermissionGroupRequest): Promise<PermissionGroupDto> =>
+    api.post(`${API_PATHS.permissions}/groups`, payload),
+  /** `keys` 传了就**整体替换**该组的权限键（不传则保持原样） */
+  updateGroup: (id: string, payload: UpdatePermissionGroupRequest): Promise<PermissionGroupDto> =>
+    api.patch(`${API_PATHS.permissions}/groups/${id}`, payload),
+  /** 内置权限组不能删除（服务端会 400），调用前页面已经禁用了按钮 */
+  removeGroup: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.permissions}/groups/${id}`),
+  /** 可分配权限的成员（管理员与教师；管理员是固定行，不能分配） */
+  listMembers: (): Promise<PermissionMemberDto[]> => api.get(`${API_PATHS.permissions}/users`),
+  /** 分配权限组：传空数组 = 回到角色默认模板 */
+  assignGroups: (userId: string, payload: AssignUserGroupsRequest): Promise<PermissionMemberDto> =>
+    api.put(`${API_PATHS.permissions}/users/${userId}/groups`, payload),
+};
+
+/* ------------------------------------------------------------------ 客户端设备（远控与版本管理） */
+
+/**
+ * 「客户端设备」页的接口。
+ *
+ * 权限（与后端 `clients.module.ts` 逐个对齐）：
+ * - `list` / `remove`：`client:manage`
+ * - `commands`：`remote:control`（关机 / 重启 / 注销 / 锁屏，机器上还会再弹一次确认框）
+ * - `pushUpdate`：`client:update-push`
+ */
+export const clientApi = {
+  /** 设备列表（自动心跳上报产生的记录）；`classId` 留空 = 全部班级 */
+  devices: (classId?: string): Promise<ClientDeviceDto[]> =>
+    api.get(`${API_PATHS.clients}/devices`, classId ? { classId } : undefined),
+  /**
+   * 下发远控命令。
+   *
+   * 同一台机器上未执行的旧命令会被服务端**自动撤销**（否则"先关机、后重启"会排队执行）。
+   */
+  commands: (payload: CreateClientCommandRequest): Promise<ClientPushResult> =>
+    api.post(`${API_PATHS.clients}/commands`, payload),
+  /** 统一下发客户端更新：按设备 / 按班级 / 全部，或 `clear: true` 取消下发 */
+  pushUpdate: (payload: PushClientUpdateRequest): Promise<ClientPushResult> =>
+    api.post(`${API_PATHS.clients}/updates`, payload),
+  /** 移除一台设备记录（换机 / 旧机器清理；只删记录，不影响那台机器本身） */
+  removeDevice: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.clients}/devices/${id}`),
+};
+
+/** GitHub 代下与「登记 → 校验 sha256」都可能要几十秒到几分钟，够长才不至于半路超时 */
+const CLIENT_RELEASE_FETCH_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * 客户端安装包缓存管理（服务端 `modules/update/client-releases.service.ts`）。
+ *
+ * 教室机器常常没有外网，所以安装包由**服务端替教室下载**再缓存：
+ * Web 端不直连 GitHub（CSP 的 connect-src 只放行 self 与 WebSocket，见 AGENTS.md §5 第 52 条）。
+ *
+ * 权限：`list` 要 `client:manage`，`fetch` / `register` / `remove` 要 `client:update-push`。
+ */
+export const clientReleaseApi = {
+  /** 服务端已缓存的安装包列表 */
+  list: (): Promise<ClientReleaseDto[]> => api.get(`${API_PATHS.update}/client/releases`),
+  /**
+   * 让服务端从 GitHub 下载指定版本并登记。
+   *
+   * ⚠️ **必须显式放宽超时**：axios 实例默认 20 秒，而服务端自己允许下载 10 分钟
+   * （`client-releases.service.ts` 的 `FETCH_TIMEOUT_MS`）。用默认值会在服务端还在下载时
+   * 就报"请求超时"，用户会以为失败而重复点。这里与服务端取同一个上限。
+   */
+  fetch: (version: string): Promise<ClientReleaseDto> =>
+    api.post(
+      `${API_PATHS.update}/client/fetch`,
+      { version },
+      { timeout: CLIENT_RELEASE_FETCH_TIMEOUT_MS },
+    ),
+  /** 登记一份已经手工放进 `data/client-releases/<版本>/` 的安装包 */
+  register: (payload: { version: string; fileName?: string; notes?: string }): Promise<ClientReleaseDto> =>
+    api.post(`${API_PATHS.update}/client/releases`, payload),
+  /** 删除缓存（元数据 + 磁盘文件） */
+  remove: (version: string): Promise<{ version: string }> =>
+    api.delete(`${API_PATHS.update}/client/releases/${encodeURIComponent(version)}`),
+};
+
+/* ------------------------------------------------------------------ 大模型助手 */
+
+/**
+ * 大模型助手的接口前缀（取自共享契约 `API_PATHS.ai`，与服务端 `modules/ai` 的挂载点同源）。
+ */
+const AI_BASE = API_PATHS.ai;
+
+/**
+ * 大模型助手（服务端 `modules/ai`）。
+ *
+ * 权限：`settings` / `audit` 要 `ai:manage`（仅管理员）；`interpret` 要 `ai:use`（教师也有）。
+ *
+ * ⚠️ **助手只解析、不落库**：`interpret` 只是把一句中文换成结构化参数，
+ * 真正写数据仍然由前端在老师确认后调既有的发布接口（作业 / 通知 / 叫人）。
+ */
+export const aiApi = {
+  /**
+   * 读取配置。
+   *
+   * 只有 `ai:manage` 能读（教师读会 403，而响应拦截器会弹一个错误提示），
+   * 所以助手页**不要**无条件调它——教师侧靠"探测式"：直接尝试解析，
+   * 服务端回了 `AI_NOT_CONFIGURED` 再切空态。
+   */
+  settings: (): Promise<AiSettingsDto> => api.get(`${AI_BASE}/settings`),
+  /**
+   * 保存配置。
+   *
+   * `apiKey` 的三种语义（服务端约定）：传字符串 = 换新、传 `null` = 清除、**不传 = 保持原样**。
+   * 因此"留空表示不修改"时不要往 body 里塞 `apiKey: ''`，那会被当成一个空密钥。
+   */
+  updateSettings: (payload: UpdateAiSettingsRequest): Promise<AiSettingsDto> =>
+    api.put(`${AI_BASE}/settings`, payload),
+  /** 把一句话解析成待确认的操作；`text` 上限 500 字（超出由服务端 400） */
+  interpret: (payload: { text: string; classId?: string }): Promise<AiInterpretResult> =>
+    api.post(`${AI_BASE}/interpret`, payload),
+  /** 使用记录（谁、什么时候、说了什么、解析成什么、结果如何），倒序 */
+  audit: (limit = 50): Promise<AiAuditDto[]> => api.get(`${AI_BASE}/audit`, { limit }),
+};
+
+/* ------------------------------------------------------------------ 系统设置与诊断 */
+
+/**
+ * 系统设置与诊断（服务端 `modules/system`），全部要 `system:manage`（仅管理员）。
+ */
+const SYSTEM_BASE = API_PATHS.system;
+
+export const systemApi = {
+  settings: (): Promise<SystemSettingsDto> => api.get(`${SYSTEM_BASE}/settings`),
+  /** 目前只有 `developerMode` 一项；保存后服务端返回完整设置 */
+  updateSettings: (payload: Partial<SystemSettingsDto>): Promise<SystemSettingsDto> =>
+    api.put(`${SYSTEM_BASE}/settings`, payload),
+  /** 只读诊断信息（版本 / Node / 平台 / 运行时长 / 数据库 / 目录 / 模块数） */
+  diagnostics: (): Promise<SystemDiagnosticsDto> => api.get(`${SYSTEM_BASE}/diagnostics`),
 };

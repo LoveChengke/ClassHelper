@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { ApiError, sendCreated, sendOk } from '../../lib/http.js';
-import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import * as gradeService from '../grades/grades.service.js';
@@ -117,7 +117,7 @@ router.use(authenticate());
  */
 router.get(
   '/devices',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('device:manage'),
   validate({ query: listDevicesQuerySchema }),
   async (req, res) => {
     const { classId } = validatedQuery<{ classId?: string }>(req);
@@ -131,14 +131,14 @@ router.get(
  * 管理员看全部班级；普通教师看自己担任班主任的班级 ∪ 任课的班级。
  * 每条含：班级、设备名/设备号、在线/离线、最后在线时间、最后心跳时间。
  */
-router.get('/classisland/status', requireRole('ADMIN', 'TEACHER'), async (req, res) => {
+router.get('/classisland/status', requirePermission('device:manage'), async (req, res) => {
   sendOk(res, await integrationService.listClassHelperStatus(getAuthUser(req)), '获取在线状态成功');
 });
 
 /** POST /api/integrations/devices - 新建设备并一次性返回明文令牌（管理员或本班班主任） */
 router.post(
   '/devices',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('device:manage'),
   validate({ body: createDeviceSchema }),
   async (req, res) => {
     const result = await integrationService.createDevice(
@@ -152,7 +152,7 @@ router.post(
 /** PATCH /api/integrations/devices/:id - 改名 / 启停 / 调整同步开关 */
 router.patch(
   '/devices/:id',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('device:manage'),
   validate({ params: deviceIdParamSchema, body: updateDeviceSchema }),
   async (req, res) => {
     const { id } = validatedParams<{ id: string }>(req);
@@ -174,7 +174,7 @@ router.patch(
  */
 router.post(
   '/devices/:id/request-schedule',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('device:manage'),
   validate({ params: deviceIdParamSchema }),
   async (req, res) => {
     const { id } = validatedParams<{ id: string }>(req);
@@ -186,7 +186,7 @@ router.post(
 /** POST /api/integrations/devices/:id/token - 重置令牌（旧令牌立即失效） */
 router.post(
   '/devices/:id/token',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('device:manage'),
   validate({ params: deviceIdParamSchema }),
   async (req, res) => {
     const { id } = validatedParams<{ id: string }>(req);
@@ -197,7 +197,7 @@ router.post(
 /** DELETE /api/integrations/devices/:id - 删除设备 */
 router.delete(
   '/devices/:id',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('device:manage'),
   validate({ params: deviceIdParamSchema }),
   async (req, res) => {
     const { id } = validatedParams<{ id: string }>(req);
@@ -209,7 +209,7 @@ router.delete(
 /** POST /api/integrations/classisland/notify - 把提醒下发到该班的 ClassIsland 设备 */
 router.post(
   '/classisland/notify',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('classisland:notify'),
   validate({ body: sendNotificationSchema }),
   async (req, res) => {
     const result = await integrationService.sendNotification(

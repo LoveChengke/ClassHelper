@@ -2029,6 +2029,39 @@ async function runIslandChecks(
   );
   await sleep(120);
   const duringClose = { state: island.getState() };
+
+  /**
+   * 收回动画（用户要求："点知道了 / 标为已读时也要有回收动画"）。
+   *
+   * 主进程收到 dismiss / dismiss-all / mark-read / mark-all-read 之后：状态**同一帧就清空**，
+   * 形态先切回胶囊（`reason === 'closing'`）让渲染进程把卡片收回去，`CLOSE_ANIMATION_MS`（360ms，
+   * 会按外观里的"动画速度"缩放）之后才淡出隐藏。这里在点击后的小窗口内轮询采样，
+   * 断言"确实经过了这个阶段、且动画期间窗口仍然可见"。
+   */
+  let closingSample: { mode: string; reason: string | null; visible: boolean } | null = null;
+  for (let attempt = 0; attempt < 20 && !closingSample; attempt += 1) {
+    const probe = island.getState();
+    if (probe.reason === 'closing') {
+      closingSample = {
+        mode: probe.mode,
+        reason: probe.reason,
+        visible: islandWindow?.isVisible() ?? false,
+      };
+      break;
+    }
+    await sleep(25);
+  }
+  record(
+    '点「知道了」有收回动画（先收回胶囊再淡出，动画期间窗口可见）',
+    closingSample !== null &&
+      closingSample.mode === 'pill' &&
+      closingSample.visible &&
+      duringClose.state.active === null,
+    closingSample
+      ? `采样=${closingSample.mode}/${closingSample.reason}/可见:${closingSample.visible}`
+      : '未捕捉到 closing 阶段（可能动画被关掉或耗时过短）',
+  );
+
   for (let attempt = 0; attempt < 26; attempt += 1) {
     await probeClosingClip();
     await sleep(40);

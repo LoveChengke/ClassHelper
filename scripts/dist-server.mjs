@@ -4,14 +4,22 @@
  * 交付产物统一落到 releases/server/<版本>/（releases/ 不入库，与客户端/插件同级）：
  *
  * 产出（Windows）：
- *   releases/server/<版本>/免安装/                                    可直接运行的免安装目录
  *   releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe  Windows 安装程序（NSIS）
  *   releases/server/<版本>/构建中间/server-installer.generated.nsi      NSIS 生成脚本（可重新生成）
  *
  * 产出（Linux，加 --platform linux，即 pnpm dist:server:linux）：
  *   releases/server/<版本>/linux-x64/classhelper-server-linux-x64-<版本>.tar.gz   Linux 一键安装器的输入
  *   releases/server/<版本>/linux-x64/classhelper-server-linux-x64-<版本>.tar.gz.sha256
- *   releases/server/<版本>/linux-x64/classhelper-server-linux-x64/                tar 的解包目录（同内容留档）
+ *
+ * 交付产物里**没有免安装目录**。组装出来的运行时（Node + node_modules + dist + web，Windows 侧
+ * 约 335MB）只是打安装程序 / 打 tar.gz 的中间物，留在 `.cache/server-staging/<版本>/` 下，
+ * 打完就删：
+ *   · NSIS 把整个 staging 目录编进 setup.exe，编完没人再读它；
+ *   · Linux 侧 tar 已经把它压成 tar.gz，那份解包目录与 tar 内容完全一样，纯属重复留档。
+ * 迭代打包用的 `--reuse-deps`（跳过两分钟 npm install）改从 `.cache/server-staging/` 复用，
+ * 所以反复打包时中间物会一直在缓存里 —— 想彻底腾空间就删 `.cache/`。
+ * **别把 staging 挪回 releases/**：交付目录里混着一个能直接双击运行的副本，
+ * 既容易被误当成"这是我该拷走的东西"，又让每个版本多占 335MB。
  *
  * 为什么 Linux 包要在 Linux 上构建：`@libsql/linux-x64-gnu`、`@prisma/adapter-libsql` 都是
  * 平台相关依赖，在 Windows 上 npm install 出来的 node_modules 装到 Linux 跑不起来。
@@ -47,7 +55,7 @@ const outRoot = path.join(root, 'releases', 'server', VERSION);
 const INSTALLER_DIR = path.join(outRoot, '安装包');
 const GENERATED_DIR = path.join(outRoot, '构建中间');
 
-/** win = 免安装目录 + NSIS 安装程序；linux = 带运维工具的 tar.gz（给 deploy/install.sh 用） */
+/** win = 组装运行时 + NSIS 安装程序；linux = 带运维工具的 tar.gz（给 deploy/install.sh 用） */
 const PLATFORM = (() => {
   const index = process.argv.indexOf('--platform');
   const value = index >= 0 ? process.argv[index + 1] : process.platform === 'win32' ? 'win' : 'linux';
@@ -57,10 +65,12 @@ const PLATFORM = (() => {
 const isLinux = PLATFORM === 'linux';
 
 // Linux 侧 staging 的目录名会原样成为 tar 里的顶层目录（deploy/install.sh 用 --strip-components=1
-// 展开），保持 ASCII 不动；Windows 侧目录名只影响本地留档，直接用中文分类名。
+// 展开），保持 ASCII 不动。
+// 两侧都放在 .cache/ 下：staging 是纯粹的一次性中间物（见文件头），不该出现在交付目录里；
+// 放缓存里同时让 `--reuse-deps` 有地方复用上一轮的 node_modules。
 const staging = isLinux
-  ? path.join(outRoot, 'linux-x64', 'classhelper-server-linux-x64')
-  : path.join(outRoot, '免安装');
+  ? path.join(root, '.cache', 'server-staging', VERSION, 'linux-x64', 'classhelper-server-linux-x64')
+  : path.join(root, '.cache', 'server-staging', VERSION, 'win');
 
 const LINUX_TARBALL = path.join(
   outRoot,
@@ -922,6 +932,13 @@ function main() {
     }
     log(`Linux 安装包：${path.relative(root, file)}（${sizeMb(LINUX_TARBALL)} MB）`);
     log(`校验文件：${path.relative(root, shaFile)}`);
+    // tar.gz 才是交付物；生成它的那份解包目录与 tar 内容一模一样，删掉。
+    try {
+      fs.rmSync(staging, { recursive: true, force: true });
+      log(`已清理组装中间物 ${path.relative(root, staging)}`);
+    } catch (error) {
+      log(`组装中间物清理失败（不影响交付物）：${error.message}`);
+    }
     log('完成。部署方式：sudo bash deploy/install.sh --package <上面的 tar.gz>');
     return;
   }
@@ -930,9 +947,18 @@ function main() {
   writeRuntimeScripts();
   writeReadme();
 
+  const stagingMb = sizeMb(staging);
   const installer = buildInstaller();
 
-  log(`免安装目录：${path.relative(root, staging)}（${sizeMb(staging)} MB）`);
+  // NSIS 已经把整个 staging 目录编进 setup.exe，编完这份组装结果就没人再读了 ——
+  // 删掉，别让交付目录/缓存里堆着一个能直接双击运行的 335MB 副本（见文件头）。
+  try {
+    fs.rmSync(staging, { recursive: true, force: true });
+    log(`已清理组装中间物 ${path.relative(root, staging)}（${stagingMb} MB）`);
+  } catch (error) {
+    log(`组装中间物清理失败（不影响交付物）：${error.message}`);
+  }
+
   if (installer)
     log(
       `安装程序：${path.relative(root, installer)}（${Math.round(fs.statSync(installer).size / 1024 / 1024)} MB）`,

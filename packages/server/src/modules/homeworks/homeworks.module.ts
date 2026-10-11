@@ -1,16 +1,18 @@
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
+  bulkCreateHomeworkSchema,
   createHomeworkSchema,
   listHomeworkDaysQuerySchema,
   listHomeworksQuerySchema,
   updateHomeworkSchema,
   updateHomeworkStatusSchema,
   updateHomeworkSubmissionsSchema,
+  type BulkCreateHomeworkInput,
   type CreateHomeworkInput,
   type ListHomeworkDaysInput,
   type UpdateHomeworkInput,
@@ -71,10 +73,32 @@ router.post(
   },
 );
 
+/**
+ * POST /api/homeworks/bulk - 一次给多个班级布置同一份作业（逐班结果）
+ *
+ * 与 POST / 的区别：批量发布是 Web 管理端的"多班同发"工作流，因此这里挂 `homework:write`；
+ * 教室机器的班级账号仍走单班录入（POST /，权限在服务层判，见 AGENTS.md §5 第 20 条）。
+ * 每个班的科目归属依然由 createHomework 里的 assertCanManageSubjectContent 逐个判定 ——
+ * 批量不是绕过科目门的后门（§5 第 5 条）。
+ */
+router.post(
+  '/bulk',
+  requirePermission('homework:write'),
+  validate({ body: bulkCreateHomeworkSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const result = await homeworkService.bulkCreateHomeworks(
+      user,
+      req.body as BulkCreateHomeworkInput,
+    );
+    sendCreated(res, result, `批量发布完成：成功 ${result.succeeded} 个班，失败 ${result.failed} 个班`);
+  },
+);
+
 /** PATCH /api/homeworks/:id - 修改作业 */
 router.patch(
   '/:id',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('homework:write'),
   validate({ params: idParamSchema, body: updateHomeworkSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -90,7 +114,7 @@ router.patch(
 /** DELETE /api/homeworks/:id - 删除作业 */
 router.delete(
   '/:id',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('homework:write'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);

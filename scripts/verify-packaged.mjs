@@ -26,18 +26,26 @@ const argOf = (name) => {
   return index >= 0 ? argv[index + 1] : undefined;
 };
 
-// 默认取 releases/client/<版本>/免安装/（dist-win 的产物落点，见 AGENTS.md §4）
-const clientVersion = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version;
-const defaultExe = path.join(repoRoot, 'releases', 'client', clientVersion, '免安装', 'ClassHelper.exe');
+// 默认取「装好的客户端」：打包产物里已经没有解包目录（见 dist-win.mjs 文件头），
+// 所以默认值只能是安装后的落点，其余情况一律用 --exe 显式指定。
+const installedExe = path.join(
+  process.env.LOCALAPPDATA ?? path.join(process.env.USERPROFILE ?? '', 'AppData', 'Local'),
+  'Programs',
+  'ClassHelper',
+  'ClassHelper.exe',
+);
 
-const exe = path.resolve(argOf('--exe') ?? defaultExe);
+const exe = path.resolve(argOf('--exe') ?? installedExe);
 const classCode = argOf('--code') ?? process.env.ELECTRON_SMOKE_CLASS_CODE ?? 'G101';
 const classPassword = argOf('--password') ?? process.env.ELECTRON_SMOKE_CLASS_PASSWORD ?? '123456';
 const forceOffline = argv.includes('--offline');
 
 if (!fs.existsSync(exe)) {
   console.error(`[packaged-smoke] 找不到打包后的 EXE：${exe}`);
-  console.error('[packaged-smoke] 先执行 pnpm dist:win，或用 --exe 指定已安装的客户端路径');
+  console.error(
+    '[packaged-smoke] 用 --exe 指定：装好的客户端（默认 %LOCALAPPDATA%\\Programs\\ClassHelper\\' +
+      'ClassHelper.exe）、或解压后的便携版所在目录',
+  );
   process.exit(2);
 }
 

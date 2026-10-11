@@ -1,6 +1,6 @@
 {
   "name": "@classhelper/server",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "ClassHelper后端服务：REST API + Socket.IO 实时推送 + Prisma 数据访问",
   "type": "module",

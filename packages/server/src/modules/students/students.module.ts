@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -33,7 +33,7 @@ router.use(authenticate());
  */
 router.get(
   '/',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('roster:manage'),
   validate({ query: listStudentsQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -45,7 +45,7 @@ router.get(
 /** GET /api/students/transfers - 调班 / 转出历史（管理员看全部，也可按学生或班级过滤） */
 router.get(
   '/transfers',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('roster:manage'),
   validate({ query: listTransfersQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -62,7 +62,7 @@ router.get(
  */
 router.post(
   '/transfer',
-  requireRole('ADMIN'),
+  requirePermission('class:manage'),
   validate({ body: transferStudentsSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -74,7 +74,7 @@ router.post(
 /** POST /api/students/transfer-out - 学生转出（学籍离开本校，不是调班） */
 router.post(
   '/transfer-out',
-  requireRole('ADMIN'),
+  requirePermission('class:manage'),
   validate({ body: transferOutStudentsSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -86,7 +86,7 @@ router.post(
 /** GET /api/students/:id/transfers - 单个学生的调班 / 转出历史 */
 router.get(
   '/:id/transfers',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('roster:manage'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -99,7 +99,7 @@ router.get(
 /** POST /api/students - 新建学生（名单记录，不是账号） */
 router.post(
   '/',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('roster:manage'),
   validate({ body: createStudentSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -114,7 +114,7 @@ router.post(
 /** PATCH /api/students/:id - 修改学生信息 / 调班 */
 router.patch(
   '/:id',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('roster:manage'),
   validate({ params: idParamSchema, body: updateStudentSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -130,7 +130,7 @@ router.patch(
 /** DELETE /api/students/:id - 删除学生名单记录 */
 router.delete(
   '/:id',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('roster:manage'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { ElButton, ElNotification } from 'element-plus';
 import type { UpdateInfo } from '@classhelper/shared';
 import {
+  replayMissedNotifications,
   startIslandBridge,
   stopIslandBridge,
   subscribeIslandMarkAllRead,
@@ -73,6 +74,20 @@ function showUpdateAvailable(info: UpdateInfo): void {
 }
 
 /**
+ * 上线补弹「离线期间收到的消息」（需求 11）。
+ *
+ * **为什么订阅放在 App.vue**：与 `onUpdateAvailable` 同一条理由 —— App.vue 整个应用生命周期
+ * 只挂载一次，而 `ClientLayout` 会随"登出 → 登录"反复挂载。而且恢复事件本身是"可达性由不可达
+ * 变为可达"的那一刻，一次会话里可能发生多次，处理器必须是**幂等**的（`replayMissedNotifications`
+ * 推完就清掉离线起点，重复触发时第二次读到空值、直接返回 0）。
+ *
+ * 处理器是具名函数：`stores/app.ts` 的订阅表按函数引用 off，匿名箭头函数在 onUnmounted 里摘不掉。
+ */
+function handleServerRecovered(): void {
+  void replayMissedNotifications();
+}
+
+/**
  * 启动流程：
  * 1) 从主进程配置恢复服务器地址与登录令牌
  * 2) 先用缓存资料渲染，再尝试向服务器刷新（不可达则进入离线会话）
@@ -107,6 +122,9 @@ onMounted(async () => {
     subscribeIslandMarkRead();
     subscribeIslandMarkAllRead();
 
+    // 离线期间收到的消息：可达性恢复的那一刻补弹到灵动岛（App.vue 常驻，所以每次恢复只跑一次）
+    appStore.onServerRecovered(handleServerRecovered);
+
     // 启动自动检查发现新版本时由主进程推过来（订阅只挂一次，理由见 showUpdateAvailable）
     window.desktop?.onUpdateAvailable?.(showUpdateAvailable);
 
@@ -129,6 +147,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  appStore.offServerRecovered(handleServerRecovered);
   stopIslandBridge();
 });
 </script>

@@ -1,7 +1,9 @@
+import { aiModule } from './ai/ai.module.js';
 import { archivesModule } from './archives/archives.module.js';
 import { authModule } from './auth/auth.module.js';
 import { callsModule } from './calls/calls.module.js';
 import { classesModule } from './classes/classes.module.js';
+import { clientsModule } from './clients/clients.module.js';
 import { coursesModule } from './courses/courses.module.js';
 import { databaseModule } from './database/database.module.js';
 import { dashboardModule } from './dashboard/dashboard.module.js';
@@ -10,8 +12,10 @@ import { homeworksModule } from './homeworks/homeworks.module.js';
 import { importsModule } from './imports/imports.module.js';
 import { integrationsModule } from './integrations/integrations.module.js';
 import { notificationsModule } from './notifications/notifications.module.js';
+import { permissionsModule } from './permissions/permissions.module.js';
 import { schedulesModule } from './schedules/schedules.module.js';
 import { studentsModule } from './students/students.module.js';
+import { systemModule } from './system/system.module.js';
 import { teachersModule } from './teachers/teachers.module.js';
 import { termModule } from './term/term.module.js';
 import { updateModule } from './update/update.module.js';
@@ -26,16 +30,20 @@ import type { ApiModule } from './module.types.js';
  */
 export const apiModules: ApiModule[] = [
   authModule,
+  aiModule,
   classesModule,
+  clientsModule,
   coursesModule,
   schedulesModule,
   homeworksModule,
   notificationsModule,
+  permissionsModule,
   callsModule,
   importsModule,
   integrationsModule,
   gradesModule,
   studentsModule,
+  systemModule,
   teachersModule,
   archivesModule,
   termModule,

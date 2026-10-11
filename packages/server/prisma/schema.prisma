@@ -43,6 +43,8 @@ model User {
   role         String   @default("TEACHER")
   /// 手机号（教师联系方式，可空）
   phone        String   @default("")
+  /// 关怀模式（大字版界面）：本人开关，Web 端与客户端各记一份
+  careMode     Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -52,6 +54,8 @@ model User {
   courses           Course[]
   createdHomeworks  Homework[]     @relation("HomeworkCreator")
   createdNotices    Notification[] @relation("NotificationCreator")
+  /// 分配的权限组；**没有任何分组时**回落角色默认模板（见 shared 的 ROLE_DEFAULT_PERMISSIONS）
+  permissionGroups  UserPermissionGroup[]
 
   @@index([role])
 }
@@ -240,6 +244,7 @@ model Class {
   timeLayouts   TimeLayout[]
   integrationDevices IntegrationDevice[]
   classIslandPushes  ClassIslandPush[]
+  clientDevices      ClientDevice[]
 
   @@index([teacherId])
   @@index([enrollmentYear])
@@ -353,6 +358,9 @@ model Notification {
   title     String
   content   String
   priority  String   @default("NORMAL")
+  /// 发布所属日期（**本地日期 YYYY-MM-DD，不带时区**）：按天归档的唯一依据。
+  /// 与 Homework.assignDate 同口径（shared 的 dayKeyLocal），**不要**用 createdAt 切 UTC。
+  assignDate String  @default("")
   createdBy String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -362,6 +370,7 @@ model Notification {
   reads   NotificationRead[]
 
   @@index([classId, createdAt])
+  @@index([classId, assignDate])
 }
 
 /// 通知已读记录
@@ -515,4 +524,175 @@ model ClassIslandPush {
 
   @@index([classId, createdAt])
   @@index([deviceId, ackedAt])
+}
+
+/* -------------------------------------------------------------------------- */
+/*  权限组 / 全局设置 / 客户端设备 / 远控命令 / 客户端安装包 / 大模型审计          */
+/* -------------------------------------------------------------------------- */
+
+/// 权限组：管理员自定义的一组**权限键**（`shared` 的 `PERMISSION_KEYS`），可分配给多个账号。
+///
+/// 语义（与 `packages/shared/src/permissions.ts` 的目录一一对应）：
+/// - 账号**没有**任何 `UserPermissionGroup` 时，生效集合 = 角色默认模板（`ROLE_DEFAULT_PERMISSIONS`）；
+/// - 一旦分了组，生效集合 = 这些组的键并集（可以比默认更少 ⇒ 也能用来**收回**权限）；
+/// - `ADMIN` 永远补上 `permission:manage` / `system:manage`，避免把自己锁死。
+model PermissionGroup {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String   @default("")
+  /// 内置组：只在种子/引导时创建，管理员不可删除（可改成员与键）
+  builtin     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items PermissionGroupItem[]
+  users UserPermissionGroup[]
+}
+
+/// 权限组里的一个权限键（一行一个键，便于查询与去重）
+model PermissionGroupItem {
+  id        String   @id @default(cuid())
+  groupId   String
+  /// 权限键，取值必须是 shared 的 PERMISSION_KEYS 之一（服务端 zod 校验）
+  key       String
+  createdAt DateTime @default(now())
+
+  group PermissionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, key])
+  @@index([groupId])
+}
+
+/// 账号 ←→ 权限组 的分配关系（一个账号可属多个组）
+model UserPermissionGroup {
+  id        String   @id @default(cuid())
+  userId    String
+  groupId   String
+  createdAt DateTime @default(now())
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group PermissionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupId])
+  @@index([userId])
+  @@index([groupId])
+}
+
+/// 全局键值设置（大模型配置、开发者模式等）。
+///
+/// 值一律存字符串（复杂结构存 JSON 文本），键名常量在 `src/lib/settings.ts`；
+/// 密钥类值（如大模型 API Key）加密后存这里，接口**只进不出**。
+model AppSetting {
+  key       String   @id
+  value     String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// ClassHelper 客户端设备（装在学生机/教室机上的桌面客户端）。
+///
+/// 身份由客户端主进程生成并持久化的 `deviceKey`（UUID）标识，心跳每 30 秒一次：
+/// 服务端由此知道**每台机器在哪个班、版本多少、是否在线**，并把更新与远控
+/// 指令按「查库 + 心跳拉取」的范式下发（不新增长连接握手，照抄
+/// `IntegrationDevice.requestScheduleReport` 的做法）。
+model ClientDevice {
+  id        String @id @default(cuid())
+  /// 该设备当前登录的班级（未登录时为空）
+  classId   String?
+  /// 设备唯一标识（客户端主进程生成，UUID）
+  deviceKey String @unique
+  /// 设备名（默认取 os.hostname()，管理员可改名）
+  name      String @default("")
+  /// 客户端版本号（来自 app.getVersion()）
+  clientVersion String @default("")
+  /// 系统与架构，如 win32-x64
+  platform  String @default("")
+  /// 是否接受服务端统一下发的自动更新
+  autoUpdate Boolean @default(true)
+  /// 服务端指定的目标版本（'' = 不指定，按最新版走）
+  updateTargetVersion String @default("")
+  /// 已下载待安装的版本（'' = 无）
+  pendingVersion String @default("")
+  /// 最近一次心跳时间（**在线判定看它**）
+  lastHeartbeatAt DateTime?
+  /// 最近一次心跳来源 IP（排查用）
+  lastIp    String @default("")
+  /// 客户端上报的当前状态说明（如"上课中/已隐藏"，仅展示用）
+  stateNote String @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  class    Class?          @relation(fields: [classId], references: [id], onDelete: SetNull)
+  commands ClientCommand[]
+
+  @@index([classId])
+  @@index([lastHeartbeatAt])
+}
+
+/// 下发给客户端设备的指令（远控：关机 / 重启 / 注销 / 锁屏）。
+///
+/// 客户端心跳时拉取未确认且未过期的指令，**执行前必须在界面上二次确认**，
+/// 执行后回执（`ackedAt` + `result`）。
+model ClientCommand {
+  id        String    @id @default(cuid())
+  deviceId  String
+  /// shutdown | restart | logoff | lock
+  kind      String
+  /// 附加参数（JSON 文本，预留：延时秒数、提示语）
+  payload   String    @default("")
+  createdBy String?
+  createdAt DateTime  @default(now())
+  /// 过期时间：超过后不再下发（避免机器离线后几天突然关机）
+  expiresAt DateTime?
+  /// 客户端确认执行的时间
+  ackedAt   DateTime?
+  /// 执行结果说明（成功 / 失败原因）
+  result    String    @default("")
+  /// 管理员撤销的时间（非空即不再下发）
+  cancelledAt DateTime?
+
+  device ClientDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, ackedAt])
+  @@index([createdAt])
+}
+
+/// 服务端缓存的客户端安装包：教室机器**没有外网**时也能统一更新。
+///
+/// 管理员上传后落在 `data/client-releases/`，客户端从
+/// `GET /api/update/client/download/:version` 下载（继承守卫与限流）。
+model ClientRelease {
+  id        String   @id @default(cuid())
+  version   String   @unique
+  fileName  String
+  /// 安装包 sha256（客户端下载后必须校验）
+  sha256    String   @default("")
+  /// 字节数（管理员上传时记录，供下载进度与展示用）
+  size      Int      @default(0)
+  /// 发布说明（展示给管理员）
+  notes     String   @default("")
+  createdBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// 大模型指令审计：谁在什么时候用"一句话"做了什么、结果如何。
+///
+/// 只记**意图与结果**，不记密钥；`rawReply` 供排查模型输出格式问题时查看。
+model AiAudit {
+  id        String   @id @default(cuid())
+  userId    String
+  /// 用户原话
+  prompt    String
+  /// 模型解析出的意图（如 homework.publish / notification.publish / unknown）
+  intent    String   @default("")
+  /// pending | confirmed | rejected | failed
+  status    String   @default("pending")
+  /// 结果说明（失败原因、生成的标题等）
+  message   String   @default("")
+  /// 模型原始回复（截断保存，排查用）
+  rawReply  String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }

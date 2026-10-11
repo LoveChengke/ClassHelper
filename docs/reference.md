@@ -1,7 +1,7 @@
 # ClassHelper · 完整参考
 
 班级信息管理系统。一个 pnpm monorepo，一份代码产出四个交付物：**后端服务**、**Web 管理端**（教师 / 管理员）、
-**桌面客户端**（ClassHelper 班级端 / 教室机器）与 **ClassIsland 联动插件**（装在教室的 ClassIsland 上）。**当前版本 1.2.0**。
+**桌面客户端**（ClassHelper 班级端 / 教室机器）与 **ClassIsland 联动插件**（装在教室的 ClassIsland 上）。
 
 核心链路：
 
@@ -43,6 +43,13 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
   - [4.8 ClassIsland 联动](#48-classisland-联动)
   - [4.9 数据库管理](#49-数据库管理仅管理员)
   - [4.10 更新检查](#410-更新检查)
+  - [4.11 毕业归档（仅管理员）](#411-毕业归档仅管理员)
+  - [4.12 学期周次](#412-学期周次可逐周覆盖仅管理员)
+  - [4.13 课表同步方向](#413-课表同步方向服务端--教室)
+  - [4.14 权限组管理（角色只是默认模板）](#414-权限组管理角色只是默认模板)
+  - [4.15 客户端设备统一更新与远控](#415-客户端设备统一更新与远控)
+  - [4.16 通知按天归档与批量发布](#416-通知按天归档与批量发布)
+  - [4.17 大模型助手与开发者模式 / 关怀模式](#417-大模型助手与开发者模式--关怀模式)
 - [5. 技术参考](#5-技术参考)
   - [5.1 目录结构](#51-目录结构)
   - [5.2 技术栈](#52-技术栈)
@@ -86,8 +93,9 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 | **ClassIsland 联动插件**        | `releases/classisland-plugin/<版本>/安装包/ClassHelper.ClassIslandPlugin.cipx`  | 装在教室机器的 ClassIsland 上（也可把 `ClassHelper.ClassIslandPlugin/` 目录丢进 Plugins） |
 
 > 这些产物**都不入库**（`releases/` 已 gitignore + eslint ignore）。三个打包脚本**直接输出**到
-> `releases/<组件>/<版本>/`，每个版本目录下按 `安装包/`、`免安装/`、`构建中间/` 分层，
-> 历史版本原样保留 —— 详见 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) §4。
+> `releases/<组件>/<版本>/`，每个版本目录下按 `安装包/`（交付物）、`构建中间/`（可重新生成）分层，
+> 历史版本原样保留。**没有免安装目录**：组装/解包出来的那一份只是中间物，脚本打完就删 ——
+> 详见 [AGENTS.md](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) §4。
 
 四种部署形态按场景选（Linux 完整步骤见 [docs/management/linux-deploy.md](management/linux-deploy.md)，
 其余见 [docs/management/production.md](management/production.md)）：
@@ -97,7 +105,7 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 | 学校机房 / 教师电脑（Windows 单机） | Windows 服务端安装程序（内置 Node，双击即用）               | `releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe`                    |
 | 云服务器 / 多终端共享（推荐长期）   | Docker Compose + MySQL（另有 SQLite 单容器版）              | `deploy/Dockerfile`、`deploy/docker-compose{,.sqlite}.yml`                               |
 | 已有 Linux 服务器                   | **一键安装器 + `classhelper` 运维命令**（systemd / docker） | `sudo bash deploy/install.sh`（先 `--check` 体检）；运维见 `classhelper help`            |
-| 自定义 / 已有 Node 环境             | 手动部署免安装目录                                          | `pnpm dist:server` → `releases/server/<版本>/免安装/`                                    |
+| 自定义 / 已有 Node 环境             | 在仓库里构建后直接跑（手动部署）                            | `pnpm --filter @classhelper/server start`                                                |
 
 **Linux 服务器最快路径是一行命令**：脚本会自己从 GitHub Release 取最新版服务端包、取发布页上的
 `.sha256` 校验，再装成 systemd 服务并带上 `classhelper` 运维命令。完整步骤与验收清单见
@@ -211,8 +219,7 @@ pnpm verify:desktop
 | `pnpm build:classisland-plugin`               | 构建 ClassIsland 联动插件（.NET 8）                                                 |
 | `pnpm dist:classisland-plugin`                | 打包插件为 `.cipx` 并归集到 `releases/classisland-plugin/<版本>/`                  |
 | `pnpm icons`                                  | 从 `build/classhelper.png` 派生全部图标（PWA / favicon / 托盘 / 安装包 / 插件 / 官网 / 界面内品牌标） |
-| `pnpm dist:server`                            | 打包服务端 + Web 管理端（免安装目录 + NSIS 安装程序，内置 Node）                    |
-| `pnpm dist:dir`                               | 打包客户端免安装目录 `release/win-unpacked`（最快）                                 |
+| `pnpm dist:server`                            | 打包服务端 + Web 管理端（NSIS 安装程序，内置 Node）                                 |
 | `pnpm dist:win`                               | 打包客户端 nsis 安装包 + portable 单文件 EXE                                        |
 | `pnpm dist:all`                               | 服务端安装程序 + 客户端安装包 + 插件一起打                                          |
 | `pnpm verify:e2e`                             | 后端端到端验收（需服务端已启动）                                                    |
@@ -765,14 +772,14 @@ Web 管理端「数据库管理」页（`/database`，仅 ADMIN 可见，后端�
 
 | 能力         | 说明                                                                                                                                                          |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 连接状态检测 | 当前类型（SQLite/MySQL）、连通性与延迟、引擎版本、数据体积、16 张表行数、连接串（MySQL 密码脱敏）                                                             |
+| 连接状态检测 | 当前类型（SQLite/MySQL）、连通性与延迟、引擎版本、数据体积、23 张表行数、连接串（MySQL 密码脱敏）                                                             |
 | 连接测试     | 任意目标库的连通性试连（切换前的第一步）                                                                                                                      |
 | **一键切换** | SQLite ⇄ MySQL：自动「备份当前库 → 改写 schema provider → prisma generate / db push 建表 → 子进程迁移全部数据 → 改写 .env」，异步任务带步骤进度，失败自动回滚 |
 | 备份 / 恢复  | gzip JSON 快照存 `<数据目录>/backups/`；手动备份 / 从备份恢复（整库覆盖）/ 删除                                                                               |
 | 定时备份     | enabled + 间隔小时数 + 保留份数，存 `data/database-settings.json`；服务端每 10 分钟检查一次到点任务（进程不运行不补跑）                                       |
 | 快捷导入导出 | 下载快照 JSON（跨库通用）/ 下载数据库文件（仅 SQLite）/ 导入快照（整库覆盖，base64 上传）                                                                     |
 
-关键设计：**备份、导入导出、跨库迁移共用同一种「JSON 快照」**（`lib/snapshot.ts`，16 张表按拓扑序导出，
+关键设计：**备份、导入导出、跨库迁移共用同一种「JSON 快照」**（`lib/snapshot.ts`，23 张表按拓扑序导出，
 恢复时临时关外键检查 —— `User.classId` 与 `Class.teacherId` 互相引用），因此任意备份都能恢复回任意一种受支持的数据库。
 MySQL 的连接测试 / 建表 / 写入依赖随包内置的 `@prisma/adapter-mariadb`（已在依赖里，不再是「切换时手动安装」）。
 
@@ -785,7 +792,8 @@ MySQL 的连接测试 / 建表 / 写入依赖随包内置的 `@prisma/adapter-ma
 > - 安装包体积因此增大（约 34MB → **62MB**）：切换需要随包内置 prisma CLI 与 TypeScript 编译器
 >   （Prisma 7 的生成器产出 .ts 源码，切换后要在目标机编译进 dist）。
 >   打包末尾会做一次**运行时裁剪**（删掉 Prisma 为其它数据库方言准备的查询编译器副本等死载荷，
->   见 `scripts/dist-server.mjs` 的 `pruneRuntime()`），免安装目录 469MB → 335MB。
+>   见 `scripts/dist-server.mjs` 的 `pruneRuntime()`），组装出来的运行时 469MB → 335MB
+>   （这份运行时现在只是中间物，打完安装程序即删）。
 > - 真实切换（SQLite→MySQL）已在本机用完整子进程链路实测（快照 728 行逐表一致）；e2e 只覆盖校验分支
 >   （同库 400 / 非法 provider 422 / 目标库非空拒绝），避免测试改写 `.env`。
 
@@ -823,8 +831,6 @@ MySQL 的连接测试 / 建表 / 写入依赖随包内置的 `@prisma/adapter-ma
 | **自动化里不查外网** | 冒烟模式跳过启动自动检查；`verify:e2e` / `verify:desktop` / `verify:web` 的断言都只验"结构完整 + 能降级"，**不断言"一定有新版本"**（那会把用例绑死在外网可达上）                                                |
 
 只提示、不自动下载、不自动安装 —— 安装包仍由人从 Release 页取（`SHA256SUMS-<版本>.txt` 可核对）。
-
-## 5. 技术参考
 
 ### 4.11 毕业归档（仅管理员）
 
@@ -892,6 +898,117 @@ MySQL 的连接测试 / 建表 / 写入依赖随包内置的 `@prisma/adapter-ma
 > 插件侧对应 `ReportSettingsDto.scheduleRequested` 与 `ReportAsync(..., forceSchedule: true)`；
 > 补发发生在**镜像之前**（顺序反了会把刚拿到的课表盖掉）。
 
+### 4.14 权限组管理（角色只是默认模板）
+
+入口：Web 管理端 →「权限组管理」。在这之前，账号能干什么完全由角色（`ADMIN` / `TEACHER`）决定；
+现在多了一层**权限组**，角色退化成「没有分组时」的默认模板。
+
+| 账号                      | 生效权限                                                                      |
+| ------------------------- | ----------------------------------------------------------------------------- |
+| `ADMIN` 管理员            | 全集；`permission:manage` 与 `system:manage` **不可被剥夺**（避免把自己锁死）  |
+| 有分组的账号              | 所属权限组权限键的**并集** —— 因此可以比角色默认**更少**（用来收回权限）       |
+| 没有任何分组的账号        | 回落角色默认模板 `defaultPermissionsForRole(role)`                            |
+| `CLASS_DEVICE` 班级端账号 | **空集，不受权限组影响**；它的能力由班级维度断言决定                          |
+
+- 生效集合的**唯一计算入口**是 `src/lib/permissions.ts` 的 `loadEffectivePermissions()`，
+  **每请求实时查询、不缓存** —— 改完权限立即生效（代价是每请求多一次分组查询）。
+- 权限键目录（`PERMISSION_KEYS` / `PERMISSION_LABELS` / `PERMISSION_CATEGORIES`）只有一份，
+  放在 `@classhelper/shared`：权限页的勾选树与后端的 `requirePermission` 读的是同一份。
+- 保存权限组时是**整体替换**权限键（漏传的等于取消勾选，不会留下幽灵权限）；
+  `builtin` 内置组可以改名、可以调键，但**不能删除**；删掉一个组后原成员回到角色默认模板。
+- 端点：`GET /permissions/me`（**无权限键**，两端据此决定入口显不显示）、`GET /permissions/catalog`、
+  `GET / POST /permissions/groups`、`PATCH / DELETE /permissions/groups/:id`、`GET /permissions/users`、
+  `PUT /permissions/users/:id/groups`（除 `/me` 外都要求 `permission:manage`）。
+- 判定规则与完整矩阵见[角色与权限](dev/permissions.md)；**服务端始终是唯一拦截点**，
+  前端只按 `GET /permissions/me` 隐藏入口，别把它当安全边界。
+
+### 4.15 客户端设备统一更新与远控
+
+每台教室机器的心跳间隔 `CLIENT_HEARTBEAT_INTERVAL_MS` = **30 秒**，一次请求把两件事带回：
+「要不要更新 / 装哪个版本」与「有没有待执行的远控命令」（`POST /clients/heartbeat`，**不挂权限键**）。
+
+| 项               | 口径                                                                           |
+| ---------------- | ------------------------------------------------------------------------------ |
+| 在线判定         | 最后一次心跳在 `CLIENT_ONLINE_WINDOW_MS`（90 秒）内算在线 —— 心跳间隔的 3 倍    |
+| 命令有效期       | `CLIENT_COMMAND_EXPIRE_MS`（10 分钟）；机器离线几天后不会被突然关机             |
+| 命令种类         | 关机 / 重启 / 注销 / 锁屏（`CLIENT_COMMAND_KINDS` + `CLIENT_COMMAND_LABELS`）    |
+| 新命令取代旧命令 | 同一台机器未回执的旧命令会被自动撤销（先关机后重启不会排队执行）                |
+| 回执             | `POST /clients/commands/:id/ack`，body 里的 `deviceKey` 既是身份也是护栏（班级端令牌全班共用），且**幂等** |
+| 二次确认         | 客户端执行前必须在界面上二次确认；回执里带成功 / 失败原因                       |
+
+**安装包由服务端中继下发**（教室机器常常没有外网，Web 端的 CSP 也不允许直连 GitHub）：
+
+- `POST /update/client/fetch` 让服务端代下并登记 sha256 + size；下不动时用
+  `POST /update/client/releases` 手工登记（文件先放进 `data/client-releases/<版本>/`）；
+- 缓存在 `<serverRoot>/../data/client-releases/<版本>/`，版本号与文件名都要过白名单
+  `^[0-9A-Za-z._-]+$`（**防路径穿越**）；
+- 客户端从 `GET /update/client/download/:version` 取包（**故意不挂权限键**，班级端要能下载）；
+- 安装时机三个条件缺一不可：**不在上课、主窗口已隐藏满 `CLIENT_UPDATE_IDLE_MS`（5 分钟）**、包已下载。
+
+权限三键：`remote:control`（下发远控命令）、`client:manage`（`GET /clients/devices` 列表、移除设备）、
+`client:update-push`（下发更新、登记与删除安装包）。
+
+### 4.16 通知按天归档与批量发布
+
+通知多了以后「哪天发了什么」比「什么时候创建的」更重要，所以通知也跟作业一样有了**所属日期**：
+
+| 项           | 说明                                                                            |
+| ------------ | ------------------------------------------------------------------------------- |
+| `assignDate` | `Notification.assignDate` 是**本地日期**（创建时 `dayKeyLocal()` 写入），不是 `createdAt` 切 UTC |
+| 索引         | `@@index([classId, assignDate])` 支撑按天 / 区间查询                            |
+| 按天归档     | `GET /notifications/days`（日期 + 条数）、`GET /notifications/creators`（按发布人） |
+| 列表筛选     | `GET /notifications?date=&from=&to=&createdBy=`（与 `classId` / `priority` / `unreadOnly` / `keyword` 叠加） |
+| 批量发布     | `POST /notifications/bulk`（`notification:publish`）、`POST /homeworks/bulk`（`homework:write`） |
+
+**批量发布逐班判定、绝不整批回滚**：
+
+```ts
+BulkPublishResult { total, succeeded, failed, results: BulkPublishClassResult[] }
+BulkPublishClassResult { classId, ok, id?, code?, message?, details? }
+```
+
+某个班没权限（403）或撞上「上课时段只许发紧急通知」只让**那一个班**失败，其它班照常落库并实时推送；
+失败项带可直接展示的中文 `message`，界面按班列出来。作业批量里每个班可以给 `subjectName`，
+服务端按**科目名**在该班匹配课程 —— 匹配不上就是那个班失败，不会退化成"挂到班主任名下"。
+
+> **不要用 `toISOString().slice(0, 10)` 算"哪一天"**：它按 UTC 切，晚上 8 点以后发的通知会算到第二天。
+> 统一用 `@classhelper/shared` 的 `dayKeyLocal / isDayKey / shiftDayKey`。
+
+### 4.17 大模型助手与开发者模式 / 关怀模式
+
+**大模型助手**（Web 管理端 →「AI 助手」）用一句话办事，但助手**只解析、不落库**：
+
+| 环节     | 口径                                                                                    |
+| -------- | --------------------------------------------------------------------------------------- |
+| 设置     | `GET / PUT /ai/settings`（`ai:manage`）：开关 / provider / `baseUrl` / 模型 / 提示词补充 |
+| 密钥     | API Key 用 **AES-256-GCM** 加密后存 `AppSetting`（密钥由 `JWT_SECRET` 经 scrypt 派生），**只进不出**：GET 只回 `hasApiKey` 与 `keyHint`（末 4 位） |
+| 解析     | `POST /ai/interpret`（`ai:use`）→ `AiInterpretResult{ action, params, preview, confidence, needConfirm }` |
+| 动作     | `action ∈ create_homework / create_notification / call_student / unknown`               |
+| 二次校验 | `params` 由服务端用**与手动入口同一份 zod** 再校验一遍，不合规直接判 `unknown`            |
+| 落库     | 前端展示 `preview`（班级 / 科目 / 学生已解析成中文），用户确认后调**既有端点**发布 —— 权限与上课时段保护都还在那条路径上 |
+| provider | `openai` 走 `{baseUrl}/chat/completions`；`mock` 是**离线确定性解析**（自动化验收不联网） |
+| 审计     | 每次解析写一条 `AiAudit`；`GET /ai/audit`（`ai:manage`）可查谁在什么时候让助手做了什么     |
+
+**系统设置**（`system:manage`，管理员）入口在「大模型设置」页底部的两张卡片：
+
+- `GET / PUT /system/settings`：`developerMode` 开启后 **500 响应会附带 `error.stack`**
+  （排查"服务端到底报了什么"），默认关闭；
+- `GET / PUT /system/autostart`：Windows 改
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\ClassHelperServer`，Linux 走
+  `systemctl enable/disable classhelper`；**非安装形态（开发机 / 免安装 / 容器）返回 `supported:false`**
+  并给出原因，不假装成功。安装器 `scripts/nsis/server-installer.nsi` 已把开机自启做成
+  **组件页上的可选 Section（默认勾选）**；
+- `GET /system/diagnostics`：运行诊断（版本 / Node / 平台 / 运行时长 / 数据库 provider /
+  在线客户端数 / 已缓存安装包数 / 已加载模块数 / 服务端根目录 / 数据目录，**不含任何密钥**）。
+
+**关怀模式与菜单回缩**（纯界面偏好，不落服务端）：Web 端把「关怀模式」存在 `localStorage`
+（`classhelper.admin.careMode` + `careScale`，1.0~1.5、默认 1.2），开启时给 `<html>` 挂 `care-mode`
+并把倍数写进 `--ch-font-scale`；客户端把 `careMode` 存本机 `config.json`，同口径放大界面文字。
+侧栏折叠同样是本机偏好。`User.careMode` 列已经建好，但**服务端目前没有读写它** ——
+别把它当成"已经有服务端开关"。
+
+## 5. 技术参考
+
 ### 5.1 目录结构
 
 ```
@@ -907,7 +1024,7 @@ class-helper/
 │   ├── use-database.mjs         # SQLite ⇄ MySQL provider 切换助手（改写 schema.prisma 的 provider）
 │   ├── generate-icons.mjs       # 启动 Electron 跑 icons/render.cjs（= pnpm icons）
 │   ├── icons/render.cjs         # 把 classhelper.png 重采样成各端图标（CommonJS）
-│   ├── dist-server.mjs          # 服务端 + Web 管理端 打包（免安装目录 + NSIS 安装程序）
+│   ├── dist-server.mjs          # 服务端 + Web 管理端 打包（组装运行时 → NSIS 安装程序）
 │   ├── verify-packaged.mjs      # 对打包后 / 已安装的客户端 EXE 复跑冒烟
 │   ├── lib/electron-env.mjs     # 启动 Electron 的公共处理（清理 RUN_AS_NODE + 定位可执行文件）
 │   ├── lib/node-runtime.mjs     # 定位真正的 node.exe（打包与 electron-builder 用）
@@ -938,8 +1055,8 @@ class-helper/
     ├── shared/                  # 三端共享：类型契约、常量、权限矩阵、工具函数
     │   └── src/{types,constants,permissions,utils,index}.ts
     ├── server/                  # 后端服务
-    │   ├── prisma/schema.prisma         # 数据模型（14 个 model）
-    │   ├── prisma/migrations/           # 迁移历史（10 个）
+    │   ├── prisma/schema.prisma         # 数据模型（24 个 model）
+    │   ├── prisma/migrations/           # 迁移历史（17 个）
     │   ├── prisma/seed.ts               # 种子数据（会清空业务表后重建演示数据）
     │   ├── prisma.config.ts             # Prisma 7 配置（schema / 迁移 / 种子 / 连接串）
     │   ├── prisma/backups/              # 备份快照与定时配置（运行期生成，已 gitignore）
@@ -957,7 +1074,7 @@ class-helper/
     │       ├── tools/apply-snapshot.ts  # 跨库迁移的子进程入口（编译到 dist/tools/）
     │       ├── middleware/              # auth / error / validate / security(helmet+限流+耗时日志)
     │       ├── realtime/                # socket.ts + bus.ts（事件总线）
-    │       └── modules/                 # 15 个功能模块 + registry.ts（模块注册表）
+    │       └── modules/                 # 21 个功能模块 + registry.ts（模块注册表）
     │           ├── database/            # 数据库管理（状态/备份/导入导出/定时/一键切换，仅管理员）
     │           └── update/              # 更新检查（查 GitHub 最新 Release，服务端唯一出网请求）
     ├── classisland-plugin/      # ClassIsland 联动插件（.NET 8 / C#，独立于 pnpm workspace）
@@ -1042,7 +1159,7 @@ class-helper/
 | PATCH / DELETE              | `/homeworks/:id`                                              | 教师 / 管理员                | 修改 / 删除（广播 `homework:new` / `homework:updated`）                          |
 | PATCH                       | `/homeworks/:id/status`                                       | 登录                         | 标记完成 / 取消（广播 `homework:status`）                                        |
 | GET / PATCH                 | `/homeworks/:id/submissions`                                  | 登录                         | 未交名单：读名单 / 回写全班完成状态                                              |
-| GET                         | `/notifications?classId=&priority=&unreadOnly=&keyword=`      | 登录                         | 通知列表（带已读状态）                                                           |
+| GET                         | `/notifications?classId=&priority=&unreadOnly=&keyword=&date=&from=&to=&createdBy=` | 登录                         | 通知列表（带已读状态；可按所属日期与发布人筛选）                                 |
 | GET                         | `/notifications/unread-count`                                 | 登录                         | 未读数（红点）                                                                   |
 | POST                        | `/notifications`                                              | 教师 / 管理员                | 发布通知（广播 `notification:new`）；上课时段发布紧急通知需 `confirmDuringClass` |
 | POST                        | `/notifications/:id/read`、`/notifications/read-all`          | 登录                         | 标记已读（班级设备会写全班）                                                     |
@@ -1068,7 +1185,7 @@ class-helper/
 | GET / POST / PATCH / DELETE | `/integrations/devices[/:id]`                                 | 管理员 / 教师                | ClassIsland 联动设备管理（令牌只存 sha256，令牌前缀用于人眼识别）                |
 | POST                        | `/integrations/devices/:id/token`                             | 管理员 / 教师                | 重置设备令牌（旧令牌立即失效，明文只返回一次）                                   |
 | POST                        | `/integrations/classisland/notify`                            | 管理员 / 教师                | 下发提醒到该班 ClassIsland 设备（广播 `classisland:notification`）               |
-| GET                         | `/database/status`                                            | **管理员**                   | 数据库状态（连接 / 版本 / 体积 / 16 张表行数 / 备份列表 / 定时配置）             |
+| GET                         | `/database/status`                                            | **管理员**                   | 数据库状态（连接 / 版本 / 体积 / 23 张表行数 / 备份列表 / 定时配置）             |
 | POST                        | `/database/test-connection`                                   | **管理员**                   | 测试任意目标库连通性（provider 仅 sqlite / mysql）                               |
 | GET / POST                  | `/database/backups`                                           | **管理员**                   | 备份列表 / 立即备份（gzip JSON 快照，存 `<数据目录>/backups/`）                  |
 | POST / DELETE               | `/database/backups/:name/restore` · `/database/backups/:name` | **管理员**                   | 从备份恢复（整库覆盖）/ 删除备份                                                 |
@@ -1082,6 +1199,38 @@ class-helper/
 | GET                         | `/integrations/classisland/class-plan`                        | **设备令牌**                 | 插件拉取本班课表（开启镜像时）用于写回 ClassIsland                               |
 | GET                         | `/update/check`                                               | 登录                         | 更新检查（服务端代查 GitHub 最新 Release；`?force=1` 绕过缓存仅管理员生效）      |
 | GET                         | `/health`                                                     | 公开                         | 健康检查（含版本号与已挂载模块）；另有 `/healthz` 存活与 `/readyz` 就绪探针      |
+| GET                         | `/permissions/me`                                             | 登录                         | 我的生效权限（**无权限键**；班级端会话返回空集），两端据此隐藏入口               |
+| GET                         | `/permissions/catalog`                                        | `permission:manage`          | 权限键目录（分类 / 名称，供勾选树用）                                            |
+| GET / POST                  | `/permissions/groups`                                         | `permission:manage`          | 权限组列表 / 新建                                                                |
+| PATCH / DELETE              | `/permissions/groups/:id`                                     | `permission:manage`          | 改名 / 改描述 / 整体替换权限键；内置组不可删                                     |
+| GET                         | `/permissions/users`                                          | `permission:manage`          | 账号列表（带各自所属权限组）                                                     |
+| PUT                         | `/permissions/users/:id/groups`                               | `permission:manage`          | 设置账号所属权限组（空数组 = 回落角色默认模板）                                  |
+| POST                        | `/clients/heartbeat`                                          | 登录                         | 客户端心跳（**无权限键**，班级端也调）：返回更新目标 + 一条待执行命令            |
+| POST                        | `/clients/commands/:id/ack`                                   | 登录                         | 命令回执（**无权限键**；body 的 `deviceKey` 校验归属，幂等）                     |
+| POST                        | `/clients/commands`                                           | `remote:control`             | 下发远控命令（关机 / 重启 / 注销 / 锁屏；自动撤销该机未回执的旧命令）            |
+| GET                         | `/clients/devices?classId=`                                   | `client:manage`              | 客户端设备列表（在线判定窗口 90 秒）                                             |
+| POST                        | `/clients/updates`                                            | `client:update-push`         | 给指定设备下发更新目标版本                                                       |
+| DELETE                      | `/clients/devices/:id`                                        | `client:manage`              | 移除设备记录                                                                     |
+| GET                         | `/update/client/releases`                                     | `client:manage`              | 已缓存的客户端安装包列表                                                         |
+| POST                        | `/update/client/fetch`                                        | `client:update-push`         | 服务端代下 GitHub 上的安装包并登记 sha256 + size                                 |
+| POST                        | `/update/client/releases`                                     | `client:update-push`         | 手工登记安装包（文件先放进 `data/client-releases/<版本>/`）                      |
+| DELETE                      | `/update/client/releases/:version`                            | `client:update-push`         | 删除缓存的安装包                                                                 |
+| GET                         | `/update/client/download/:version`                            | 登录                         | 下载安装包（**故意不挂权限键**，班级端要能下载；版本号白名单防路径穿越）         |
+| POST                        | `/homeworks/bulk`                                             | `homework:write`             | 跨班批量发布作业（每班可选 `subjectName`，按科目名在该班匹配）                   |
+| GET                         | `/notifications/days?classId=&from=&to=&createdBy=`            | 登录                         | 哪些天有通知（按天归档，供日期高亮）                                             |
+| GET                         | `/notifications/creators?classId=&from=&to=&createdBy=&date=`  | 登录                         | 发布人列表（含每人条数）                                                         |
+| POST                        | `/notifications/bulk`                                         | `notification:publish`       | 跨班批量发布通知（逐班判定，单班失败不影响整批）                                 |
+| GET / PUT                   | `/ai/settings`                                                | `ai:manage`                  | 大模型设置（API Key 加密存储、**只进不出**，只回 `hasApiKey` / `keyHint`）       |
+| POST                        | `/ai/interpret`                                               | `ai:use`                     | 助手解析自然语言（**只解析不落库**，返回 `action` / `params` / `preview`）       |
+| GET                         | `/ai/audit?limit=`                                            | `ai:manage`                  | 助手使用审计（谁在什么时候让助手做了什么）                                       |
+| GET / PUT                   | `/system/settings`                                            | `system:manage`              | 系统设置（`developerMode`：开启后 500 响应带 `error.stack`）                     |
+| GET / PUT                   | `/system/autostart`                                           | `system:manage`              | 服务端开机自启状态 / 开关（非安装形态 `supported:false` 并给原因）               |
+| GET                         | `/system/diagnostics`                                         | `system:manage`              | 运行诊断（版本 / Node / 运行时长 / 在线客户端数 / 数据目录…，不含密钥）          |
+
+> 新增的这几组用**权限键**（`permission:manage` / `client:manage` / `remote:control` /
+> `client:update-push` / `ai:use` / `ai:manage` / `system:manage` / `homework:write` /
+> `notification:publish`）标权限，规则见 [§5.5](#55-角色与权限rbac) 与
+> [角色与权限](dev/permissions.md)；上表其余行写的是**角色默认模板**下的口径。
 
 ### 5.4 WebSocket 事件
 
@@ -1147,28 +1296,45 @@ class-helper/
 - 成绩相关写入按「老师端可用 + 不越权」实现（需求 6 / 7 口径）：录入 / 修改 / 删除成绩与成绩模板下载 / 预览 / 导入
   都是「管理员 + 本班班主任」，学生名单模板与导入仅管理员，班科任老师一律 403 —— 服务层兜底，前端只是按同一矩阵隐藏。
 
+**权限组：角色只是默认模板**（完整规则见[角色与权限](dev/permissions.md)）：
+
+- 上面的矩阵描述的是**角色默认模板**（`defaultPermissionsForRole`）—— 它只在账号**没有加入任何权限组**时生效。
+- 账号可以加入若干权限组，生效权限 = 这些组权限键的**并集**，因此可以比角色默认**更少**
+  （要收回权限就建一个只勾部分键的组）；删掉组后成员回到角色默认模板，不会变成空权限。
+- `ADMIN` 恒定全集，`permission:manage` / `system:manage` **不可被剥夺**（否则可能把自己锁在外面）；
+  `CLASS_DEVICE` 恒定空集，不受权限组影响。
+- 唯一计算入口是 `src/lib/permissions.ts` 的 `loadEffectivePermissions()`，**每请求实时查询、不缓存**；
+  路由上的 `requirePermission('<key>')` 与权限页的勾选树共用 `@classhelper/shared` 里同一份权限键目录，
+  `PERMISSION_MATRIX` 与它不再是两套规则（矩阵就是默认模板的说明）。
+
 ### 5.6 模块化设计
 
 后端每个功能是一个独立目录，统一契约 `ApiModule = { name, basePath, router, enabled? }`：
 
 ```ts
-// packages/server/src/modules/registry.ts（当前 15 个模块）
+// packages/server/src/modules/registry.ts（当前 21 个模块）
 export const apiModules: ApiModule[] = [
   authModule,
+  aiModule, // ← 大模型助手
   classesModule,
+  clientsModule, // ← 客户端设备 / 心跳 / 远控
   coursesModule,
   schedulesModule,
   homeworksModule,
   notificationsModule,
+  permissionsModule, // ← 权限组
   callsModule,
   importsModule,
   integrationsModule, // ← ClassIsland 联动
   gradesModule,
   studentsModule,
+  systemModule, // ← 系统设置（开发者模式 / 开机自启 / 诊断）
   teachersModule,
+  archivesModule,
+  termModule,
   dashboardModule,
   databaseModule, // ← 数据库管理（仅管理员）
-  updateModule, // ← 更新检查（查 GitHub 最新 Release）
+  updateModule, // ← 更新检查 + 客户端安装包（查 GitHub 最新 Release）
 ].filter((module) => module.enabled !== false);
 ```
 
@@ -1192,21 +1358,28 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 
 > MySQL 驱动适配器 `@prisma/adapter-mariadb` **已随包内置**（数据库管理模块的连接测试 / 迁移需要），无需手动安装。
 
-数据模型共 **16 张表**：`User`（纯账号表）/ `Student`（名单，不是账号）/ `StudentClassTransfer`（调班与转出历史）/
+数据模型共 **24 张表**：`User`（纯账号表）/ `Student`（名单，不是账号）/ `StudentClassTransfer`（调班与转出历史）/
 `ArchivedYear`（毕业归档届别）/ `Class` / `TermWeek`（学期周次区间）/ `Course`（= 班级 + 科目 + 教师的任课关系）/
 `Schedule` / `Homework` / `HomeworkStatus` / `Notification` / `NotificationRead` / `TimeLayout` / `Grade` /
-`IntegrationDevice` / `ClassIslandPush`。
+`IntegrationDevice` / `ClassIslandPush` / `PermissionGroup` / `PermissionGroupItem` / `UserPermissionGroup`（权限组）/
+`AppSetting`（全局键值设置）/ `ClientDevice` / `ClientCommand`（客户端设备与远控）/ `ClientRelease`（安装包缓存）/
+`AiAudit`（大模型审计）。
 其中 `Class.name` 是「2026级1班」这种**届别称呼**；`Class.code` / `Class.passwordHash` 是班级端账号字段；
 `Class.notificationChannel` 决定提醒弹在哪端；`Class.studentGradeQueryEnabled` 是班级端查成绩的开关；
 `Student.studentNo` 是学生的唯一标识与查询键；`Grade.levelType` / `level` 是等级口径与等级；
-`Homework.assignDate` 是作业的「所属日期」；`Schedule.weekParity` 是单双周；`Schedule.source` 是课表来源；
-`ClassIslandPush.kind` 区分通知类与叫人。
+`Homework.assignDate` 是作业的「所属日期」；`Notification.assignDate` 是通知的「所属日期」（本地日期，
+配 `@@index([classId, assignDate])` 支撑按天查询）；`User.careMode` 是关怀模式的预留列（服务端暂未读写）；
+`Schedule.weekParity` 是单双周；`Schedule.source` 是课表来源；`ClassIslandPush.kind` 区分通知类与叫人。
 
-迁移历史（**16 个**，按时间顺序）：`init` → `add_time_layout` → `add_class_account` → `add_schedule_week_parity` →
+备份 / 导出导入共用 `src/lib/snapshot.ts` 的 `SNAPSHOT_TABLES`，按拓扑序导出 **23 张**
+（`TermWeek` 不在其中 —— 学期周次不进快照，换库后按开学日期重新生成）。
+
+迁移历史（**17 个**，按时间顺序）：`init` → `add_time_layout` → `add_class_account` → `add_schedule_week_parity` →
 `add_class_term_weeks` → `add_classisland_integration` → `add_class_notification_channel` →
 `add_homework_assign_date` → `add_push_kind` → `add_schedule_source` →
 `add_student_table` → `add_student_grade_query` → `add_grade_level` →
-`add_classhelper_heartbeat` → `add_archives` → `add_term_weeks`。
+`add_classhelper_heartbeat` → `add_archives` → `add_term_weeks` → `add_permission_groups_and_clients`
+（最后一个只加表 / 加列：8 张新表 + `Notification.assignDate` 与索引 + `User.careMode`，无数据搬运）。
 
 **启动时迁移（安装版自动升级）**：`src/lib/db-bootstrap.ts` 用一张账本表 `_ch_migrations` 记录已执行的迁移目录名 ——
 全新安装依次执行全部迁移并创建初始管理员；覆盖安装只补跑账本里没有的迁移（已存在的表 / 索引自动跳过），
@@ -1307,15 +1480,15 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 | **登录页无示例内容**                                          | ✅   | `verify:web`（管理端）与 `verify:desktop`（客户端）都断言登录页正文 / 占位符不含 `演示 / 示例 / admin123 / teacher123 / G101`                                                                                                                                                                                                                                                                                                                         |
 | **新手引导（首启弹出 + 随时重看）**                           | ✅   | Web 管理端：首次登录弹出 `el-tour` 聚焦引导，头像菜单「使用引导」重看（`verify:web`）；客户端：首启六步向导，登录页 / 设置页可重看（`verify:desktop`）                                                                                                                                                                                                                                                                                                |
 | **客户端设置改版（分组侧栏 / 深色模式 / 关于页）**            | ✅   | `verify:desktop`：「侧边栏点击导航」适配「学习 / 设置」分组；「主题切换与侧边栏折叠（真实点击、写回配置）」——`html.dark` 翻转 + 折叠宽度 200→64 + 双双落盘；「关于页渲染」含 configPath                                                                                                                                                                                                                                                               |
-| **数据库管理（仅管理员：状态 / 备份 / 导入导出 / 一键切换）** | ✅   | `verify:e2e` 13 项：状态与 14 表行数、教师全端点 403、连接测试（当前库可达 / 不可达 MySQL ok=false）、**Redis 主库 422**、切换校验分支（同库 400）、备份 → 快照导入 → 备份恢复 roundtrip（临时数据被清除）、定时配置校验、SQLite 文件下载；**切换子进程链路真机实测**：快照 728 行 → generate → db push → apply-snapshot 逐表一致；`verify:web`：数据库管理页（仅管理员）状态卡与备份表渲染                                                           |
-| **更新检查（服务端 / Web 端 / 客户端）**                      | ✅   | `verify:e2e` 4 项：未登录 401、管理员结构完整且本机版本取自 package.json、教师可查但 `force` 仅管理员生效、健康检查暴露版本号与 15 个模块；`verify:desktop` 4 项：IPC 返回结构正确（无外网时降级 `ok=false` 且带原因）、结果带缓存、冒烟模式跳过启动自动检查、关于页出现「检查更新」；`verify:web`：「顶栏用户菜单 → 弹窗给出结论并可关闭」。**真机联网实测**：`GET /api/update/check` → `ok=true`、`latestVersion=1.0.0`、5 个附件、更新说明 1358 字 |
+| **数据库管理（仅管理员：状态 / 备份 / 导入导出 / 一键切换）** | ✅   | `verify:e2e` 13 项：状态与全部数据表行数、教师全端点 403、连接测试（当前库可达 / 不可达 MySQL ok=false）、**Redis 主库 422**、切换校验分支（同库 400）、备份 → 快照导入 → 备份恢复 roundtrip（临时数据被清除）、定时配置校验、SQLite 文件下载；**切换子进程链路真机实测**：快照 728 行 → generate → db push → apply-snapshot 逐表一致；`verify:web`：数据库管理页（仅管理员）状态卡与备份表渲染                                                           |
+| **更新检查（服务端 / Web 端 / 客户端）**                      | ✅   | `verify:e2e` 4 项：未登录 401、管理员结构完整且本机版本取自 package.json、教师可查但 `force` 仅管理员生效、健康检查暴露版本号与模块清单（含 update 模块）；`verify:desktop` 4 项：IPC 返回结构正确（无外网时降级 `ok=false` 且带原因）、结果带缓存、冒烟模式跳过启动自动检查、关于页出现「检查更新」；`verify:web`：「顶栏用户菜单 → 弹窗给出结论并可关闭」。**真机联网实测**：`GET /api/update/check` → `ok=true`、`latestVersion=1.0.0`、5 个附件、更新说明 1358 字 |
 | **其他页面发通知也会联动 ClassIsland**                        | ✅   | `verify:classisland`：「通知发布页发的通知也会推送」「叫人也会推送」；2026-09-27 在真机（ClassIsland 2.1.0.1 + 本插件）上实测过，当时的抓图留在 `docs/screenshots/classisland/`                                                                                                                                                                                                                                                                                        |
 | **作业按天查看（日期选择器 + 有作业日期高亮）**               | ✅   | `verify:e2e`：`assignDate` 默认服务器当天、`?date=` 只返回该天、`/homeworks/days` 返回有作业日期、非法日期 422                                                                                                                                                                                                                                                                                                                                        |
 | **支持在客户端录入作业（含自定义快捷短语）**                  | ✅   | `verify:e2e`：班级账号录入 201（归属班主任）、跨班 403；客户端录入弹窗 + 「设置 → 通用」管理短语                                                                                                                                                                                                                                                                                                                                                      |
 | **提醒弹在哪个端由客户端自行选择**                            | ✅   | 客户端「设置 → 提醒」三选一（`verify:desktop`：设置页真实点击 → 写回本地配置）；服务端按班级设置决定是否推送（`verify:classisland`：`client` 时通知与联动页下发都被跳过）                                                                                                                                                                                                                                                                             |
 | **ClassHelper能读取 ClassIsland 的课表**                       | ✅   | `verify:classisland`：插件上报课表 → 本班课表新增 / 更新（重复上报幂等）、节次时间写入、设备状态快照可在 Web 端展示；`verify:web`：教师在「ClassIsland 联动」页真实签发设备令牌                                                                                                                                                                                                                                                                       |
 | **用户可选择通知是否在 ClassIsland 上显示**                   | ✅   | 插件设置页开关「接收 ClassHelper提醒」（本机总闸）+ Web 端「下发提醒」（标题 / 内容 / 时长 / 优先级 / 语音朗读 / 是否同步通知中心）；`verify:classisland`：提醒落库 → 待提醒 → 回执 → 确认后不补发                                                                                                                                                                                                                                                      |
-| 能成功打包 Windows EXE                                        | ✅   | `-x64-setup.exe` / `-x64-portable.exe` / `win-unpacked/*.exe`（见 [7. 打包与交付](#7-打包与交付)）                                                                                                                                                                                                                                                                                                                                                    |
+| 能成功打包 Windows EXE                                        | ✅   | `-x64-setup.exe` / `-x64-portable.exe`（见 [7. 打包与交付](#7-打包与交付)）                                                                                                                                                                                                                                                                                                                                                    |
 | 提供完整 README（启动、构建、打包、默认账号）                 | ✅   | 本文档含快速开始、命令表、API、WebSocket、RBAC、模块化、数据库、打包与常见问题                                                                                                                                                                                                                                                                                                                                                                        |
 
 ### 6.2 最近一次实测
@@ -1370,10 +1543,10 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 | ----------------------------------- | -------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | 客户端渲染产物 `dist/renderer`      | 3.2MB                | **2.1MB**    | 成绩页图表从 echarts 全量（1.12MB，占 35%）换成内置 HTML/SVG 组件；Element Plus 图标从全量注册 293 个改为按需 42/33 个                    |
 | 客户端主进程产物体积                | 242KB                | 242KB        | 未变（冒烟代码拆分会重复 `island`/`config` 单例，esbuild 的 CJS 打包无法代码分割，故保留）                                                |
-| 客户端 `win-unpacked`               | 372MB                | **323MB**    | `electronLanguages: [zh-CN]`，只留中文语言包（其余 54 个 `locales/*.pak` 共 48MB）                                                        |
+| 客户端解包目录（中间物，打完即删）  | 372MB                | **323MB**    | `electronLanguages: [zh-CN]`，只留中文语言包（其余 54 个 `locales/*.pak` 共 48MB）                                                        |
 | 客户端 `setup.exe` / `portable.exe` | 107MB                | **98MB**     | 同上。**安装包有硬底**：`ClassHelper.exe`（electron.exe）压缩后本身就有 85~90MB，60MB 不可达                                               |
 | 服务端 `dist`                       | 3.8MB                | **0.6MB**    | `tsconfig.build.json` 关掉 `declaration`/`declarationMap`/`sourceMap`（占原体积 82%）                                                     |
-| 服务端免安装目录                    | 436MB                | **335MB**    | 打包末尾的运行时裁剪：删掉 Prisma 为 postgresql/cockroachdb/sqlserver 准备的查询编译器副本、`*.map`、文档与测试夹具（共 2329 项 / 101MB） |
+| 服务端组装运行时（中间物，打完即删） | 436MB                | **335MB**    | 打包末尾的运行时裁剪：删掉 Prisma 为 postgresql/cockroachdb/sqlserver 准备的查询编译器副本、`*.map`、文档与测试夹具（共 2329 项 / 101MB） |
 | 服务端安装程序                      | 71MB                 | **62MB**     | 同上                                                                                                                                      |
 | Web 端前端产物                      | 3.3MB                | **2.1MB**    | 同样是 echarts → 内置 SVG/CSS 图表 + 图标按需                                                                                             |
 | 灵动岛主进程常驻开销                | 每 60ms 2 次系统调用 | 每 60ms 1 次 | 光标位置每跳只读一次（命中判定与"跟随鼠标屏幕"共用）；窗口不可见时整跳                                                                    |
@@ -1386,7 +1559,6 @@ pnpm db:generate && pnpm --filter @classhelper/server db:deploy && pnpm db:seed
 ### 客户端（Windows EXE）
 
 ```bash
-pnpm dist:dir     # 免安装目录：releases/client/<版本>/免安装/ClassHelper.exe
 pnpm dist:win     # nsis 安装包 + portable 单文件（需联网下载 NSIS 工具，可用镜像）
 ```
 
@@ -1394,33 +1566,40 @@ pnpm dist:win     # nsis 安装包 + portable 单文件（需联网下载 NSIS �
 （`--config.electronDist`，不重复下载 150MB+）；默认走国内镜像（`ELECTRON_MIRROR`、
 `ELECTRON_BUILDER_BINARIES_MIRROR`，可用环境变量覆盖）；构建缓存固定到仓库内 `.cache/`；
 用 `--config.directories.output` 把输出目录覆盖成 `releases/client/<版本>/`，打包成功后再把
-electron-builder 的原始布局整理成 `安装包/`、`免安装/`、`构建中间/`；
-收尾把交付物完整性标签改成 Medium（Low 标签会导致装不上 / 双击没反应，见 [8. 常见问题](#8-常见问题)）。
+electron-builder 的原始布局整理成 `安装包/`、`构建中间/`，并把 `win-unpacked/`（约 323MB 的中间物）
+删掉；收尾把交付物完整性标签改成 Medium（Low 标签会导致装不上 / 双击没反应，
+见 [8. 常见问题](#8-常见问题)）。
 
-产物结构：`免安装/ClassHelper.exe`（Electron 运行时）+ `resources/app.asar`
-（仅含 `dist/` 与 `package.json`，运行时不需要 node_modules）。
+**只有两个交付物**，都落在 `releases/client/<版本>/安装包/`：`-x64-setup.exe`（NSIS 安装程序）
+与 `-x64-portable.exe`（自解压单文件，双击即用）。解包目录 `win-unpacked/` 只是生成这两个 exe 的
+中间产物 —— 便携版是拿它自己做成的自解压包，所以它必须活到 portable 这一步之后才能删，
+`tidyArtifacts()` 就排在最后。
 
-> **把修复交付到「已安装的客户端」**：`pnpm dist:win` 只产出 `releases/client/<版本>/`。
+> **把修复交付到「已安装的客户端」**：`pnpm dist:win` 只产出 `releases/client/<版本>/` 里的两个安装包。
 > 若学生机上是**安装版**（例如装在 `D:\class\@classhelperdesktop-client`），只更新 release 而不同步安装目录，
-> 用户打开的还是旧 `resources/app.asar`，会出现「改了但界面不生效」。覆盖升级（用户配置在 `%APPDATA%`，不受影响）：
+> 用户打开的还是旧 `resources/app.asar`，会出现「改了但界面不生效」。两个可行做法：
 >
 > ```powershell
-> # 1) 先退出客户端（托盘右键退出；有进程残留就精确结束 PID）
-> # 2) 用新产物覆盖安装目录（不删 Uninstall 等安装器文件，所以不加 /MIR）
-> robocopy "packages\desktop-client\release\win-unpacked" "D:\class\@classhelperdesktop-client" /E /NFL /NDL /NJH /NJS /R:2 /W:1
-> # 3) 实测**那个副本**真的带上了修复（packaged=true）
+> # 做法一（推荐）：直接跑新安装包覆盖升级。用户配置在 %APPDATA%，不受影响。
+> #   静默：releases\client\<版本>\安装包\ClassHelper-<版本>-x64-setup.exe /S
+> #   再实测**装好那个副本**真的带上了修复（packaged=true）
 > pnpm verify:packaged --exe "D:\class\@classhelperdesktop-client\ClassHelper.exe"
+>
+> # 做法二：要按文件覆盖（例如只换 app.asar），先让 portable 自解压出一份再拷
+> #   便携版双击后会解到 %TEMP% 下的一个随机目录，从那里 robocopy 即可。
 > ```
+>
+> 注意路径变了：`dist-win.mjs` 不再在 releases 里留解包目录，
+> 所以 `packages\desktop-client\release\win-unpacked` 这个旧路径已经不存在了。
 
 最近一次打包实测（产物不入库）：
 
-| 产物                                   | 大小   | 冒烟结果                                                             |
-| -------------------------------------- | ------ | -------------------------------------------------------------------- |
-| 服务端安装程序（内置 Node + Web 端）   | ~62MB  | ✅ 静默安装（升级保留 `.env` 与数据库）→ 自动建库建号 → 服务就绪     |
-| `releases/client/<版本>/免安装/ClassHelper.exe`  | ~235MB | ✅ 打包版冒烟全绿，`packaged: true`，退出码 0                        |
-| `releases/client/<版本>/安装包/…-portable.exe` | ~98MB  | ✅ 打包后冒烟全绿，`packaged: true`，退出码 0                        |
-| `releases/client/<版本>/安装包/…-setup.exe`    | ~98MB  | ✅ 构建成功，已嵌入自定义图标                                        |
-| `releases/classisland-plugin/<版本>/…cipx`     | ~88KB  | ✅ 全量编译通过（1 警告 0 错误），包内 DLL 哈希与 `bin/Release` 一致 |
+| 产物                                              | 大小   | 冒烟结果                                                             |
+| ------------------------------------------------- | ------ | -------------------------------------------------------------------- |
+| 服务端安装程序（内置 Node + Web 端）              | ~62MB  | ✅ 静默安装（升级保留 `.env` 与数据库）→ 自动建库建号 → 服务就绪     |
+| `releases/client/<版本>/安装包/…-portable.exe`    | ~99MB  | ✅ 打包后冒烟全绿，`packaged: true`，退出码 0                        |
+| `releases/client/<版本>/安装包/…-setup.exe`       | ~99MB  | ✅ 构建成功，已嵌入自定义图标                                        |
+| `releases/classisland-plugin/<版本>/…cipx`        | ~88KB  | ✅ 全量编译通过（1 警告 0 错误），包内 DLL 哈希与 `bin/Release` 一致 |
 
 ### ClassIsland 插件
 

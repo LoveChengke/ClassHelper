@@ -13,6 +13,29 @@
   /* 1Panel 风格：固定顶栏 + 深色侧栏 */
   --ch-header-height: 56px;
   --ch-aside-width: 210px;
+  /* 折叠态侧栏宽（图标导轨）。与展开态并排放在令牌里 —— 几何只在这个文件里定义一次 */
+  --ch-aside-collapsed-width: 64px;
+
+  /*
+   * 侧栏收放动画。组件（AdminLayout 的 .layout-aside/.brand）与全局的折叠导轨规则
+   * （下面的 .ch-nav.is-collapsed …）共用这一份参数 —— 改时长/缓动只改这里，两边不会漂。
+   *
+   * ⚠️ 缓动**刻意保留 Material 的 cubic-bezier(.4, 0, .2, 1)**，没有换成全站统一的
+   * beUI EASE_OUT：EASE_OUT 起步极快，栏宽掉到 80px 时动画才走了约 35%，
+   * 此刻内边距还在动，自动化量到的图标中心会偏 2px 以上而判红（桌面客户端实测踩过）。
+   * 想换曲线就得连"折叠几何"的断言一起重新商量。
+   */
+  --nav-dur: 260ms;
+  --nav-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  /* 图标与文字的间距（折叠时收到 0） */
+  --nav-gap: 8px;
+
+  /*
+   * 关怀模式的放大倍数：1 = 默认，界面上可调 1.0~1.5。
+   * 只有**一个**来源 —— `html.care-mode { … }` 那一块用它做 calc 的乘数，
+   * stores/ui.ts 在 mount 之前把它写成 <html> 的内联变量。
+   */
+  --ch-font-scale: 1;
 
   /*
    * 语义色 —— 组件里**一律引用这些，不要写死颜色**（深色主题靠 html.dark 覆盖这里）。
@@ -67,6 +90,193 @@ html.dark {
   --ch-text-muted: #8b93a3;
   --ch-text-placeholder: #6b7280;
   --el-box-shadow-light: var(--ch-shadow-sm);
+}
+
+/* ============================================================================
+ * 关怀模式（需求 14）：放大正文字号与常用控件，方便不习惯默认字号的老师
+ *
+ * 三条纪律：
+ *   1. **只放大字号与控件高度**。几何令牌（--ch-radius-* / --ch-shadow-* /
+ *      --ch-aside-width / --nav-*）一律不动 —— 放大圆角会让卡片与弹窗看起来"变形"，
+ *      放大侧栏宽会让折叠动画的几何全部重算；
+ *   2. 倍数只有一个来源 `--ch-font-scale`（:root 里定义，stores/ui.ts 在 mount 之前
+ *      写入 <html> 的内联变量）。想"再大一点"就调这个倍数，不要在组件里另写一份 calc；
+ *   3. Element Plus 的字号与控件高度全部由它自己的变量拼出来
+ *      （`--el-font-size-*` / `--el-component-size*`），覆盖变量等于一次性放大全站组件；
+ *      项目自己写死的那几个 px 字号（页面标题等）在下面一并给 calc。
+ *
+ * 这一块**只依赖 --ch-font-scale，不依赖主题** —— 深浅色模式下都是同一套几何与字号。
+ * ========================================================================== */
+html.care-mode {
+  /* 文字：正文基准 + 各档字号（Element Plus 的组件字号全部由这几个变量派生） */
+  --el-font-size-extra-large: calc(20px * var(--ch-font-scale));
+  --el-font-size-large: calc(18px * var(--ch-font-scale));
+  --el-font-size-medium: calc(16px * var(--ch-font-scale));
+  --el-font-size-base: calc(14px * var(--ch-font-scale));
+  --el-font-size-small: calc(13px * var(--ch-font-scale));
+  --el-font-size-extra-small: calc(12px * var(--ch-font-scale));
+
+  /* 控件高度：按钮 / 输入框 / 下拉 / 日期选择器 / 分页…（大字配矮控件会挤在一起） */
+  --el-component-size-large: calc(40px * var(--ch-font-scale));
+  --el-component-size: calc(32px * var(--ch-font-scale));
+  --el-component-size-small: calc(24px * var(--ch-font-scale));
+
+  /* 正文字号：body 没写 font-size，浏览器默认 16px —— 这里跟着倍数走 */
+  font-size: calc(16px * var(--ch-font-scale));
+}
+
+/* 项目自己写死的字号（不引用 --el-* 的那几个），跟着倍数放大 */
+html.care-mode .page-title {
+  font-size: calc(18px * var(--ch-font-scale));
+}
+
+html.care-mode .page-subtitle,
+html.care-mode .stat-label {
+  font-size: calc(13px * var(--ch-font-scale));
+}
+
+html.care-mode .stat-value {
+  font-size: calc(26px * var(--ch-font-scale));
+}
+
+html.care-mode .stat-hint,
+html.care-mode .timetable-meta {
+  font-size: calc(12px * var(--ch-font-scale));
+}
+
+/*
+ * 助手入口（顶栏按钮 + 侧栏菜单项）在关怀模式下更醒目：
+ * 文案放大 1.3 倍并加粗 —— 关怀模式的用户正是"看小字吃力"的那批人，
+ * 助手这个新入口不该比别处更难找。
+ */
+html.care-mode .care-emphasis {
+  font-size: calc(var(--el-font-size-base) * 1.3);
+  font-weight: 700;
+}
+
+/* ============================================================================
+ * 侧栏导航：折叠态是"图标导轨"（AGENTS.md §5 第 49 条）
+ *
+ * 折叠**不用** el-menu 的 `:collapse` 属性：那个 prop 会把每个分组的子项卸载进浮层
+ * （一次结构切换）并让整条菜单重排一遍 —— 既做不出连续形变，也是"点汉堡卡一下"的根因。
+ * 现在折叠只做四件事：栏宽（.layout-aside 的 width）、文字（min-width:0 让 flex 压得动 +
+ * overflow:hidden 裁切 + opacity 淡出）、图标位置（padding 过渡）、行高（导轨要放得下）。
+ * **全程没有结构变化、没有 v-if 增删**。
+ *
+ * 几何（64px 栏、菜单项左右各 8px margin）：
+ *   展开  菜单项 padding-left 20px（Element Plus 自带）→ 图标中心 8 + 20 + 12 = 40px
+ *   折叠  菜单项 padding 左右各 12px → 图标中心 8 + 12 + 12 = 32px = 64/2，正好在栏中线上
+ * ========================================================================== */
+
+/* 图标与文字的间距改由文字的 margin-left 负责：Element Plus 给图标挂了 margin-right: 5px，
+   那会让图标在 24px 的槽里偏左 2.5px（折叠后肉眼可见地不居中）。 */
+.ch-nav .el-menu-item > [class^='el-icon'] {
+  margin-right: 0;
+}
+
+.ch-nav .el-menu-item {
+  transition:
+    padding-left var(--nav-dur) var(--nav-ease),
+    padding-right var(--nav-dur) var(--nav-ease),
+    height var(--nav-dur) var(--nav-ease),
+    line-height var(--nav-dur) var(--nav-ease),
+    background-color var(--el-transition-duration),
+    color var(--el-transition-duration);
+}
+
+/*
+ * 文字：**不给它单独设动画终点**，宽度靠 flex 被压缩 —— `min-width: 0` 让这个 flex 子项
+ * 能被压到 0（默认的 `min-width: auto` 会撑住内容宽度），多出来的字由 `overflow: hidden` 裁掉。
+ * 于是文字宽度天然跟着栏宽连续变化，不需要写什么魔法 max-width；再叠一层 opacity 淡出，
+ * 避免中间帧留下"半截字"（`display: none` 没法过渡，用不了）。
+ */
+.ch-nav .el-menu-item > span {
+  min-width: 0;
+  margin-left: var(--nav-gap);
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    margin-left var(--nav-dur) var(--nav-ease),
+    opacity calc(var(--nav-dur) * 0.6) var(--nav-ease);
+}
+
+/* 折叠态的判据是"看得见"而不是"有没有被布局"：文字仍在布局里，只是被裁掉且全透明 */
+.ch-nav.is-collapsed .el-menu-item > span {
+  margin-left: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/*
+ * 折叠后的内边距与行高。
+ *
+ * 这两条选择器的形状是**照抄 Element Plus 的**，不是冗余 —— 它按下标层级用不同的选择器算缩进
+ * （一级项 20px、分组标题 20px、分组内子项 40px），特异度分别是 0-4-0 / 0-4-0 / 0-5-0：
+ *   `.el-menu--vertical:not(.el-menu--collapse):not(.el-menu--popup-container) .el-menu-item`
+ *   `.el-menu--vertical:not(.el-menu--collapse):not(.el-menu--popup-container) .el-sub-menu__title`
+ *   `.el-menu--vertical:not(.el-menu--collapse):not(.el-menu--popup-container) .el-sub-menu .el-menu-item`
+ * 写成 `.ch-nav.is-collapsed .el-sub-menu__title` 这种（0-3-0）一条都压不住 —— 桌面客户端踩过两次
+ * （第一版漏了分组标题、第二版漏了一级项，都偏 8.0px）。下面两条（0-5-0 / 0-6-0）把三种形状全覆盖，
+ * 且不用 `!important`。Web 管理端目前没有 el-sub-menu，这里仍然写全：以后加设置分组时不用再踩一次。
+ *
+ * 行高 36px + 上下各 1px 外边距 = 每项 38px（展开态是 Element Plus 默认的 56px）。
+ * **只在折叠态生效**：导轨要"一眼看全" —— Web 端目前 14 个菜单项，
+ * 14 × 38 = 532px，在 1366×768 笔记本上那个约 540px 的菜单视口里刚好放得下
+ * （1366×768 扣掉浏览器框、顶栏 56px、品牌区 56px）。展开态不动 —— 那是原有的观感。
+ * 这里的 `margin` 必须一起写：`.layout-menu :deep(.el-menu-item)` 的 `margin: 2px 8px`
+ * 是 AdminLayout 的 scoped 规则（0-3-0），本段是 0-5-0，靠特异度压住它。
+ */
+.ch-nav.is-collapsed .el-menu--vertical:not(.el-menu--collapse) .el-menu-item,
+.ch-nav.is-collapsed .el-menu--vertical:not(.el-menu--collapse) .el-sub-menu__title {
+  height: 36px;
+  line-height: 36px;
+  margin: 1px 8px;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.ch-nav.is-collapsed .el-menu--vertical:not(.el-menu--collapse) .el-sub-menu .el-menu-item {
+  height: 36px;
+  line-height: 36px;
+  margin: 1px 8px;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+/*
+ * 导轨里**不出现滚动条**：图标要一眼看全（用户要求"不要用滚轮、删掉滚动条"）。
+ * 只隐藏滚动条本身，`overflow-y: auto` 保留 —— 窗口被拉到极矮时还能滚，不至于把图标直接裁掉。
+ * 展开态**不隐藏**：菜单确实会超高，滚动条是"下面还有内容"的唯一提示，不能拿掉。
+ */
+.ch-nav.is-collapsed .layout-menu {
+  scrollbar-width: none;
+}
+
+.ch-nav.is-collapsed .layout-menu::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/*
+ * 品牌文字同样靠"能被压扁 + 裁切 + 淡出"收掉，不写任何魔法 max-width：
+ * `min-width: 0` 是必需的（flex 子项默认 `min-width: auto`，不归零就会撑住内容宽度）。
+ */
+.ch-nav .brand-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: opacity calc(var(--nav-dur) * 0.6) var(--nav-ease);
+}
+
+/* 品牌区在折叠态收成图标一枚：收内边距 + 收掉 gap + 文字淡出（**不是** v-if 删节点） */
+.ch-nav.is-collapsed .brand {
+  gap: 0;
+  padding-left: 20px;
+  padding-right: 20px;
+}
+
+.ch-nav.is-collapsed .brand-text {
+  opacity: 0;
 }
 
 /* ---------------------------------------------------------------- 圆角设计：
@@ -936,4 +1146,16 @@ body {
 
 ::view-transition-new(root) {
   z-index: 2;
+}
+
+/* ------------------------------------------------- 多行确认框（ElMessageBox）
+ *
+ * 远控指令与更新推送的二次确认里有换行（逐台设备列表、"什么时候才装"的说明），
+ * 而 ElMessageBox 的正文默认按 HTML 折叠空白 —— 不保留换行的话那几句会挤成一整段，
+ * 逐台列表就读不出来了。页面通过 `customClass: 'ch-confirm-multiline'` 挂上这个类，
+ * 弹窗节点在 body 上（不在组件的 scoped 样式作用域里），所以规则写在这里。
+ */
+.ch-confirm-multiline .el-message-box__message p {
+  white-space: pre-line;
+  line-height: 1.7;
 }

@@ -145,6 +145,249 @@ export function canImport(role: UserRole, classRole: ClassRole, kind: ImportKind
   return canManageGrades(classRole);
 }
 
+/* -------------------------------------------------------------------------- */
+/*  权限键目录（权限组的唯一事实来源）                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 权限键：三端共用的**唯一权限标识**。
+ *
+ * - 服务端：路由级用 `requirePermission(key)`，班级维度的细门仍走下面那些
+ *   `canXxx`（科目归属这类**数据完整性**规则故意不可被权限组覆盖）；
+ * - Web 管理端：按钮/菜单显隐、权限组管理页的勾选项；
+ * - 桌面客户端：功能入口显隐。
+ *
+ * 键名用 `领域:动作` 的形式，新增功能要**先在这里加键**，再去两端用。
+ * **不要**在页面或服务里硬编码角色判断来代替它（AGENTS.md §5 第 3 条）。
+ */
+export const PERMISSION_KEYS = [
+  // 班级与人员
+  'class:read',
+  'class:manage',
+  'roster:manage',
+  'teacher:manage',
+  'schedule:read',
+  'schedule:write',
+  // 内容发布
+  'homework:read',
+  'homework:write',
+  'notification:read',
+  'notification:publish',
+  'notification:delete',
+  'call:create',
+  // 成绩与导入
+  'grade:read',
+  'grade:write',
+  'grade:import',
+  'student:grade-query',
+  'import:students',
+  'import:teachers',
+  'import:schedule',
+  'import:class-teachers',
+  // 设备与联动
+  'device:manage',
+  'classisland:notify',
+  'client:read',
+  'client:manage',
+  'client:update-push',
+  'remote:control',
+  // 学期与归档
+  'term:read',
+  'term:write',
+  'archive:manage',
+  'dashboard:read',
+  // 系统与安全
+  'database:manage',
+  'update:check',
+  'update:force',
+  'ai:use',
+  'ai:manage',
+  'permission:manage',
+  'system:manage',
+  'log:read',
+  'developer:mode',
+] as const;
+
+export type PermissionKey = (typeof PERMISSION_KEYS)[number];
+
+/** 权限键的中文名（权限组管理页与文档展示，别再各写一份） */
+export const PERMISSION_LABELS: Record<PermissionKey, string> = {
+  'class:read': '查看班级与班级列表',
+  'class:manage': '创建 / 修改 / 删除班级（含班级账号密码）',
+  'roster:manage': '学生名单管理（增删 / 调班 / 导入）',
+  'teacher:manage': '教师账号管理（新建 / 导入 / 重置密码 / 删除）',
+  'schedule:read': '查看课表',
+  'schedule:write': '课表与课程编辑',
+  'homework:read': '查看作业',
+  'homework:write': '发布 / 修改 / 删除作业（仍按任教科目录入）',
+  'notification:read': '查看通知',
+  'notification:publish': '发布通知',
+  'notification:delete': '删除通知',
+  'call:create': '叫人',
+  'grade:read': '查看成绩与成绩汇总',
+  'grade:write': '录入 / 修改成绩（仍按任教科目录入）',
+  'grade:import': '导入成绩',
+  'student:grade-query': '按学号查询学生成绩明细',
+  'import:students': '导入学生名单',
+  'import:teachers': '导入教师名单',
+  'import:schedule': '导入课表时间配置',
+  'import:class-teachers': '导入班级任课关系',
+  'device:manage': '联动设备管理（ClassIsland 设备令牌 / 课表上报）',
+  'classisland:notify': '向 ClassIsland 下发提醒',
+  'client:read': '查看 ClassHelper 客户端在线状态与版本',
+  'client:manage': '管理客户端设备（改名 / 停用 / 删除）',
+  'client:update-push': '向客户端统一下发更新',
+  'remote:control': '远控客户端电脑（关机 / 重启 / 注销 / 锁屏）',
+  'term:read': '查看学期周次',
+  'term:write': '修改学期周次与开学日期',
+  'archive:manage': '毕业归档',
+  'dashboard:read': '查看统计看板',
+  'database:manage': '数据库快照 / 导出 / 切库',
+  'update:check': '检查服务端更新',
+  'update:force': '强制检查更新（绕过缓存）',
+  'ai:use': '使用大模型指令（一句话发布）',
+  'ai:manage': '大模型设置（开关 / 服务地址 / 密钥 / 模型）',
+  'permission:manage': '权限组与用户权限管理',
+  'system:manage': '全局系统设置（含开发者模式）',
+  'log:read': '查看服务端日志',
+  'developer:mode': '开发者模式',
+};
+
+/** 权限组管理页的分组展示（只影响排序与标题，不改变语义） */
+export const PERMISSION_CATEGORIES: readonly { title: string; keys: readonly PermissionKey[] }[] = [
+  {
+    title: '班级与人员',
+    keys: ['class:read', 'class:manage', 'roster:manage', 'teacher:manage', 'schedule:read', 'schedule:write'],
+  },
+  {
+    title: '内容发布',
+    keys: [
+      'homework:read',
+      'homework:write',
+      'notification:read',
+      'notification:publish',
+      'notification:delete',
+      'call:create',
+    ],
+  },
+  {
+    title: '成绩与导入',
+    keys: [
+      'grade:read',
+      'grade:write',
+      'grade:import',
+      'student:grade-query',
+      'import:students',
+      'import:teachers',
+      'import:schedule',
+      'import:class-teachers',
+    ],
+  },
+  {
+    title: '设备与联动',
+    keys: ['device:manage', 'classisland:notify', 'client:read', 'client:manage', 'client:update-push', 'remote:control'],
+  },
+  { title: '学期与统计', keys: ['term:read', 'term:write', 'archive:manage', 'dashboard:read'] },
+  {
+    title: '系统与安全',
+    keys: [
+      'database:manage',
+      'update:check',
+      'update:force',
+      'ai:use',
+      'ai:manage',
+      'permission:manage',
+      'system:manage',
+      'log:read',
+      'developer:mode',
+    ],
+  },
+];
+
+/**
+ * 每个权限键的**默认角色**（镜像改造前各路由的 `requireRole(...)`，逐条对齐）。
+ *
+ * 这是"没有分过任何权限组"时的回落模板：行为与权限组功能上线前完全一致。
+ * 一旦管理员给某个账号分了组，生效集合就**只由组的并集决定**（可以比默认更少）。
+ *
+ * 注意 `CLASS_DEVICE` 不出现在任何默认里：班级端的能力由班级维度断言
+ * （`canManageSubjectContent(..., { allowClassDevice })` 等）决定，不受权限组影响。
+ */
+export const PERMISSION_DEFAULT_ROLES: Record<PermissionKey, readonly UserRole[]> = {
+  'class:read': ['ADMIN', 'TEACHER'],
+  'class:manage': ['ADMIN'],
+  'roster:manage': ['ADMIN', 'TEACHER'],
+  'teacher:manage': ['ADMIN'],
+  'schedule:read': ['ADMIN', 'TEACHER'],
+  'schedule:write': ['ADMIN', 'TEACHER'],
+  'homework:read': ['ADMIN', 'TEACHER'],
+  'homework:write': ['ADMIN', 'TEACHER'],
+  'notification:read': ['ADMIN', 'TEACHER'],
+  'notification:publish': ['ADMIN', 'TEACHER'],
+  'notification:delete': ['ADMIN', 'TEACHER'],
+  'call:create': ['ADMIN', 'TEACHER'],
+  'grade:read': ['ADMIN', 'TEACHER'],
+  'grade:write': ['ADMIN', 'TEACHER'],
+  'grade:import': ['ADMIN', 'TEACHER'],
+  'student:grade-query': ['ADMIN', 'TEACHER'],
+  'import:students': ['ADMIN', 'TEACHER'],
+  'import:teachers': ['ADMIN'],
+  'import:schedule': ['ADMIN', 'TEACHER'],
+  'import:class-teachers': ['ADMIN'],
+  'device:manage': ['ADMIN', 'TEACHER'],
+  'classisland:notify': ['ADMIN', 'TEACHER'],
+  'client:read': ['ADMIN', 'TEACHER'],
+  'client:manage': ['ADMIN'],
+  'client:update-push': ['ADMIN'],
+  'remote:control': ['ADMIN'],
+  'term:read': ['ADMIN', 'TEACHER'],
+  'term:write': ['ADMIN'],
+  'archive:manage': ['ADMIN'],
+  'dashboard:read': ['ADMIN', 'TEACHER'],
+  'database:manage': ['ADMIN'],
+  'update:check': ['ADMIN', 'TEACHER'],
+  'update:force': ['ADMIN'],
+  'ai:use': ['ADMIN', 'TEACHER'],
+  'ai:manage': ['ADMIN'],
+  'permission:manage': ['ADMIN'],
+  'system:manage': ['ADMIN'],
+  'log:read': ['ADMIN'],
+  'developer:mode': ['ADMIN'],
+};
+
+/** 全部权限键（管理员的生效集合；也用在校验 zod 的枚举上） */
+export const ALL_PERMISSION_KEYS: readonly PermissionKey[] = PERMISSION_KEYS;
+
+/**
+ * 角色默认权限清单（由 {@link PERMISSION_DEFAULT_ROLES} 派生）。
+ *
+ * `ADMIN` 是全集（服务端还会强制补上 `permission:manage` / `system:manage`，防止把自己锁死）。
+ */
+export const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, readonly PermissionKey[]> = {
+  ADMIN: PERMISSION_KEYS,
+  TEACHER: PERMISSION_KEYS.filter((key) => PERMISSION_DEFAULT_ROLES[key].includes('TEACHER')),
+  CLASS_DEVICE: [],
+};
+
+/** 取某个角色的默认权限集合（无分组时的回落模板） */
+export function defaultPermissionsForRole(role: UserRole): PermissionKey[] {
+  return [...ROLE_DEFAULT_PERMISSIONS[role]];
+}
+
+/** 判断权限集合里是否有某个键（`Set` 或数组都接受） */
+export function hasPermission(permissions: ReadonlySet<string> | readonly string[], key: PermissionKey): boolean {
+  const list: readonly string[] = Array.isArray(permissions) ? permissions : [...permissions];
+  return list.includes(key);
+}
+
+/** 判断是否含任意一个键（服务端 requirePermission 是"全部满足"，这里留给页面做"任一"判断） */
+export function hasAnyPermission(
+  permissions: ReadonlySet<string> | readonly string[],
+  keys: readonly PermissionKey[],
+): boolean {
+  return keys.some((key) => hasPermission(permissions, key));
+}
+
 /** 人类可读的权限矩阵（README / 设置页展示，单一事实来源） */
 export const PERMISSION_MATRIX: readonly {
   action: string;

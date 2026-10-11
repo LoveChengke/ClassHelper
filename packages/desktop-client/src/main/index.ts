@@ -1,7 +1,10 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BrowserWindow, app, shell } from 'electron';
+import { setQuitHandler, watchMainWindow as watchAutoUpdateWindow } from './auto-update.js';
+import { startClientAgent, stopClientAgent } from './client-agent.js';
 import { flushConfigSync, getConfig } from './config.js';
+import { installCrashGuard, watchMainWindow as watchCrashGuardWindow } from './crash-guard.js';
 import { registerIpcHandlers } from './ipc.js';
 import { island, registerIslandIpc } from './island.js';
 import { logger } from './logger.js';
@@ -15,6 +18,13 @@ const currentDir = __dirname;
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const isSmokeTest = process.env.ELECTRON_SMOKE_TEST === '1';
+
+/**
+ * 这次启动是否需要"直接进托盘、不弹窗"——开机自启专用（见 `applyAutoLaunch()`）。
+ * 判定依据是我们自己在登录项里注册的命令行参数 `--hidden`（Electron 44 的
+ * `setLoginItemSettings` 在 Windows 上**没有** `openAsHidden` 这个开关，只能自己带参数）。
+ */
+const startHidden = !isSmokeTest && process.argv.includes('--hidden');
 
 // 自动化验证使用独立的 userData：否则用户正在运行的客户端会占着单实例锁，
 // 冒烟进程会"静默退出（退出码 0、无输出）"，看起来像构建坏了。
@@ -50,7 +60,7 @@ function isAllowedNavigation(url: string): boolean {
   }
 }
 
-function createWindow(): BrowserWindow {
+function createWindow(options: { hidden?: boolean } = {}): BrowserWindow {
   // 启动底色跟主题走：深色主题下若仍用浅色底，窗口先白后黑会"闪一下"
   const theme = getConfig().theme;
   const win = new BrowserWindow({
@@ -61,8 +71,8 @@ function createWindow(): BrowserWindow {
     minHeight: 540,
     center: true,
     title: 'ClassHelper',
-    // 冒烟验证时不弹窗，避免打扰使用者
-    show: !isSmokeTest,
+    // 冒烟验证时不弹窗，避免打扰使用者；开机自启（--hidden）时直接进托盘
+    show: !isSmokeTest && options.hidden !== true,
     autoHideMenuBar: true,
     backgroundColor: theme === 'dark' ? '#161719' : '#f3f3f3',
     webPreferences: {
@@ -87,10 +97,32 @@ function createWindow(): BrowserWindow {
   });
 
   win.on('closed', () => {
-    mainWindow = null;
+    if (mainWindow === win) mainWindow = null;
   });
 
+  // 崩溃自愈与「空闲安装更新」都要盯着主窗口：窗口重建后换的是新实例，因此每次建窗都重挂一次
+  watchCrashGuardWindow(win);
+  watchAutoUpdateWindow(win);
+
   return win;
+}
+
+/**
+ * 取当前主窗口，必要时重建。
+ *
+ * 与 `createWindow()` 的区别：这里会把"窗口已经被崩溃自愈销毁 / 还没建"的情况一并处理掉
+ * （托盘、二次启动、`activate` 都通过它拿窗口），因此调用方拿到的要么是活着的窗口、要么是 null。
+ */
+function ensureMainWindow(options: { hidden?: boolean } = {}): BrowserWindow | null {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
+  try {
+    mainWindow = createWindow(options);
+    void loadRenderer(mainWindow);
+  } catch (error) {
+    logger.error(`创建主窗口失败：${error instanceof Error ? error.message : String(error)}`);
+    mainWindow = null;
+  }
+  return mainWindow;
 }
 
 async function loadRenderer(win: BrowserWindow): Promise<void> {
@@ -103,23 +135,73 @@ async function loadRenderer(win: BrowserWindow): Promise<void> {
   await win.loadFile(path.join(currentDir, '../renderer/index.html'));
 }
 
+/**
+ * 按配置里的 `autoLaunch` 应用「开机自启」。
+ *
+ * 两个实测过的坑：
+ * 1. Electron 44 的 `setLoginItemSettings` 在 **Windows 上没有 `openAsHidden`**
+ *    （那是旧的 macOS 选项），所以"登录后不弹主窗口"只能自己带参数 —— 启动时注册 `--hidden`，
+ *    `createWindow()` 看到它就把窗口建成隐藏态（见 `startHidden`）；
+ * 2. **冒烟验证绝不写登录项**：那会改开发机真实的注册表启动项，属于"验证污染环境"。
+ */
+function applyAutoLaunch(): void {
+  if (isSmokeTest) return;
+  const enabled = getConfig().autoLaunch === true;
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      path: process.execPath,
+      args: enabled ? ['--hidden'] : [],
+    });
+    logger.info(enabled ? '已开启开机自启（登录 Windows 后静默启动，不弹主窗口）' : '开机自启未开启');
+  } catch (error) {
+    logger.warn(
+      `设置开机自启失败（不影响主功能，可在设置页重试）：${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
 // 单实例：重复启动时聚焦已有窗口
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+    showMainWindow();
   });
 
   app.whenReady().then(async () => {
+    // 日志级别跟开发者模式走：debug 只在开启时才输出（设置页「开发者模式」）
+    logger.setVerbose(getConfig().developerMode === true);
     registerIpcHandlers();
     registerIslandIpc();
 
-    mainWindow = createWindow();
+    // 开机自启：登录项要与配置保持一致（用户在设置页改过之后由 IPC 立即同步）
+    applyAutoLaunch();
+
+    mainWindow = createWindow({ hidden: startHidden });
     await loadRenderer(mainWindow);
+
+    // 崩溃自愈：主窗口渲染进程崩溃 / 界面无响应时静默重建；主进程崩溃且本机空闲时自动重启
+    installCrashGuard({
+      recoverMainWindow: () => {
+        const alive = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+        if (alive) {
+          alive.hide();
+          alive.destroy();
+        }
+        mainWindow = ensureMainWindow();
+      },
+      isIdle: () =>
+        island.getState().inClass === false &&
+        mainWindow?.isVisible() !== true &&
+        !BrowserWindow.getAllWindows().some((win) => !win.isDestroyed() && win.isVisible()),
+      quitApp: () => quitApp(),
+    });
+    // 空闲安装更新：先把手动退出的回调交给 auto-update（它不能再 import 本文件，否则循环导入）
+    setQuitHandler(() => quitApp());
 
     // 灵动岛：独立的置顶透明小窗口（桌面中上方）
     try {
@@ -167,6 +249,9 @@ if (!gotLock) {
     // 启动后自动查一次更新（延迟几秒，不跟首屏抢带宽）；冒烟模式下自动跳过，见 main/update.ts
     scheduleStartupUpdateCheck(() => mainWindow);
 
+    // 服务端统一下发：定时上报本机状态并领取「待执行命令 / 统一更新」（冒烟默认不上报）
+    startClientAgent();
+
     if (isSmokeTest) {
       try {
         await runSmokeTest(mainWindow);
@@ -177,15 +262,13 @@ if (!gotLock) {
     }
   });
 
-  /** 显示主窗口（托盘左键 / 托盘菜单 / 二次启动） */
+  /** 显示主窗口（托盘左键 / 托盘菜单 / 二次启动 / 灵动岛"打开应用"） */
   function showMainWindow(): void {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      mainWindow = createWindow();
-      void loadRenderer(mainWindow);
-    }
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+    const win = ensureMainWindow();
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
   }
 
   /**
@@ -194,6 +277,8 @@ if (!gotLock) {
    */
   function shutdownResources(): string {
     const done: string[] = [];
+    // 上报代理先停：否则退出过程中它还会再排一次心跳（幂等，重复调用无副作用）
+    stopClientAgent();
     // 配置是**异步合并写**的（见 main/config.ts）：退出前必须同步落地一次，
     // 否则"刚改完设置就退出"这一类操作会丢掉最后一次改动。
     // 放在最前面：后面会销毁窗口与灵动岛，先落盘不依赖任何窗口是否还在。
@@ -243,8 +328,8 @@ if (!gotLock) {
 
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      mainWindow = createWindow();
-      await loadRenderer(mainWindow);
+      const win = ensureMainWindow();
+      if (win) await loadRenderer(win);
     }
   });
 }

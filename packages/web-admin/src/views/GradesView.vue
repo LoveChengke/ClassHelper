@@ -19,7 +19,7 @@ import {
   type StudentDto,
   type StudentGradeDetailDto,
 } from '@classhelper/shared';
-import { classApi, courseApi, gradeApi } from '@/api';
+import { classApi, courseApi, courseIdFromExistsError, gradeApi } from '@/api';
 import ScoreBarChart from '@/components/ScoreBarChart.vue';
 import ScoreLineChart from '@/components/ScoreLineChart.vue';
 import TableImportDialog from '@/components/TableImportDialog.vue';
@@ -100,7 +100,6 @@ async function onClassChange(): Promise<void> {
   courses.value = await courseApi.list(filter.classId);
   students.value = await classApi.students(filter.classId);
   await loadGrades();
-  await loadTeacherSuggestions();
 }
 
 /* ------------------------------------------------------------ 图表
@@ -132,9 +131,40 @@ async function resolveCourseId(value: string): Promise<string | null> {
   const name = value.slice(SUBJECT_PREFIX.length);
   const existing = courses.value.find((item) => item.name === name);
   if (existing) return existing.id;
-  const created = await courseApi.create({ classId: filter.classId, name });
-  courses.value = [...courses.value, created];
-  return created.id;
+  try {
+    const created = await courseApi.create({ classId: filter.classId, name });
+    courses.value = [...courses.value, created];
+    return created.id;
+  } catch (error) {
+    // 该班已有同名课程（本地列表过期）：复用那一门（服务端 409 COURSE_EXISTS + details.courseId）；
+    // 复用之后成绩的科目写权限照常判定，不会"因为选了新建就变成自己的科目"
+    const reusedId = courseIdFromExistsError(error);
+    if (reusedId) return reusedId;
+    throw error;
+  }
+}
+
+/**
+ * 录入下拉里可选的课程：**只列自己任教的科目**（管理员不受限）。
+ *
+ * 与后端 `assertCanManageSubjectContent` 同源：班主任也不自动拥有本班所有科目的成绩录入权，
+ * 所以下拉里不给"别人的科目"，避免老师选完提交才吃 403。
+ */
+const ownCourses = computed(() =>
+  auth.isAdmin ? courses.value : courses.value.filter((item) => item.teacherId === auth.user?.id),
+);
+
+/** 能不能在该班新建科目（与课表管理同权限：管理员或本班班主任） */
+const canCreateCourse = computed(() => {
+  if (auth.isAdmin) return true;
+  return classes.value.find((item) => item.id === filter.classId)?.teacherId === auth.user?.id;
+});
+
+/** 录入弹窗的默认科目：优先沿用页面筛选，但筛的是别人的科目时退回"我的科目"第一条 */
+function defaultFormCourseId(): string {
+  const list = ownCourses.value;
+  if (filter.courseId && list.some((item) => item.id === filter.courseId)) return filter.courseId;
+  return list[0]?.id ?? '';
 }
 
 /* ------------------------------------------------------------ 单条录入 */
@@ -156,7 +186,7 @@ function openSingle(): void {
     return;
   }
   singleForm.studentId = students.value[0]?.id ?? '';
-  singleForm.courseId = filter.courseId || courses.value[0]?.id || '';
+  singleForm.courseId = defaultFormCourseId();
   singleForm.examName = filter.examName || '期中考试';
   singleForm.score = 90;
   singleForm.totalScore = 100;
@@ -202,7 +232,7 @@ function openBulk(): void {
     ElMessage.warning('该班级暂无学生');
     return;
   }
-  bulkForm.courseId = filter.courseId || courses.value[0]?.id || '';
+  bulkForm.courseId = defaultFormCourseId();
   bulkForm.examName = filter.examName || '期中考试';
   bulkForm.totalScore = 100;
   bulkForm.levelType = 'percent';
@@ -269,7 +299,7 @@ function openLevelBatch(): void {
     ElMessage.warning('请先选择班级');
     return;
   }
-  levelBatchForm.courseId = filter.courseId || courses.value[0]?.id || '';
+  levelBatchForm.courseId = defaultFormCourseId();
   levelBatchForm.examName = filter.examName || examOptions.value[0] || '';
   levelBatchForm.levelType = 'letter';
   levelBatchVisible.value = true;
@@ -354,11 +384,6 @@ async function removeGrade(row: GradeDto): Promise<void> {
 }
 
 /* ------------------------------------------------------------ 教师视角建议：按考试分组统计 */
-
-const teacherCourseSuggestions = ref<CourseDto[]>([]);
-async function loadTeacherSuggestions(): Promise<void> {
-  teacherCourseSuggestions.value = courses.value;
-}
 
 function onGradeEvent(): void {
   void loadGrades();
@@ -523,8 +548,8 @@ onUnmounted(() => {
         </el-form-item>
         <el-form-item label="科目">
           <el-select v-model="singleForm.courseId" clearable filterable style="width: 100%">
-            <el-option v-for="item in courses" :key="item.id" :label="`${item.name}（${item.teacher?.name ?? ''}）`" :value="item.id" />
-            <el-option-group v-if="subjectOptions.length" label="统一科目（自动建课）">
+            <el-option v-for="item in ownCourses" :key="item.id" :label="`${item.name}（${item.teacher?.name ?? ''}）`" :value="item.id" />
+            <el-option-group v-if="canCreateCourse && subjectOptions.length" label="统一科目（自动建课）">
               <el-option
                 v-for="name in subjectOptions"
                 :key="name"
@@ -579,12 +604,12 @@ onUnmounted(() => {
         <el-form-item label="科目">
           <el-select v-model="bulkForm.courseId" clearable filterable style="width: 150px">
             <el-option
-              v-for="item in teacherCourseSuggestions"
+              v-for="item in ownCourses"
               :key="item.id"
               :label="item.name"
               :value="item.id"
             />
-            <el-option-group v-if="subjectOptions.length" label="统一科目（自动建课）">
+            <el-option-group v-if="canCreateCourse && subjectOptions.length" label="统一科目（自动建课）">
               <el-option
                 v-for="name in subjectOptions"
                 :key="name"
@@ -645,8 +670,8 @@ onUnmounted(() => {
       <el-form :model="levelBatchForm" label-width="90px">
         <el-form-item label="科目">
           <el-select v-model="levelBatchForm.courseId" clearable filterable style="width: 100%">
-            <el-option v-for="item in courses" :key="item.id" :label="item.name" :value="item.id" />
-            <el-option-group v-if="subjectOptions.length" label="统一科目（自动建课）">
+            <el-option v-for="item in ownCourses" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option-group v-if="canCreateCourse && subjectOptions.length" label="统一科目（自动建课）">
               <el-option
                 v-for="name in subjectOptions"
                 :key="name"

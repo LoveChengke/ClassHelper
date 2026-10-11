@@ -4,6 +4,10 @@
  * 后端返回值与前端调用方都必须依赖它，避免契约漂移。
  */
 
+// 只导入类型（PermissionKey 由 permissions.ts 的 PERMISSION_KEYS 推导）：
+// 两个文件之间是**类型层面**的相互引用，编译后都会被抹掉，运行时不存在循环依赖。
+import type { PermissionKey } from './permissions.js';
+
 /**
  * 账号角色：管理员 / 教师 / ClassHelper 班级端。
  *
@@ -733,6 +737,13 @@ export interface NotificationDto {
   priority: NotificationPriority;
   createdBy: string;
   createdAt: string;
+  /**
+   * 通知所属日期（YYYY-MM-DD，**不带时区**）。
+   *
+   * 与 createdAt 的区别：createdAt 是"什么时候发的"，assignDate 是"这天的通知"。
+   * Web 端与客户端的按天归档、日期筛选都用它（晚间发布不会被 UTC 切片算到第二天）。
+   */
+  assignDate: string;
   creator?: ClassTeacherBrief | null;
   /** 当前用户是否已读 */
   read?: boolean;
@@ -777,6 +788,99 @@ export interface NotificationQueryParams {
   priority?: NotificationPriority;
   unreadOnly?: boolean;
   keyword?: string;
+  /** 只看某一天（YYYY-MM-DD），与 from/to 二选一 */
+  date?: string;
+  /** 日期区间起点（YYYY-MM-DD，含当天） */
+  from?: string;
+  /** 日期区间终点（YYYY-MM-DD，含当天） */
+  to?: string;
+  /** 只看某位发布人的通知 */
+  createdBy?: string;
+}
+
+/** 某一天有通知（用于按天归档的日期列表） */
+export interface NotificationDaySummary {
+  /** YYYY-MM-DD */
+  date: string;
+  /** 当天通知条数 */
+  count: number;
+}
+
+/** GET /api/notifications/days 的返回 */
+export interface NotificationDaysDto {
+  days: NotificationDaySummary[];
+}
+
+/** 通知发布人汇总（按发布人归档时的筛选项） */
+export interface NotificationCreatorSummary {
+  id: string;
+  name: string;
+  username: string;
+  /** 该发布人在当前筛选范围内的通知条数 */
+  count: number;
+}
+
+/** GET /api/notifications/creators 的返回 */
+export interface NotificationCreatorsDto {
+  creators: NotificationCreatorSummary[];
+}
+
+/**
+ * 批量发布的单班结果。
+ *
+ * 批量发布**逐班判定**：某个班没有权限、或正在上课而通知是紧急的，都不会让整批失败 ——
+ * 失败的那个班带着错误码与中文原因回到这里，成功的班照常落库并实时推送。
+ */
+export interface BulkPublishClassResult {
+  classId: string;
+  ok: boolean;
+  /** 成功时：新建的实体 id（通知 / 作业） */
+  id?: string;
+  /** 失败时：错误码（FORBIDDEN / URGENT_DURING_CLASS / CLASS_NOT_FOUND …） */
+  code?: string;
+  /** 失败时：可直接展示给用户的中文原因 */
+  message?: string;
+  /** 失败时的附加信息（如 URGENT_DURING_CLASS 的当前课程与下一次课） */
+  details?: Record<string, unknown>;
+}
+
+/** 批量发布结果汇总 */
+export interface BulkPublishResult {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: BulkPublishClassResult[];
+}
+
+/** POST /api/notifications/bulk：一次给多个班级发同一条通知 */
+export interface BulkCreateNotificationRequest {
+  /** 目标班级 id 列表（1~50 个） */
+  classIds: string[];
+  title: string;
+  content: string;
+  priority?: NotificationPriority;
+  /** 有班级正在上课且优先级为紧急时必须置 true（前端二次确认后重试） */
+  confirmDuringClass?: boolean;
+}
+
+/** POST /api/homeworks/bulk：一次给多个班级布置同一份作业 */
+export interface BulkCreateHomeworkRequest {
+  /** 目标班级 id 列表（1~50 个） */
+  classIds: string[];
+  courseId?: string | null;
+  /**
+   * 按**科目名称**指定科目（批量场景用这个，而不是 courseId）。
+   *
+   * 课程是"班级内"的：同一门「语文」在每个班是不同的 Course 记录，跨班不可能共用一个 courseId。
+   * 传名称后由服务端在每个目标班里查同名课程；某个班没有这门课时**只让那个班失败**
+   * （结果里带「该班级没有…这门课程」），**不会自动建课**。与 courseId 同时传时以本字段为准。
+   */
+  subjectName?: string | null;
+  title: string;
+  content: string;
+  /** 作业所属日期（YYYY-MM-DD）；不传按服务器当天处理 */
+  assignDate?: string | null;
+  attachmentUrl?: string | null;
 }
 
 /* ------------------------------------------------------------------ 成绩 */
@@ -979,8 +1083,15 @@ export interface IslandState {
   inClass: boolean;
   /** 当前课的结束时间（HH:mm），用于"下课后自动弹出" */
   currentPeriodEnd: string | null;
-  /** 本轮展示原因：新消息 / 下课后补发 / 紧急插播 / 叫人 */
-  reason: 'new' | 'after-class' | 'urgent' | 'call' | null;
+  /**
+   * 本轮展示原因：新消息 / 下课后补发 / 紧急插播 / 叫人 / 收回中。
+   *
+   * `closing` 是"用户点了知道了 / 标为已读"之后的**收回动画**阶段：状态在同一帧就已经落地
+   * （`active` 清空、`queued` 清空），主进程只是把形态切回胶囊让渲染进程把卡片收回去，
+   * 待 `CLOSE_ANIMATION_MS` 之后再淡出隐藏。它不是跨进程握手，渲染进程也不需要任何回执
+   * （见 AGENTS.md §5 第 34 条）。
+   */
+  reason: 'new' | 'after-class' | 'urgent' | 'call' | 'closing' | null;
   /**
    * 多条通知时是否已点过"展开更多"（展开后显示全部放得下的通知）。
    * 由主进程持有：卡片高度与窗口包围盒都由它决定，渲染进程只负责照此渲染。
@@ -1600,4 +1711,327 @@ export interface UpdateInfo {
   notes: string | null;
   assets: UpdateAssetDto[];
   checkedAt: string;
+}
+
+/* ------------------------------------------------------------------ 权限组 */
+
+/**
+ * 一个权限组：名字 + 描述 + 一组权限键（`PermissionGroupItem`）。
+ *
+ * 生效规则见服务端 `lib/permissions.ts` 的 `loadEffectivePermissions`：
+ * 账号**有分组**时取所属组的键并集（因此能比角色默认更少 ⇒ 可以用来收权）；
+ * **没有任何分组**时回落角色默认模板（逐条镜像权限组上线前各路由的 requireRole）。
+ */
+export interface PermissionGroupDto {
+  id: string;
+  name: string;
+  description: string;
+  keys: PermissionKey[];
+  memberCount: number;
+  /** 内置组（种子创建）不可删除，只允许改成员与键 */
+  builtin: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 权限页里的一个成员（管理员/教师账号） */
+export interface PermissionMemberDto {
+  id: string;
+  username: string;
+  name: string;
+  role: UserRole;
+  /** 所属权限组；空数组 = 走角色默认模板 */
+  groupIds: string[];
+  /** 生效权限数量（ADMIN 恒为全集；班级端账号恒为 0，见权限页的说明） */
+  permissionCount: number;
+  /** 该账号固定拥有全部权限，不接受分配（管理员） */
+  fixed: boolean;
+}
+
+/** `GET /api/permissions/catalog`：权限键目录（与 shared 的常量一一对应，供权限页渲染） */
+export interface PermissionCatalogDto {
+  keys: PermissionKey[];
+  labels: Record<PermissionKey, string>;
+  categories: { title: string; keys: PermissionKey[] }[];
+  /** 每个键"默认给哪些角色"（权限页的提示文案用） */
+  defaultRoles: Record<PermissionKey, UserRole[]>;
+  /** 每个角色的默认模板（"没有分组时会是什么"） */
+  roleDefaults: Record<UserRole, PermissionKey[]>;
+  /** 管理员不可被剥夺的键（前端置灰、服务端也会合并回去） */
+  unremovable: PermissionKey[];
+}
+
+export interface CreatePermissionGroupRequest {
+  name: string;
+  description?: string;
+  keys?: PermissionKey[];
+}
+
+export interface UpdatePermissionGroupRequest {
+  name?: string;
+  description?: string;
+  keys?: PermissionKey[];
+}
+
+/** `PUT /api/permissions/users/:id/groups`：整体替换某账号的权限组 */
+export interface AssignUserGroupsRequest {
+  groupIds: string[];
+}
+
+/**
+ * `GET /api/permissions/me`：当前账号的生效权限。
+ *
+ * 两端用它决定"入口显不显示"，而**不是**再写一套权限规则（AGENTS.md §5 第 3 条）：
+ * 真正的拦截始终在服务端。
+ */
+export interface MyPermissionsDto {
+  role: UserRole;
+  permissions: PermissionKey[];
+  /** true = 权限来自权限组；false = 走角色默认模板（未分配任何组） */
+  fromGroups: boolean;
+}
+
+/* ------------------------------------- 客户端设备 / 远控 / 客户端更新 */
+
+/** 远控命令种类（与 shared 的常量 `CLIENT_COMMAND_KINDS` 一一对应） */
+export type ClientCommandKind = 'shutdown' | 'restart' | 'logoff' | 'lock';
+
+/** 一条下发给教室客户端电脑的命令 */
+export interface ClientCommandDto {
+  id: string;
+  deviceId: string;
+  kind: ClientCommandKind;
+  /** 给人看的说明：动作描述 + 管理员填的备注 */
+  payload: string;
+  createdAt: string;
+  /** 过期时间：客户端拉到时已过期就丢弃并回执「已过期」（避免机器离线几天后突然关机） */
+  expiresAt: string | null;
+  ackedAt: string | null;
+  /** 执行结果说明（未回执为空串） */
+  result: string;
+}
+
+/** Web 端「客户端设备」列表里的一台机器 */
+export interface ClientDeviceDto {
+  id: string;
+  classId: string | null;
+  className: string | null;
+  deviceKey: string;
+  name: string;
+  /** 本机版本（客户端主进程 `app.getVersion()`） */
+  clientVersion: string;
+  platform: string;
+  /** 是否接受服务端统一下发的自动更新 */
+  autoUpdate: boolean;
+  /** 服务端指定的目标版本；`''` = 不指定 */
+  updateTargetVersion: string;
+  /** 已下载待安装的版本；`''` = 无 */
+  pendingVersion: string;
+  lastHeartbeatAt: string | null;
+  lastIp: string;
+  /** 客户端上报的状态说明（如「上课中」「窗口已隐藏」） */
+  stateNote: string;
+  /** 由最后一次心跳与 `CLIENT_ONLINE_WINDOW_MS` 判定 */
+  online: boolean;
+  /** 该设备当前待执行（未回执、未撤销、未过期）的命令；没有则 null */
+  pendingCommand: ClientCommandDto | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** `POST /api/clients/heartbeat`：客户端每 30 秒一次的上报 */
+export interface ClientHeartbeatRequest {
+  deviceKey: string;
+  name?: string;
+  clientVersion?: string;
+  platform?: string;
+  pendingVersion?: string | null;
+  stateNote?: string;
+}
+
+/** 服务端为某个版本缓存好的安装包信息（教室没有外网时也走服务端下载） */
+export interface ClientUpdateInfoDto {
+  version: string;
+  fileName: string;
+  size: number;
+  sha256: string;
+  notes: string;
+  /** 下载路径（**含 `/api` 前缀**；客户端用「服务器地址 + 它」直接下载） */
+  url: string;
+}
+
+/** `POST /api/clients/heartbeat` 的返回：更新下发与远控命令都在这里带回 */
+export interface ClientHeartbeatResponse {
+  deviceId: string;
+  serverTime: string;
+  /** 服务端要求升到的版本；null = 不要求 */
+  updateTargetVersion: string | null;
+  /** 目标版本的安装包信息；null = 服务端还没有这份安装包（客户端只能提示手动更新） */
+  update: ClientUpdateInfoDto | null;
+  /** 待执行命令（最早的一条）；null = 无 */
+  command: ClientCommandDto | null;
+}
+
+/** `POST /api/clients/commands/:id/ack`：客户端执行后的回执 */
+export interface ClientCommandAckRequest {
+  /** 既是身份也是护栏：班级端令牌全班共用，靠它确认回执来自命令指向的那台机器 */
+  deviceKey: string;
+  ok: boolean;
+  result?: string;
+}
+
+/** 一台设备上的操作结果（远控命令 / 更新推送共用） */
+export interface ClientTargetResult {
+  deviceId: string;
+  deviceName: string;
+  ok: boolean;
+  code?: string;
+  message?: string;
+}
+
+/** 批量下发结果（远控命令 / 更新推送共用） */
+export interface ClientPushResult {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: ClientTargetResult[];
+}
+
+/** `POST /api/clients/commands`：给选中的电脑下发远控命令 */
+export interface CreateClientCommandRequest {
+  deviceIds: string[];
+  kind: ClientCommandKind;
+  /** 备注（会显示在被控机器上的二次确认弹窗里） */
+  note?: string;
+}
+
+/** `POST /api/clients/updates`：推送更新（按设备、按班级或全部） */
+export interface PushClientUpdateRequest {
+  deviceIds?: string[];
+  classIds?: string[];
+  all?: boolean;
+  /** 目标版本；省略则用服务端缓存的最新版本 */
+  version?: string | null;
+  /** true = 取消下发（回到"不要求更新"的状态） */
+  clear?: boolean;
+}
+
+/** `GET /api/update/client/releases`：服务端已缓存的客户端安装包 */
+export interface ClientReleaseDto {
+  version: string;
+  fileName: string;
+  size: number;
+  sha256: string;
+  notes: string;
+  /** 文件是否真的在磁盘上（登记的元数据可能因为手工清理而失效） */
+  fileReady: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/* ------------------------------------------------- 全局设置 / 服务端系统状态 */
+
+/** `GET/PUT /api/system/settings`：全局设置（目前只有开发者模式，仅 ADMIN 可改） */
+export interface SystemSettingsDto {
+  /** 开发者模式：错误响应带堆栈、日志降到 debug 级 */
+  developerMode: boolean;
+}
+
+/** `GET/PUT /api/system/autostart`：服务端开机自启状态与切换 */
+export interface AutostartStatusDto {
+  /** 当前形态是否支持切换（开发机/免安装/容器里不支持 —— 避免把开发机的自启项写坏） */
+  supported: boolean;
+  enabled: boolean;
+  /** run-key=Windows 注册表 Run 项 / scheduled-task / systemd / unsupported */
+  mechanism: 'run-key' | 'scheduled-task' | 'systemd' | 'unsupported';
+  /** 给人看的说明：命令、路径，或"为什么不支持" */
+  detail: string;
+}
+
+/** `GET /api/system/diagnostics`：开发者模式下的运行诊断（**不含任何密钥**） */
+export interface SystemDiagnosticsDto {
+  version: string;
+  nodeVersion: string;
+  platform: string;
+  uptimeSeconds: number;
+  databaseProvider: string;
+  serverRoot: string;
+  dataDir: string;
+  clientReleaseCount: number;
+  onlineClientCount: number;
+  moduleCount: number;
+  developerMode: boolean;
+}
+
+/* ------------------------------------------------------------------ 大模型助手 */
+
+/** 大模型服务端实现：openai=真接口 / mock=离线确定性结果（自动化验收用，不联网） */
+export type AiProvider = 'openai' | 'mock';
+
+/** `GET/PUT /api/ai/settings`：大模型设置（**API Key 只进不出**） */
+export interface AiSettingsDto {
+  enabled: boolean;
+  provider: AiProvider;
+  baseUrl: string;
+  model: string;
+  /** 是否已配置密钥（界面据此显示"已配置/未配置"，永不回传密钥本身） */
+  hasApiKey: boolean;
+  /** 密钥尾 4 位（便于确认换对了，空串表示未配置） */
+  keyHint: string;
+  /** 追加到系统提示词的学校自定义要求 */
+  systemPromptExtra: string;
+}
+
+export interface UpdateAiSettingsRequest {
+  enabled?: boolean;
+  provider?: AiProvider;
+  baseUrl?: string;
+  model?: string;
+  /** 传字符串=换成新密钥；传 null=清除；不传=保持不变 */
+  apiKey?: string | null;
+  systemPromptExtra?: string;
+}
+
+/** 助手能执行的动作（都是既有发布入口的封装，绝不直接写库） */
+export type AiActionKind = 'create_homework' | 'create_notification' | 'call_student' | 'unknown';
+
+/** `POST /api/ai/interpret`：只解析、不落库；确认后由前端调既有端点 */
+export interface AiInterpretRequest {
+  /** 老师原话，例如「给高一二班布置作业，把卷子写完」 */
+  text: string;
+  /** 有上下文班级时一并给出（助手据此缩小候选） */
+  classId?: string;
+}
+
+/** 助手解析出的一次动作（params 用与手动入口**同一份 zod 校验**后再返回） */
+export interface AiInterpretResult {
+  action: AiActionKind;
+  /** 可直接提交给既有端点的参数（已通过 zod 校验） */
+  params: Record<string, unknown>;
+  /** 给人看的预览（班级名 / 科目名 / 学生名等已解析成中文） */
+  preview: {
+    summary: string;
+    className?: string | null;
+    courseName?: string | null;
+    studentName?: string | null;
+    warnings: string[];
+  };
+  /** 模型自评置信度 0~1（低于 0.5 时界面提示"请仔细核对"） */
+  confidence: number;
+  /** 一律为 true：助手的结果必须由老师确认后才落库 */
+  needConfirm: boolean;
+  /** 模型原始回复（仅在开发者模式下回传，便于排查格式问题） */
+  rawReply?: string | null;
+}
+
+/** `GET /api/ai/audit`：助手使用审计（谁在什么时候让助手做了什么） */
+export interface AiAuditDto {
+  id: string;
+  userId: string;
+  userName: string;
+  prompt: string;
+  intent: string;
+  status: string;
+  message: string;
+  createdAt: string;
 }

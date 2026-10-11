@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
 import {
   validate,
   validatedBody,
@@ -56,7 +56,7 @@ router.get('/', validate({ query: listClassesQuerySchema }), async (req, res) =>
  */
 router.post(
   '/promote',
-  requireRole('ADMIN'),
+  requirePermission('class:manage'),
   validate({ body: promoteClassesSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -73,7 +73,7 @@ router.get('/:id', validate({ params: idParamSchema }), async (req, res) => {
 });
 
 /** POST /api/classes - 创建班级（称呼由入学年份 + 班号生成，如「2026级1班」） */
-router.post('/', requireRole('ADMIN'), validate({ body: createClassSchema }), async (req, res) => {
+router.post('/', requirePermission('class:manage'), validate({ body: createClassSchema }), async (req, res) => {
   const user = getAuthUser(req);
   sendCreated(res, await classService.createClass(user, req.body as CreateClassInput), '班级创建成功');
 });
@@ -81,7 +81,7 @@ router.post('/', requireRole('ADMIN'), validate({ body: createClassSchema }), as
 /** PATCH /api/classes/:id - 编辑班级（年级 / 届别 / 教学周数），仅管理员 */
 router.patch(
   '/:id',
-  requireRole('ADMIN'),
+  requirePermission('class:manage'),
   validate({ params: idParamSchema, body: updateClassSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -93,7 +93,7 @@ router.patch(
 /** DELETE /api/classes/:id - 删除班级 */
 router.delete(
   '/:id',
-  requireRole('ADMIN'),
+  requirePermission('class:manage'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -109,7 +109,7 @@ router.delete(
  */
 router.patch(
   '/:id/class-account',
-  requireRole('ADMIN'),
+  requirePermission('class:manage'),
   validate({ params: idParamSchema, body: updateClassAccountSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -128,7 +128,7 @@ router.patch(
  */
 router.patch(
   '/:id/head-teacher',
-  requireRole('ADMIN'),
+  requirePermission('class:manage'),
   validate({ params: idParamSchema, body: assignHeadTeacherSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -147,7 +147,7 @@ router.patch(
  */
 router.put(
   '/:id/subject-teachers',
-  requireRole('ADMIN'),
+  requirePermission('class:manage'),
   validate({ params: idParamSchema, body: assignSubjectTeachersSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -244,7 +244,7 @@ router.get('/:id/students', validate({ params: idParamSchema }), async (req, res
 /** POST /api/classes/:id/students - 把学生加入班级（按学号，已存在则转入并留调班痕迹） */
 router.post(
   '/:id/students',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('roster:manage'),
   validate({ params: idParamSchema, body: addStudentSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -256,7 +256,7 @@ router.post(
 /** DELETE /api/classes/:id/students/:studentId - 移出学生（回到「未分班」，名单记录保留） */
 router.delete(
   '/:id/students/:studentId',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('roster:manage'),
   validate({ params: classStudentParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);

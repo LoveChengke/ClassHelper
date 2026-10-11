@@ -13,10 +13,12 @@ import {
   type HomeworkDto,
   type HomeworkSubmissionsDto,
 } from '@classhelper/shared';
-import { classApi, courseApi, homeworkApi } from '@/api';
+import { classApi, courseApi, courseIdFromExistsError, homeworkApi } from '@/api';
+import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useResponsive } from '@/composables/useResponsive';
 
+const auth = useAuthStore();
 const realtime = useRealtimeStore();
 const { isMobile } = useResponsive();
 
@@ -218,6 +220,23 @@ const newSubjectOptions = computed(() => {
   return SUBJECT_CATALOG.filter((name) => !existing.has(name));
 });
 
+/**
+ * 发布弹窗里可选的课程：**只列自己任教的科目**（管理员不受限）。
+ *
+ * 展示侧的收口与服务端 `assertCanManageSubjectContent` 同源：班主任也不自动拥有
+ * 本班所有科目的作业权，所以下拉里不给"别人的科目"这个选项 —— 否则老师选了、
+ * 提交、再吃一个 403，只会以为是系统坏了。留空（不指定科目）仍然允许班主任用。
+ */
+const ownFormCourses = computed(() =>
+  auth.isAdmin ? formCourses.value : formCourses.value.filter((item) => item.teacherId === auth.user?.id),
+);
+
+/** 该班里能不能新建科目：与课表管理同权限（管理员或本班班主任） */
+const canCreateCourse = computed(() => {
+  if (auth.isAdmin) return true;
+  return classes.value.find((item) => item.id === form.classId)?.teacherId === auth.user?.id;
+});
+
 async function loadFormCourses(): Promise<void> {
   if (!form.classId) {
     formCourses.value = [];
@@ -292,6 +311,14 @@ async function resolveCourseId(): Promise<string | null> {
     formCourses.value = [...formCourses.value, created];
     return created.id;
   } catch (error) {
+    // 该班已有同名课程（本地列表过期或别人刚建）：复用那一门 ——
+    // 服务端对同名课程返回 409 COURSE_EXISTS + details.courseId（不许再建第二门同名的，
+    // 否则创建者会凭空成为该科任课老师，绕过科目维度的写权限）。
+    const reusedId = courseIdFromExistsError(error);
+    if (reusedId) {
+      await loadFormCourses();
+      return reusedId;
+    }
     // 新建课程需要"管理员或本班班主任"权限（与课表管理一致），科任老师会被 403 拦截
     ElMessage.error(
       `新建科目「${name}」失败：${
@@ -332,6 +359,89 @@ async function submitForm(): Promise<void> {
   }
   formVisible.value = false;
   await loadHomeworks();
+}
+
+/* ------------------------------------------------------------------ 批量布置（多班同发） */
+
+/**
+ * 批量布置：一次给多个班级布置同一份作业。
+ *
+ * 科目按**名称**提交（`subjectName`），不是一个 courseId —— 课程是"班级内"的：
+ * 同一门「语文」在每个班是不同的 Course 记录，没法共用一个 id。服务端在每个目标班里查同名课程，
+ * 某个班没有这门课时只让那个班失败（结果里带原因），不会自动建课、也不会拖垮整批。
+ */
+const bulkVisible = ref(false);
+const bulkSending = ref(false);
+const bulkForm = reactive({
+  classIds: [] as string[],
+  subjectName: '',
+  title: '',
+  content: '',
+  attachmentUrl: '',
+  assignDate: dayKeyLocal(new Date()),
+});
+
+function openBulk(): void {
+  bulkForm.classIds = filter.classId ? [filter.classId] : [];
+  bulkForm.subjectName = '';
+  bulkForm.title = '';
+  bulkForm.content = '';
+  bulkForm.attachmentUrl = '';
+  // 默认跟当前「按天查看」的日期一致
+  bulkForm.assignDate = filter.date || dayKeyLocal(new Date());
+  bulkVisible.value = true;
+}
+
+function classNameOf(classId: string): string {
+  return classes.value.find((item) => item.id === classId)?.name ?? classId;
+}
+
+async function submitBulk(): Promise<void> {
+  if (bulkForm.classIds.length === 0) {
+    ElMessage.warning('请至少选择一个目标班级');
+    return;
+  }
+  if (!bulkForm.title.trim()) {
+    ElMessage.warning('请输入作业标题');
+    return;
+  }
+  if (!bulkForm.content.trim()) {
+    ElMessage.warning('请输入作业内容');
+    return;
+  }
+
+  bulkSending.value = true;
+  try {
+    const result = await homeworkApi.bulkCreate({
+      classIds: bulkForm.classIds,
+      subjectName: bulkForm.subjectName || null,
+      title: bulkForm.title.trim(),
+      content: bulkForm.content,
+      assignDate: bulkForm.assignDate || null,
+      attachmentUrl: bulkForm.attachmentUrl.trim() || null,
+    });
+
+    const failures = result.results.filter((item) => !item.ok);
+    if (failures.length === 0) {
+      ElMessage.success(`作业已发布到 ${result.succeeded} 个班级，实时推送已发出`);
+    } else {
+      const detail = failures
+        .map((item) => `${classNameOf(item.classId)}（${item.message ?? '失败'}）`)
+        .join('；');
+      ElMessage({
+        type: result.succeeded > 0 ? 'warning' : 'error',
+        message: `成功 ${result.succeeded} 个班，失败 ${failures.length} 个班｜${detail}`,
+        duration: 8000,
+        showClose: true,
+      });
+    }
+
+    // 全部失败时把弹窗留着，方便老师改科目/改班级后直接重试
+    bulkVisible.value = result.succeeded === 0;
+    if (result.succeeded > 0) await loadHomeworks();
+  } finally {
+    bulkSending.value = false;
+  }
 }
 
 async function removeHomework(row: HomeworkDto): Promise<void> {
@@ -414,6 +524,7 @@ onUnmounted(() => {
           @clear="loadHomeworks"
         />
         <el-button type="primary" :icon="'Plus'" @click="openCreate">发布作业</el-button>
+        <el-button @click="openBulk">批量布置</el-button>
       </div>
     </div>
 
@@ -460,10 +571,18 @@ onUnmounted(() => {
             :loading="formCoursesLoading"
             style="width: 100%"
           >
-            <el-option-group v-if="formCourses.length" label="已有课程">
-              <el-option v-for="item in formCourses" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option-group v-if="ownFormCourses.length" label="我的科目">
+              <el-option
+                v-for="item in ownFormCourses"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"
+              />
             </el-option-group>
-            <el-option-group v-if="!formCoursesLoading && newSubjectOptions.length" label="其他科目（新建）">
+            <el-option-group
+              v-if="canCreateCourse && !formCoursesLoading && newSubjectOptions.length"
+              label="其他科目（新建）"
+            >
               <el-option
                 v-for="name in newSubjectOptions"
                 :key="`new-${name}`"
@@ -476,7 +595,9 @@ onUnmounted(() => {
             {{
               formCoursesLoading
                 ? '正在加载该班课程…'
-                : '该班还没有的科目在「其他科目（新建）」里，选中后会自动建课再发布（需班主任/管理员）'
+                : canCreateCourse
+                  ? '只列你任教的科目；该班还没有的科目在「其他科目（新建）」里，选中后自动建课再发布'
+                  : '只列你任教的科目；需要别的科目请先由班主任/管理员在课表管理里建好并分配任课老师'
             }}
           </div>
         </el-form-item>
@@ -503,6 +624,69 @@ onUnmounted(() => {
       <template #footer>
         <el-button @click="formVisible = false">取消</el-button>
         <el-button type="primary" @click="submitForm">{{ editingId ? '保存' : '发布' }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 批量布置：多班同发同一份作业；科目按名称匹配，某个班没有这门课只让那个班失败 -->
+    <el-dialog v-model="bulkVisible" title="批量布置作业" width="560px">
+      <el-form label-width="90px">
+        <el-form-item label="目标班级" required>
+          <el-select
+            v-model="bulkForm.classIds"
+            multiple
+            filterable
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="可多选；一次布置到所有选中班级"
+            style="width: 100%"
+          >
+            <el-option v-for="item in classes" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="所属科目">
+          <el-select
+            v-model="bulkForm.subjectName"
+            placeholder="不指定科目（仅班主任/管理员可用）"
+            clearable
+            filterable
+            style="width: 100%"
+          >
+            <el-option v-for="name in SUBJECT_CATALOG" :key="name" :label="name" :value="name" />
+          </el-select>
+          <div class="form-hint">
+            按科目名称匹配：服务端在每个班里找同名课程，某个班没有这门课时只有那个班失败（不会自动建课）
+          </div>
+        </el-form-item>
+        <el-form-item label="所属日期">
+          <el-date-picker
+            v-model="bulkForm.assignDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            :cell-class-name="dayCellClass"
+            style="width: 200px"
+          />
+        </el-form-item>
+        <el-form-item label="标题" required>
+          <el-input v-model="bulkForm.title" maxlength="120" show-word-limit />
+        </el-form-item>
+        <el-form-item label="内容" required>
+          <el-input
+            v-model="bulkForm.content"
+            type="textarea"
+            :rows="5"
+            maxlength="5000"
+            show-word-limit
+          />
+        </el-form-item>
+        <el-form-item label="附件链接">
+          <el-input v-model="bulkForm.attachmentUrl" placeholder="https://..." />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="bulkVisible = false">取消</el-button>
+        <el-button type="primary" :loading="bulkSending" @click="submitBulk">
+          发布到 {{ bulkForm.classIds.length }} 个班级
+        </el-button>
       </template>
     </el-dialog>
 

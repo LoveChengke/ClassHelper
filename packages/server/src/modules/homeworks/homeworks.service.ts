@@ -2,6 +2,9 @@ import {
   SOCKET_EVENTS,
   dayKeyLocal,
   shiftDayKey,
+  type BulkCreateHomeworkRequest,
+  type BulkPublishClassResult,
+  type BulkPublishResult,
   type HomeworkDaysDto,
   type HomeworkDto,
   type HomeworkStatusDto,
@@ -15,9 +18,11 @@ import {
   isClassDevice,
   resolveClassScope,
 } from '../../lib/access.js';
+import { normalizeBulkClassIds, summarizeBulk, toBulkFailure } from '../../lib/bulk.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
+import { logger } from '../../lib/logger.js';
 import { toHomeworkDto, toHomeworkStatusDto } from '../../lib/mappers.js';
 import { personalIdWhere, resolvePersonalIds } from '../../lib/session.js';
 import { emitToClass } from '../../realtime/bus.js';
@@ -180,6 +185,63 @@ export async function createHomework(user: TokenPayload, input: CreateHomeworkIn
   const dto = toHomeworkDto(created, { withStatus: true });
   emitToClass(created.classId, SOCKET_EVENTS.homeworkNew, dto);
   return dto;
+}
+
+/**
+ * 批量布置作业：一次给多个班级发同一份内容。
+ *
+ * 逐班串行调用 `createHomework`（复用同一套科目归属断言 + 实时广播 + 班级端归属规则），
+ * **某个班失败只记进结果**：例如批量里含一个"语文由别的老师任教"的班，
+ * 那个班带着「不是你任教的科目」的失败原因回来，其余班照常发布。
+ *
+ * 科目用 `subjectName` 而不是 courseId：课程是班级内的，同一门课在每个班是不同的记录，
+ * 跨班只能用名称逐个查（查不到只让那个班失败，不自动建课）。
+ */
+export async function bulkCreateHomeworks(
+  user: TokenPayload,
+  input: BulkCreateHomeworkRequest,
+): Promise<BulkPublishResult> {
+  const classIds = normalizeBulkClassIds(input.classIds);
+  const results: BulkPublishClassResult[] = [];
+
+  for (const classId of classIds) {
+    try {
+      // 批量跨班只能用科目「名称」定位课程：同一门课在每个班是不同的 Course 记录。
+      // 该班没有这门课时只让这个班失败 —— 不自动建课（否则一次批量会在 N 个班里凭空
+      // 建出课程，还会让发起人在这些班里变成"任课老师"，绕过科目维度的写权限）。
+      let courseId = input.courseId ?? null;
+      if (input.subjectName) {
+        const course = await prisma.course.findFirst({
+          where: { classId, name: input.subjectName },
+          select: { id: true },
+        });
+        if (!course) {
+          throw ApiError.badRequest(
+            `该班级没有「${input.subjectName}」这门课程（跨班发布按科目名称匹配，请先让班主任/管理员在本班建课并分配任课老师，或改选其他科目）`,
+          );
+        }
+        courseId = course.id;
+      }
+
+      const dto = await createHomework(user, {
+        classId,
+        courseId,
+        title: input.title,
+        content: input.content,
+        assignDate: input.assignDate ?? null,
+        attachmentUrl: input.attachmentUrl ?? null,
+      });
+      results.push({ classId, ok: true, id: dto.id });
+    } catch (error) {
+      results.push(toBulkFailure(classId, error, '布置作业'));
+    }
+  }
+
+  const summary = summarizeBulk(results);
+  logger.info(
+    `批量布置作业：目标 ${summary.total} 个班级，成功 ${summary.succeeded} 个，失败 ${summary.failed} 个（发起人=${user.username}）`,
+  );
+  return summary;
 }
 
 export async function updateHomework(

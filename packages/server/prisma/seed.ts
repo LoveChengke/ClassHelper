@@ -70,6 +70,17 @@ function createRandom(seed: number): () => number {
 
 async function resetDatabase(): Promise<void> {
   // 顺序敏感：先删子表，再删主表
+  // 权限组 / 客户端设备 / 远端指令 / 安装包缓存 / 大模型审计（2026-10-10 新增表）
+  // 注意：ClientDevice.classId 是 SetNull，不显式删会留下"孤儿设备"（班级已删、设备还在）
+  await prisma.clientCommand.deleteMany();
+  await prisma.clientDevice.deleteMany();
+  await prisma.clientRelease.deleteMany();
+  await prisma.aiAudit.deleteMany();
+  await prisma.userPermissionGroup.deleteMany();
+  await prisma.permissionGroupItem.deleteMany();
+  await prisma.permissionGroup.deleteMany();
+  // 全局设置（大模型配置 / 开发者模式）不属于业务数据，但演示库重置时一并清掉，保证可复现
+  await prisma.appSetting.deleteMany();
   await prisma.grade.deleteMany();
   await prisma.homeworkStatus.deleteMany();
   await prisma.homework.deleteMany();
@@ -115,6 +126,32 @@ async function main(): Promise<void> {
   });
   const teacher2 = await prisma.user.create({
     data: { username: 'teacher2', name: '李老师', role: 'TEACHER', passwordHash: teacherHash },
+  });
+
+  // 内置权限组示例：**没有分配给任何账号**，所以不影响默认行为（演示「创建权限组」这条需求）。
+  // 一旦把某个老师加进组，他的生效权限就**只由组的并集决定**（可以比角色默认更少 ⇒ 也能收回权限）。
+  await prisma.permissionGroup.create({
+    data: {
+      name: '教务协作（示例）',
+      description: '可查看班级与课表、发布作业与通知、录入成绩；不能创建班级或管理教师账号',
+      builtin: true,
+      items: {
+        create: [
+          'class:read',
+          'schedule:read',
+          'homework:read',
+          'homework:write',
+          'notification:read',
+          'notification:publish',
+          'grade:read',
+          'grade:write',
+          'dashboard:read',
+          'term:read',
+          'client:read',
+          'ai:use',
+        ].map((key) => ({ key })),
+      },
+    },
   });
 
   // 班级账号：班级码（ClassHelper 班级端「班级登录」的账号）+ 班级密码（默认 123456，可在班级管理里重置）

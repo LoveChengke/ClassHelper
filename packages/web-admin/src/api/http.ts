@@ -58,7 +58,8 @@ async function request<T>(config: AxiosRequestConfig): Promise<T> {
 export const api = {
   get: <T>(url: string, params?: Record<string, unknown>): Promise<T> =>
     request<T>({ method: 'GET', url, params }),
-  post: <T>(url: string, data?: unknown): Promise<T> => request<T>({ method: 'POST', url, data }),
+  post: <T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> =>
+    request<T>({ method: 'POST', url, data, ...config }),
   patch: <T>(url: string, data?: unknown): Promise<T> => request<T>({ method: 'PATCH', url, data }),
   put: <T>(url: string, data?: unknown): Promise<T> => request<T>({ method: 'PUT', url, data }),
   delete: <T>(url: string): Promise<T> => request<T>({ method: 'DELETE', url }),

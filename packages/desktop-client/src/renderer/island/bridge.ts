@@ -6,9 +6,9 @@ import {
   type NotificationDto,
   type ScheduleDto,
 } from '@classhelper/shared';
-import { scheduleApi } from '../api/index.js';
+import { notificationApi, scheduleApi } from '../api/index.js';
 import { fetchWithCache } from '../cache/index.js';
-import { useAppStore } from '../stores/app.js';
+import { clearOfflineSince, readOfflineSince, useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useNotificationStore } from '../stores/notifications.js';
 import { useRealtimeStore } from '../stores/realtime.js';
@@ -188,6 +188,81 @@ export function pushCallToIsland(call: NotificationDto): void {
     },
     context: getIslandClassContext(),
   });
+}
+
+/* ------------------------------------------------------------ 补弹离线期间收到的消息（需求 11） */
+
+/**
+ * 补弹条数上限。
+ *
+ * 灵动岛的多条通知列表默认只显示 `ISLAND_LIST_METRICS.defaultVisibleRows`（3）条 +
+ * 「展开更多（还有 N 条）」。所以一条不补、和一次补十几条，都是同样的阅读体验 ——
+ * 封顶 5 条 = 3 条可见 + 2 条藏在"展开更多"里，正好是打开就能读完的量；
+ * 补太多只会让"展开更多"变成一个没有意义的按钮。
+ */
+const REPLAY_MAX_COUNT = 5;
+
+/**
+ * 上线后补弹「离线期间收到的消息」（需求 11）。
+ *
+ * 调用时机：`App.vue` 订阅 `useAppStore().onServerRecovered`，也就是**可达性由不可达变为可达**
+ * 的那一刻（断网期间的实时通道是断的，那些通知既没弹过、也没进过用户的视野）。
+ *
+ * 数据来源复用既有的通知接口（`notificationApi.list({ unreadOnly: true })`）：
+ * 客户端本来就是离线优先的（`fetchWithCache` 会把数据落 IndexedDB），**不为此新建数据源** ——
+ * 补弹只需要"服务端现在有哪些未读"，而通知列表本来就是这个问题的答案。
+ *
+ * 实现上有四条约定：
+ * 1. **没有离线起点就直接返回 0**（首次启动 / 一直在线）：离线起点只由
+ *    `stores/app.ts` 在"由可达变不可达"的那一刻写入，没有它就说明这段时间根本没断过网，
+ *    此时补弹等于把**历史未读**全弹一遍，那不是「离线期间收到的」。
+ * 2. **只补离线起点之后创建的**（`createdAt > offlineSince`），并且在服务端排序之外再排一次
+ *    **按时间升序**投递 —— 顺序投递才能让灵动岛的队列保持时间顺序。
+ * 3. **取最近的 5 条**（升序列表的尾部）：断网一天可能积压几十条，取最早的那 5 条等于
+ *    让用户先看最旧的、最新的反而被"展开更多"挡住。取最近的 5 条更符合"我刚错过了什么"。
+ * 4. **推完就清掉离线起点**：同一次离线只补一次，否则每次可达性抖动都会重复弹同一批。
+ *
+ * @returns 实际补弹的条数（0 = 没补）
+ */
+export async function replayMissedNotifications(): Promise<number> {
+  // 冒烟保护：`verify:desktop` / `verify:packaged` 有一条「灵动岛队列」的断言链
+  // （100+ 条断言量的是卡片的条数、顺序、高度与"展开更多"的分页），
+  // 冒烟脚本会反复断开/恢复网络，注入的合成通知与这里的补弹会互相打乱队列，
+  // 让那些断言随机变红。冒烟模式下**直接跳过补弹**（也不动离线起点），
+  // 补弹本身由人工/单元路径覆盖，不进冒烟。
+  if (window.desktop?.smokeTest === true) return 0;
+
+  const offlineSince = readOfflineSince();
+  if (!offlineSince) return 0;
+  const sinceMs = Date.parse(offlineSince);
+  if (Number.isNaN(sinceMs)) {
+    // 存储里是坏值（手工改过 / 旧版本写入格式不同）：清掉，别让它永远挡住补弹
+    clearOfflineSince();
+    return 0;
+  }
+
+  let unread: NotificationDto[];
+  try {
+    unread = await notificationApi.list({ unreadOnly: true });
+  } catch {
+    // 刚恢复就又断了（或服务端还没真正就绪）：保留离线起点，等下一次恢复再补
+    return 0;
+  }
+
+  const missed = unread
+    .filter((item) => {
+      const at = Date.parse(item.createdAt);
+      return !Number.isNaN(at) && at > sinceMs;
+    })
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+
+  const picked = missed.slice(-REPLAY_MAX_COUNT);
+  for (const item of picked) pushNotificationToIsland(item);
+
+  // 无论补到几条都清掉：这一轮离线已经被处理过了
+  clearOfflineSince();
+  console.info(`[离线补弹] 补弹离线消息 ${picked.length} 条（离线起点 ${offlineSince}）`);
+  return picked.length;
 }
 
 /**

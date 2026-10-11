@@ -67,9 +67,50 @@ description: 权限矩阵、科目维度的收口规则，以及"前端隐藏 �
 实现在 `lib/access.ts` 的 **`assertCanManageSubjectContent(user, classId, courseId, action, { allowClassDevice })`**，
 作业 / 成绩 / 叫人三处写入统一走它。
 
+## 权限键与权限组（2026-10 起：权限组驱动，角色只是默认模板）
+
+从权限组重构开始，**功能级准入不再看角色，而看权限键**：键目录同样是
+`packages/shared/src/permissions.ts` 的 `PERMISSION_KEYS`（39 个，形如 `domain:action`，
+中文名在 `PERMISSION_LABELS`、分组在 `PERMISSION_CATEGORIES`）。路由上挂的是
+
+```ts
+requirePermission('notification:publish')      // 需要全部列出的键
+requireAnyPermission('grade:write', 'grade:import')  // 有任意一个即可
+```
+
+**生效规则（四句话）**：
+
+| 账号                                    | 有效权限                                                       |
+| --------------------------------------- | -------------------------------------------------------------- |
+| `ADMIN`                                 | 全集；其中 `permission:manage` / `system:manage` **不可被剥夺** |
+| `CLASS_DEVICE`（班级端）                | 空集，**不受任何分组影响**（它的能力来自班级维度断言）          |
+| 被分配了权限分组                        | 分组键的**并集**（可以比角色默认更少 —— 这就是"能收权"）        |
+| 没有被分配任何分组                      | 回落到角色默认模板 `defaultPermissionsForRole(role)`            |
+
+默认模板逐条镜像重构前的 `requireRole`，所以"不动分组"= 行为与以前完全一致。
+实现见 `packages/server/src/lib/permissions.ts` 的 `loadEffectivePermissions()`：它**每个请求实时查库**
+（不缓存），因此管理员改完分组**立刻生效**，不需要等令牌过期 —— 与下面「鉴权中间件会回查数据库」是同一个理由。
+
+**管理接口**（`packages/server/src/modules/permissions/`）：
+
+| 方法与路径                        | 权限要求             | 说明                                                     |
+| --------------------------------- | -------------------- | -------------------------------------------------------- |
+| `GET /api/permissions/me`         | 登录即可             | 当前账号的有效权限与来源（前端据此显示/隐藏入口）        |
+| `GET /api/permissions/catalog`    | `permission:manage`  | 全部权限键（含中文名、分类、默认角色、不可移除标记）     |
+| `GET/POST /api/permissions/groups`、`PATCH/DELETE /groups/:id` | `permission:manage` | 分组 CRUD；内置分组（`builtin=true`）可改不可删 |
+| `GET /api/permissions/users`、`PUT /api/permissions/users/:id/groups` | `permission:manage` | 成员列表与「整组替换」式分配；拒绝给 ADMIN / CLASS_DEVICE 分配 |
+
+**一条不能松的边界**：权限组只管**功能/路由级**准入；**班级维度的科目规则不可被权限组覆盖**。
+换句话说，给某人授了 `homework:write` 只代表"他能进布置作业这条路由"，
+**具体到哪个班、哪个科目**仍然由 `assertCanManageSubjectContent` 判（下一节）。
+否则「班主任能布置别人科目的作业」这个老 bug 会从权限组这条新路重新长出来。
+
 ## 实现要点
 
-**路由级只做角色过滤**：`requireRole('ADMIN', 'TEACHER')`。
+**路由级只做权限过滤**：`requirePermission('…')`（需要列出的键全有）或
+`requireAnyPermission('…')`（任意一个即可）。改造前这里是 `requireRole('ADMIN','TEACHER')`，
+按键目录里的 `PERMISSION_DEFAULT_ROLES` 逐条映射过来，因此**默认行为没有变化**。
+403 的文案会直接点名缺哪个键：「当前账号缺少「X」权限，请联系管理员在「权限组」里分配」。
 
 **班级维度的判断在服务层**：`src/lib/access.ts` 提供
 
@@ -93,9 +134,15 @@ assertCanManageGrades     / assertCanManageSubjectContent
 
 前端的隐藏只是"别让人看见入口"：
 
-- 教师登录时侧边栏不显示「班级管理 / 学生管理 / 教师管理 / 毕业归档 / 学期周次 / 数据库管理」；
+- 教师登录时侧边栏不显示「班级管理 / 学生管理 / 教师管理 / 毕业归档 / 学期周次 / 数据库管理 / 权限组 / 客户端设备」；
 - 课表页的增删改按钮只对「管理员或本班班主任」显示；
 - 成绩页的录入 / 删除按钮对教师显示（科任也能用，**具体到某一条由后端按科目判定**）。
+
+**门控怎么写的**：路由 `meta.roles` 做粗筛（角色），`meta.permission` 做细筛（权限键）——
+`packages/web-admin/src/router/index.ts` 的 `beforeEach` 会 `await auth.ensurePermissions()`
+再问 `auth.can(key)`（管理员短路为 true），不通过就 **fail-closed** 回仪表盘；
+侧栏菜单项同理带 `permission` 字段（`AdminLayout.vue` 的 `visibleMenuItems`）。
+`auth.ensurePermissions()` 读的就是 `GET /api/permissions/me`。
 
 但这些页面**直接输网址也进不去**（路由 `meta.roles` 会把非管理员挡回仪表盘），
 而且**所有写入请求服务端都会再断言一次**。绕过菜单、绕过前端，一样 403。

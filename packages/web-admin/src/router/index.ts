@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
-import { STORAGE_KEYS } from '@classhelper/shared';
+import { STORAGE_KEYS, type PermissionKey } from '@classhelper/shared';
+import { useAuthStore } from '@/stores/auth';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -76,6 +77,14 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '成绩录入', icon: 'Trophy' },
       },
       {
+        path: 'assistant',
+        name: 'assistant',
+        component: () => import('@/views/AssistantView.vue'),
+        // 按**生效权限**门控（教师默认就有 ai:use，见 shared/permissions.ts 的默认模板）：
+        // 管理员把 ai:use 从某个权限组收回后，这一页同时从菜单与路由上消失
+        meta: { title: 'AI 助手', icon: 'MagicStick', permission: 'ai:use' },
+      },
+      {
         path: 'integrations',
         name: 'integrations',
         component: () => import('@/views/IntegrationsView.vue'),
@@ -83,11 +92,36 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'ClassHelper 联动', icon: 'Connection', roles: ['ADMIN', 'TEACHER'] },
       },
       {
+        path: 'ai-settings',
+        name: 'ai-settings',
+        component: () => import('@/views/AiSettingsView.vue'),
+        // 与后端 requirePermission('ai:manage') 对齐：这一页能改密钥与开关，默认仅管理员
+        meta: { title: '大模型设置', icon: 'Setting', permission: 'ai:manage' },
+      },
+      {
         path: 'database',
         name: 'database',
         component: () => import('@/views/DatabaseView.vue'),
         // 与后端 requireRole('ADMIN') 对齐：改动数据库是最高危操作，仅管理员
         meta: { title: '数据库管理', icon: 'Coin', roles: ['ADMIN'] },
+      },
+      {
+        path: 'permissions',
+        name: 'permissions',
+        component: () => import('@/views/PermissionsView.vue'),
+        // 这一页**按生效权限**门控而不是按角色：教师被某个权限组授予 permission:manage 后同样可用，
+        // 与后端 requirePermission('permission:manage') 对齐（详见下方守卫）
+        meta: { title: '权限组管理', icon: 'Lock', permission: 'permission:manage' },
+      },
+      {
+        path: 'clients',
+        name: 'clients',
+        component: () => import('@/views/ClientsView.vue'),
+        // 这一页同样**按生效权限**门控：远控关机、统一下发更新都是高危操作，
+        // 后端三个接口分别要 client:manage / client:update-push / remote:control，
+        // 但教师默认三个都没有（见 shared/permissions.ts 的默认模板），所以这里用
+        // 最基础的 client:manage 当入口门禁，页面内的按钮再各自按权限显示/禁用。
+        meta: { title: '客户端设备', icon: 'Monitor', permission: 'client:manage' },
       },
     ],
   },
@@ -116,7 +150,7 @@ function storedRole(): string | null {
   }
 }
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const token = localStorage.getItem(STORAGE_KEYS.token);
   if (to.meta.public) {
     if (to.name === 'login' && token) return { name: 'dashboard' };
@@ -133,6 +167,15 @@ router.beforeEach((to) => {
     if (!role || !(roles as string[]).includes(role)) {
       return { name: 'dashboard' };
     }
+  }
+  // 按**生效权限**门控的页面（权限组管理）：角色判不出来 —— 教师被权限组授予
+  // permission:manage 后同样该放行，所以这里异步取一次生效权限。
+  // `ensurePermissions()` 在 store 内是幂等的（本次会话只真拉一次），不会每次跳转都打接口。
+  const permission = to.meta.permission;
+  if (typeof permission === 'string') {
+    const auth = useAuthStore();
+    await auth.ensurePermissions();
+    if (!auth.can(permission as PermissionKey)) return { name: 'dashboard' };
   }
   return true;
 });

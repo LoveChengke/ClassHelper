@@ -37,6 +37,26 @@ export const createHomeworkSchema = z.object({
   assignDate: dayKeySchema.nullish(),
 });
 
+/**
+ * 一次给多个班级布置同一份作业（批量发布）。
+ *
+ * 上限 50 个班是刻意设的：逐班串行落库 + 逐班判定科目归属，
+ * 一批塞几百个班会长时间占住请求。
+ */
+export const bulkCreateHomeworkSchema = z.object({
+  classIds: z
+    .array(z.string().min(1))
+    .min(1, '请至少选择一个班级')
+    .max(50, '一次最多发布 50 个班级'),
+  courseId: z.string().min(1).nullish(),
+  /** 按科目名称指定（跨班只能用名称：课程是班级内的，同一门课在每个班是不同的记录） */
+  subjectName: z.string().trim().min(1).max(50).nullish(),
+  title: z.string().trim().min(1, '请输入作业标题').max(120),
+  content: z.string().min(1, '请输入作业内容').max(5000),
+  assignDate: dayKeySchema.nullish(),
+  attachmentUrl: attachmentUrlSchema,
+});
+
 export const updateHomeworkSchema = z.object({
   courseId: z.string().min(1).nullish(),
   /** 改作业所属日期（把作业挪到另一天） */
@@ -62,6 +82,7 @@ export const updateHomeworkSubmissionsSchema = z.object({
 
 export type ListHomeworkDaysInput = z.infer<typeof listHomeworkDaysQuerySchema>;
 export type CreateHomeworkInput = z.infer<typeof createHomeworkSchema>;
+export type BulkCreateHomeworkInput = z.infer<typeof bulkCreateHomeworkSchema>;
 export type UpdateHomeworkInput = z.infer<typeof updateHomeworkSchema>;
 export type UpdateHomeworkStatusInput = z.infer<typeof updateHomeworkStatusSchema>;
 export type UpdateHomeworkSubmissionsInput = z.infer<typeof updateHomeworkSubmissionsSchema>;

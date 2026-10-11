@@ -7,11 +7,15 @@ import {
   Connection,
   CopyDocument,
   Document,
+  Expand,
+  Fold,
   FolderAdd,
   FolderOpened,
   Guide,
   Lock,
+  MagicStick,
   Menu,
+  Monitor,
   Moon,
   Notebook,
   Odometer,
@@ -20,6 +24,7 @@ import {
   Right,
   School,
   Search,
+  Setting,
   Sunny,
   Sort,
   Switch,
@@ -29,6 +34,7 @@ import {
   User,
   UserFilled,
   WarningFilled,
+  ZoomIn,
 } from '@element-plus/icons-vue';
 
 /**
@@ -54,11 +60,17 @@ const APP_ICONS = {
   Connection,
   CopyDocument,
   Document,
+  /* 侧栏折叠/展开（顶栏汉堡按钮），与桌面客户端用同一对图标 */
+  Expand,
+  Fold,
   FolderAdd,
   FolderOpened,
   Guide,
   Lock,
+  /* 大模型助手入口 */
+  MagicStick,
   Menu,
+  Monitor,
   Moon,
   Notebook,
   Odometer,
@@ -67,6 +79,7 @@ const APP_ICONS = {
   Right,
   School,
   Search,
+  Setting,
   Sunny,
   Sort,
   Switch,
@@ -76,6 +89,8 @@ const APP_ICONS = {
   User,
   UserFilled,
   WarningFilled,
+  /* 关怀模式（放大字号与控件） */
+  ZoomIn,
 } as const;
 
 /** 供 `scripts/check-icons.mjs` 读取的名单（构建期静态校验用） */

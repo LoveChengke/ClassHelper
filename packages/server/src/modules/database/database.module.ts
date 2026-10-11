@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
-import { authenticate, requireRole } from '../../middleware/auth.js';
+import { authenticate, requirePermission } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedParams } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -22,7 +22,7 @@ import * as databaseService from './database.service.js';
 /**
  * 数据库管理（仅管理员）：状态检测 / 连接测试 / 备份恢复 / 导入导出 / 定时备份 / 一键切换。
  *
- * 改动数据库属于最高危操作，全部接口挂在 requireRole('ADMIN') 之下；
+ * 改动数据库属于最高危操作，全部接口挂在 requirePermission('database:manage') 之下；
  * 前端入口同样只对 ADMIN 显示（Web 端「数据库管理」页）。
  *
  * 一键切换是异步任务：POST /switch 返回 jobId，前端轮询 GET /switch/jobs/:id 展示步骤进度。
@@ -31,7 +31,7 @@ import * as databaseService from './database.service.js';
 const router = Router();
 
 router.use(authenticate());
-router.use(requireRole('ADMIN'));
+router.use(requirePermission('database:manage'));
 
 /** GET /api/database/status - 当前数据库状态（连接/版本/大小/各表行数/备份与定时配置） */
 router.get('/status', async (_req, res) => {

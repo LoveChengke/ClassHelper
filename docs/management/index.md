@@ -14,7 +14,7 @@ description: 部署形态怎么选、备份与恢复、换数据库、升级与�
 | **Windows 安装包**       | 学校机房、教师办公电脑（单机即完整系统） | NSIS 安装程序，内置 Node 运行时     | [生产部署指南](production.md)       |
 | **Linux 原生 + systemd** | 学校已有 Linux 服务器                    | 一键安装器 + `classhelper` 运维命令 | [Linux 部署与运维](linux-deploy.md) |
 | **Docker**               | 云服务器、跟别的服务共用一台机器         | `deploy/docker-compose*.yml`        | [生产部署指南](production.md)       |
-| **手动部署**             | 已有 Node 环境、需要自定义               | 免安装目录                          | [生产部署指南](production.md)       |
+| **手动部署**             | 已有 Node 环境、需要自定义               | 仓库源码（`pnpm build` 后直接跑）   | [生产部署指南](production.md)       |
 
 一句话的取舍：
 

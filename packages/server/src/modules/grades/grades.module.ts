@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -56,7 +56,7 @@ router.get(
 /** GET /api/grades/stats?classId=&courseId=&examName= - 成绩统计（图表） */
 router.get(
   '/stats',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('grade:read'),
   validate({ query: statsQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -68,7 +68,7 @@ router.get(
 /** GET /api/grades?classId=&courseId=&studentId=&examName= - 成绩列表（教师） */
 router.get(
   '/',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('grade:read'),
   validate({ query: listGradesQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -83,7 +83,7 @@ router.get(
 );
 
 /** POST /api/grades - 录入单条成绩（仅自己任教科目） */
-router.post('/', requireRole('ADMIN', 'TEACHER'), validate({ body: createGradeSchema }), async (req, res) => {
+router.post('/', requirePermission('grade:write'), validate({ body: createGradeSchema }), async (req, res) => {
   const user = getAuthUser(req);
   sendCreated(
     res,
@@ -100,7 +100,7 @@ router.post('/', requireRole('ADMIN', 'TEACHER'), validate({ body: createGradeSc
  */
 router.patch(
   '/levels',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('grade:write'),
   validate({ body: updateGradeLevelsSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -112,7 +112,7 @@ router.patch(
 /** POST /api/grades/bulk - 批量录入 / 导入成绩 */
 router.post(
   '/bulk',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('grade:write'),
   validate({ body: bulkCreateGradeSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -124,7 +124,7 @@ router.post(
 /** PATCH /api/grades/:id - 修改成绩（含单个改等级） */
 router.patch(
   '/:id',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('grade:write'),
   validate({ params: idParamSchema, body: updateGradeSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -136,7 +136,7 @@ router.patch(
 /** DELETE /api/grades/:id - 删除成绩 */
 router.delete(
   '/:id',
-  requireRole('ADMIN', 'TEACHER'),
+  requirePermission('grade:write'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);

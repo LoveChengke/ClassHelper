@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router';
 import { useAuthStore } from '../stores/auth.js';
+import { useUiStore } from '../stores/ui.js';
 
 /**
  * Electron 生产环境通过 file:// 加载页面，无法使用 history 模式，
@@ -82,6 +83,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/settings/AboutView.vue'),
         meta: { title: '关于' },
       },
+      {
+        /**
+         * 开发者（需求 10）。入口只在 `config.developerMode === true` 时出现在侧栏上，
+         * 但**路由始终注册**：关掉开关后侧栏项消失，已打开的页面靠一条守卫弹回「通用」，
+         * 不做成条件注册 —— 条件注册会让 `router.getRoutes()` 随配置变化，
+         * ClientLayout 的开发期自检与直接输 URL 的行为都会变得难以预期。
+         */
+        path: 'settings/developer',
+        name: 'settings-developer',
+        component: () => import('../views/settings/DeveloperSettingsView.vue'),
+        meta: { title: '开发者' },
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/schedule' },
@@ -99,6 +112,16 @@ router.beforeEach((to) => {
     return true;
   }
   if (!auth.isAuthenticated) return { name: 'login' };
+  /**
+   * 开发者页（需求 10）只在开发者模式开启时可进：侧栏项本身也是条件显示的，
+   * 但配置可能是在**停留在这个页面时**被关掉的（「通用」页的开关），
+   * 所以需要这条守卫把它弹回「通用」，不让用户在看一个"已经不该存在"的页面。
+   *
+   * 这里读的是 ui store 里的状态（由 `ui.init()` 在首屏前从主进程配置恢复），
+   * 不额外调 `window.desktop.getConfig()` —— 导航守卫是同步高频路径，
+   * 每次跳转都跨一次 contextBridge 不值得。
+   */
+  if (to.name === 'settings-developer' && !useUiStore().developerMode) return { name: 'settings-general' };
   return true;
 });
 

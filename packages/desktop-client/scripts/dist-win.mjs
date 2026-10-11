@@ -10,12 +10,15 @@
  *
  * 用法：
  *   node scripts/dist-win.mjs            # nsis 安装包 + portable 单文件
- *   node scripts/dist-win.mjs --dir      # 仅生成免安装目录
  *
  * 产物统一落到 releases/client/<版本>/（releases/ 不入库，与服务端、插件同级）：
  *   安装包/   ClassHelper-<版本>-x64-setup.exe / -portable.exe（+ .blockmap）
- *   免安装/   electron-builder 的 win-unpacked 内容
  *   构建中间/ builder-*.yml、*.nsis.7z
+ *
+ * 产物里**没有免安装目录**：electron-builder 的 `win-unpacked/` 只是生成两个 exe 的中间物
+ * （每版 320MB 上下），打完就删 —— 便携版 `-portable.exe` 已是自解压单文件，交付不需要解包目录。
+ * 因此也没有 `--dir`：那等于只产出中间物、拿不到任何交付物。需要临时跑一下解包目录时直接调
+ * electron-builder，别往 releases/ 里塞。
  * electron-builder 自身的 `directories.output` 由本脚本用 --config 覆盖成上面的版本目录；
  * 显式传入 `-c.directories.output=...` 时不覆盖，整理（tidyArtifacts）以传入的目录为准。
  */
@@ -27,9 +30,7 @@ import { resolveNodeRuntime } from '../../../scripts/lib/node-runtime.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(root, '..', '..');
-const args = process.argv.slice(2);
-const dirOnly = args.includes('--dir');
-const passthrough = args.filter((item) => item !== '--dir');
+const passthrough = process.argv.slice(2);
 
 // makensis 会在 %TEMP% 所在位置建临时文件：Git Bash 里 TEMP=/tmp 是 MSYS 路径，
 // 原生程序会把它当成「当前盘根下的 tmp」（D:\tmp，不存在）而报
@@ -74,7 +75,7 @@ const destDir = explicitOutput
   : path.join(repoRoot, 'releases', 'client', clientVersion);
 if (!explicitOutput) overrides.push(`--config.directories.output=${destDir}`);
 
-const cliArgs = [cli, '--win', ...(dirOnly ? ['--dir'] : []), ...overrides, ...passthrough];
+const cliArgs = [cli, '--win', ...overrides, ...passthrough];
 console.log('[dist] electron-builder', cliArgs.slice(1).join(' '));
 
 // 必须用真正的 node 执行 electron-builder CLI：
@@ -98,7 +99,17 @@ for (const name of ['win-unpacked', '免安装', '安装包', '构建中间']) {
     console.warn(`[dist] 无法清理旧产物 ${name}：${error.message}`);
   }
 }
-if (cleaned) console.log('[dist] 已清理上一轮的免安装目录 / 安装包 / 构建中间');
+if (cleaned) console.log('[dist] 已清理上一轮的中间物与安装包');
+
+// 打包**之前**就要把输出目录的完整性标签压回 Low（继承），不留到收尾 ——
+// 实测过一次：上一轮留下的 win-unpacked 是收尾时用 icacls 标成 Medium 的，
+// 而 7za 自身带 Low 标签，pack 时读不动这些 Medium 目录，报
+// "cannot open file ... Access is denied"，打包直接失败。
+try {
+  execFileSync('icacls', [destDir, '/setintegritylevel', '(OI)(CI)Low'], { stdio: 'pipe', windowsHide: true });
+} catch {
+  /* 宿主目录树本就没有 Low 标签体系时会被系统拒绝，保持继承即可 */
+}
 
 const child = spawn(runtime.path, cliArgs, { cwd: root, stdio: 'inherit', env });
 
@@ -138,9 +149,9 @@ function normalizeIntegrityLabel(dir) {
 
 /**
  * 把 electron-builder 的原始输出整理成 releases 的固定分层：
- *   win-unpacked/     → 免安装/
  *   *.exe / *.blockmap → 安装包/
  *   *.yml / *.nsis.7z  → 构建中间/
+ *   win-unpacked/      → **直接删掉**（见文件头：它只是生成两个 exe 的中间物）
  * electron-builder 每次都会按自己的布局重写这些路径，因此整理只放在打包成功之后做；
  * 同名文件用 renameSync 同盘移动，不会产生大文件的额外拷贝。
  */
@@ -152,11 +163,12 @@ function tidyArtifacts(dir) {
     fs.renameSync(from, path.join(to, path.basename(from)));
   };
 
-  const unpacked = path.join(dir, 'win-unpacked');
-  const portableDir = path.join(dir, '免安装');
-  if (fs.existsSync(unpacked)) {
-    fs.rmSync(portableDir, { recursive: true, force: true });
-    fs.renameSync(unpacked, portableDir);
+  // 必须留在最后删：electron-builder 的 portable 目标就是拿它自己解包出来的 app 做自解压包，
+  // 提前删会让 `-portable.exe` 这一步找不到源文件。
+  const throwaway = [];
+  for (const name of ['win-unpacked', '免安装']) {
+    const from = path.join(dir, name);
+    if (fs.existsSync(from)) throwaway.push(from);
   }
 
   for (const name of fs.readdirSync(dir)) {
@@ -165,6 +177,31 @@ function tidyArtifacts(dir) {
     if (/\.(exe|blockmap)$/i.test(name)) moveInto(from, '安装包');
     else if (/\.(yml|7z)$/i.test(name)) moveInto(from, '构建中间');
   }
+
+  for (const from of throwaway) {
+    // 体积必须在删之前量：删完再 walk 只会得到 0
+    const mb = Math.round(dirSizeMb(from));
+    try {
+      fs.rmSync(from, { recursive: true, force: true });
+      console.log(`[dist] 已删除中间物 ${path.basename(from)}/（约 ${mb} MB）`);
+    } catch (error) {
+      console.warn(`[dist] 中间物 ${path.basename(from)}/ 删除失败（不影响交付物）：${error.message}`);
+    }
+  }
+}
+
+/** 交付目录里没有现成的体积统计函数，这里只在打日志时用一次 */
+function dirSizeMb(target) {
+  let total = 0;
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else total += fs.statSync(full).size;
+    }
+  };
+  if (fs.existsSync(target)) walk(target);
+  return total / 1024 / 1024;
 }
 
 child.on('exit', (code) => {

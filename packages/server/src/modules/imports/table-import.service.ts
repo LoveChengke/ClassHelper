@@ -7,7 +7,7 @@ import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
 import { hashPassword } from '../../lib/password.js';
 import { resolveUserClassRole } from '../../lib/access.js';
-import { canImport } from '@classhelper/shared';
+import { canImport, canManageSubjectContent } from '@classhelper/shared';
 import type { TableCommitInput, TableFileInput } from './imports.schemas.js';
 
 /**
@@ -337,8 +337,18 @@ export async function commitGrades(user: TokenPayload, input: TableCommitInput):
   const byName = new Map(students.map((item) => [item.name.toLowerCase(), item]));
   const courses = await prisma.course.findMany({
     where: { classId },
-    select: { id: true, name: true },
+    select: { id: true, name: true, teacherId: true },
   });
+
+  /*
+   * 科目维度的第二道门（`assertImportAllowed` 只到"班级"这一层）。
+   *
+   * 成绩是**逐行落到具体科目**上的，而班主任并不自动是本班所有科目的老师 ——
+   * 少了这道检查，班主任就能导入别的老师任教科目的成绩，班里会平白多出一份
+   * 不属于那门课的记录（且覆盖语义的 append/overwrite 会把它写进同一张表）。
+   * 判定沿用 shared 的 canManageSubjectContent，与 Web 端单条录入、作业发布**同一份规则**。
+   */
+  const classRole = await resolveUserClassRole(user, classId);
 
   const errors: ImportRowError[] = [];
   const warnings: string[] = [];
@@ -389,6 +399,23 @@ export async function commitGrades(user: TokenPayload, input: TableCommitInput):
     const course = courseName ? courses.find((item) => item.name === courseName) : null;
     if (courseName && !course)
       warnings.push(`第 ${rowNumber} 行：科目「${courseName}」不存在，已按"不指定科目"导入`);
+
+    // 该科目的成绩能不能由**当前这个人**写（管理员全通；挂了科目就只能是该科任课老师）
+    const canWriteCourse = canManageSubjectContent({
+      classRole,
+      hasSubject: Boolean(course),
+      isSubjectTeacherOfCourse: course ? course.teacherId === user.sub : false,
+      allowClassDevice: false,
+    });
+    if (!canWriteCourse) {
+      errors.push({
+        row: rowNumber,
+        message: course
+          ? `「${course.name}」不是你任教的科目，不能导入该科目的成绩`
+          : '不指定科目的成绩只有班主任或管理员可以导入，请填写科目列后再导入',
+      });
+      continue;
+    }
 
     // 表格里带等级列就按"自定义等级"落库（教师明确给了等级），否则按百分制换算
     const levelType = levelText ? 'custom' : 'percent';

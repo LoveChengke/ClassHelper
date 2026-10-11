@@ -1,6 +1,6 @@
 ---
 title: 数据模型
-description: 16 张表的职责、跨库通用约定、迁移历史与启动时自动迁移。
+description: 24 张表的职责、跨库通用约定、迁移历史与启动时自动迁移。
 ---
 
 # 数据模型
@@ -30,11 +30,11 @@ description: 16 张表的职责、跨库通用约定、迁移历史与启动时�
 同一位教师可以在同一个班同时是班主任和某科科任老师：两处指向同一个 `User`，不重复建号，
 权限在 `@classhelper/shared` 的 `resolveClassRole()` 里合并。
 
-## 16 张表
+## 24 张表
 
 | 表                     | 职责                                       | 值得注意的字段                                                                                        |
 | ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `User`                 | **纯账号表**：管理员 / 教师 / ClassHelper 班级端 | `username`（教师即**工号**，班级端即班级码）、`role`、`phone`；**学生不在这里**                        |
+| `User`                 | **纯账号表**：管理员 / 教师 / ClassHelper 班级端 | `username`（教师即**工号**，班级端即班级码）、`role`、`phone`、`careMode`（关怀模式偏好，目前只由本机界面读写）；**学生不在这里** |
 | `Student`              | 学生名单记录（**没有账号**）               | `studentNo`（学号，唯一，唯一标识与查询键）、`classId`、`status`、`archivedYearId`                     |
 | `StudentClassTransfer` | 调班 / 转出历史                            | 班级 id 与班级名**都存快照且不建外键**（班级删了历史仍要能读）、`mode`（single｜batch｜transfer-out）  |
 | `ArchivedYear`         | 毕业归档的届别档案                         | `enrollmentYear`（届别，唯一）、`graduationYear`、归档时的统计快照                                     |
@@ -44,12 +44,20 @@ description: 16 张表的职责、跨库通用约定、迁移历史与启动时�
 | `Schedule`             | 课表条目                                   | `weekStart` / `weekEnd` / `weekParity`（单双周）/ `source`（manual｜classisland）                      |
 | `Homework`             | 作业                                       | `assignDate`（所属日期）、`attachmentUrl`；`dueAt` 是已下线的遗留列                                    |
 | `HomeworkStatus`       | 学生作业完成状态                           | `@@unique([homeworkId, studentId])`                                                                    |
-| `Notification`         | 通知                                       | `priority`                                                                                             |
+| `Notification`         | 通知                                       | `priority`、`assignDate`（所属本地日期，禁止 UTC 切片）；`@@index([classId, assignDate])` 供按天归档 |
 | `NotificationRead`     | 已读记录                                   | `@@unique([notificationId, studentId])`                                                                |
 | `TimeLayout`           | 节次时间配置（ClassIsland 同款 JSON 导入得到） | `items` 是 JSON 字符串：`[{ index, name, startTime, endTime, type, skipped }]`                         |
 | `Grade`                | 成绩                                       | `studentId`、`score` / `totalScore`、`levelType`（percent｜letter｜custom）与 `level`                  |
 | `IntegrationDevice`    | ClassHelper 班级端 / ClassIsland 联动设备   | `tokenHash`（只存 sha256）、`lastHeartbeatAt`（在线判定）、`lastSeenAt`（最后一次带状态的上报）、三个方向开关 |
 | `ClassIslandPush`      | 下发给 ClassIsland 的提醒                   | `kind`（notification｜call）、`ackedAt`、`expiresAt`                                                   |
+| `PermissionGroup`      | 权限组（角色之上的**默认模板**）             | `name`（唯一）、`builtin`（内置组不可删）；生效集合见 [角色与权限](permissions.md)                      |
+| `PermissionGroupItem`  | 权限组里的一个权限键（一行一个键）           | `@@unique([groupId, key])`；键取值必须是 shared 的 `PERMISSION_KEYS` 之一                              |
+| `UserPermissionGroup`  | 账号 ←→ 权限组 的分配关系（可属多个组）      | `@@unique([userId, groupId])`；**没有任何行 = 回落角色默认模板**                                       |
+| `AppSetting`           | 全局键值设置（大模型配置 / 开发者模式）      | `key` 即主键、`value` 存字符串（复杂结构存 JSON）；密钥类值做 AES-256-GCM 加密后存这里（**只进不出**）  |
+| `ClientDevice`         | ClassHelper 客户端设备（教室 / 学生机）      | `deviceKey`（唯一，客户端生成）、`classId`、`clientVersion`、`updateTargetVersion`、`lastHeartbeatAt`（**在线判定看它**） |
+| `ClientCommand`        | 下发给客户端的远控指令                       | `kind`（shutdown｜restart｜logoff｜lock）、`expiresAt`（10 分钟）、`ackedAt` / `result`、`cancelledAt`  |
+| `ClientRelease`        | 服务端缓存的客户端安装包                     | `version`（唯一，白名单校验防路径穿越）、`fileName`、`sha256`、`size`；文件在 `data/client-releases/`  |
+| `AiAudit`              | 大模型指令审计（意图与结果，不记密钥）        | `userId`、`prompt`、`intent`、`status`（pending｜confirmed｜rejected｜failed）、`rawReply`             |
 
 ### 几个容易忽略的设计
 
@@ -74,23 +82,38 @@ description: 16 张表的职责、跨库通用约定、迁移历史与启动时�
 **`Homework.dueAt`** —— 截止时间功能已下线，UI 与接口都不再读写它。
 保留列是为了**不对已安装的库做破坏性迁移**；新库里它恒为 `null`。
 
+**`Notification.assignDate`** —— 与 `Homework.assignDate` 同口径：**本地日期**（`YYYY-MM-DD`），
+创建时用 `dayKeyLocal()` 写入，按天 / 区间归档都读它。**不要用 `createdAt` 切 UTC 当"哪一天"** ——
+晚上发的通知会被算到第二天。`@@index([classId, assignDate])` 是归档查询的支撑。
+
+**`User.careMode`** —— 关怀模式的账号级偏好列（放大正文与控件）。**目前服务端没有任何接口读写它**：
+Web 端存在 `localStorage`（`classhelper.admin.careMode` + `careScale`），客户端存在本机 `config.json`。
+列先建好是为了将来跨设备同步偏好时不必再迁移；别把它当成"已有服务端开关"。
+
 **`TermWeek.classId` 用空串而不是 null 表示"全校默认"** —— SQLite 与 MySQL 的唯一约束都把
 NULL 视作互不相同，`@@unique([classId, weekNumber])` 用 null 就形同虚设。
 
-## 迁移历史（16 个）
+## 迁移历史（17 个）
 
 ```
 init → add_time_layout → add_class_account → add_schedule_week_parity →
 add_class_term_weeks → add_classisland_integration → add_class_notification_channel →
 add_homework_assign_date → add_push_kind → add_schedule_source →
 add_student_table → add_student_grade_query → add_grade_level →
-add_classhelper_heartbeat → add_archives → add_term_weeks
+add_classhelper_heartbeat → add_archives → add_term_weeks →
+add_permission_groups_and_clients
 ```
 
 `add_student_table` 是一次真正的表重构（不是加列）：新建 `Student` / `StudentClassTransfer`、
 把 `User` 里 `role='STUDENT'` 的行**按 id 原样搬过去**、把 `Grade` / `HomeworkStatus` /
 `NotificationRead` 的外键从 `userId` 换到 `studentId`、删掉 `Enrollment` 与 `ClassTeacher`。
 因为学生行的 id 保持不变，三张个人数据表的 `userId` 可以直接当 `studentId` 用，历史一条不丢。
+
+`add_permission_groups_and_clients` 是纯加表 / 加列：新建 `PermissionGroup` /
+`PermissionGroupItem` / `UserPermissionGroup`（权限组）、`AppSetting`（全局键值设置）、
+`ClientDevice` / `ClientCommand`（客户端设备与远控）、`ClientRelease`（安装包缓存）、
+`AiAudit`（大模型审计），并给 `Notification` 加 `assignDate` + `[classId, assignDate]` 索引、
+给 `User` 加 `careMode`。没有数据搬运，旧库直接补跑即可。
 
 ### 启动时自动迁移
 
@@ -107,8 +130,10 @@ add_classhelper_heartbeat → add_archives → add_term_weeks
 
 ## 备份格式就是这份模型的拓扑序导出
 
-「数据库管理」里的备份 / 导出导入 / 跨库迁移共用一种 JSON 快照：16 张表按拓扑序导出
-（见 `lib/snapshot.ts` 的 `SNAPSHOT_TABLES`），恢复时**临时关闭外键检查** ——
+「数据库管理」里的备份 / 导出导入 / 跨库迁移共用一种 JSON 快照：**23 张表按拓扑序导出**
+（见 `lib/snapshot.ts` 的 `SNAPSHOT_TABLES`，现在共 23 项，顺序为
+`User` → `PermissionGroup` → `PermissionGroupItem` → `UserPermissionGroup` → `AppSetting` →
+`ArchivedYear` → `Class` → `Student` → … → `AiAudit`），恢复时**临时关闭外键检查** ——
 因为 `Class.teacherId → User` 与 `Student.classId → Class` 是一条链、
 `Class/Student.archivedYearId → ArchivedYear` 又是一条，任何排序都会被其中一侧卡死。
 见[数据库管理](../management/database.md)。
@@ -127,4 +152,4 @@ add_classhelper_heartbeat → add_archives → add_term_weeks
    再回到 `packages/server/scripts/apply-column-migrations.cjs` 补上可 `ALTER TABLE` 的简单列。
 
 模型总数与迁移个数会随版本增长，以 `schema.prisma` 与 `prisma/migrations/` 的实际内容为准；
-本文里的数字标注的是当前版本（1.2.0）的状态。
+本文里的数字标注的是**当前代码库**的状态。

@@ -68,6 +68,15 @@ const isHomework = computed(() => kind.value === 'homework');
 const queueCount = computed(() => state.value.queued.length);
 
 /**
+ * 是不是"点了知道了 / 标为已读"之后的**收回动画**阶段（`reason === 'closing'`）。
+ *
+ * 这一阶段主进程已经把状态清空（`active` 为 null、`queued` 为空），形态却切回了胶囊：
+ * 卡片正沿既有的形变路径收回，**胶囊里不该显示任何文字** —— 否则会闪出一句
+ * "新消息 · 点击查看"（那是"有新消息"的语义，与"正在消失"正好相反）。
+ */
+const isClosing = computed(() => state.value.reason === 'closing');
+
+/**
  * 这一批**未处理**的消息（正在展示的 + 队列里的），按「重要程度 → 时间」排序。
  * 与主进程 `pendingNotifications()` 同一口径（同一份 `PRIORITY_RANK`）。
  */
@@ -460,6 +469,8 @@ const islandClass = computed(() => ({
   call: isCall.value,
   homework: isHomework.value,
   'after-class': showAfterClassHint.value,
+  // 收回动画：胶囊里不显示内容（见 isClosing 与 .island-card.closing 的说明）
+  closing: isClosing.value,
 }));
 
 /**
@@ -1046,6 +1057,18 @@ body {
 
 .island-card[data-anchor='right'] .pill-layer {
   justify-content: flex-end;
+}
+
+/**
+ * 收回动画（`reason === 'closing'`）：胶囊收回过程中**不显示任何胶囊内容**。
+ *
+ * 这时状态已经在同一帧清空（没有可展示的消息），若照常渲染胶囊层，卡片刚收回就会闪出
+ * 一句"新消息 · 点击查看" —— 语义正好相反。这里保留 DOM（宽度固定为 `--island-w`，
+ * 内容盒不会重排，符合"开合时胶囊内容不许重排"的约定）只把内容隐藏，
+ * 卡片形状照样沿既有弹簧收回，随后由主进程淡出窗口。
+ */
+.island-card.closing .pill-inner {
+  opacity: 0;
 }
 
 .pill-icon {

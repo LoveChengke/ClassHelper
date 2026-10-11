@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { sendOk } from '../../lib/http.js';
-import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -23,7 +23,7 @@ router.use(authenticate());
  * - **写**：仅管理员 —— 周次是全校口径，改错会让所有班的课表整体错位；
  * - `classId` 留空 = 全校默认；某个班有自己的配置时优先用它。
  */
-router.get('/', requireRole('ADMIN', 'TEACHER'), validate({ query: termQuerySchema }), async (req, res) => {
+router.get('/', requirePermission('term:read'), validate({ query: termQuerySchema }), async (req, res) => {
   const user = getAuthUser(req);
   const { classId } = validatedQuery<{ classId?: string }>(req);
   sendOk(res, await termService.getTermWeeks(user, classId), '获取学期周次成功');
@@ -32,7 +32,7 @@ router.get('/', requireRole('ADMIN', 'TEACHER'), validate({ query: termQuerySche
 /** PUT /api/term - 保存逐周区间（整表覆盖，仅管理员） */
 router.put(
   '/',
-  requireRole('ADMIN'),
+  requirePermission('term:write'),
   validate({ body: updateTermWeeksSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -51,7 +51,7 @@ router.put(
  */
 router.post(
   '/auto',
-  requireRole('ADMIN'),
+  requirePermission('term:write'),
   validate({ body: autoTermWeeksSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -70,7 +70,7 @@ router.post(
  */
 router.get(
   '/holidays',
-  requireRole('ADMIN'),
+  requirePermission('term:write'),
   validate({ query: holidayQuerySchema }),
   async (req, res) => {
     const { year } = validatedQuery<{ year?: number }>(req);

@@ -82,6 +82,41 @@ async function submit(): Promise<void> {
   padding: 30px 28px 22px;
   box-shadow: 0 18px 40px rgba(15, 30, 50, 0.28);
   /*
+   * 登录卡片**永远按浅色渲染**。
+   *
+   * 页面底色是刻意固定的深色渐变（AGENTS.md §5 第 46 条），卡片按设计就是"深底白卡"。
+   * 但卡片的内部颜色原本会随 `html.dark` 变：Element Plus 的深色 css-vars 与 `--ch-*`
+   * 是挂在 `<html>` 上的，照常继承进白卡片 —— 于是深色主题下出现"白卡片 + 深色输入框 +
+   * 浅灰字"的黑白混搭（用户反馈的「登录页出现黑夜白天模式混合显示」）。
+   * 这里把卡片范围内的语义色与关键 --el-* 变量钉回浅色值；原生控件也一并声明为 light。
+   */
+  color-scheme: light;
+  --ch-surface: #ffffff;
+  --ch-surface-alt: #f7f9fc;
+  --ch-surface-sunken: #f2f3f5;
+  --ch-surface-hover: #e6e8eb;
+  --ch-border: #e6e8ef;
+  --ch-text: #303133;
+  --ch-text-secondary: #606266;
+  --ch-text-muted: #909399;
+  --ch-text-placeholder: #c0c4cc;
+  --el-bg-color: #ffffff;
+  --el-bg-color-overlay: #ffffff;
+  --el-bg-color-page: #f2f4f8;
+  --el-text-color-primary: #303133;
+  --el-text-color-regular: #606266;
+  --el-text-color-secondary: #909399;
+  --el-text-color-placeholder: #c0c4cc;
+  --el-text-color-disabled: #a8abb2;
+  --el-fill-color-blank: #ffffff;
+  --el-fill-color-light: #f2f3f5;
+  --el-fill-color-lighter: #f5f7fa;
+  --el-fill-color: #f2f3f5;
+  --el-border-color: #e6e8ef;
+  --el-border-color-light: #e6e8ef;
+  --el-border-color-lighter: #e6e8ef;
+  --el-color-primary: #409eff;
+  /*
    * 入场用 PANEL 弹簧（beUI 的 center-morph-modal 观感：从略小、略高处落下来）。
    * 登录页是整个应用里最"一次性"、最值得给一点分量的一屏 ——
    * 它不像弹窗那样会被反复开关，慢一点不会变成等待。

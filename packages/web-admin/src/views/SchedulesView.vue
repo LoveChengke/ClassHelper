@@ -18,7 +18,7 @@ import {
   type ScheduleWeekView,
   type WeekParity,
 } from '@classhelper/shared';
-import { classApi, courseApi, dashboardApi, scheduleApi } from '@/api';
+import { classApi, courseApi, courseIdFromExistsError, dashboardApi, scheduleApi } from '@/api';
 import ClassPlanImportDialog from '@/components/ClassPlanImportDialog.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
@@ -122,9 +122,17 @@ async function resolveCourseId(): Promise<string | null> {
   const name = value.slice(SUBJECT_PREFIX.length);
   const existing = courses.value.find((item) => item.name === name);
   if (existing) return existing.id;
-  const created = await courseApi.create({ classId: query.classId, name });
-  courses.value = [...courses.value, created];
-  return created.id;
+  try {
+    const created = await courseApi.create({ classId: query.classId, name });
+    courses.value = [...courses.value, created];
+    return created.id;
+  } catch (error) {
+    // 该班已有同名课程（本地列表过期）：复用那一门，绝不另建第二门同名的课
+    // —— 课程创建会把创建者写成任课老师，重复建课正是"把自己变成别人科目的老师"的入口
+    const reusedId = courseIdFromExistsError(error);
+    if (!reusedId) throw error;
+    return reusedId;
+  }
 }
 
 /**

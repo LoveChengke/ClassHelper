@@ -9,6 +9,10 @@ import type {
   IslandState,
   UpdateInfo,
 } from '@classhelper/shared';
+import type { ClientAgentStatus } from '../main/client-agent.js';
+
+/** 服务端联动状态：渲染进程要显示它，因此在这里转出（`desktop.d.ts` 是两端契约的单一入口） */
+export type { ClientAgentStatus };
 
 /** 作业页展示偏好（看板 / 列表，看板外观） */
 export interface HomeworkBoardSettings {
@@ -66,6 +70,25 @@ export interface DesktopStoredConfig {
    * 在「关于」页手动检查时仍会正常显示结果。
    */
   ignoredUpdateVersion: string;
+  /**
+   * 本机设备标识（UUID）：这台机器在服务端的身份。
+   *
+   * 服务端按它 upsert 设备记录（在线状态 / 待执行命令 / 已下载版本都挂在它上面），
+   * **首次读取配置时自动生成并落盘，之后永不变**；渲染进程只读，不允许改写。
+   */
+  deviceKey: string;
+  /** 是否开机自启（登录 Windows 后静默启动，不弹主窗口） */
+  autoLaunch: boolean;
+  /** 是否接受服务端统一下发的自动更新（下载随时进行，安装只在空闲时） */
+  autoUpdate: boolean;
+  /** 开发者模式：把日志调到 debug 级，并在设置里显示「开发者」页 */
+  developerMode: boolean;
+  /** 关怀模式：整体放大正文与控件字号（不动圆角/阴影/侧栏几何） */
+  careMode: boolean;
+  /** 已下载待安装的更新版本（空串 = 无） */
+  pendingUpdateVersion: string;
+  /** 已下载待安装的安装包绝对路径（空串 = 无） */
+  pendingUpdateFile: string;
 }
 
 export interface DesktopAppInfo {
@@ -165,6 +188,26 @@ export interface DesktopBridge {
   onIslandMarkRead(handler: (id: string) => void): void;
   /** 订阅"灵动岛点了标为已读（多条通知的整批）"，一次把这一批都标记已读 */
   onIslandMarkAllRead(handler: (ids: string[]) => void): void;
+
+  /* 开机自启 / 日志 / 服务端联动 */
+  /** 读当前是否已注册为开机自启（以系统登录项为准，不是配置文件里的值） */
+  getAutoLaunch(): Promise<boolean>;
+  /** 设置开机自启：写配置 + 同步系统登录项，返回生效后的值 */
+  setAutoLaunch(enabled: boolean): Promise<boolean>;
+  /** 打开日志目录（排查问题用；日志文件是 main.log） */
+  openLogDir(): Promise<boolean>;
+  /**
+   * 打开主窗口的开发者工具（detached 独立窗口）。
+   *
+   * 只在**非冒烟模式**下允许：冒烟验证会给窗口注入大量合成事件与截图，
+   * 多一个 DevTools 窗口会抢焦点、改变窗口尺寸，把那些断言打乱。
+   * 返回是否真的打开了（冒烟模式下返回 false）。
+   */
+  openDevTools(): Promise<boolean>;
+  /** 读服务端联动状态（设置页「服务端联动状态」区块） */
+  getClientAgentStatus(): Promise<ClientAgentStatus>;
+  /** 立即向服务端上报一次，返回上报后的最新状态 */
+  beatClientNow(): Promise<ClientAgentStatus>;
 }
 
 /** 灵动岛窗口自身的桥接（只暴露订阅状态与发送操作） */

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { ApiError, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requireRole } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requireAnyPermission } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -48,7 +48,7 @@ function resolveImportKind(value: unknown): (typeof IMPORT_KINDS)[number] {
  * GET /api/imports/template?kind=grades|students|teachers&format=csv|xlsx - 下载导入模板
  * 成绩模板：管理员或班主任（空白模板，不含任何业务数据）；学生/教师名单模板：仅管理员
  */
-router.get('/template', requireRole('ADMIN', 'TEACHER'), (req, res) => {
+router.get('/template', requireAnyPermission('import:students', 'grade:import', 'import:teachers', 'import:schedule', 'import:class-teachers'), (req, res) => {
   const kind = resolveImportKind(req.query.kind);
   assertImportKindAllowed(kind, getAuthUser(req).role);
   const format = req.query.format === 'xlsx' ? 'xlsx' : 'csv';
@@ -72,7 +72,7 @@ router.get('/template', requireRole('ADMIN', 'TEACHER'), (req, res) => {
  */
 router.post(
   '/table/preview',
-  requireRole('ADMIN', 'TEACHER'),
+  requireAnyPermission('import:students', 'grade:import', 'import:teachers', 'import:schedule', 'import:class-teachers'),
   validate({ body: tableFileSchema }),
   (req, res) => {
     const input = validatedBody<TableFileInput>(req);
@@ -89,7 +89,7 @@ router.post(
  */
 router.post(
   '/table/commit',
-  requireRole('ADMIN', 'TEACHER'),
+  requireAnyPermission('import:students', 'grade:import', 'import:teachers', 'import:schedule', 'import:class-teachers'),
   validate({ body: tableCommitSchema }),
   async (req, res) => {
     const input = validatedBody<TableCommitInput>(req);

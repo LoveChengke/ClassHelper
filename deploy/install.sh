@@ -44,6 +44,7 @@
 #     --node-tarball <url|路径>    直接用指定的 Node 压缩包（内网离线场景）
 #     --with-nginx                 顺带放一份 Nginx 反代配置（不自动申请证书）
 #     --open-firewall              按检测到的防火墙放行端口
+#     --no-autostart               不设开机自启（默认设为自启；装完仍可 systemctl enable 改回来）
 #     --yes                        全部用默认值，不再交互（CI / 验收用）
 #
 # 幂等：重复执行 = 覆盖安装。已有 config.env（含 JWT_SECRET）与 data/ 一律保留，不重置密钥。
@@ -91,6 +92,10 @@ NODE_DIR_NAME="runtime/node"
 
 WITH_NGINX=0
 OPEN_FIREWALL=0
+# 是否设为开机自启（systemd enable）。需求：「支持选择开机自启动」——
+# 安装器只负责**默认值**，装完之后随时可以用 `systemctl disable/enable classhelper` 改
+# （Windows 侧对应 Web 管理端「系统设置」里的开关，见 PUT /api/system/autostart）。
+AUTOSTART=1
 ASSUME_YES=0
 CHECK_ONLY=0
 UNINSTALL=0
@@ -231,6 +236,8 @@ parse_args() {
       --node-tarball) NODE_TARBALL="${2:-}"; NODE_SOURCE="tarball"; shift 2 ;;
       --with-nginx) WITH_NGINX=1; shift ;;
       --open-firewall) OPEN_FIREWALL=1; shift ;;
+      --autostart) AUTOSTART=1; shift ;;
+      --no-autostart) AUTOSTART=0; shift ;;
       --install-docker) INSTALL_DOCKER=1; shift ;;
       --yes|-y) ASSUME_YES=1; shift ;;
       --force) FORCE=1; shift ;;
@@ -477,6 +484,7 @@ collect_answers() {
   fi
   if ask_yes_no "顺带放一份 Nginx 反向代理配置到 ${CONFIG_DIR}/nginx.conf？" "n"; then WITH_NGINX=1; fi
   if ask_yes_no "按检测到的防火墙放行端口 ${PORT}？" "n"; then OPEN_FIREWALL=1; fi
+  if ask_yes_no "设为开机自启（systemctl enable ${SERVICE_NAME}）？" "y"; then AUTOSTART=1; else AUTOSTART=0; fi
 }
 
 # ---------------------------------------------------------------- 用户与目录
@@ -901,8 +909,12 @@ EOF
   fi
   chmod 644 "/etc/systemd/system/${SERVICE_NAME}.service"
   systemctl daemon-reload
-  systemctl enable "$SERVICE_NAME" >/dev/null
-  log "已安装 /etc/systemd/system/${SERVICE_NAME}.service 并设为开机自启"
+  if [ "${AUTOSTART}" = "1" ]; then
+    systemctl enable "$SERVICE_NAME" >/dev/null
+    log "已安装 /etc/systemd/system/${SERVICE_NAME}.service 并设为开机自启"
+  else
+    log "已安装 /etc/systemd/system/${SERVICE_NAME}.service（**未**设为开机自启；需要时执行 systemctl enable ${SERVICE_NAME}）"
+  fi
 }
 
 install_aux_files() {

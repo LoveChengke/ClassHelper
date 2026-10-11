@@ -7,6 +7,7 @@ import { env } from './config/env.js';
 import { disconnectPrisma, pingDatabase } from './lib/db.js';
 import { ensureInitialAdmin, ensureSchema } from './lib/db-bootstrap.js';
 import { logger } from './lib/logger.js';
+import { refreshDeveloperMode } from './lib/settings.js';
 import { resolveWebDistDir } from './lib/web-static.js';
 import { initRealtime } from './realtime/socket.js';
 import { startBackupScheduler } from './modules/database/database.service.js';
@@ -50,6 +51,9 @@ async function prepareDatabase(): Promise<void> {
 }
 
 await prepareDatabase();
+
+// 开发者模式的内存缓存：错误中间件每请求都要问一次，不可能为此查库（见 lib/settings.ts）
+await refreshDeveloperMode();
 
 const app = createApp();
 const httpServer = createServer(app);

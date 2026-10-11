@@ -1,4 +1,15 @@
-import { SOCKET_EVENTS, type NotificationDto } from '@classhelper/shared';
+import {
+  SOCKET_EVENTS,
+  dayKeyLocal,
+  type BulkCreateNotificationRequest,
+  type BulkPublishClassResult,
+  type BulkPublishResult,
+  type NotificationCreatorSummary,
+  type NotificationCreatorsDto,
+  type NotificationDaysDto,
+  type NotificationDto,
+} from '@classhelper/shared';
+import { normalizeBulkClassIds, summarizeBulk, toBulkFailure } from '../../lib/bulk.js';
 import {
   assertClassAccess,
   assertCanPublishNotification,
@@ -23,6 +34,37 @@ export interface ListNotificationOptions {
   priority?: string;
   unreadOnly?: boolean;
   keyword?: string;
+  date?: string;
+  from?: string;
+  to?: string;
+  createdBy?: string;
+}
+
+/** 归档筛选条件：按天 / 日期区间 / 发布人 / 优先级（assignDate 是本地日期字符串，字典序即时间序） */
+function archiveWhere(options: {
+  priority?: string;
+  createdBy?: string;
+  date?: string;
+  from?: string;
+  to?: string;
+}): Record<string, unknown> {
+  if (options.date) {
+    return {
+      ...(options.priority ? { priority: options.priority } : {}),
+      ...(options.createdBy ? { createdBy: options.createdBy } : {}),
+      assignDate: options.date,
+    };
+  }
+
+  const range = {
+    ...(options.from ? { gte: options.from } : {}),
+    ...(options.to ? { lte: options.to } : {}),
+  };
+  return {
+    ...(options.priority ? { priority: options.priority } : {}),
+    ...(options.createdBy ? { createdBy: options.createdBy } : {}),
+    ...(Object.keys(range).length > 0 ? { assignDate: range } : {}),
+  };
 }
 
 export async function listNotifications(
@@ -38,7 +80,7 @@ export async function listNotifications(
   const notifications = await prisma.notification.findMany({
     where: {
       ...classScopeWhere(scope),
-      ...(options.priority ? { priority: options.priority } : {}),
+      ...archiveWhere(options),
       ...(options.keyword
         ? { OR: [{ title: { contains: options.keyword } }, { content: { contains: options.keyword } }] }
         : {}),
@@ -53,6 +95,98 @@ export async function listNotifications(
   });
 
   return notifications.map((item) => toNotificationDto(item, { studentIds: personalIds, withStatus: isStaff }));
+}
+
+/**
+ * 按天归档：列出「有通知的日期 + 当天条数」，供 Web 端左侧日期栏使用。
+ *
+ * 用 `assignDate`（本地日期）而不是 `createdAt`：晚上发的通知不该被算到第二天。
+ * 传了 `date` 也刻意忽略 —— 日期栏是"归档索引"，不该被当前选中的那天过滤掉。
+ */
+export async function listNotificationDays(
+  user: TokenPayload,
+  options: { classId?: string; priority?: string; createdBy?: string; from?: string; to?: string },
+): Promise<NotificationDaysDto> {
+  const scope = await resolveClassScope(user, options.classId);
+  const grouped = await prisma.notification.groupBy({
+    by: ['assignDate'],
+    where: { ...classScopeWhere(scope), ...archiveWhere(options) },
+    _count: { _all: true },
+  });
+
+  const days = grouped
+    .map((item) => ({ date: item.assignDate, count: item._count._all }))
+    .filter((item) => item.date !== '')
+    .sort((left, right) => right.date.localeCompare(left.date));
+
+  return { days };
+}
+
+/** 按发布人归档：列出当前筛选范围内的发布人及其条数（供"按发布人看通知"用） */
+export async function listNotificationCreators(
+  user: TokenPayload,
+  options: { classId?: string; priority?: string; date?: string; from?: string; to?: string },
+): Promise<NotificationCreatorsDto> {
+  const scope = await resolveClassScope(user, options.classId);
+  const grouped = await prisma.notification.groupBy({
+    by: ['createdBy'],
+    where: { ...classScopeWhere(scope), ...archiveWhere(options) },
+    _count: { _all: true },
+  });
+
+  const owners = await prisma.user.findMany({
+    where: { id: { in: grouped.map((item) => item.createdBy) } },
+    select: { id: true, name: true, username: true },
+  });
+
+  const creators: NotificationCreatorSummary[] = grouped
+    .map((item) => {
+      const owner = owners.find((candidate) => candidate.id === item.createdBy);
+      return {
+        id: item.createdBy,
+        name: owner?.name ?? '未知用户',
+        username: owner?.username ?? '',
+        count: item._count._all,
+      };
+    })
+    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, 'zh-CN'));
+
+  return { creators };
+}
+
+/**
+ * 批量发布通知：一次给多个班级发同一条内容。
+ *
+ * 逐班串行调用 `createNotification`（复用同一套权限断言 + 上课保护 + 实时广播 + ClassIsland 推送），
+ * 某个班失败只记进结果，不影响其他班 —— 前端拿到逐班结果后自己决定怎么展示与重试。
+ */
+export async function bulkCreateNotifications(
+  user: TokenPayload,
+  input: BulkCreateNotificationRequest,
+): Promise<BulkPublishResult> {
+  const classIds = normalizeBulkClassIds(input.classIds);
+  const results: BulkPublishClassResult[] = [];
+
+  for (const classId of classIds) {
+    try {
+      const dto = await createNotification(user, {
+        classId,
+        title: input.title,
+        content: input.content,
+        priority: input.priority,
+        confirmDuringClass: input.confirmDuringClass,
+      });
+      results.push({ classId, ok: true, id: dto.id });
+    } catch (error) {
+      results.push(toBulkFailure(classId, error, '发布通知'));
+    }
+  }
+
+  const summary = summarizeBulk(results);
+  logger.info(
+    `批量发布通知：目标 ${summary.total} 个班级，成功 ${summary.succeeded} 个，失败 ${summary.failed} 个（发起人=${user.username}）`,
+  );
+  return summary;
 }
 
 /**
@@ -92,6 +226,8 @@ export async function createNotification(
       content: input.content,
       priority,
       createdBy: user.sub,
+      // 按天归档用「本地日期」：晚间发布的通知不会被 UTC 切片算到第二天（与作业同口径）
+      assignDate: dayKeyLocal(new Date()),
     },
     include: { creator: creatorSelect, reads: true },
   });

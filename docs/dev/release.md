@@ -95,11 +95,15 @@ pnpm build && pnpm verify:web
 pnpm dist:all                   # = dist:server + dist:win + dist:classisland-plugin
 ```
 
-产物落在 `releases/<组件>/<版本>/`：`安装包/`、`免安装/`、`构建中间/`。
+产物落在 `releases/<组件>/<版本>/`：`安装包/`（交付物）、`构建中间/`（可重新生成）。
+**没有免安装目录** —— 组装/解包出来的那一份是中间物，打包脚本用完就删（见仓库根 `AGENTS.md` §4
+「交付产物归集」）。
+
 打完之后**对打包副本再验一次**（开发产物通过 ≠ 用户机器上的副本通过）：
 
 ```bash
-pnpm verify:packaged --exe "releases/client/<版本>/免安装/ClassHelper.exe"
+# 默认指向装好的客户端；推荐直接拿刚打出来的便携版单文件当被测副本
+pnpm verify:packaged --exe "releases/client/<版本>/安装包/ClassHelper-<版本>-x64-portable.exe"
 ```
 
 > Linux 包**只能在 Linux 上构建**（依赖是平台相关的），所以不在这条命令里 ——

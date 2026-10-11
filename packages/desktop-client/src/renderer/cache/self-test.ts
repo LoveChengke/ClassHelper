@@ -1048,6 +1048,15 @@ export async function layoutChromeSelfTest(): Promise<SmokeCheckResult> {
     // 2.2) 导轨必须"一眼看全"：先把设置组展开（11 行图标 = 最坏情况），再断言菜单区没有纵向溢出。
     //      折叠态页脚必须把**高度**也收成 0 —— 只淡出不留高度的话，那 ~70px 会把最后两个图标
     //      顶出可视区，用户就得上下滑动（反馈原话："菜单图标无法完全显示需要上下滑动"）。
+    //
+    //      ⚠️ 量之前必须等页脚真的收成 0 高：宽度到 64px 与页脚收拢各有一条 260ms 过渡，
+    //      而 `--nav-ease`（Material 曲线）在 74% 处就越过"宽度 ≤ 80px"这个等待条件，
+    //      此时页脚还剩十几像素 —— 直接量 `.menu` 会读出"溢出 16px"的**假红**
+    //      （实测出现过一次：同一份产物上一次全绿、下一次红）。这里等的是**稳态几何**，
+    //      与这条断言本来的意图一致（CSS 里那句"量到的是稳态"）。
+    const railFooter = document.querySelector<HTMLElement>('.aside-footer');
+    await waitUntil(() => (railFooter?.offsetHeight ?? 0) <= 1, 2000);
+
     const settingsItem = Array.from(
       document.querySelectorAll<HTMLElement>('.aside .el-sub-menu .el-menu-item'),
     ).find((element) =>

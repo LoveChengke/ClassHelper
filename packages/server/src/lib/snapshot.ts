@@ -26,9 +26,18 @@ export const SNAPSHOT_VERSION = 1;
  * `StudentClassTransfer` 存调班与转出历史；`ArchivedYear` 是毕业归档的届别档案。
  * 历史上那两张 `ClassTeacher`（无科目的协作关系）与 `Enrollment`（与 Student.classId 双写）
  * 已随 2026-10-06 的重构删除。
+ *
+ * 2026-10-10 新增：权限组（`PermissionGroup` / `PermissionGroupItem` / `UserPermissionGroup`）、
+ * 全局设置 `AppSetting`（大模型配置与开发者模式开关）、客户端设备与远控
+ * （`ClientDevice` / `ClientCommand`）、客户端安装包缓存 `ClientRelease`、大模型审计 `AiAudit`。
+ * **加新表一定同步这里**，否则备份/换库会静默丢表。
  */
 export const SNAPSHOT_TABLES = [
   'User',
+  'PermissionGroup',
+  'PermissionGroupItem',
+  'UserPermissionGroup',
+  'AppSetting',
   'ArchivedYear',
   'Class',
   'Student',
@@ -43,6 +52,10 @@ export const SNAPSHOT_TABLES = [
   'Grade',
   'IntegrationDevice',
   'ClassIslandPush',
+  'ClientDevice',
+  'ClientCommand',
+  'ClientRelease',
+  'AiAudit',
 ] as const;
 
 export type SnapshotTable = (typeof SNAPSHOT_TABLES)[number];

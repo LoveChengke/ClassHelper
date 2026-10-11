@@ -101,6 +101,15 @@ let SLIVER_SIZE = { width: ISLAND_SLIVER_WIDTH, height: 22 };
  */
 let BBOX_SIZE = { width: 0, height: 0 };
 
+/**
+ * 「收回动画」时长（毫秒）。
+ *
+ * 用户点了「知道了 / 标为已读」之后，主进程把形态切回胶囊、让渲染进程沿**既有的形变路径**
+ * 把卡片收回去，到点再淡出隐藏。取值与渲染进程的形变弹簧（约 300~500ms）同量级；
+ * 外观设置里的"动画速度"会同比缩放它（见 `beginClose()`）。
+ */
+const CLOSE_ANIMATION_MS = 360;
+
 /** 各状态的自动收起/隐藏时长（毫秒），0 表示不自动收起 */
 const TIMEOUTS = {
   pill: 15_000,
@@ -150,6 +159,11 @@ class IslandController {
   private ready = false;
   private pendingState: IslandState | null = null;
   private collapseTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * 「收回动画」定时器：点知道了 / 标为已读之后，延时把窗口淡出隐藏。
+   * 任何让岛重新可见的路径（`activate()` 等）都会经 `clearTimers()` 取消它。
+   */
+  private closeTimer: ReturnType<typeof setTimeout> | null = null;
   /** 尺寸（形变）动画令牌：新动画会作废上一轮，避免互相打架 */
   private boundsToken = 0;
   /** 透明度（淡入淡出）动画令牌，与尺寸动画分开，否则淡入会立刻取消形变 */
@@ -786,6 +800,48 @@ class IslandController {
       this.setState({ mode: 'hidden', reason: null });
       return;
     }
+    this.beginClose();
+  }
+
+  /**
+   * 收回动画：把形态切回胶囊，让渲染进程沿**既有的胶囊形变路径**把卡片收回去，
+   * `CLOSE_ANIMATION_MS` 之后再淡出隐藏。
+   *
+   * 起因：用户反馈"点「知道了」「已读」时没有收回动画"（其他场景都有）。
+   * 状态**在同一帧就已经落地**（调用方 `dismissActive()` / `clearPendingForClose()` 已清空
+   * active/queued），这里只是把形态切回胶囊 —— **不引入任何跨进程握手，也没有收回快照**
+   * （见 AGENTS.md §5 第 34 条：早先自研的 `closing` / `closingSnapshot` 已整体删除，
+   * 它在触摸屏上会露旧帧；这里复用的是已被 `collapse` 用例验收过的那条路径）。
+   */
+  private beginClose(): void {
+    // 关掉动画（含"减少动态效果"）：保持原行为，直接淡出
+    if (!this.appearance.animations) {
+      this.finishClose();
+      return;
+    }
+    /**
+     * **必须 `skipWindow`**：收回动画是"卡片沿既有的胶囊形变路径缩回去"，
+     * 而窗口此刻还是展开/列表态的大包围盒 —— 若这里同步缩窗，卡片会在动画的 360ms 里
+     * 被窗口裁掉（冒烟用例「整批关闭过程中卡片不被窗口裁切」实测最大越界 554.9px，
+     * 用户看到的是一瞬间的硬裁边）。窗口要变小一律等**隐藏之后**由 `syncWindow()` 做，
+     * 这与触摸模式那条"窗口可见期间只增不减"（AGENTS.md §5 第 30 条）是同一条纪律。
+     */
+    this.setState({ mode: 'pill', reason: 'closing' }, { skipWindow: true });
+    const speed = clamp(this.appearance.speed, 0.5, 2, 1);
+    this.closeTimer = setTimeout(() => {
+      this.closeTimer = null;
+      this.finishClose();
+    }, Math.round(CLOSE_ANIMATION_MS / speed));
+  }
+
+  /**
+   * 收回动画收尾：淡出窗口并把状态落成 hidden —— 与原来的 `hide()` 完全一致，
+   * 所以"窗口最终会隐藏"的既有断言（含轮询写法）不受影响。
+   */
+  private finishClose(): void {
+    // 动画期间又来了新消息 / 被显式唤起：这次收回归属于旧的一批，放弃收尾
+    if (this.state.mode !== 'pill' || this.state.reason !== 'closing') return;
+    if (this.state.active || this.state.queued.length > 0) return;
     this.fadeOut();
     this.setState({ mode: 'hidden', reason: null }, { skipWindow: true });
   }
@@ -907,6 +963,11 @@ class IslandController {
     if (this.collapseTimer) {
       clearTimeout(this.collapseTimer);
       this.collapseTimer = null;
+    }
+    // 收回动画定时器：岛一旦被重新唤起（新消息/显式展开/预览），必须取消这次收尾
+    if (this.closeTimer) {
+      clearTimeout(this.closeTimer);
+      this.closeTimer = null;
     }
     if (this.previewTimer) {
       clearTimeout(this.previewTimer);
@@ -1690,21 +1751,26 @@ export function getSliverSize(): { width: number; height: number } {
   return { ...SLIVER_SIZE };
 }
 
+/**
+ * 夹紧数值：**非法值回落到该字段的默认值**，而不是变成 NaN。
+ *
+ * 注意 `Math.max(min, NaN)` 仍是 NaN、`Math.min(max, NaN)` 也是 NaN —— 也就是说"只夹紧"
+ * 并不能防住 NaN。而 `setAppearance()` 的入参来自 IPC（`island:set-appearance` 只判了 `if (patch)`），
+ * 渲染进程传一个显式 `undefined` 字段就会得到 NaN，随后 `setOpacity(NaN)` / `setBounds({x:NaN})`
+ * 抛异常；它在非 async 的 ipcMain 监听里抛出，主进程没有兜底，会直接崩掉
+ * （连带托盘、灵动岛、实时连接一起消失）。因此这里补上 fallback。
+ *
+ * 提到模块作用域：收回动画（`beginClose()`）也要用它按 `appearance.speed` 折算时长，
+ * 原先它只定义在 `normalizeAppearance()` 内部，`beginClose()` 引用不到（编译报
+ * `TS2304: Cannot find name 'clamp'`）。
+ */
+const clamp = (value: number, min: number, max: number, fallback: number): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value * 100) / 100));
+};
+
 /** 夹紧外观取值（越界值直接收敛，避免用户配置破坏布局） */
 export function normalizeAppearance(input: IslandAppearance): IslandAppearance {
-  /**
-   * 夹紧数值：**非法值回落到该字段的默认值**，而不是变成 NaN。
-   *
-   * 注意 `Math.max(min, NaN)` 仍是 NaN、`Math.min(max, NaN)` 也是 NaN —— 也就是说"只夹紧"
-   * 并不能防住 NaN。而 `setAppearance()` 的入参来自 IPC（`island:set-appearance` 只判了 `if (patch)`），
-   * 渲染进程传一个显式 `undefined` 字段就会得到 NaN，随后 `setOpacity(NaN)` / `setBounds({x:NaN})`
-   * 抛异常；它在非 async 的 ipcMain 监听里抛出，主进程没有兜底，会直接崩掉
-   * （连带托盘、灵动岛、实时连接一起消失）。因此这里补上 fallback。
-   */
-  const clamp = (value: number, min: number, max: number, fallback: number): number => {
-    if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
-    return Math.min(max, Math.max(min, Math.round(value * 100) / 100));
-  };
   const fallbackOf = DEFAULT_ISLAND_APPEARANCE;
   return {
     height: clamp(input.height, 36, 72, fallbackOf.height),

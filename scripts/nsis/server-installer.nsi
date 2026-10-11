@@ -33,7 +33,7 @@ ShowUninstDetails show
 !define MUI_UNICON "${ICON_FILE}"
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_TITLE "安装完成"
-!define MUI_FINISHPAGE_TEXT "ClassHelper 服务端已安装完成。$\r$\n$\r$\n安装程序已将服务加入当前用户的开机自启项，浏览器打开 http://127.0.0.1:${APP_PORT}/ 即可使用管理端。$\r$\n$\r$\n默认账号：admin / admin123（首次登录后请立即修改密码）"
+!define MUI_FINISHPAGE_TEXT "ClassHelper 服务端已安装完成。$\r$\n$\r$\n若勾选了「开机自启动」，服务会在登录 Windows 后自动运行（可随时在管理端「系统设置」里关闭）。浏览器打开 http://127.0.0.1:${APP_PORT}/ 即可使用管理端。$\r$\n$\r$\n默认账号：admin / admin123（首次登录后请立即修改密码）"
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "立即启动服务并打开管理端"
 !define MUI_FINISHPAGE_RUN_FUNCTION LaunchService
@@ -42,6 +42,10 @@ ShowUninstDetails show
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${STAGING}\LICENSE.txt"
 !insertmacro MUI_PAGE_DIRECTORY
+; 组件页：让"开机自启动"成为**可选**项（需求：「支持选择开机自启动」）。
+; 默认勾选（保持既有行为），取消勾选则完全不写注册表 Run 项 ——
+; 装完之后仍然可以在 Web 端「系统设置」里随时开关（PUT /api/system/autostart）。
+!insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 
@@ -100,8 +104,8 @@ Section "主程序" SecMain
   ; 桌面快捷方式（管理端进浏览器）
   CreateShortCut "$DESKTOP\${PRODUCT}.lnk" "http://127.0.0.1:${APP_PORT}/"
 
-  ; 开机自启（当前用户）
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "ClassHelperServer" '"$INSTDIR\start.cmd"'
+  ; 开机自启改到**组件页里的可选 Section**（见下面的 SecAutostart）：
+  ; 这里不再无条件写注册表，由用户在组件页勾选决定（需求：「支持选择开机自启动」）。
 
   ; 注册到"应用和功能"列表，便于通过系统设置卸载
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
@@ -115,6 +119,15 @@ Section "主程序" SecMain
 
   ; 首次启动即初始化数据库并开始提供服务
   ExecShell "open" "$INSTDIR\start.cmd" "" SW_SHOWMINIMIZED
+SectionEnd
+
+; ------------------------------------------------------------------ 开机自启动
+;
+; 独立成一个 Section，于是它会出现在组件页上（默认勾选 = 与历史行为一致），
+; 用户可以取消勾选、装完之后也能在 Web 端「系统设置」里随时开关
+; （服务端接口 `PUT /api/system/autostart`，Windows 走的就是这个注册表 Run 项）。
+Section "开机自启动（登录 Windows 后自动启动服务，推荐）" SecAutostart
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "ClassHelperServer" '"$INSTDIR\start.cmd"'
 SectionEnd
 
 ; ------------------------------------------------------------------ 卸载

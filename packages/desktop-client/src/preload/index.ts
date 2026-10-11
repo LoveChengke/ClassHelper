@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC_CHANNELS } from '../main/ipc.js';
-import { UPDATE_AVAILABLE_CHANNEL } from '../main/update.js';
+import { IPC_CHANNELS, UPDATE_AVAILABLE_CHANNEL } from '../main/channels.js';
+import type { ClientAgentStatus } from '../main/client-agent.js';
 import type {
   DesktopAppInfo,
   DesktopBridge,
@@ -66,6 +66,15 @@ const bridge: DesktopBridge = {
   onIslandMarkAllRead: (handler: (ids: string[]) => void): void => {
     ipcRenderer.on('island:mark-all-read', (_event, ids: string[]) => handler(ids ?? []));
   },
+
+  /* 开机自启 / 日志 / 服务端联动 */
+  getAutoLaunch: (): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.getAutoLaunch),
+  setAutoLaunch: (enabled: boolean): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.setAutoLaunch, enabled === true),
+  openLogDir: (): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.openLogDir),
+  openDevTools: (): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.openDevTools),
+  getClientAgentStatus: (): Promise<ClientAgentStatus> => ipcRenderer.invoke(IPC_CHANNELS.clientStatus),
+  beatClientNow: (): Promise<ClientAgentStatus> => ipcRenderer.invoke(IPC_CHANNELS.clientBeatNow),
 };
 
 contextBridge.exposeInMainWorld('desktop', bridge);

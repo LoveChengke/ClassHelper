@@ -378,6 +378,8 @@ export interface NotificationLike {
   priority: string;
   createdBy: string;
   createdAt: Date;
+  /** 通知所属日期（YYYY-MM-DD）；老库可能为空串，DTO 层按 createdAt 本地日期兜底 */
+  assignDate?: string;
   creator?: TeacherBriefLike | null;
   reads?: NotificationReadLike[];
 }
@@ -403,6 +405,8 @@ export function toNotificationDto(
     priority: item.priority as NotificationPriority,
     createdBy: item.createdBy,
     createdAt: toIso(item.createdAt),
+    // 老库兜底：assignDate 为空时按 createdAt 的本地日期回退，前端不必处理空值
+    assignDate: item.assignDate || dayKeyLocal(item.createdAt),
     creator: item.creator ? toTeacherBrief(item.creator) : null,
     read: own ? true : false,
     readAt: toIsoOrNull(own?.readAt),

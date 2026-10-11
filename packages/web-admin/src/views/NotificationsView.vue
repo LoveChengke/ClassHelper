@@ -13,6 +13,8 @@ import {
   truncate,
   type ClassDto,
   type ClassPeriod,
+  type NotificationCreatorSummary,
+  type NotificationDaySummary,
   type NotificationDto,
   type NotificationPriority,
   type StudentDto,
@@ -27,7 +29,38 @@ const route = useRoute();
 const loading = ref(false);
 const classes = ref<ClassDto[]>([]);
 const notifications = ref<NotificationDto[]>([]);
-const filter = reactive({ classId: '', priority: '', keyword: '' });
+const filter = reactive({ classId: '', priority: '', keyword: '', date: '', createdBy: '' });
+
+/**
+ * 按天归档 / 按发布人归档的候选列表（需求：通知按天归档，也可按发布人、类型看）。
+ *
+ * 两者跟着"班级 + 优先级"走：班级一换，日期栏与发布人栏就应该只剩那个班里真实存在的
+ * 日期与人 —— 否则选项里全是别的班级的数据，选中后得到空列表，看着像坏了。
+ * 发布人栏还额外跟着当前选中的日期收敛（"这一天都有谁发过通知"）。
+ */
+const days = ref<NotificationDaySummary[]>([]);
+const creators = ref<NotificationCreatorSummary[]>([]);
+
+async function loadArchive(): Promise<void> {
+  const base = {
+    ...(filter.classId ? { classId: filter.classId } : {}),
+    ...(filter.priority ? { priority: filter.priority } : {}),
+  };
+  const [dayList, creatorList] = await Promise.all([
+    notificationApi.days(base).catch(() => ({ days: [] as NotificationDaySummary[] })),
+    notificationApi
+      .creators({ ...base, ...(filter.date ? { date: filter.date } : {}) })
+      .catch(() => ({ creators: [] as NotificationCreatorSummary[] })),
+  ]);
+  days.value = dayList.days;
+  creators.value = creatorList.creators;
+}
+
+/** 筛选变化后统一刷新：先更新归档候选，再拉当前筛选下的列表 */
+async function refreshList(): Promise<void> {
+  await loadArchive();
+  await loadNotifications();
+}
 
 /**
  * 是否"单班视图"：选中了具体班级时列表只服务一个班。
@@ -65,10 +98,18 @@ async function loadClassStudentCounts(): Promise<void> {
 async function loadNotifications(): Promise<void> {
   loading.value = true;
   try {
-    const params: { classId?: string; priority?: string; keyword?: string } = {};
+    const params: {
+      classId?: string;
+      priority?: string;
+      keyword?: string;
+      date?: string;
+      createdBy?: string;
+    } = {};
     if (filter.classId) params.classId = filter.classId;
     if (filter.priority) params.priority = filter.priority;
     if (filter.keyword.trim()) params.keyword = filter.keyword.trim();
+    if (filter.date) params.date = filter.date;
+    if (filter.createdBy) params.createdBy = filter.createdBy;
     notifications.value = await notificationApi.list(params);
   } finally {
     loading.value = false;
@@ -236,47 +277,33 @@ interface PublishFailure {
 }
 
 /**
- * 真正提交：对每个班级各调一次 `POST /api/notifications`（Promise.allSettled），
- * confirmDuringClass 为 true 表示教师已在上课警告中确认。
+ * 真正提交：调用服务端的**批量发布**端点（`POST /api/notifications/bulk`）一次提交，
+ * 服务端逐班做权限断言与上课保护，并把每个班的结果回给我们。
+ *
+ * 为什么不再由前端对每个班各发一次请求：N 个班就是 N 次往返，权限/上课保护/ClassIsland 推送
+ * 分散在 N 个响应里，前端还得自己合并；服务端批量端点把这些收敛成一份逐班结果（见 AGENTS.md §5）。
+ * confirmDuringClass 为 true 表示教师已在上课警告里确认。
  */
 async function doPublish(classIds: string[], confirmDuringClass: boolean): Promise<void> {
   if (classIds.length === 0) return;
 
-  const payload = {
+  const result = await notificationApi.bulkCreate({
+    classIds,
     title: form.title.trim(),
     content: form.content,
     priority: form.priority,
     ...(confirmDuringClass ? { confirmDuringClass: true } : {}),
-  };
-
-  const settled = await Promise.allSettled(
-    classIds.map((classId) => notificationApi.create({ ...payload, classId })),
-  );
-
-  let successCount = 0;
-  const failures: PublishFailure[] = [];
-
-  settled.forEach((result, index) => {
-    if (result.status === 'fulfilled') {
-      successCount += 1;
-      return;
-    }
-    const response = (
-      result.reason as {
-        response?: {
-          status?: number;
-          data?: { code?: string; message?: string; details?: { current?: ClassPeriod | null } };
-        };
-      }
-    ).response;
-    failures.push({
-      classId: classIds[index] ?? '',
-      reason:
-        response?.data?.message ?? (result.reason instanceof Error ? result.reason.message : '发布失败'),
-      urgentConflict: response?.status === 409 && response?.data?.code === 'URGENT_DURING_CLASS',
-      period: response?.data?.details?.current ?? null,
-    });
   });
+
+  const successCount = result.succeeded;
+  const failures: PublishFailure[] = result.results
+    .filter((item) => !item.ok)
+    .map((item) => ({
+      classId: item.classId,
+      reason: item.message ?? '发布失败',
+      urgentConflict: item.code === 'URGENT_DURING_CLASS',
+      period: ((item.details ?? {}) as { current?: ClassPeriod | null }).current ?? null,
+    }));
 
   // 兜底：并发场景下服务端仍可能拦截（例如刚好上课铃响），对这批班级重新走一次二次确认
   const conflicted = failures.filter((item) => item.urgentConflict);
@@ -296,7 +323,7 @@ async function doPublish(classIds: string[], confirmDuringClass: boolean): Promi
     // 注意这里是 pendingConfirm 而不是 !pendingConfirm —— 写成取反会让弹窗在**发布成功后仍然开着**，
     // 老师以为没发出去再点一次「立即发布」，同一批班级就重复收到通知（还会重复广播与推 ClassIsland）。
     formVisible.value = pendingConfirm;
-    await loadNotifications();
+    await refreshList();
   }
 }
 
@@ -363,7 +390,7 @@ function rowClassName({ row }: { row: NotificationDto }): string {
 
 onMounted(async () => {
   await loadClasses();
-  await loadNotifications();
+  await refreshList();
   realtime.on(SOCKET_EVENTS.notificationNew, onNotificationEvent);
   // 列表渲染完再滚动，否则表格行还没生成
   if (highlightedId.value) {
@@ -390,7 +417,7 @@ onUnmounted(() => {
           placeholder="选择班级"
           clearable
           style="width: 170px"
-          @change="loadNotifications"
+          @change="refreshList"
         >
           <el-option v-for="item in classes" :key="item.id" :label="item.name" :value="item.id" />
         </el-select>
@@ -399,13 +426,43 @@ onUnmounted(() => {
           placeholder="全部优先级"
           clearable
           style="width: 150px"
-          @change="loadNotifications"
+          @change="refreshList"
         >
           <el-option
             v-for="item in NOTIFICATION_PRIORITIES"
             :key="item"
             :label="PRIORITY_LABELS[item]"
             :value="item"
+          />
+        </el-select>
+        <!-- 按天归档：只列当前班级/优先级下真实存在的日期与条数 -->
+        <el-select
+          v-model="filter.date"
+          placeholder="按天归档"
+          clearable
+          style="width: 170px"
+          @change="refreshList"
+        >
+          <el-option
+            v-for="item in days"
+            :key="item.date"
+            :label="`${item.date}（${item.count}）`"
+            :value="item.date"
+          />
+        </el-select>
+        <!-- 按发布人归档：跟着班级/优先级/日期收敛 -->
+        <el-select
+          v-model="filter.createdBy"
+          placeholder="全部发布人"
+          clearable
+          style="width: 160px"
+          @change="loadNotifications"
+        >
+          <el-option
+            v-for="item in creators"
+            :key="item.id"
+            :label="`${item.name}（${item.count}）`"
+            :value="item.id"
           />
         </el-select>
         <el-input
@@ -452,6 +509,12 @@ onUnmounted(() => {
             <div class="text-muted">{{ relativeTime(row.createdAt) }}</div>
           </template>
         </el-table-column>
+        <!-- 所属日期：按天归档用的口径（本地日期），晚间发布不会被算到第二天 -->
+        <el-table-column label="所属日期" width="120">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain">{{ row.assignDate }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column :label="isSingleClass ? '已读情况' : '已读率'" width="150">
           <template #default="{ row }">
             <!--
@@ -489,7 +552,7 @@ onUnmounted(() => {
             filterable
             collapse-tags
             collapse-tags-tooltip
-            placeholder="可多选；发布时逐班提交"
+            placeholder="可多选；一次发布到所有选中班级"
             style="width: 100%"
           >
             <el-option v-for="item in classes" :key="item.id" :label="item.name" :value="item.id" />

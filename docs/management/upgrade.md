@@ -98,7 +98,7 @@ docker compose up -d
 
 ### 手动 / 源码
 
-拉新代码或替换免安装目录 → 重启服务端。启动时 `db-bootstrap` 会用账本表 `_ch_migrations`
+拉新代码（或覆盖安装新的服务端程序）→ 重启服务端。启动时 `db-bootstrap` 会用账本表 `_ch_migrations`
 对比已执行的迁移，只补跑缺的那些：
 
 - 全新安装：依次执行全部迁移并创建初始管理员；

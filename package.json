@@ -1,6 +1,6 @@
 {
   "name": "class-helper",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "ClassHelper - 班级信息管理系统（Web 管理端 + 后端服务 + 桌面客户端）",
   "packageManager": "pnpm@11.8.0",
@@ -44,7 +44,6 @@
     "dev:site": "pnpm docs:build && node website/serve.mjs",
     "docs:check": "node docs/build.mjs --check",
     "dist:win": "pnpm --filter @classhelper/desktop-client dist:win",
-    "dist:dir": "pnpm --filter @classhelper/desktop-client dist:dir",
     "dist:server": "pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build && node scripts/dist-server.mjs",
     "dist:server:linux": "pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build && node scripts/dist-server.mjs --platform linux",
     "dist:classisland-plugin": "node packages/classisland-plugin/scripts/build.mjs --cipx",

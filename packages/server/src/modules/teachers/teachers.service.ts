@@ -11,7 +11,7 @@ import type {
 } from './teachers.schemas.js';
 
 /**
- * 教师管理（**仅管理员**，路由层已用 requireRole('ADMIN') 兜住）：
+ * 教师管理（**仅管理员**，路由层已用 requirePermission('teacher:manage') 兜住）：
  * 录入教师是管理员专属操作，班主任与科任老师都没有该权限。
  * 学生名单在 students 模块，两个模块结构保持一致（列表 / 新建 / 编辑 / 重置密码 / 删除）。
  */

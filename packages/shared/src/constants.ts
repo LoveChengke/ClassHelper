@@ -1,4 +1,11 @@
-import type { GradeLevelType, NotificationPriority, StudentGender, StudentStatus, UserRole } from './types.js';
+import type {
+  ClientCommandKind,
+  GradeLevelType,
+  NotificationPriority,
+  StudentGender,
+  StudentStatus,
+  UserRole,
+} from './types.js';
 
 /** API 前缀 */
 export const API_PREFIX = '/api';
@@ -33,6 +40,14 @@ export const API_PATHS = {
   database: '/database',
   /** 更新检查：Web 端经服务端转发查 GitHub 上的最新 Release（浏览器受 CSP 限制不能直连） */
   update: '/update',
+  /** 权限组：权限目录、组的增删改、成员分配、当前账号生效权限 */
+  permissions: '/permissions',
+  /** ClassHelper 客户端设备：心跳、设备清单、统一下发更新与远控指令 */
+  clients: '/clients',
+  /** 大模型助手：设置（仅管理员）、一句话解析、使用记录 */
+  ai: '/ai',
+  /** 系统设置与诊断：开发者模式、服务端开机自启、运行诊断（仅管理员） */
+  system: '/system',
   dashboard: '/dashboard/summary',
 } as const;
 
@@ -654,3 +669,43 @@ export const UPDATE_CHECK_CACHE_TTL_MS = 30 * 60 * 1000;
 
 /** 单次检查的超时：教室机 / 机房的网络常常很慢，但也不能把界面卡住 */
 export const UPDATE_CHECK_TIMEOUT_MS = 8_000;
+
+/* -------------------------------------------- 客户端设备（ClassHelper 桌面端） */
+
+/**
+ * 桌面客户端向服务端上报心跳的间隔（30 秒，与班级端在线状态刷新一致）。
+ *
+ * 为什么**不用 Socket.IO 事件**下发更新与远控：教室机的连接经常断（代理、休眠、重启），
+ * 而「这台机器什么版本、要不要更新、有没有待执行命令」必须下次上线就能补上，
+ * 所以统一用「DB 记状态 + 客户端定时拉取」的范式（与 `IntegrationDevice.requestScheduleReport` 同一套路），
+ * 不引入新的长连接握手。
+ */
+export const CLIENT_HEARTBEAT_INTERVAL_MS = 30_000;
+
+/** 「在线」判定窗口：容忍连续丢两次心跳（30 秒 × 3） */
+export const CLIENT_ONLINE_WINDOW_MS = 90_000;
+
+/** 远控命令种类：只有这四种，全部用系统命令实现 */
+export const CLIENT_COMMAND_KINDS: readonly ClientCommandKind[] = ['shutdown', 'restart', 'logoff', 'lock'];
+
+export const CLIENT_COMMAND_LABELS: Record<ClientCommandKind, string> = {
+  shutdown: '关机',
+  restart: '重启',
+  logoff: '注销',
+  lock: '锁屏',
+};
+
+/** 命令有效期：超过这个时间还没被拉走就作废（避免机器离线几天后一开机就被昨天的命令关掉） */
+export const CLIENT_COMMAND_EXPIRE_MS = 10 * 60 * 1000;
+
+/** 客户端回执里 result 的长度上限（一句中文足够） */
+export const CLIENT_COMMAND_RESULT_MAX = 200;
+
+/**
+ * 自动安装更新前的「空闲」判据：主窗口已隐藏满这么久才装。
+ * 上课时段（渲染进程上报的课表状态）与窗口可见都会把安装往后推。
+ */
+export const CLIENT_UPDATE_IDLE_MS = 5 * 60 * 1000;
+
+/** 服务端缓存客户端安装包的目录（相对 `<serverRoot>/../data`，见 update 模块） */
+export const CLIENT_RELEASE_DIR = 'client-releases';
