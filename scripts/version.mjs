@@ -4,16 +4,13 @@
  *
  * ## 为什么要这个脚本
  *
- * 这个仓库里**同一个版本号写在 14 处（12 个文件）**：5 份 package.json、运行时常量、两个 compose 文件、
- * 插件清单、插件 C# 源码里的一个 const，以及官网页面上三处手写的版本号、下载页那一处兜底值。
+ * 这个仓库里**同一个版本号写在 12 处（10 个文件）**：5 份 package.json、运行时常量、两个 compose 文件、
+ * 官网页面上三处手写的版本号、下载页那一处兜底值。
  * 手工改必然漏一处，
  * 而漏掉的那处**不会报错**，只会在某个不常走的分支上表现为"版本号对不上"：
  *
  *   - `deploy/docker-compose*.yml`     镜像 tag 落后 → 服务器上跑的还是旧镜像；
  *   - `deploy/package.runtime.json`    容器 / 安装包里那份依赖清单的版本（人看，但会误导排查）；
- *   - `manifest.yml` + `BridgeService.cs`  ClassIsland 上显示的插件版本
- *     （清单里的 version 与实际上报的 PluginVersion 不一致时，
- *     Web 端「ClassIsland 联动」页显示的版本会对不上插件市场）；
  *   - `website/index.html` 的那三处        官网是纯静态站、无构建步骤，没有哪段代码会去读
  *     `package.json`，漏改的后果是**首页上一直挂着旧版本号** —— 那是别人看到的第一眼；
  *   - `website/download.html` 的 `<meta name="ch-version">`  下载页拿它当"读不到版本清单"时的兜底，
@@ -28,7 +25,7 @@
  *   node scripts/version.mjs --bump patch       # 1.1.2 → 1.1.3
  *   node scripts/version.mjs --bump minor       # 1.1.2 → 1.2.0
  *   node scripts/version.mjs --bump major       # 1.1.2 → 2.0.0
- *   node scripts/version.mjs --set 1.2.0        # 显式指定（插件同时设为 1.2.0.0）
+ *   node scripts/version.mjs --set 1.2.0        # 显式指定
  *   node scripts/version.mjs --bump minor --dry # 只看会改哪些文件，不落盘
  *
  * 版本口径与完整发布流程见 docs/dev/release.md。
@@ -62,21 +59,6 @@ const PRODUCT_TARGETS = [
 ];
 
 /**
- * 插件版本（`x.y.z.0`）。第 4 段留给"只改插件、不动产品版本"的补丁发布；
- * `--bump` / `--set` 一律把它归零，要单独发插件补丁时手工改这两处即可。
- */
-const PLUGIN_TARGETS = [
-  {
-    file: 'packages/classisland-plugin/manifest.yml',
-    pattern: /^(version:[ \t]*)(\d+\.\d+\.\d+\.\d+)([ \t]*)$/m,
-  },
-  {
-    file: 'packages/classisland-plugin/src/Services/BridgeService.cs',
-    pattern: /(private const string PluginVersion = ")(\d+\.\d+\.\d+\.\d+)(";)/,
-  },
-];
-
-/**
  * 官网首页与下载页上那几处手写的版本号。官网是纯静态站，没有构建步骤、也没有哪段代码会去读
  * `package.json`，所以这几处只能靠脚本一起改 —— 漏了的话官网会一直显示旧版本号，
  * 而它是别人看到的第一眼。
@@ -100,10 +82,9 @@ const SITE_TARGETS = [
   },
 ];
 
-const ALL_TARGETS = [...PRODUCT_TARGETS, ...PLUGIN_TARGETS, ...SITE_TARGETS];
+const ALL_TARGETS = [...PRODUCT_TARGETS, ...SITE_TARGETS];
 
 const PRODUCT_RE = /^\d+\.\d+\.\d+$/;
-const PLUGIN_RE = /^\d+\.\d+\.\d+\.\d+$/;
 
 /** 输出用的名字：同一个文件里有多个落点时带上括号里的说明，否则三行看起来一模一样 */
 function name(target) {
@@ -160,11 +141,8 @@ function check(product) {
       problems.push(`${target.file}：匹配不到版本号`);
       continue;
     }
-    // 插件版本是四段，只校验前三段；第 4 段允许不为 0（插件专属补丁号）
-    const expected = PLUGIN_RE.test(version) ? `${product}.0` : product;
-    const ok = PLUGIN_RE.test(version)
-      ? version.split('.').slice(0, 3).join('.') === product
-      : version === expected;
+    const expected = product;
+    const ok = version === expected;
     console.log(`${ok ? '  ' : '!!'} ${name(target).padEnd(width)}  ${version}`);
     if (!ok) problems.push(`${target.file}：${version} ≠ ${expected}`);
   }
@@ -175,19 +153,15 @@ function check(product) {
     console.error('\n对齐方式：pnpm version:check 之后用 pnpm version:bump patch 统一改写。');
     process.exit(1);
   }
-  console.log('\n全部一致 ✅（插件第 4 段是插件专属补丁号，允许不为 0）');
+  console.log('\n全部一致 ✅');
 }
 
 function apply(next, { dry, product }) {
-  const pluginNext = `${next}.0`;
   const lines = [];
   for (const target of PRODUCT_TARGETS) lines.push(writeVersion(target, next, { dry }));
-  for (const target of PLUGIN_TARGETS) lines.push(writeVersion(target, pluginNext, { dry }));
   for (const target of SITE_TARGETS) lines.push(writeVersion(target, next, { dry }));
 
-  console.log(
-    `${dry ? '[dry] 将改写' : '已改写'} ${product} → ${next}（插件 ${product}.0 → ${pluginNext}）：\n`,
-  );
+  console.log(`${dry ? '[dry] 将改写' : '已改写'} ${product} → ${next}：\n`);
   for (const line of lines) console.log(`  ${line}`);
   console.log('\n接着按 docs/dev/release.md 走发布流程；GitHub Release 的 tag（v' + next + '）也要对齐。');
 }

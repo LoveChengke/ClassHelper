@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { confirmAction } from '../../composables/confirm.js';
 import { useRouter } from 'vue-router';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 import { useAuthStore } from '../../stores/auth.js';
 import { useRealtimeStore } from '../../stores/realtime.js';
 
@@ -13,7 +14,7 @@ const auth = useAuthStore();
 const realtime = useRealtimeStore();
 
 async function logout(): Promise<void> {
-  await ElMessageBox.confirm('确认退出当前账号？', '退出登录', { type: 'warning' });
+  if (!(await confirmAction('确认退出当前账号？', '退出登录', { type: 'warning' }))) return;
   realtime.disconnect();
   await auth.logout();
   ElMessage.success('已退出登录');

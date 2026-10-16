@@ -71,7 +71,9 @@ export function canManageCourses(classRole: ClassRole): boolean {
  * 因此凡是与本班有关联的教师（班主任或任课老师）都能发；ClassHelper 班级端也可以。
  */
 export function canPublishNotification(classRole: ClassRole): boolean {
-  return classRole === 'ADMIN' || classRole === 'HEAD' || classRole === 'SUBJECT' || classRole === 'CLASS_DEVICE';
+  return (
+    classRole === 'ADMIN' || classRole === 'HEAD' || classRole === 'SUBJECT' || classRole === 'CLASS_DEVICE'
+  );
 }
 
 /**
@@ -164,7 +166,9 @@ export const PERMISSION_KEYS = [
   // 班级与人员
   'class:read',
   'class:manage',
+  'roster:read',
   'roster:manage',
+  'teacher:read',
   'teacher:manage',
   'schedule:read',
   'schedule:write',
@@ -185,8 +189,6 @@ export const PERMISSION_KEYS = [
   'import:schedule',
   'import:class-teachers',
   // 设备与联动
-  'device:manage',
-  'classisland:notify',
   'client:read',
   'client:manage',
   'client:update-push',
@@ -204,8 +206,6 @@ export const PERMISSION_KEYS = [
   'ai:manage',
   'permission:manage',
   'system:manage',
-  'log:read',
-  'developer:mode',
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -214,7 +214,9 @@ export type PermissionKey = (typeof PERMISSION_KEYS)[number];
 export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   'class:read': '查看班级与班级列表',
   'class:manage': '创建 / 修改 / 删除班级（含班级账号密码）',
+  'roster:read': '查看学生名单',
   'roster:manage': '学生名单管理（增删 / 调班 / 导入）',
+  'teacher:read': '查看教师名单',
   'teacher:manage': '教师账号管理（新建 / 导入 / 重置密码 / 删除）',
   'schedule:read': '查看课表',
   'schedule:write': '课表与课程编辑',
@@ -232,8 +234,6 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   'import:teachers': '导入教师名单',
   'import:schedule': '导入课表时间配置',
   'import:class-teachers': '导入班级任课关系',
-  'device:manage': '联动设备管理（ClassIsland 设备令牌 / 课表上报）',
-  'classisland:notify': '向 ClassIsland 下发提醒',
   'client:read': '查看 ClassHelper 客户端在线状态与版本',
   'client:manage': '管理客户端设备（改名 / 停用 / 删除）',
   'client:update-push': '向客户端统一下发更新',
@@ -249,15 +249,22 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   'ai:manage': '大模型设置（开关 / 服务地址 / 密钥 / 模型）',
   'permission:manage': '权限组与用户权限管理',
   'system:manage': '全局系统设置（含开发者模式）',
-  'log:read': '查看服务端日志',
-  'developer:mode': '开发者模式',
 };
 
 /** 权限组管理页的分组展示（只影响排序与标题，不改变语义） */
 export const PERMISSION_CATEGORIES: readonly { title: string; keys: readonly PermissionKey[] }[] = [
   {
     title: '班级与人员',
-    keys: ['class:read', 'class:manage', 'roster:manage', 'teacher:manage', 'schedule:read', 'schedule:write'],
+    keys: [
+      'class:read',
+      'class:manage',
+      'roster:read',
+      'roster:manage',
+      'teacher:read',
+      'teacher:manage',
+      'schedule:read',
+      'schedule:write',
+    ],
   },
   {
     title: '内容发布',
@@ -284,8 +291,8 @@ export const PERMISSION_CATEGORIES: readonly { title: string; keys: readonly Per
     ],
   },
   {
-    title: '设备与联动',
-    keys: ['device:manage', 'classisland:notify', 'client:read', 'client:manage', 'client:update-push', 'remote:control'],
+    title: '客户端设备',
+    keys: ['client:read', 'client:manage', 'client:update-push', 'remote:control'],
   },
   { title: '学期与统计', keys: ['term:read', 'term:write', 'archive:manage', 'dashboard:read'] },
   {
@@ -298,8 +305,6 @@ export const PERMISSION_CATEGORIES: readonly { title: string; keys: readonly Per
       'ai:manage',
       'permission:manage',
       'system:manage',
-      'log:read',
-      'developer:mode',
     ],
   },
 ];
@@ -307,7 +312,7 @@ export const PERMISSION_CATEGORIES: readonly { title: string; keys: readonly Per
 /**
  * 每个权限键的**默认角色**（镜像改造前各路由的 `requireRole(...)`，逐条对齐）。
  *
- * 这是"没有分过任何权限组"时的回落模板：行为与权限组功能上线前完全一致。
+ * 这是创建角色默认组时的初始模板；默认组写入数据库后允许自定义。
  * 一旦管理员给某个账号分了组，生效集合就**只由组的并集决定**（可以比默认更少）。
  *
  * 注意 `CLASS_DEVICE` 不出现在任何默认里：班级端的能力由班级维度断言
@@ -316,7 +321,9 @@ export const PERMISSION_CATEGORIES: readonly { title: string; keys: readonly Per
 export const PERMISSION_DEFAULT_ROLES: Record<PermissionKey, readonly UserRole[]> = {
   'class:read': ['ADMIN', 'TEACHER'],
   'class:manage': ['ADMIN'],
+  'roster:read': ['ADMIN', 'TEACHER'],
   'roster:manage': ['ADMIN', 'TEACHER'],
+  'teacher:read': ['ADMIN', 'TEACHER'],
   'teacher:manage': ['ADMIN'],
   'schedule:read': ['ADMIN', 'TEACHER'],
   'schedule:write': ['ADMIN', 'TEACHER'],
@@ -334,8 +341,6 @@ export const PERMISSION_DEFAULT_ROLES: Record<PermissionKey, readonly UserRole[]
   'import:teachers': ['ADMIN'],
   'import:schedule': ['ADMIN', 'TEACHER'],
   'import:class-teachers': ['ADMIN'],
-  'device:manage': ['ADMIN', 'TEACHER'],
-  'classisland:notify': ['ADMIN', 'TEACHER'],
   'client:read': ['ADMIN', 'TEACHER'],
   'client:manage': ['ADMIN'],
   'client:update-push': ['ADMIN'],
@@ -351,11 +356,9 @@ export const PERMISSION_DEFAULT_ROLES: Record<PermissionKey, readonly UserRole[]
   'ai:manage': ['ADMIN'],
   'permission:manage': ['ADMIN'],
   'system:manage': ['ADMIN'],
-  'log:read': ['ADMIN'],
-  'developer:mode': ['ADMIN'],
 };
 
-/** 全部权限键（管理员的生效集合；也用在校验 zod 的枚举上） */
+/** 全部权限键（默认组初始模板；也用在校验 zod 的枚举上） */
 export const ALL_PERMISSION_KEYS: readonly PermissionKey[] = PERMISSION_KEYS;
 
 /**
@@ -375,7 +378,10 @@ export function defaultPermissionsForRole(role: UserRole): PermissionKey[] {
 }
 
 /** 判断权限集合里是否有某个键（`Set` 或数组都接受） */
-export function hasPermission(permissions: ReadonlySet<string> | readonly string[], key: PermissionKey): boolean {
+export function hasPermission(
+  permissions: ReadonlySet<string> | readonly string[],
+  key: PermissionKey,
+): boolean {
   const list: readonly string[] = Array.isArray(permissions) ? permissions : [...permissions];
   return list.includes(key);
 }

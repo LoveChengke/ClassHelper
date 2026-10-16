@@ -2,6 +2,8 @@ import {
   CLIENT_COMMAND_EXPIRE_MS,
   CLIENT_COMMAND_LABELS,
   CLIENT_ONLINE_WINDOW_MS,
+  weekParityOf,
+  type ClientUpdateMode,
   type ClientCommandAckRequest,
   type ClientCommandDto,
   type ClientCommandKind,
@@ -10,18 +12,23 @@ import {
   type ClientPushResult,
   type ClientTargetResult,
 } from '@classhelper/shared';
+import { loadTermContext, resolveCurrentWeek } from '../../lib/term.js';
+import { resolveClassScope, classScopeWhere } from '../../lib/access.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
 import * as clientReleases from '../update/client-releases.service.js';
-import type { ClientHeartbeatInput, CreateClientCommandInput, PushClientUpdateInput } from './clients.schemas.js';
+import type {
+  ClientHeartbeatInput,
+  CreateClientCommandInput,
+  PushClientUpdateInput,
+} from './clients.schemas.js';
 
 /**
  * ClassHelper 桌面客户端设备的心跳 / 远控命令 / 更新下发。
  *
  * 范式（AGENTS.md §5 第 67 条）：**DB 记状态 + 客户端定时拉取** ——
- * 与 `IntegrationDevice.requestScheduleReport` 同一套路，不新增长连接握手。
  * 因此本文件里没有任何"推送"动作：所有下发都只是改 `ClientDevice` / `ClientCommand` 的字段，
  * 由客户端下一次心跳（30 秒内）带走。
  */
@@ -35,6 +42,8 @@ type DeviceRow = {
   platform: string;
   autoUpdate: boolean;
   updateTargetVersion: string;
+  updateMode: ClientUpdateMode;
+  updateNotBefore: Date | null;
   pendingVersion: string;
   lastHeartbeatAt: Date | null;
   lastIp: string;
@@ -131,6 +140,7 @@ export async function heartbeat(
     name: input.name?.trim() || '未命名设备',
     clientVersion: input.clientVersion?.trim() ?? '',
     platform: input.platform?.trim() ?? '',
+    autoUpdate: input.autoUpdate !== false,
     pendingVersion: input.pendingVersion?.trim() ?? '',
     stateNote: input.stateNote?.trim() ?? '',
     lastHeartbeatAt: now,
@@ -153,7 +163,16 @@ export async function heartbeat(
     deviceId: device.id,
     serverTime: now.toISOString(),
     updateTargetVersion: targetVersion || null,
-    update,
+    updateMode: device.updateMode,
+    updateNotBefore: device.updateNotBefore?.toISOString() ?? null,
+    // 旧客户端没有时机判断：到放学时间前不提供包，避免它提前安装。
+    update:
+      input.agentProtocol !== 2 &&
+      device.updateMode === 'after-school' &&
+      device.updateNotBefore &&
+      now < device.updateNotBefore
+        ? null
+        : update,
     command: command ? toCommandDto(command) : null,
   };
 }
@@ -187,9 +206,13 @@ export async function ackCommand(
 }
 
 /** GET /api/clients/devices - Web 端「客户端设备」列表（含待执行命令） */
-export async function listDevices(options: { classId?: string } = {}): Promise<ClientDeviceDto[]> {
+export async function listDevices(
+  user: TokenPayload,
+  options: { classId?: string } = {},
+): Promise<ClientDeviceDto[]> {
+  const scope = await resolveClassScope(user, options.classId);
   const rows = (await prisma.clientDevice.findMany({
-    where: options.classId ? { classId: options.classId } : {},
+    where: classScopeWhere(scope),
     include: { class: { select: { id: true, name: true } } },
     orderBy: [{ lastHeartbeatAt: 'desc' }, { createdAt: 'desc' }],
   })) as unknown as DeviceRow[];
@@ -235,6 +258,8 @@ export async function listDevices(options: { classId?: string } = {}): Promise<C
       platform: row.platform,
       autoUpdate: row.autoUpdate,
       updateTargetVersion: row.updateTargetVersion,
+      updateMode: row.updateMode,
+      updateNotBefore: row.updateNotBefore?.toISOString() ?? null,
       pendingVersion: row.pendingVersion,
       lastHeartbeatAt: heartbeat ? heartbeat.toISOString() : null,
       lastIp: row.lastIp,
@@ -249,10 +274,11 @@ export async function listDevices(options: { classId?: string } = {}): Promise<C
 }
 
 /** 命令去重后的目标设备（保持请求顺序，便于结果一一对应） */
-async function findTargetDevices(deviceIds: string[]): Promise<Map<string, DeviceRow>> {
+async function findTargetDevices(user: TokenPayload, deviceIds: string[]): Promise<Map<string, DeviceRow>> {
   const wanted = [...new Set(deviceIds)];
+  const scope = classScopeWhere(await resolveClassScope(user));
   const rows = (await prisma.clientDevice.findMany({
-    where: { id: { in: wanted } },
+    where: { AND: [scope, { id: { in: wanted } }] },
     select: { id: true, name: true, deviceKey: true },
   })) as unknown as DeviceRow[];
   return new Map(rows.map((row) => [row.id, row]));
@@ -268,7 +294,7 @@ export async function createCommands(
   user: TokenPayload,
   input: CreateClientCommandInput,
 ): Promise<ClientPushResult> {
-  const targets = await findTargetDevices(input.deviceIds);
+  const targets = await findTargetDevices(user, input.deviceIds);
   const expiresAt = new Date(Date.now() + CLIENT_COMMAND_EXPIRE_MS);
   const note = input.note?.trim() ?? '';
   const results: ClientTargetResult[] = [];
@@ -304,12 +330,13 @@ export async function createCommands(
 }
 
 /** 更新推送的目标集合：优先设备，其次班级，最后"全部" */
-async function resolveUpdateTargets(input: PushClientUpdateInput): Promise<DeviceRow[]> {
+async function resolveUpdateTargets(user: TokenPayload, input: PushClientUpdateInput): Promise<DeviceRow[]> {
+  const scope = classScopeWhere(await resolveClassScope(user));
   const deviceIds = [...new Set(input.deviceIds ?? [])];
   if (deviceIds.length > 0) {
     const rows = (await prisma.clientDevice.findMany({
-      where: { id: { in: deviceIds } },
-      select: { id: true, name: true },
+      where: { AND: [scope, { id: { in: deviceIds } }] },
+      select: { id: true, name: true, classId: true },
     })) as unknown as DeviceRow[];
     return rows;
   }
@@ -317,13 +344,16 @@ async function resolveUpdateTargets(input: PushClientUpdateInput): Promise<Devic
   const classIds = [...new Set(input.classIds ?? [])];
   if (classIds.length > 0) {
     return (await prisma.clientDevice.findMany({
-      where: { classId: { in: classIds } },
-      select: { id: true, name: true },
+      where: { AND: [scope, { classId: { in: classIds } }] },
+      select: { id: true, name: true, classId: true },
     })) as unknown as DeviceRow[];
   }
 
   if (input.all) {
-    return (await prisma.clientDevice.findMany({ select: { id: true, name: true } })) as unknown as DeviceRow[];
+    return (await prisma.clientDevice.findMany({
+      where: scope,
+      select: { id: true, name: true, classId: true },
+    })) as unknown as DeviceRow[];
   }
 
   throw ApiError.badRequest('请选择要推送的设备、班级，或选择"全部设备"');
@@ -333,8 +363,7 @@ async function resolveUpdateTargets(input: PushClientUpdateInput): Promise<Devic
  * POST /api/clients/updates - 统一下发客户端更新
  *
  * `version` 省略时用服务端缓存里最新的那个版本；`clear: true` 取消下发。
- * 只改 `updateTargetVersion`，真正的下载与安装由客户端按自己的空闲判据决定
- * （上课时段 / 窗口可见都不装）。
+ * 保存目标版本和安装策略，下载、安装由客户端在心跳后执行。
  */
 export async function pushUpdate(
   user: TokenPayload,
@@ -352,14 +381,21 @@ export async function pushUpdate(
     if (!info) throw ApiError.badRequest(`服务端缺少 v${target} 的安装包文件，请重新下载或登记`);
   }
 
-  const devices = await resolveUpdateTargets(input);
+  const devices = await resolveUpdateTargets(user, input);
   if (devices.length === 0) throw ApiError.badRequest('没有匹配到任何客户端设备');
 
   const results: ClientTargetResult[] = [];
   for (const device of devices) {
     await prisma.clientDevice.update({
       where: { id: device.id },
-      data: { updateTargetVersion: target },
+      data: {
+        updateTargetVersion: target,
+        updateMode: clear ? 'idle' : input.mode,
+        updateNotBefore:
+          !clear && input.mode === 'after-school'
+            ? await afterSchoolAt(device.classId, input.afterSchoolTime)
+            : null,
+      },
     });
     results.push({ deviceId: device.id, deviceName: device.name, ok: true });
   }
@@ -373,10 +409,36 @@ export async function pushUpdate(
   return summary;
 }
 
+/** 按当前教学周、单双周与星期计算今天放学时间；未绑定班级使用明确的兜底时间。 */
+async function afterSchoolAt(classId: string | null, fallback = '17:00'): Promise<Date> {
+  const now = new Date();
+  let end = fallback;
+  if (classId) {
+    const week = resolveCurrentWeek(now, await loadTermContext(classId));
+    const last = await prisma.schedule.findFirst({
+      where: {
+        classId,
+        dayOfWeek: now.getDay() || 7,
+        weekStart: { lte: week },
+        weekEnd: { gte: week },
+        weekParity: { in: ['ALL', weekParityOf(week)] },
+      },
+      orderBy: { endTime: 'desc' },
+      select: { endTime: true },
+    });
+    if (last && last.endTime > end) end = last.endTime;
+  }
+  const [hours, minutes] = end.split(':').map(Number);
+  const at = new Date(now);
+  at.setHours(hours!, minutes!, 0, 0);
+  return at;
+}
+
 /** DELETE /api/clients/devices/:id - 移除一台设备记录（换机 / 旧机器清理） */
-export async function deleteDevice(deviceId: string): Promise<{ id: string }> {
-  const device = await prisma.clientDevice.findUnique({
-    where: { id: deviceId },
+export async function deleteDevice(user: TokenPayload, deviceId: string): Promise<{ id: string }> {
+  const scope = classScopeWhere(await resolveClassScope(user));
+  const device = await prisma.clientDevice.findFirst({
+    where: { AND: [scope, { id: deviceId }] },
     select: { id: true, name: true, deviceKey: true },
   });
   if (!device) throw ApiError.notFound('设备不存在');

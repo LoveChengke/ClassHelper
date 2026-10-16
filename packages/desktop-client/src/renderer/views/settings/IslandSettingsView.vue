@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { confirmAction } from '../../composables/confirm.js';
 import { computed, onMounted, ref } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 import {
   DEFAULT_ISLAND_APPEARANCE,
   ISLAND_APPEARANCE_RANGES as RANGES,
@@ -65,7 +66,7 @@ async function saveIslandAppearance(): Promise<void> {
 }
 
 async function resetIslandAppearance(): Promise<void> {
-  await ElMessageBox.confirm('恢复灵动岛的默认外观？', '恢复默认', { type: 'warning' });
+  if (!(await confirmAction('恢复灵动岛的默认外观？', '恢复默认', { type: 'warning' }))) return;
   applyIslandAppearance({ ...DEFAULT_ISLAND_APPEARANCE });
   await saveIslandAppearance();
 }

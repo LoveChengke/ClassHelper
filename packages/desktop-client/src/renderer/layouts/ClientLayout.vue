@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import { confirmAction } from '../composables/confirm.js';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElMessage, ElMessageBox, type MenuInstance } from 'element-plus';
+import { ElMessage, type MenuInstance } from 'element-plus';
 import { SOCKET_EVENTS, type NotificationDto } from '@classhelper/shared';
 import { startIslandBridge, stopIslandBridge } from '../island/bridge.js';
 import { useThemeReveal } from '../composables/motion.js';
@@ -354,7 +355,7 @@ const connectionText = computed(() => {
 });
 
 async function handleLogout(): Promise<void> {
-  await ElMessageBox.confirm('确认退出当前账号？离线缓存会保留。', '退出登录', { type: 'warning' });
+  if (!(await confirmAction('确认退出当前账号？离线缓存会保留。', '退出登录', { type: 'warning' }))) return;
   realtime.disconnect();
   await auth.logout();
   ElMessage.success('已退出登录');
@@ -370,6 +371,10 @@ async function handleLogout(): Promise<void> {
 function onNotification(payload: unknown): void {
   void notifications.pushRealtime(payload as NotificationDto);
 }
+function onNotificationDeleted(payload: unknown): void {
+  void notifications.removeRealtime((payload as { id: string }).id);
+  window.desktop?.islandRemoveNotification((payload as { id: string }).id);
+}
 
 /** 服务器从不可达恢复为可达：自动同步一次（联网后自动同步） */
 function onRecovered(): void {
@@ -378,9 +383,10 @@ function onRecovered(): void {
 }
 
 onMounted(async () => {
+  realtime.on(SOCKET_EVENTS.notificationNew, onNotification);
+  realtime.on(SOCKET_EVENTS.notificationDeleted, onNotificationDeleted);
   await notifications.load().catch(() => undefined);
   await notifications.refreshUnreadCount();
-  realtime.on(SOCKET_EVENTS.notificationNew, onNotification);
   appStore.onServerRecovered(onRecovered);
   // 灵动岛桥接跟着"已登录布局"的生命周期走：这样退出登录会随布局卸载而停止，
   // 重新登录（或换班登录）时又会重新启动，不会拿旧课表算上课状态。
@@ -389,6 +395,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   realtime.off(SOCKET_EVENTS.notificationNew, onNotification);
+  realtime.off(SOCKET_EVENTS.notificationDeleted, onNotificationDeleted);
   appStore.offServerRecovered(onRecovered);
   stopIslandBridge();
 });
@@ -410,7 +417,10 @@ onUnmounted(() => {
           data-test="sidebar-toggle"
           @click="ui.toggleSidebar()"
         >
-          <el-icon :size="16"><Expand v-if="ui.sidebarCollapsed" /><Fold v-else /></el-icon>
+          <el-icon :size="16">
+            <Expand v-if="ui.sidebarCollapsed" />
+            <Fold v-else />
+          </el-icon>
         </button>
         <!-- 品牌区在折叠时**不是 v-if 删掉**，而是靠 CSS 收宽度 + 淡出：
              v-if 会在动画中途把节点直接摘掉，看上去是"啪"地一跳；收放要连续就得让它们一直在。 -->
@@ -422,11 +432,7 @@ onUnmounted(() => {
            把"跟着菜单滚出视口"的底片裁掉，不让它盖到品牌区/页脚上。
            两层都 pointer-events:none —— 底片盖在菜单项上，否则会把点击吃掉。 -->
       <div class="nav-indicator-clip" :style="clipStyle" aria-hidden="true">
-        <div
-          class="nav-indicator"
-          :class="{ 'is-following': indicatorFollowing }"
-          :style="indicatorStyle"
-        />
+        <div class="nav-indicator" :class="{ 'is-following': indicatorFollowing }" :style="indicatorStyle" />
       </div>
       <el-menu
         ref="menuRef"
@@ -495,7 +501,10 @@ onUnmounted(() => {
               :aria-label="ui.theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'"
               @click="handleThemeToggle"
             >
-              <el-icon><Sunny v-if="ui.theme === 'dark'" /><Moon v-else /></el-icon>
+              <el-icon>
+                <Sunny v-if="ui.theme === 'dark'" />
+                <Moon v-else />
+              </el-icon>
             </el-button>
           </el-tooltip>
           <el-dropdown trigger="click">

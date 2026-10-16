@@ -102,7 +102,7 @@ function finish(): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') finish();
+  if (onboarding.visible && event.key === 'Escape') finish();
 }
 if (typeof window !== 'undefined') {
   window.addEventListener('keydown', onKeydown);
@@ -154,9 +154,7 @@ onUnmounted(() => {
           </div>
           <div class="onboarding-actions">
             <el-button v-if="!isFirst" data-action="prev" @click="goPrev">上一步</el-button>
-            <el-button v-if="!isLast" type="primary" data-action="next" @click="goNext">
-              下一步
-            </el-button>
+            <el-button v-if="!isLast" type="primary" data-action="next" @click="goNext">下一步</el-button>
             <el-button v-else type="primary" data-action="finish" @click="finish">开始使用</el-button>
           </div>
         </div>
@@ -250,7 +248,7 @@ onUnmounted(() => {
   margin: 0 0 8px;
   font-size: 13px;
   line-height: 1.8;
-  color: var(--ch-text-regular, #606266);
+  color: var(--ch-text-secondary);
 }
 
 .onboarding-foot {

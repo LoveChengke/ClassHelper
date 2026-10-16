@@ -219,11 +219,8 @@ model Class {
   /// 本学期教学周数（班主任可调，默认 20）：课表周次选择与 weekEnd 默认值都用它
   termWeeks    Int      @default(20)
   /// 本班学期开始日期（YYYY-MM-DD，本地日期）；留空则用全局配置（.env 的 TERM_START_DATE）。
-  /// 管理员改它会重算「当前第几周」，并随镜像课表下发给教室的 ClassIsland。
+  /// 管理员改它会重算「当前第几周」，并广播课表更新。
   termStartDate String?
-  /// 通知显示位置（由 ClassHelper 班级端在设置页里选）：
-  /// both=班级端与 ClassIsland 都弹 / client=只弹班级端 / classisland=只弹 ClassIsland
-  notificationChannel String @default("both")
   /// 是否允许 ClassHelper 班级端按学号查询本班学生的成绩明细（默认开启）。
   /// 关闭后班级端查成绩一律 403；教师端不受影响。
   studentGradeQueryEnabled Boolean @default(true)
@@ -243,8 +240,6 @@ model Class {
   grades        Grade[]
   exams         Exam[]
   timeLayouts   TimeLayout[]
-  integrationDevices IntegrationDevice[]
-  classIslandPushes  ClassIslandPush[]
   clientDevices      ClientDevice[]
 
   @@index([teacherId])
@@ -295,9 +290,6 @@ model Schedule {
   /// 单双周：ALL=每周（默认）/ ODD=单周 / EVEN=双周（ClassIsland WeekCountDiv + WeekCountDivTotal 的映射）
   weekParity String @default("ALL")
   /// 该行的来源：manual=手工建立（Web 端录入 / ClassIsland JSON 导入）
-  /// / classisland=插件上报同步得到。
-  /// 插件每次全量上报时只清理「classisland 来源且本次未再上报」的行（解决"老师在 ClassIsland
-  /// 里删掉一节、服务端却永远留着"的幽灵课），老师手排的课一律不删。
   source     String @default("manual")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -436,120 +428,9 @@ model Grade {
   @@index([courseId])
 }
 
-/// ClassIsland 联动设备（一台装有联动插件的机器 = 某个班的 ClassHelper 班级端）
-///
-/// 说明：
-/// 1) 令牌是「设备级」的，不是用户级：插件在本机保存明文，服务端只存 sha256 哈希 + 前缀提示；
-/// 2) 同一班级下按 deviceKey（机器码）唯一：插件重装后带同一 deviceKey 会自动重绑到原记录，
-///    避免设备列表里堆满重复项；
-/// 3) 状态字段是「最后一次上报的快照」，Web 端据此展示"某班现在上什么课"；
-/// 4) `lastHeartbeatAt` 每次上报都刷新（在线判定用它），`lastSeenAt` 只在**带运行状态**的
-///    上报时刷新 —— 这样"能连上但一直没上报状态"的设备不会被误判成完全正常。
-model IntegrationDevice {
-  id        String  @id @default(cuid())
-  classId   String
-  /// 设备显示名（默认取机器名）
-  name      String
-  /// 设备唯一标识（插件上报的机器码）
-  deviceKey String
-  /// 联动方式：plugin=实时插件联动 / import=仅一次性导入
-  mode      String  @default("plugin")
-  /// 是否接入（关闭后插件上报与下发一律 403）
-  enabled   Boolean @default(true)
-  /// 设备令牌的 sha256（明文只在创建/重置时返回一次）
-  tokenHash String
-  /// 令牌前缀（chci_xxxxxxxx），设备列表里用于人眼识别与排查
-  tokenHint String
-  /// 是否允许插件把 ClassIsland 的课表回传到本服务
-  ///
-  /// **默认关闭**（2026-10-06 起）：课表以服务端为准，由服务端**自动下发**到教室；
-  /// 「从教室机器取一次课表」改成 Web 端的手动动作（点击前会弹警告），
-  /// 因为自动回传会在老师手排课之后被教室的旧课表悄悄覆盖。
-  syncScheduleToServer        Boolean   @default(false)
-  /// 是否允许把本班课表镜像回 ClassIsland（由插件执行）。
-  ///
-  /// **2026-10-11 起含义收窄为"允许下发"**：不再是"自动同步的主方向" —— 插件以前每 15 秒
-  /// 上报一次、每次上报完都顺手镜像一遍（`MirrorSchedule` 开着时），教室的课表被反复重写；
-  /// 现在镜像只由 `requestMirrorSchedule` 这个一次性待办触发，这里只表示"这台设备接不接受下发"。
-  mirrorScheduleToClassIsland Boolean   @default(true)
-  /// 待办的「立即上报一次课表」请求：Web 端点「从教室机器获取课表」时置位，
-  /// 插件在下一次心跳看到它就把当前课表推上来并清除标记。
-  requestScheduleReport       Boolean   @default(false)
-  /// 待办的「立即下发一次课表」请求：Web 端点「下发课表到教室」时置位，
-  /// 插件在下一次心跳看到它就去拉本班课表并**强制替换**写进 ClassIsland，
-  /// 拉取成功即由服务端清除标记（见 `pullClassPlanForDevice`）。
-  ///
-  /// 为什么要一次性待办而不是"开关"：教室机常常离线，一个实时下发的长连接握手不值得，
-  /// 而后台定时镜像会与老师在教室本地做的调整互相打架（2026-10-11 实测：
-  /// 插件每 15 秒重写一遍课表，服务端那边看起来就是课表被反复删改）。
-  requestMirrorSchedule       Boolean   @default(false)
-  classIslandVersion String?
-  pluginVersion      String?
-  /// 最后一次**带运行状态**的上报时间
-  lastSeenAt DateTime?
-  /// 最后一次心跳时间（每次上报都刷新）；「在线」看它
-  lastHeartbeatAt DateTime?
-  /// 以下为最后一次上报的快照
-  classPlanLoaded    Boolean @default(false)
-  currentSubject     String?
-  currentTimeState   String?
-  currentPeriodStart String?
-  currentPeriodEnd   String?
-  nextSubject        String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  class  Class             @relation(fields: [classId], references: [id], onDelete: Cascade)
-  pushes ClassIslandPush[]
-
-  @@unique([classId, deviceKey])
-  @@index([classId])
-  @@index([tokenHash])
-}
-
-/// 下发给 ClassIsland 的提醒：教师发通知 → 学生机器全屏弹出。
-/// 落库是为了「设备离线时通知不丢」——插件重连后拉取未确认的一条立即弹出。
-model ClassIslandPush {
-  id       String  @id @default(cuid())
-  classId  String
-  deviceId String?
-  title    String
-  content  String
-  /// 显示时长（秒）：映射到 ClassIsland 的 NotificationContent.Duration
-  durationSeconds Int     @default(8)
-  /// 语音朗读内容；null = 不朗读
-  speechContent   String?
-  urgent          Boolean @default(false)
-  /// 提醒类型：notification=通知类 / call=叫人（叫人算「主动通知」，上课时段也立刻弹）
-  kind            String  @default("notification")
-  /// 发起人的用户 id（教师/管理员）
-  createdBy String?
-  /// 同时落库到通知中心的通知 id（saveToNotifications 时写入）
-  notificationId String?
-  /// 插件确认弹出的时间（确认后不再重复下发）
-  ackedAt   DateTime?
-  createdAt DateTime  @default(now())
-  /// 过期时间：超过后不再补发（避免学生几天后突然弹出旧提醒）
-  expiresAt DateTime
-
-  class  Class              @relation(fields: [classId], references: [id], onDelete: Cascade)
-  device IntegrationDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
-
-  @@index([classId, createdAt])
-  @@index([deviceId, ackedAt])
-}
-
-/* -------------------------------------------------------------------------- */
-/*  权限组 / 全局设置 / 客户端设备 / 远控命令 / 客户端安装包 / 大模型审计          */
-/* -------------------------------------------------------------------------- */
-
-/// 权限组：管理员自定义的一组**权限键**（`shared` 的 `PERMISSION_KEYS`），可分配给多个账号。
-///
-/// 语义（与 `packages/shared/src/permissions.ts` 的目录一一对应）：
-/// - 账号**没有**任何 `UserPermissionGroup` 时，生效集合 = 角色默认模板（`ROLE_DEFAULT_PERMISSIONS`）；
-/// - 一旦分了组，生效集合 = 这些组的键并集（可以比默认更少 ⇒ 也能用来**收回**权限）；
-/// - `ADMIN` 永远补上 `permission:manage` / `system:manage`，避免把自己锁死。
 model PermissionGroup {
+  /// 角色默认组；自定义组为空，改名不影响对应角色。
+  defaultRole String? @unique
   id          String   @id @default(cuid())
   name        String   @unique
   description String   @default("")
@@ -606,8 +487,7 @@ model AppSetting {
 ///
 /// 身份由客户端主进程生成并持久化的 `deviceKey`（UUID）标识，心跳每 30 秒一次：
 /// 服务端由此知道**每台机器在哪个班、版本多少、是否在线**，并把更新与远控
-/// 指令按「查库 + 心跳拉取」的范式下发（不新增长连接握手，照抄
-/// `IntegrationDevice.requestScheduleReport` 的做法）。
+/// 指令按「查库 + 心跳拉取」的范式下发，不新增长连接握手。
 model ClientDevice {
   id        String @id @default(cuid())
   /// 该设备当前登录的班级（未登录时为空）
@@ -624,6 +504,8 @@ model ClientDevice {
   autoUpdate Boolean @default(true)
   /// 服务端指定的目标版本（'' = 不指定，按最新版走）
   updateTargetVersion String @default("")
+  updateMode String @default("idle")
+  updateNotBefore DateTime?
   /// 已下载待安装的版本（'' = 无）
   pendingVersion String @default("")
   /// 最近一次心跳时间（**在线判定看它**）

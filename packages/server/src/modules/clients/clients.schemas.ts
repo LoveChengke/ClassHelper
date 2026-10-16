@@ -14,10 +14,12 @@ const deviceKeySchema = z.string().trim().min(8, '设备标识不合法').max(80
 
 /** `POST /api/clients/heartbeat`：客户端每 30 秒一次的上报 */
 export const clientHeartbeatSchema = z.object({
+  agentProtocol: z.number().int().min(1).max(2).optional(),
   deviceKey: deviceKeySchema,
   name: z.string().trim().max(60).optional(),
   clientVersion: z.string().trim().max(40).optional(),
   platform: z.string().trim().max(40).optional(),
+  autoUpdate: z.boolean().optional(),
   pendingVersion: z.string().trim().max(40).nullable().optional(),
   stateNote: z.string().trim().max(120).optional(),
 });
@@ -53,6 +55,11 @@ export const pushClientUpdateSchema = z.object({
   all: z.boolean().optional(),
   version: z.string().trim().max(40).nullable().optional(),
   clear: z.boolean().optional(),
+  mode: z.enum(['idle', 'immediate', 'after-school']).default('idle'),
+  afterSchoolTime: z
+    .string()
+    .regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, '放学时间应为 HH:mm')
+    .optional(),
 });
 
 export type ClientHeartbeatInput = z.infer<typeof clientHeartbeatSchema>;

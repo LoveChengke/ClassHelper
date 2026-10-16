@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
+import {
+  authenticate,
+  getAuthUser,
+  requirePermission,
+  requireStaffPermission,
+} from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -43,16 +48,13 @@ router.get('/my', async (req, res) => {
  */
 router.get(
   '/student/:studentNo',
+  requireStaffPermission('student:grade-query'),
   validate({ params: studentGradeParamSchema, query: studentGradeQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
     const { studentNo } = validatedParams<{ studentNo: string }>(req);
     const { classId } = validatedQuery<{ classId?: string }>(req);
-    sendOk(
-      res,
-      await gradeService.getStudentGradeDetail(user, studentNo, classId),
-      '获取学生成绩明细成功',
-    );
+    sendOk(res, await gradeService.getStudentGradeDetail(user, studentNo, classId), '获取学生成绩明细成功');
   },
 );
 
@@ -74,15 +76,11 @@ router.get(
  * **刻意不挂权限键**：ClassHelper 班级端要用它列出可选考试（班级端的有效权限是空集，
  * 挂 `grade:read` 会把教室机器挡在门外）。边界在 service 里：`assertClassAccess` + 班级开关。
  */
-router.get(
-  '/exams',
-  validate({ query: examListQuerySchema }),
-  async (req, res) => {
-    const user = getAuthUser(req);
-    const { classId } = validatedQuery<{ classId: string }>(req);
-    sendOk(res, await gradeService.listExams(user, classId), '获取考试列表成功');
-  },
-);
+router.get('/exams', validate({ query: examListQuerySchema }), async (req, res) => {
+  const user = getAuthUser(req);
+  const { classId } = validatedQuery<{ classId: string }>(req);
+  sendOk(res, await gradeService.listExams(user, classId), '获取考试列表成功');
+});
 
 /** PUT /api/grades/exams - 设置"这次考试是否把所有科目相加做总分排名"（教师/管理员） */
 router.put(
@@ -106,15 +104,11 @@ router.put(
  * 同样不挂权限键（班级端要看），边界在 service 里 —— 与按学号查明细共用
  * `canQueryStudentGrades`：班级端受按班开关控制，教师端不受影响。
  */
-router.get(
-  '/ranking',
-  validate({ query: examRankingQuerySchema }),
-  async (req, res) => {
-    const user = getAuthUser(req);
-    const { classId, examName } = validatedQuery<{ classId: string; examName: string }>(req);
-    sendOk(res, await gradeService.getExamRanking(user, classId, examName), '获取考试排名成功');
-  },
-);
+router.get('/ranking', validate({ query: examRankingQuerySchema }), async (req, res) => {
+  const user = getAuthUser(req);
+  const { classId, examName } = validatedQuery<{ classId: string; examName: string }>(req);
+  sendOk(res, await gradeService.getExamRanking(user, classId, examName), '获取考试排名成功');
+});
 
 /** GET /api/grades?classId=&courseId=&studentId=&examName= - 成绩列表（教师） */
 router.get(
@@ -134,14 +128,19 @@ router.get(
 );
 
 /** POST /api/grades - 录入单条成绩（仅自己任教科目） */
-router.post('/', requirePermission('grade:write'), validate({ body: createGradeSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  sendCreated(
-    res,
-    await gradeService.createGrade(user, req.body as CreateGradeInput),
-    '成绩录入成功，已实时推送',
-  );
-});
+router.post(
+  '/',
+  requirePermission('grade:write'),
+  validate({ body: createGradeSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    sendCreated(
+      res,
+      await gradeService.createGrade(user, req.body as CreateGradeInput),
+      '成绩录入成功，已实时推送',
+    );
+  },
+);
 
 /**
  * PATCH /api/grades/levels - 批量修改等级

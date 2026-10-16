@@ -7,13 +7,12 @@ description: ClassHelper的架构、接口、数据模型、权限、动效层�
 
 ClassHelper是一个 **pnpm monorepo**，一份代码产出四个交付物：
 
-| 交付物               | 位置                          | 形态                                                            |
-| -------------------- | ----------------------------- | --------------------------------------------------------------- |
-| 后端服务             | `packages/server`             | Express 5 + Prisma 7 + Socket.IO，接口前缀 `/api`               |
-| Web 管理端           | `packages/web-admin`          | Vue 3 + Vite + Element Plus（教师 / 管理员用，PWA 可安装）      |
-| 桌面客户端           | `packages/desktop-client`     | Electron + Vue 3（ClassHelper 班级端 / 教室机器，含灵动岛浮窗）             |
-| 共享契约             | `packages/shared`             | 三端共用的类型 / 常量 / 权限 / 工具函数                         |
-| ClassIsland 联动插件 | `packages/classisland-plugin` | .NET 8 / C#（**独立于 pnpm workspace**，不参与 `pnpm install`） |
+| 交付物     | 位置                      | 形态                                                            |
+| ---------- | ------------------------- | --------------------------------------------------------------- |
+| 后端服务   | `packages/server`         | Express 5 + Prisma 7 + Socket.IO，接口前缀 `/api`               |
+| Web 管理端 | `packages/web-admin`      | Vue 3 + Vite + Element Plus（教师 / 管理员用，PWA 可安装）      |
+| 桌面客户端 | `packages/desktop-client` | Electron + Vue 3（ClassHelper 班级端 / 教室机器，含灵动岛浮窗） |
+| 共享契约   | `packages/shared`         | 三端共用的类型 / 常量 / 权限 / 工具函数                         |
 
 核心链路：
 
@@ -26,7 +25,6 @@ ClassHelper是一个 **pnpm monorepo**，一份代码产出四个交付物：
         ▼
  Socket.IO ──► class:{classId} 房间 ──► 学生桌面客户端实时更新 UI（含灵动岛）
 
-ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/classisland/*（设备令牌鉴权）
                                   ▲                          │
                                   └──── 老师下发的提醒 ◄──────┘
 ```
@@ -41,7 +39,6 @@ ClassIsland（教室机器）──► 联动插件 ──► /api/integrations/
 | [数据模型](data-model.md)                    | 24 张表、迁移历史、跨库约定                      |
 | [角色与权限](permissions.md)                 | 权限矩阵与实现位置                               |
 | [动效层与主题](motion.md)                    | beUI 令牌、CSS `linear()` 弹簧、深色主题         |
-| [ClassIsland 插件](classisland-plugin.md)    | 插件契约、镜像为什么要带 `startTime`、部署与调试 |
 | [灵动岛设计令牌](winisland-design-tokens.md) | 岛逐项的几何 / 配色 / 排版 token                 |
 | [验收与测试](testing.md)                     | 五套验收脚本怎么跑、哪些用例是脆弱的             |
 | [版本迭代与发布](release.md)                 | 改版本号、出安装包、发 Release 的完整流程        |

@@ -384,7 +384,7 @@ onUnmounted(() => {
         </el-table-column>
         <el-table-column label="等级" width="80">
           <template #default="{ row }">
-            {{ gradeLevel(gradePercent(row.score, row.totalScore)) }}
+            {{ row.level || gradeLevel(gradePercent(row.score, row.totalScore)) }}
           </template>
         </el-table-column>
         <el-table-column label="发布时间" width="170">

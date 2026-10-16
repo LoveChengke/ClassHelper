@@ -70,7 +70,8 @@ const FIELDS: Record<Kind, FieldDef[]> = {
 /** 各类导入的一句话说明（弹窗顶部提示） */
 const KIND_HINTS: Record<Kind, string> = {
   grades: '按**学号**匹配本班学生；同一学生 + 科目 + 考试重复导入会覆盖旧分数。',
-  students: '按**学号**去重；只生成班级名单，**不创建任何账号**（学生没有密码、不能登录）。班级列可留空，用上一步选的班级。',
+  students:
+    '按**学号**去重；只生成班级名单，**不创建任何账号**（学生没有密码、不能登录）。班级列可留空，用上一步选的班级。',
   teachers: '按**工号**去重；工号就是登录名。',
   classTeachers:
     '导入「班级 + 科目 + 教师」的任课关系。角色填「班主任」或「科任」；' +
@@ -378,7 +379,9 @@ async function submit(): Promise<void> {
         <el-form-item v-if="usesTeacherNo" label="教师匹配">
           <el-switch v-model="useTeacherNo" />
           <div class="mode-hint">
-            打开时优先按<b>工号</b>匹配已有教师账号（匹配不到会按工号新建）；
+            打开时优先按
+            <b>工号</b>
+            匹配已有教师账号（匹配不到会按工号新建）；
             关闭时只按姓名匹配，匹配不到就报错。同一份表格里同一位老师出现多次只会有一个账号。
           </div>
         </el-form-item>
@@ -449,7 +452,7 @@ async function submit(): Promise<void> {
 }
 .required-hint {
   margin-left: 8px;
-  color: #f56c6c;
+  color: var(--el-color-danger);
   font-size: 12px;
 }
 .mode-hint {
@@ -464,13 +467,13 @@ async function submit(): Promise<void> {
   font-size: 13px;
 }
 .result-stats .ok {
-  color: #67c23a;
+  color: var(--el-color-success);
 }
 .result-stats .warn {
-  color: #e6a23c;
+  color: var(--el-color-warning);
 }
 .result-stats .bad {
-  color: #f56c6c;
+  color: var(--el-color-danger);
 }
 .mb-8 {
   margin-bottom: 8px;

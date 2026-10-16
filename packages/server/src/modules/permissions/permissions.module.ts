@@ -30,7 +30,7 @@ router.get('/me', async (req, res) => {
 
 /** GET /api/permissions/catalog - 权限键目录（权限页整棵勾选树的唯一来源） */
 router.get('/catalog', requirePermission('permission:manage'), async (_req, res) => {
-  sendOk(res, permissionService.permissionCatalog(), '获取权限目录成功');
+  sendOk(res, await permissionService.permissionCatalog(), '获取权限目录成功');
 });
 
 /** GET /api/permissions/groups - 权限组列表 */

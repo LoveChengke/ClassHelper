@@ -30,8 +30,6 @@ io(url, { auth: { token } }); // 握手阶段用 JWT 鉴权
 | `schedule:updated`                    | 服务端 → 客户端 | `{ classId, action, schedule? }`                 |
 | `class:updated`                       | 服务端 → 客户端 | `{ classId, action }`                            |
 | `call:new`                            | 服务端 → 客户端 | 叫人消息（定向到 `user:{studentId}` / 班级设备） |
-| `classisland:state`                   | 服务端 → 客户端 | `ClassIslandStateEvent`（教室现在上什么课）      |
-| `classisland:notification`            | 服务端 → 客户端 | `ClassIslandNotificationEvent`（提醒已下发）     |
 | `class:join` / `class:leave` / `ping` | 客户端 → 服务端 | 手动订阅班级（服务端二次校验权限）               |
 
 ## 房间规则
@@ -44,7 +42,7 @@ io(url, { auth: { token } }); // 握手阶段用 JWT 鉴权
 | `user:{userId}`       | 某个用户自己的连接                |
 | `teacher:{teacherId}` | 某个教师                          |
 | `role:{role}`         | 某一角色（`ADMIN` / `TEACHER` …） |
-| `students`            | 全部 ClassHelper 班级端连接                    |
+| `students`            | 全部 ClassHelper 班级端连接       |
 | `teachers`            | 全部教师端连接                    |
 
 服务端通过 `realtime/bus.ts` 的 `emitToClass` / `emitToUser` 发事件 ——

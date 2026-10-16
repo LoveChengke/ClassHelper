@@ -1,9 +1,8 @@
 /**
  * 维护脚本：给"已有数据库"补齐结构性新增列（不依赖安装程序升级）。
  *
- * 为什么需要它：安装版服务端只在**库为空**时执行随包迁移 SQL（首次启动建表）；
- * 用安装程序覆盖升级时，升级逻辑会自动补齐新迁移。若像本地联调那样**手工覆盖 dist**
- * 部署，就需要显式跑一次本脚本。
+ * 服务端启动时会自动应用完整迁移。本脚本仅用于排查旧库缺列，
+ * 不能替代正式迁移（例如移除联动表、创建权限组索引）。
  *
  * 用法（用安装目录自带的 node 即可，无需 SDK）：传入**已编译的 `lib/db.js`**，
  * 直接复用服务端自己配置好的 Prisma 客户端（Prisma 7 需要 driver adapter，不能裸 new）：
@@ -55,12 +54,6 @@ const COLUMNS = [
     column: 'level',
     sql: `ALTER TABLE "Grade" ADD COLUMN "level" TEXT NOT NULL DEFAULT ''`,
     note: '成绩等级文本（percent 下由得分率换算，可手改）',
-  },
-  {
-    table: 'IntegrationDevice',
-    column: 'lastHeartbeatAt',
-    sql: `ALTER TABLE "IntegrationDevice" ADD COLUMN "lastHeartbeatAt" DATETIME`,
-    note: 'ClassHelper 班级端最后一次心跳（在线判定看它）',
   },
   {
     table: 'User',

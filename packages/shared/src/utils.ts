@@ -99,7 +99,7 @@ export function weekParityOf(week: number): Exclude<WeekParity, 'ALL'> {
  * `WeekCountDiv <= 0` 或 `Total <= 1` 表示每周都上。
  *
  * 注意：本系统只用单双周（2 周循环），3 周及以上的循环**无法表达**，此时降级为「每周」
- * 并由调用方向用户提示（导入模块记 warning）。这里集中为一处，避免导入与插件上报各写一套。
+ * 并由调用方向用户提示（导入模块记 warning）。这里集中为一处，保持导入口径一致。
  */
 export function weekParityFromDiv(weekCountDiv: number, weekCountDivTotal: number): WeekParity {
   if (weekCountDiv <= 0 || weekCountDivTotal <= 1) return 'ALL';

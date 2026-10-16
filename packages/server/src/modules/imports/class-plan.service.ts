@@ -97,7 +97,7 @@ function normalizeTime(value: unknown): string | null {
 
 /**
  * `WeekCountDiv` / `WeekCountDivTotal` → 我们课表的 weekParity。
- * 口径集中在 `@classhelper/shared` 的 `weekParityFromDiv`（插件上报走同一份实现），
+ * 口径集中在 `@classhelper/shared` 的 `weekParityFromDiv`，
  * 这里只是本模块内的别名，保证"手动导入 JSON"与"插件实时上报"落到库里完全一致。
  */
 const resolveParity = weekParityFromDiv;
@@ -294,13 +294,14 @@ export async function importClassPlan(
 
   const classRecord = await prisma.class.findUnique({
     where: { id: input.classId },
-    select: { id: true, teacherId: true },
+    select: { id: true, teacherId: true, termWeeks: true },
   });
   if (!classRecord) throw ApiError.notFound('班级不存在');
 
-  // 时间配置（导入的时间表）里如果只有部分节次，weekEnd 用默认 20 周
+  // 导入范围与本班配置的学期长度一致。
   const weekStart = input.termStartWeek ?? 1;
-  const weekEnd = 20;
+  const weekEnd = classRecord.termWeeks;
+  if (weekStart > weekEnd) throw ApiError.badRequest('导入起始周不能超出本班学期周数');
 
   const result = await prisma.$transaction(async (tx) => {
     // 1) 补建缺失课程（用班主任作为课程任课老师）

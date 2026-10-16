@@ -1,4 +1,4 @@
-import { SOCKET_EVENTS, buildCallTitle, type NotificationDto } from '@classhelper/shared';
+import { SOCKET_EVENTS, buildCallTitle, dayKeyLocal, type NotificationDto } from '@classhelper/shared';
 import { assertCanPublishNotification } from '../../lib/access.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
@@ -6,7 +6,6 @@ import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
 import { toNotificationDto } from '../../lib/mappers.js';
 import { emitToClass, emitToSession } from '../../realtime/bus.js';
-import { pushToClassIsland, shouldPushToClassIsland } from '../integrations/integrations.service.js';
 import type { CreateCallInput } from './calls.schemas.js';
 
 const creatorSelect = { select: { id: true, name: true, username: true } } as const;
@@ -55,6 +54,7 @@ export async function createCall(user: TokenPayload, input: CreateCallInput): Pr
       // （不会触发上课时段 409 拦截，但客户端按普通通知排队处理）
       priority: input.urgent ? 'URGENT' : 'HIGH',
       createdBy: user.sub,
+      assignDate: dayKeyLocal(new Date()),
     },
     include: { creator: creatorSelect, reads: true },
   });
@@ -64,26 +64,6 @@ export async function createCall(user: TokenPayload, input: CreateCallInput): Pr
   emitToClass(created.classId, SOCKET_EVENTS.notificationNew, dto);
   // 定向广播给教室机器：会话房间以**班级 id** 为键，叫人消息因此立即展开
   emitToSession(created.classId, SOCKET_EVENTS.callNew, dto);
-
-  // 叫人同样推到教室的 ClassIsland：老师点名时，教室大屏也弹一条（学生姓名在标题里）。
-  // 显示位置由班级端决定；推送失败不影响叫人本身。
-  try {
-    if (await shouldPushToClassIsland(input.classId)) {
-      await pushToClassIsland({
-        classId: input.classId,
-        title: created.title,
-        content: created.content,
-        urgent: input.urgent === true,
-        // 叫人属于「主动通知」：教室的 ClassIsland 上课时段也要立刻弹
-        kind: 'call',
-        createdBy: user.sub,
-        notificationId: created.id,
-        teacherName,
-      });
-    }
-  } catch (error) {
-    logger.warn(`叫人推送 ClassIsland 失败（叫人本身已发出）：${String(error)}`);
-  }
 
   logger.info(`${input.urgent ? '紧急叫人' : '叫人'}：${teacherName} → ${studentName}（${message}）`);
   return dto;

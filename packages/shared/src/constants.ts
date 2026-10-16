@@ -34,8 +34,6 @@ export const API_PATHS = {
   archives: '/archives',
   /** 学期周次：逐周日期区间、按开学日期自动生成、联网拉取调休建议（仅管理员） */
   term: '/term',
-  /** ClassIsland 联动：设备接入、状态上报、通知下发 / ClassHelper 班级端在线状态 */
-  integrations: '/integrations',
   /** 数据库管理（仅管理员）：状态/备份/导入导出/一键切换 */
   database: '/database',
   /** 更新检查：Web 端经服务端转发查 GitHub 上的最新 Release（浏览器受 CSP 限制不能直连） */
@@ -89,12 +87,7 @@ export const CLASS_TEACHER_ROLE_LABELS: Record<ClassTeacherRole, string> = {
 
 /* ------------------------------------------------------------------ 学生名单 */
 
-export const STUDENT_STATUSES: readonly StudentStatus[] = [
-  'active',
-  'graduated',
-  'transferred',
-  'inactive',
-];
+export const STUDENT_STATUSES: readonly StudentStatus[] = ['active', 'graduated', 'transferred', 'inactive'];
 
 export const STUDENT_STATUS_LABELS: Record<StudentStatus, string> = {
   active: '在读',
@@ -488,6 +481,7 @@ export const DEFAULT_WEEK_COUNT = 20;
 /** WebSocket 事件名（服务端广播 / 客户端监听保持一致） */
 export const SOCKET_EVENTS = {
   notificationNew: 'notification:new',
+  notificationDeleted: 'notification:deleted',
   homeworkNew: 'homework:new',
   homeworkUpdated: 'homework:updated',
   homeworkStatus: 'homework:status',
@@ -496,17 +490,10 @@ export const SOCKET_EVENTS = {
   classUpdated: 'class:updated',
   /** "叫人"：老师点名让某位同学去找他（定向到 user:{studentId} 房间） */
   callNew: 'call:new',
-  /** ClassIsland 联动：设备状态上报（Web 端实时展示当前课程） */
-  classislandState: 'classisland:state',
-  /** ClassIsland 联动：教师发起的提醒已下发（插件据此全屏弹出） */
-  classislandNotification: 'classisland:notification',
   connected: 'connected',
 } as const;
 
-/** ClassIsland 联动：设备接入令牌的前缀（便于识别与日志排查） */
-export const CLASSISLAND_DEVICE_TOKEN_PREFIX = 'chci_';
-
-/** ClassIsland 联动：ClassIsland 的时间点类型（与 TimeLayoutItem.TimeType 一致） */
+/** ClassIsland JSON 导入：时间点类型（与 TimeLayoutItem.TimeType 一致） */
 export const CLASSISLAND_TIME_TYPES = {
   class: 0,
   break: 1,
@@ -525,38 +512,6 @@ export const CLASSISLAND_TIME_TYPE_LABELS: Record<number, string> = {
   3: '行动',
 };
 
-/** ClassIsland TimeState 字符串 -> 中文（插件上报 → Web 端展示） */
-export const CLASSISLAND_TIME_STATE_LABELS: Record<string, string> = {
-  None: '空闲',
-  OnClass: '上课中',
-  PrepareOnClass: '预备铃',
-  Breaking: '课间休息',
-  AfterSchool: '已放学',
-};
-
-/**
- * 通知的显示位置（由**教室的班级客户端**在设置页里选，存在班级上）。
- *
- * - `both`：ClassHelper 客户端弹（弹窗 + 灵动岛），同时推给教室的 ClassIsland；
- * - `client`：只在 ClassHelper 客户端弹，不打扰 ClassIsland；
- * - `classisland`：只在 ClassIsland 上弹（客户端只进通知中心，不弹窗、不上岛）。
- */
-export const CLASSISLAND_NOTIFICATION_CHANNELS = ['both', 'client', 'classisland'] as const;
-
-export const CLASSISLAND_NOTIFICATION_CHANNEL_LABELS: Record<string, string> = {
-  both: '两者都弹',
-  client: '灵动岛（ClassHelper 客户端）',
-  classisland: 'ClassIsland',
-};
-
-export const CLASSISLAND_NOTIFICATION_CHANNEL_HINTS: Record<string, string> = {
-  both: '灵动岛与 ClassIsland 都会提醒老师发的内容（默认）',
-  client: '只在 ClassHelper 客户端的灵动岛提醒，不推送到 ClassIsland',
-  classisland: '只推送到 ClassIsland 全屏提醒，灵动岛不弹（通知中心仍留记录）',
-};
-
-/** 默认显示位置：两端都弹 */
-export const DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL = 'both';
 /**
  * 作业录入的默认快捷短语（客户端「设置 → 作业录入」可增删）。
  *
@@ -581,10 +536,6 @@ export const HOMEWORK_PHRASE_MAX_LENGTH = 20;
 
 /** 快捷短语最多几条 */
 export const HOMEWORK_PHRASE_MAX_COUNT = 24;
-
-/** 默认提醒显示时长（秒），后端与插件共用同一口径 */
-export const CLASSISLAND_NOTIFICATION_DEFAULT_DURATION = 8;
-export const CLASSISLAND_NOTIFICATION_MAX_DURATION = 120;
 
 /**
  * "叫人"快捷短语（Web 管理端一键选择，ClassHelper 班级端灵动岛同步展示）。
@@ -677,7 +628,7 @@ export const UPDATE_CHECK_TIMEOUT_MS = 8_000;
  *
  * 为什么**不用 Socket.IO 事件**下发更新与远控：教室机的连接经常断（代理、休眠、重启），
  * 而「这台机器什么版本、要不要更新、有没有待执行命令」必须下次上线就能补上，
- * 所以统一用「DB 记状态 + 客户端定时拉取」的范式（与 `IntegrationDevice.requestScheduleReport` 同一套路），
+ * 所以统一用「DB 记状态 + 客户端定时拉取」的范式，
  * 不引入新的长连接握手。
  */
 export const CLIENT_HEARTBEAT_INTERVAL_MS = 30_000;

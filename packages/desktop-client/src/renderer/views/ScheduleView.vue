@@ -12,7 +12,7 @@ import {
   type ScheduleDto,
   type ScheduleWeekView,
 } from '@classhelper/shared';
-import { dashboardApi, scheduleApi } from '../api/index.js';
+import { scheduleApi } from '../api/index.js';
 import { fetchWithCache } from '../cache/index.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
@@ -172,14 +172,9 @@ function remainText(minutes: number): string {
 
 async function loadTerm(): Promise<void> {
   // 带 classId：周次上限取本班"教学周数"（班主任可调，默认 20 周）
-  const result = await fetchWithCache('classes', 'term', () => dashboardApi.term(auth.classId ?? undefined), {
-    currentWeek: 1,
-    maxWeek: 20,
-  });
-  appStore.currentWeek = result.data.currentWeek;
-  appStore.maxWeek = result.data.maxWeek;
-  weekOptions.value = buildWeekOptions(result.data.maxWeek);
-  if (!week.value || week.value === 1) week.value = result.data.currentWeek;
+  await appStore.refreshTerm(auth.classId ?? undefined);
+  weekOptions.value = buildWeekOptions(appStore.maxWeek);
+  if (!week.value || week.value === 1) week.value = appStore.currentWeek;
 }
 
 async function loadSchedules(): Promise<void> {

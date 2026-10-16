@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, requirePermission } from '../../middleware/auth.js';
+import { authenticate, requirePermission, requireAnyPermission } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -27,7 +27,7 @@ router.use(authenticate());
 /** GET /api/teachers?keyword= - 教师列表（教师管理页 + 分配协作教师时使用） */
 router.get(
   '/',
-  requirePermission('teacher:manage'),
+  requireAnyPermission('teacher:read', 'teacher:manage'),
   validate({ query: listTeachersQuerySchema }),
   async (req, res) => {
     const { keyword } = validatedQuery<{ keyword?: string }>(req);

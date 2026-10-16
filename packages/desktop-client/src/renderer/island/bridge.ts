@@ -1,3 +1,4 @@
+import { watch, type WatchStopHandle } from 'vue';
 import {
   SOCKET_EVENTS,
   resolveClassStatus,
@@ -8,6 +9,7 @@ import {
 } from '@classhelper/shared';
 import { notificationApi, scheduleApi } from '../api/index.js';
 import { fetchWithCache } from '../cache/index.js';
+import { getCacheScope } from '../cache/scope.js';
 import { clearOfflineSince, readOfflineSince, useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useNotificationStore } from '../stores/notifications.js';
@@ -30,6 +32,9 @@ let currentPeriod: ClassPeriod | null = null;
 let inClass = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
+let stopWeekWatch: WatchStopHandle | null = null;
+let scheduleRequest = 0;
+let scheduleWeek = 1;
 
 /** 供通知投递时读取：当前是否上课 + 本节课结束时间 */
 export function getIslandClassContext(): { inClass: boolean; currentPeriodEnd: string | null } {
@@ -45,21 +50,28 @@ export async function refreshIslandSchedules(): Promise<void> {
   const appStore = useAppStore();
   const auth = useAuthStore();
   if (!auth.token) return;
-
+  const scope = getCacheScope();
+  const classId = auth.classId ?? undefined;
+  await appStore.refreshTerm(classId);
+  if (scope !== getCacheScope() || !auth.token) return;
+  const request = ++scheduleRequest;
   const week = appStore.currentWeek;
   const result = await fetchWithCache<ScheduleDto[]>(
     'schedules',
     `week:${week}`,
-    () => scheduleApi.list({ classId: auth.classId ?? undefined, week }),
+    () => scheduleApi.list({ classId, week }),
     [],
   );
+  if (scope !== getCacheScope() || request !== scheduleRequest) return;
+  if (result.error && !result.updatedAt) return;
   schedules = result.data;
+  scheduleWeek = week;
   recomputeClassState(true);
 }
 
 function recomputeClassState(force = false): void {
   const appStore = useAppStore();
-  const status = resolveClassStatus(schedules, new Date(), appStore.currentWeek);
+  const status = resolveClassStatus(schedules, new Date(), scheduleWeek);
   const nextInClass = status.inClass;
   currentPeriod = status.current;
 
@@ -313,6 +325,12 @@ function onScheduleUpdated(): void {
 
 export function startIslandBridge(): void {
   if (tickTimer) return;
+  stopWeekWatch = watch(
+    () => useAppStore().currentWeek,
+    () => {
+      void refreshIslandSchedules();
+    },
+  );
 
   void refreshIslandSchedules().catch(() => undefined);
 
@@ -338,6 +356,9 @@ export function stopIslandBridge(): void {
   if (refreshTimer) clearInterval(refreshTimer);
   tickTimer = null;
   refreshTimer = null;
+  scheduleRequest += 1;
+  stopWeekWatch?.();
+  stopWeekWatch = null;
 
   useRealtimeStore().off(SOCKET_EVENTS.scheduleUpdated, onScheduleUpdated);
   schedules = [];

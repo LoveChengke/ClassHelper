@@ -41,13 +41,12 @@ export const useAuthStore = defineStore('auth', () => {
    * {@link ensurePermissions} 补上。
    */
   const permissions = ref<PermissionKey[]>([]);
-  /** 生效权限是否来自权限组（false = 没有任何组，走角色默认模板） */
+  /** 生效权限是否来自显式分组；没有显式分组时使用可编辑的角色默认组。 */
   const permissionsFromGroups = ref(false);
   const permissionsLoaded = ref(false);
 
   const isAuthenticated = computed(() => Boolean(token.value));
   const role = computed(() => user.value?.role ?? null);
-  const isStaff = computed(() => role.value === 'ADMIN' || role.value === 'TEACHER');
   const isAdmin = computed(() => role.value === 'ADMIN');
   const displayName = computed(() => user.value?.name ?? '未登录');
   const roleLabel = computed(() => (role.value ? ROLE_LABELS[role.value] : '未登录'));
@@ -55,12 +54,10 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * 是否有某个生效权限。
    *
-   * 管理员**短路为 true**：服务端 `loadEffectivePermissions` 对 ADMIN 直接给全集，
-   * 而权限是异步拉的 —— 不短路的话，管理员刚进页面时侧栏会先缺几项再补上（可见闪烁），
-   * 且 `/permissions/me` 偶发失败会把管理员挡在本来就有的功能之外。
+   * 管理员同样遵守生效集合，只保留与服务端一致的两个管理入口，避免锁死。
    */
   function can(key: PermissionKey): boolean {
-    if (isAdmin.value) return true;
+    if (isAdmin.value && (key === 'permission:manage' || key === 'system:manage')) return true;
     return hasPermission(permissions.value, key);
   }
 
@@ -144,7 +141,6 @@ export const useAuthStore = defineStore('auth', () => {
     permissionsFromGroups,
     permissionsLoaded,
     isAuthenticated,
-    isStaff,
     isAdmin,
     role,
     displayName,

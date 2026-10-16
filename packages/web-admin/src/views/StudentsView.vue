@@ -30,16 +30,19 @@ async function loadClasses(): Promise<void> {
   classes.value = await classApi.list();
 }
 
+let studentRequest = 0;
 async function loadStudents(): Promise<void> {
+  const request = ++studentRequest;
   loading.value = true;
   try {
     const params: { classId?: string; keyword?: string; status?: StudentStatus } = {};
     if (filter.classId) params.classId = filter.classId;
     if (filter.keyword.trim()) params.keyword = filter.keyword.trim();
     if (filter.status) params.status = filter.status;
-    students.value = await studentApi.list(params);
+    const list = await studentApi.list(params);
+    if (request === studentRequest) students.value = list;
   } finally {
-    loading.value = false;
+    if (request === studentRequest) loading.value = false;
   }
 }
 
@@ -263,7 +266,9 @@ async function submitCall(): Promise<void> {
       <div>
         <h2 class="page-title">学生管理</h2>
         <p class="page-subtitle">
-          学生是班级名单里的记录：<b>没有个人账号、不能登录</b>，学号是唯一标识；教室机器用班级码 + 班级密码登录
+          学生是班级名单里的记录：
+          <b>没有个人账号、不能登录</b>
+          ，学号是唯一标识；教室机器用班级码 + 班级密码登录
         </p>
       </div>
       <div class="toolbar">
@@ -316,7 +321,8 @@ async function submitCall(): Promise<void> {
               :disabled="selection.length === 0"
               @click="openTransfer(selection)"
             >
-              批量调班<span v-if="selection.length">（{{ selection.length }}）</span>
+              批量调班
+              <span v-if="selection.length">（{{ selection.length }}）</span>
             </el-button>
             <el-button
               type="danger"
@@ -325,7 +331,8 @@ async function submitCall(): Promise<void> {
               :disabled="selection.length === 0"
               @click="transferOut(selection)"
             >
-              批量转出<span v-if="selection.length">（{{ selection.length }}）</span>
+              批量转出
+              <span v-if="selection.length">（{{ selection.length }}）</span>
             </el-button>
           </div>
         </div>
@@ -340,7 +347,9 @@ async function submitCall(): Promise<void> {
         <el-table-column prop="studentNo" label="学号" width="130" />
         <el-table-column prop="name" label="姓名" width="110" />
         <el-table-column label="性别" width="80">
-          <template #default="{ row }">{{ STUDENT_GENDER_LABELS[row.gender as '' | 'MALE' | 'FEMALE'] }}</template>
+          <template #default="{ row }">
+            {{ STUDENT_GENDER_LABELS[row.gender as '' | 'MALE' | 'FEMALE'] }}
+          </template>
         </el-table-column>
         <el-table-column label="班级" width="140">
           <template #default="{ row }">
@@ -384,12 +393,21 @@ async function submitCall(): Promise<void> {
           <span>{{ transferTargets.length }} 名（{{ transferTargets.map((s) => s.name).join('、') }}）</span>
         </el-form-item>
         <el-form-item label="调入班级">
-          <el-select v-model="transferForm.toClassId" placeholder="留空 = 移出班级（未分班）" clearable style="width: 100%">
+          <el-select
+            v-model="transferForm.toClassId"
+            placeholder="留空 = 移出班级（未分班）"
+            clearable
+            style="width: 100%"
+          >
             <el-option v-for="item in classOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="备注">
-          <el-input v-model="transferForm.note" maxlength="200" placeholder="例如：按分班考试成绩调整（可选）" />
+          <el-input
+            v-model="transferForm.note"
+            maxlength="200"
+            placeholder="例如：按分班考试成绩调整（可选）"
+          />
         </el-form-item>
       </el-form>
       <template #footer>

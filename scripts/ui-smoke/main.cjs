@@ -40,8 +40,7 @@ const MENU_ITEMS = [
   { label: '作业发布', path: '/homeworks' },
   { label: '通知发布', path: '/notifications' },
   { label: '成绩录入', path: '/grades' },
-  // 2026-10-11 起「ClassIsland 联动」与「客户端设备」合并成这一项；
-  // 门控是 `classisland:notify`（默认 ADMIN + TEACHER），所以教师也看得见。
+  // 按 client:read 展示设备状态入口。
   { label: '客户端', path: '/clients' },
 ];
 
@@ -132,6 +131,55 @@ async function runAdminTeacherChecks(win) {
     while (Date.now() < closeDeadline && document.querySelector('.el-tour__mask')) await sleep(100);
     return true;
   })()`);
+
+  for (const item of [
+    { label: '学期周次', path: '/term-weeks' },
+    { label: '毕业归档', path: '/archives' },
+    { label: '权限组', path: '/permissions' },
+  ]) {
+    await win.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('.el-menu-item')).find(node => node.textContent.trim().startsWith(${JSON.stringify(item.label)}))?.click()`,
+    );
+    const ready = await waitFor(
+      win,
+      `location.pathname === ${JSON.stringify(item.path)} && Boolean(document.querySelector('.page-title'))`,
+      8000,
+    );
+    record(`管理侧栏入口：${item.label}`, ready);
+  }
+  // 客户端推送弹窗真实切换安装时机，只检查界面，不向设备发送更新。
+  await win.loadURL(`${TARGET_URL.replace(/\/$/, '')}/clients`);
+  await waitFor(
+    win,
+    `Array.from(document.querySelectorAll('button')).some(n => n.textContent.includes('一键推送更新'))`,
+    15000,
+  );
+  const updateTiming = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    Array.from(document.querySelectorAll('button')).find(n => n.textContent.includes('一键推送更新'))?.click();
+    await sleep(500);
+    const dialog = Array.from(document.querySelectorAll('.el-dialog')).find(n => n.textContent.includes('安装时机'));
+    if (!dialog) return { reason: '未找到更新弹窗' };
+    const radios = Array.from(dialog.querySelectorAll('.el-radio'));
+    const pick = label => radios.find(n => n.textContent.trim() === label);
+    const afterSchool = pick('放学后更新');
+    const initial = afterSchool?.classList.contains('is-checked');
+    pick('立即更新')?.click(); await sleep(100);
+    const immediate = pick('立即更新')?.classList.contains('is-checked');
+    afterSchool?.click(); await sleep(100);
+    const timeItem = Array.from(dialog.querySelectorAll('.el-form-item')).find(n => n.textContent.includes('最早安装时间'));
+    timeItem?.querySelector('.el-select__wrapper')?.click(); await sleep(200);
+    Array.from(document.querySelectorAll('.el-select-dropdown__item')).find(n => n.textContent.trim() === '18:00')?.click();
+    await sleep(150);
+    const time = timeItem?.textContent.includes('18:00');
+    Array.from(dialog.querySelectorAll('button')).find(n => n.textContent.trim() === '取消')?.click();
+    return { initial, immediate, time, idle: Boolean(pick('空闲时更新')) };
+  })()`);
+  record(
+    '客户端更新时机可切换立即、放学后与空闲，放学时间可设置',
+    updateTiming?.initial && updateTiming?.immediate && updateTiming?.time && updateTiming?.idle,
+    JSON.stringify(updateTiming),
+  );
 
   // 1.2) 数据库管理页（仅管理员）：点开菜单 → 状态卡与备份表渲染
   const databasePage = await win.webContents.executeJavaScript(`(async () => {
@@ -340,9 +388,17 @@ async function main() {
     width: 1440,
     height: 900,
     show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    focusable: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+      offscreen: true,
+    },
   });
 
+  win.on('show', () => record('后台验证禁止显示窗口', false, '出现 show 事件'));
+  win.on('focus', () => record('后台验证禁止抢占焦点', false, '出现 focus 事件'));
   // 把渲染进程的报错转发到控制台（兼容 Electron 新旧事件签名）
   win.webContents.on('console-message', (...args) => {
     const first = args[0];
@@ -1054,7 +1110,7 @@ async function main() {
     const listDeadline = Date.now() + 8000;
     let rowText = '';
     while (Date.now() < listDeadline) {
-      const rows = Array.from(document.querySelectorAll('.el-table__row'));
+      const rows = Array.from(document.querySelectorAll('.timetable-cell'));
       const hit = rows.find((row) => (row.textContent ?? '').includes(subjectName));
       if (hit) {
         rowText = (hit.textContent ?? '').replace(/\\s+/g, ' ').trim();
@@ -1074,7 +1130,7 @@ async function main() {
 
   // 删掉刚写入的那条课表**以及自动建出来的课程**，保持演示数据不变
   const removedUnified = await win.webContents.executeJavaScript(`(async () => {
-    const rows = Array.from(document.querySelectorAll('.el-table__row'));
+    const rows = Array.from(document.querySelectorAll('.timetable-cell'));
     const row = rows.find((item) => (item.textContent ?? '').includes(${JSON.stringify(
       unifiedSubject?.subjectName ?? '',
     )}));
@@ -1118,211 +1174,17 @@ async function main() {
       : `原因=${removedUnified?.reason ?? '-'}`,
   );
 
-  // 7.84 「客户端」页（合并了原来的「ClassIsland 联动」与「客户端设备」）：
-  //      侧栏点得进、班级卡片渲染出来、两个批量按钮在
-  const hubUi = await win.webContents.executeJavaScript(`(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  // 客户端页保留设备、远控与安装包入口；退役联动入口已移除。
+  const clientsUi = await win.webContents.executeJavaScript(`(async () => {
     const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
-      (node.textContent ?? '').trim().startsWith('客户端'),
-    );
-    if (!menu) return { ok: false, reason: '教师端看不到「客户端」入口' };
+      (node.textContent ?? '').trim().startsWith('客户端'));
+    if (!menu) return false;
     menu.click();
-    const deadline = Date.now() + 6000;
-    while (Date.now() < deadline && location.pathname !== '/clients') await sleep(80);
-    if (location.pathname !== '/clients') return { ok: false, reason: '点击后没有跳到 /clients' };
-    await sleep(1200);
-    const title = (document.querySelector('.page-title')?.textContent ?? '').trim();
-    const buttons = Array.from(document.querySelectorAll('button')).map((node) => (node.textContent ?? '').trim());
-    const cards = document.querySelectorAll('.class-card').length;
-    // 详情抽屉：点第一张卡的「详情」，抽屉里应有两条链路的表格
-    const detail = Array.from(document.querySelectorAll('.class-card .card-foot button')).find((node) =>
-      (node.textContent ?? '').trim() === '详情',
-    );
-    if (detail) {
-      detail.click();
-      await sleep(900);
-    }
-    const drawer = document.querySelector('.el-drawer');
-    const drawerText = (drawer?.textContent ?? '').trim();
-    const close = document.querySelector('.el-drawer__close-btn');
-    if (close) close.click();
-    await sleep(400);
-    return {
-      ok: true,
-      title,
-      cards,
-      hasBatchMirror: buttons.includes('批量下发课表'),
-      hasBatchUpdate: buttons.includes('批量下发更新'),
-      hasNotify: buttons.includes('下发提醒'),
-      drawerOpened: Boolean(drawer),
-      drawerHasBothSides: drawerText.includes('ClassIsland 教室端') && drawerText.includes('ClassHelper 客户端'),
-      path: location.pathname,
-    };
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    return location.pathname === '/clients' && document.body.innerText.includes('一键推送更新') &&
+      !document.body.innerText.includes('ClassIsland 联动');
   })()`);
-  record(
-    '「客户端」页（合并 ClassIsland 联动 + 客户端设备）：卡片渲染 + 批量下发 + 详情抽屉',
-    Boolean(hubUi?.ok) &&
-      hubUi?.title === '客户端' &&
-      hubUi?.cards > 0 &&
-      hubUi?.hasBatchMirror === true &&
-      hubUi?.drawerOpened === true &&
-      hubUi?.drawerHasBothSides === true,
-    `path=${hubUi?.path ?? '-'} 标题=${hubUi?.title ?? '-'} 卡片=${hubUi?.cards ?? 0} ` +
-      `批量下发课表=${hubUi?.hasBatchMirror ? '有' : '无'} 抽屉=${hubUi?.drawerOpened ? '开' : '未开'} ` +
-      `两端清单都在=${hubUi?.drawerHasBothSides ? '是' : '否'}` +
-      `${hubUi?.reason ? ` 原因=${hubUi.reason}` : ''}`,
-  );
-
-  // 7.85 ClassIsland 联动页：班主任为本班签发设备令牌 → 页面下发提醒表单可用 → 收尾删除设备
-  //      （这条链路是"老师在 Web 端发提醒 → 教室里 ClassIsland 全屏弹出"的入口，必须真实点得动）
-  //      这一页 2026-10-11 起**从侧栏摘掉**（常用动作合并进「客户端」），路由还在，
-  //      所以这里用 history 直接过去，后面几条断言仍然盯着这页本身。
-  const integrationUi = await win.webContents.executeJavaScript(`(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    history.pushState({}, '', '/integrations');
-    window.dispatchEvent(new PopStateEvent('popstate'));
-    const deadline = Date.now() + 6000;
-    while (Date.now() < deadline && location.pathname !== '/integrations') await sleep(80);
-    if (location.pathname !== '/integrations') return { ok: false, reason: '没能跳到 /integrations（旧版联动页）' };
-    await sleep(900);
-
-    const buttons = Array.from(document.querySelectorAll('button')).map((node) => (node.textContent ?? '').trim());
-    const title = (document.querySelector('.page-title')?.textContent ?? '').trim();
-
-    // 打开「下发提醒」弹窗：表单字段齐不齐
-    const notifyButton = Array.from(document.querySelectorAll('button')).find((node) =>
-      (node.textContent ?? '').trim() === '下发提醒',
-    );
-    if (!notifyButton) return { ok: false, title, reason: '页面没有「下发提醒」按钮' };
-    notifyButton.click();
-    await sleep(700);
-    const notifyDialog = Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
-      (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('下发提醒到 ClassIsland'),
-    );
-    if (!notifyDialog) return { ok: false, title, reason: '下发提醒弹窗未打开' };
-    const labels = Array.from(notifyDialog.querySelectorAll('.el-form-item__label')).map((node) =>
-      (node.textContent ?? '').trim(),
-    );
-    const submit = Array.from(notifyDialog.querySelectorAll('.el-dialog__footer button')).some(
-      (node) => (node.textContent ?? '').trim() === '立即下发',
-    );
-    const cancel = Array.from(document.querySelectorAll('.el-dialog__footer button')).find((node) =>
-      (node.textContent ?? '').trim() === '取消',
-    );
-    if (cancel) cancel.click();
-    await sleep(400);
-
-    // 打开「接入新设备」：生成令牌 → 弹窗必须给出 chci_ 明文
-    // 收尾要删掉本次新增的设备，因此先记下当前已有的 id，之后按"集合差"清理
-    const authHeaders = { authorization: 'Bearer ' + (localStorage.getItem('classhelper.token') ?? '') };
-    const before = (await (await fetch('/api/integrations/devices', { headers: authHeaders })).json()).data ?? [];
-    const beforeIds = new Set(before.map((item) => item.id));
-
-    const createButton = Array.from(document.querySelectorAll('button')).find((node) =>
-      (node.textContent ?? '').trim() === '接入新设备',
-    );
-    if (!createButton) return { ok: false, title, reason: '页面没有「接入新设备」按钮' };
-    createButton.click();
-    await sleep(600);
-    const createDialog = Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
-      (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('接入新设备'),
-    );
-    if (!createDialog) return { ok: false, title, reason: '接入新设备弹窗未打开' };
-    const classSelected = Boolean((createDialog.querySelector('.el-select')?.textContent ?? '').trim());
-
-    // 「设备名称」是 el-input，且同一弹窗里 el-select 也渲染 input，
-    // 所以必须按表单项标签定位，否则会写进班级选择框里（这正是第一次写这个用例时踩的坑）
-    const nameItem = Array.from(createDialog.querySelectorAll('.el-form-item')).find(
-      (node) => (node.querySelector('.el-form-item__label')?.textContent ?? '').trim() === '设备名称',
-    );
-    const nameInput = nameItem?.querySelector('input');
-    if (!nameInput) return { ok: false, title, reason: '「设备名称」输入框未找到' };
-    nameInput.value = 'UI 冒烟设备';
-    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
-    await sleep(200);
-    const generate = Array.from(createDialog.querySelectorAll('.el-dialog__footer button')).find((node) =>
-      (node.textContent ?? '').trim() === '生成设备令牌',
-    );
-    if (!generate) return { ok: false, title, reason: '弹窗没有「生成设备令牌」按钮' };
-    generate.click();
-
-    const tokenDeadline = Date.now() + 8000;
-    let tokenText = '';
-    while (Date.now() < tokenDeadline) {
-      const box = document.querySelector('.el-dialog textarea');
-      tokenText = (box?.value ?? '').trim();
-      if (tokenText.startsWith('chci_')) break;
-      await sleep(150);
-    }
-    const hasCopy = Array.from(document.querySelectorAll('.el-dialog__footer button')).some((node) =>
-      (node.textContent ?? '').trim() === '复制令牌',
-    );
-    const closeToken = Array.from(document.querySelectorAll('.el-dialog__footer button')).find((node) =>
-      (node.textContent ?? '').trim() === '关闭',
-    );
-    if (closeToken) closeToken.click();
-    await sleep(400);
-
-    // 用接口再确认一次"确实新建了一台设备"（界面上的令牌弹窗也可能是假象）
-    const after = (await (await fetch('/api/integrations/devices', { headers: authHeaders })).json()).data ?? [];
-    const created = after.filter((item) => !beforeIds.has(item.id));
-
-    return {
-      ok: true,
-      title,
-      hasNotify: buttons.includes('下发提醒'),
-      hasCreate: buttons.includes('接入新设备'),
-      labels,
-      submit,
-      classSelected,
-      tokenPrefixOk: tokenText.startsWith('chci_'),
-      tokenLength: tokenText.length,
-      hasCopy,
-      path: location.pathname,
-      createdCount: created.length,
-      createdName: created[0]?.name ?? '',
-      createdIds: created.map((item) => item.id),
-    };
-  })()`);
-  record(
-    'ClassHelper 联动页（教师为本班签发设备令牌 + 下发提醒表单）',
-    Boolean(integrationUi?.ok) &&
-      integrationUi?.title === 'ClassHelper 联动' &&
-      integrationUi?.hasNotify === true &&
-      integrationUi?.hasCreate === true &&
-      integrationUi?.submit === true &&
-      integrationUi?.classSelected === true &&
-      integrationUi?.tokenPrefixOk === true &&
-      integrationUi?.tokenLength > 40 &&
-      integrationUi?.hasCopy === true &&
-      integrationUi?.createdCount === 1 &&
-      integrationUi?.createdName === 'UI 冒烟设备' &&
-      ['目标班级', '标题', '内容', '显示时长', '优先级', '语音朗读', '同步通知中心'].every((label) =>
-        (integrationUi?.labels ?? []).includes(label),
-      ),
-    `path=${integrationUi?.path ?? '-'} 标题=${integrationUi?.title ?? '-'} 表单字段=[${(integrationUi?.labels ?? []).join('/')}] ` +
-      `令牌前缀=${integrationUi?.tokenPrefixOk ? 'chci_' : '(异常)'}(${integrationUi?.tokenLength ?? 0} 字符) ` +
-      `新建设备=${integrationUi?.createdCount ?? 0}台(${integrationUi?.createdName ?? '-'})` +
-      `${integrationUi?.reason ? ` 原因=${integrationUi.reason}` : ''}`,
-  );
-
-  // 收尾：把本次新建的设备按 id 删掉（演示数据里不该留下"UI 冒烟设备"）
-  const integrationCleanup = await win.webContents.executeJavaScript(`(async () => {
-    const token = localStorage.getItem('classhelper.token') ?? '';
-    const headers = { authorization: 'Bearer ' + token };
-    const ids = ${JSON.stringify(integrationUi?.createdIds ?? [])};
-    for (const id of ids) {
-      await fetch('/api/integrations/devices/' + id, { method: 'DELETE', headers });
-    }
-    const list = (await (await fetch('/api/integrations/devices', { headers })).json()).data ?? [];
-    return { ok: true, removed: ids.length, left: list.filter((item) => ids.includes(item.id)).length };
-  })()`);
-  record(
-    'ClassIsland 联动用例收尾：冒烟设备已删除（不污染演示数据）',
-    Boolean(integrationCleanup?.ok) && integrationCleanup?.left === 0,
-    `删除=${integrationCleanup?.removed ?? 0} 残留=${integrationCleanup?.left ?? '-'}` +
-      (integrationCleanup?.reason ? ` 原因=${integrationCleanup.reason}` : ''),
-  );
+  record('客户端设备页可以进入且已移除联动入口', clientsUi === true);
 
   // 7.9 管理员专属：教师录入（本轮新增「教师管理」页，仅管理员可见可用）
   await runAdminTeacherChecks(win);
@@ -1361,13 +1223,11 @@ async function captureMobileShot(win, name) {
  *   6. 弹窗宽度自适应（不超出视口且接近整屏宽）
  *   7. 工具栏控件铺满整行
  *
- * 注意：这套检查必须让窗口真正可见（showInactive）。
- * Chromium 对隐藏的页面会冻结 CSS transition，Vue 的 <Transition> 收不到
- * transitionend，抽屉会一直停在 enter-from（表现为"点了没反应"）。
+ * 使用离屏渲染并关闭后台节流，让隐藏窗口的 CSS transition 正常完成。
+ * 整套检查保持窗口隐藏、不可聚焦，不占用用户前台。
  */
 async function runMobileChecks(win) {
   const MOBILE = { width: 390, height: 844 };
-  win.showInactive();
   await sleep(500);
   win.setBounds({ ...win.getBounds(), width: MOBILE.width, height: MOBILE.height });
   await sleep(600);
@@ -1576,6 +1436,7 @@ async function runMobileChecks(win) {
 }
 
 async function finish(win) {
+  record('全程后台结束（窗口隐藏且未聚焦）', !win.isVisible() && !win.isFocused());
   const failed = results.filter((item) => !item.ok);
   const passed = results.length - failed.length;
   console.log(`\n[ui-smoke] ${passed}/${results.length} 项通过`);

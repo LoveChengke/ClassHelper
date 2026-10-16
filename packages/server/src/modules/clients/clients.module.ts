@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requireAnyPermission, requirePermission } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -30,7 +30,9 @@ router.use(authenticate());
 router.post('/heartbeat', validate({ body: clientHeartbeatSchema }), async (req, res) => {
   const user = getAuthUser(req);
   const input = validatedBody<ClientHeartbeatInput>(req);
-  sendOk(res, await clientService.heartbeat(user, input, req.ip ?? ''), '心跳已上报');
+  const result = await clientService.heartbeat(user, input, req.ip ?? '');
+  // 1.3.x 旧客户端误读顶层字段，提供兼容别名让它们仍能接收修复版更新。
+  sendOk(res, result, '心跳已上报', 200, input.agentProtocol === 2 ? {} : result);
 });
 
 /** POST /api/clients/commands/:id/ack - 执行回执（同样不挂权限键，靠 deviceKey 归属校验） */
@@ -56,18 +58,26 @@ router.post(
   async (req, res) => {
     const user = getAuthUser(req);
     const input = validatedBody<CreateClientCommandInput>(req);
-    sendCreated(res, await clientService.createCommands(user, input), '命令已下发，将在这台电脑下次心跳时送达');
+    sendCreated(
+      res,
+      await clientService.createCommands(user, input),
+      '命令已下发，将在这台电脑下次心跳时送达',
+    );
   },
 );
 
 /** GET /api/clients/devices?classId= - Web 端设备列表（版本 / 在线 / 待执行命令） */
 router.get(
   '/devices',
-  requirePermission('client:manage'),
+  requireAnyPermission('client:read', 'client:manage', 'remote:control', 'client:update-push'),
   validate({ query: listClientDevicesQuerySchema }),
   async (req, res) => {
     const query = validatedQuery<ListClientDevicesQuery>(req);
-    sendOk(res, await clientService.listDevices({ classId: query.classId }), '获取设备列表成功');
+    sendOk(
+      res,
+      await clientService.listDevices(getAuthUser(req), { classId: query.classId }),
+      '获取设备列表成功',
+    );
   },
 );
 
@@ -90,7 +100,7 @@ router.delete(
   validate({ params: idParamSchema }),
   async (req, res) => {
     const { id } = validatedParams<{ id: string }>(req);
-    sendOk(res, await clientService.deleteDevice(id), '设备已移除');
+    sendOk(res, await clientService.deleteDevice(getAuthUser(req), id), '设备已移除');
   },
 );
 

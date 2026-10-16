@@ -143,6 +143,8 @@ const INTENT_LABELS: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
+  interpreted: '已解析，待人工确认',
+  unrecognized: '未识别出可用动作',
   pending: '已解析',
   confirmed: '已发布',
   cancelled: '已放弃',
@@ -246,7 +248,11 @@ onMounted(async () => {
     <el-tabs v-model="activeTab" class="settings-tabs">
       <el-tab-pane label="模型配置" name="model">
         <el-card v-loading="loading" shadow="never">
-          <el-form :model="form" :label-width="isMobile ? undefined : '132px'" :label-position="isMobile ? 'top' : 'right'">
+          <el-form
+            :model="form"
+            :label-width="isMobile ? undefined : '132px'"
+            :label-position="isMobile ? 'top' : 'right'"
+          >
             <el-form-item label="启用助手">
               <el-switch v-model="form.enabled" data-test="ai-enabled" />
               <span class="field-hint">关闭后教师在「AI 助手」页会看到"还没启用"的空态</span>
@@ -262,11 +268,19 @@ onMounted(async () => {
 
             <template v-if="form.provider === 'openai'">
               <el-form-item label="服务地址">
-                <el-input v-model="form.baseUrl" placeholder="https://api.openai.com/v1" class="field-input" />
+                <el-input
+                  v-model="form.baseUrl"
+                  placeholder="https://api.openai.com/v1"
+                  class="field-input"
+                />
               </el-form-item>
 
               <el-form-item label="模型名">
-                <el-input v-model="form.model" placeholder="gpt-4o-mini（留空即用默认）" class="field-input" />
+                <el-input
+                  v-model="form.model"
+                  placeholder="gpt-4o-mini（留空即用默认）"
+                  class="field-input"
+                />
               </el-form-item>
 
               <el-form-item label="API 密钥">
@@ -276,7 +290,9 @@ onMounted(async () => {
                     type="password"
                     show-password
                     class="field-input"
-                    :placeholder="hasApiKey ? `已配置（尾号 ${keyHint}），留空表示不修改` : '粘贴密钥，保存后不再显示'"
+                    :placeholder="
+                      hasApiKey ? `已配置（尾号 ${keyHint}），留空表示不修改` : '粘贴密钥，保存后不再显示'
+                    "
                   />
                   <el-button v-if="hasApiKey" :loading="clearingKey" @click="clearApiKey">清除密钥</el-button>
                 </div>
@@ -366,15 +382,21 @@ onMounted(async () => {
             <el-descriptions-item label="版本">{{ diagnostics?.version ?? '—' }}</el-descriptions-item>
             <el-descriptions-item label="Node">{{ diagnostics?.nodeVersion ?? '—' }}</el-descriptions-item>
             <el-descriptions-item label="平台">{{ diagnostics?.platform ?? '—' }}</el-descriptions-item>
-            <el-descriptions-item label="已运行">{{ formatUptime(diagnostics?.uptimeSeconds) }}</el-descriptions-item>
-            <el-descriptions-item label="数据库">{{ diagnostics?.databaseProvider ?? '—' }}</el-descriptions-item>
+            <el-descriptions-item label="已运行">
+              {{ formatUptime(diagnostics?.uptimeSeconds) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="数据库">
+              {{ diagnostics?.databaseProvider ?? '—' }}
+            </el-descriptions-item>
             <el-descriptions-item label="在线客户端">
               {{ diagnostics?.onlineClientCount ?? '—' }}
             </el-descriptions-item>
             <el-descriptions-item label="已发布客户端版本">
               {{ diagnostics?.clientReleaseCount ?? '—' }}
             </el-descriptions-item>
-            <el-descriptions-item label="已加载模块">{{ diagnostics?.moduleCount ?? '—' }}</el-descriptions-item>
+            <el-descriptions-item label="已加载模块">
+              {{ diagnostics?.moduleCount ?? '—' }}
+            </el-descriptions-item>
             <el-descriptions-item label="服务端目录" :span="isMobile ? 1 : 2">
               <span class="cell-path">{{ diagnostics?.serverRoot ?? '—' }}</span>
             </el-descriptions-item>

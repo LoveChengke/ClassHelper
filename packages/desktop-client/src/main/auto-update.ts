@@ -4,7 +4,12 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { BrowserWindow, app } from 'electron';
-import { CLIENT_UPDATE_IDLE_MS, type ClientUpdateInfoDto } from '@classhelper/shared';
+import {
+  isNewerVersion,
+  CLIENT_UPDATE_IDLE_MS,
+  type ClientHeartbeatResponse,
+  type ClientUpdateInfoDto,
+} from '@classhelper/shared';
 import { getConfig, saveConfig } from './config.js';
 import { island } from './island.js';
 import { logger } from './logger.js';
@@ -13,15 +18,57 @@ import { logger } from './logger.js';
  * 服务端统一下发的自动更新（下载 + 空闲时静默安装）。
  *
  * 设计要点（都是"教室机器"这个使用场景逼出来的）：
- * 1. **下载随时进行、安装只在完全空闲时**：教室机的带宽与注意力都有限，上课期间重启应用是灾难，
- *    所以安装的三个必要条件缺一不可 —— 不在上课、主窗口已隐藏满 `CLIENT_UPDATE_IDLE_MS`（5 分钟）、
- *    本进程还没装过；
+ * 1. **下载随时进行，按下发策略安装**：立即安装；放学后到指定时刻且不在上课时安装；
+ *    空闲安装要求不在上课且主窗口隐藏满五分钟；
  * 2. **下完先校验 sha256**：服务端给的哈希对不上就删掉文件、记 error，**不做任何信任放行**
  *    （宁可这次更新失败，也不能把一个来源不明的 exe 装到教室里）；
- * 3. **安装脚本脱离本进程**：`start /wait` 等安装器跑完后重新拉起应用，
+ * 3. **安装脚本脱离本进程**：PowerShell 等旧进程退出、安装器完成后重新拉起应用，
  *    本进程随即走既有退出路径退出（重启应用这件事交给安装脚本，而不是自己 `relaunch`，
  *    否则会与"安装器正在覆盖自己"撞车 —— Windows 上正在运行的程序文件是删不掉的）。
  */
+
+let policy: Pick<ClientHeartbeatResponse, 'updateTargetVersion' | 'updateMode' | 'updateNotBefore'> | null =
+  null;
+function policyPath(): string {
+  return path.join(pendingUpdateDir(), 'policy.json');
+}
+function loadPolicy(): typeof policy {
+  if (policy) return policy;
+  try {
+    policy = JSON.parse(fs.readFileSync(policyPath(), 'utf8'));
+  } catch {
+    /* 尚无下发策略 */
+  }
+  return policy;
+}
+
+/** 更新包只来自专用目录；清理与执行均不得接受目录外的配置路径。 */
+function isManagedInstaller(file: string): boolean {
+  return path.dirname(path.resolve(file)) === path.resolve(pendingUpdateDir()) && /\.exe$/i.test(file);
+}
+function removeManagedInstaller(file: string): void {
+  if (!file || !isManagedInstaller(file)) return;
+  try {
+    fs.rmSync(file, { force: true });
+  } catch (error) {
+    logger.warn(`清理旧更新包失败：${String(error)}`);
+  }
+}
+
+/** 每次成功心跳先同步策略；取消或更换目标后旧包不得自行安装。 */
+export function syncUpdatePolicy(next: ClientHeartbeatResponse): void {
+  policy = {
+    updateTargetVersion: next.updateTargetVersion,
+    updateMode: next.updateMode ?? 'idle',
+    updateNotBefore: next.updateNotBefore ?? null,
+  };
+  fs.mkdirSync(pendingUpdateDir(), { recursive: true });
+  fs.writeFileSync(policyPath(), JSON.stringify(policy), 'utf8');
+  if (getConfig().pendingUpdateVersion !== (next.updateTargetVersion ?? '')) {
+    removeManagedInstaller(getConfig().pendingUpdateFile);
+    saveConfig({ pendingUpdateVersion: '', pendingUpdateFile: '' });
+  }
+}
 
 /** 单个安装包的下载超时：教室机网络慢，给足 10 分钟 */
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
@@ -77,7 +124,7 @@ export function watchMainWindow(win: BrowserWindow): void {
     mainWindowHiddenAt = null;
     if (hookedWindow === win) hookedWindow = null;
   });
-  if (win.isVisible()) mainWindowHiddenAt = null;
+  mainWindowHiddenAt = win.isVisible() ? null : Date.now();
 }
 
 /** 主窗口是否已经隐藏满 `CLIENT_UPDATE_IDLE_MS` */
@@ -187,11 +234,15 @@ export async function considerUpdate(info: ClientUpdateInfoDto, targetVersion: s
 
     await fsp.rm(target, { force: true });
     await fsp.rename(temp, target);
+    if (loadPolicy()?.updateTargetVersion !== version) {
+      removeManagedInstaller(target);
+      return;
+    }
     saveConfig({ pendingUpdateVersion: version, pendingUpdateFile: target });
     logger.info(
       `更新 ${version} 已下载并校验通过（${formatSize(fs.statSync(target).size)}，耗时 ${Math.round(
         (Date.now() - startedAt) / 1000,
-      )} 秒），将在空闲时自动安装`,
+      )} 秒），将按服务端指定的时机安装`,
     );
     await maybeInstallPendingUpdate();
   } catch (error) {
@@ -230,9 +281,8 @@ function formatSize(bytes: number): string {
 /**
  * 如果条件全部满足就装更新。
  *
- * 条件（缺一不可）：非冒烟模式 / 配置里有待安装版本 / 文件还在 / 不在上课 /
- * 主窗口已隐藏满 5 分钟 / 本进程没装过。**每次心跳后与主窗口 hide 后都会调用**，
- * 所以"老师下课关掉窗口 → 5 分钟后自动装上"就是靠这里触发的。
+ * 非冒烟模式、有有效目标与安装包且自动更新开启；其余条件按安装策略判断。
+ * 每次心跳后与主窗口隐藏后都会调用。
  */
 export async function maybeInstallPendingUpdate(): Promise<void> {
   if (installing) return;
@@ -241,21 +291,40 @@ export async function maybeInstallPendingUpdate(): Promise<void> {
   const config = getConfig();
   const version = config.pendingUpdateVersion?.trim() ?? '';
   const installer = config.pendingUpdateFile?.trim() ?? '';
-  if (!version || !installer) return;
+  if (!version || !installer || config.autoUpdate === false || !config.token) return;
+  if (!isNewerVersion(app.getVersion(), version)) {
+    removeManagedInstaller(installer);
+    saveConfig({ pendingUpdateVersion: '', pendingUpdateFile: '' });
+    return;
+  }
+  const active = loadPolicy();
+  if (!active || active.updateTargetVersion !== version) return;
+  if (active.updateMode === 'after-school') {
+    const at = Date.parse(active.updateNotBefore ?? '');
+    if (!Number.isFinite(at) || Date.now() < at) return;
+  }
   if (!fs.existsSync(installer)) {
     logger.warn(`待安装的更新 ${version} 已不存在（${installer}），清除待安装记录`);
     saveConfig({ pendingUpdateVersion: '', pendingUpdateFile: '' });
     return;
   }
-  if (island.getState().inClass) {
+  if (
+    !isManagedInstaller(installer) ||
+    path.dirname(fs.realpathSync(installer)) !== fs.realpathSync(pendingUpdateDir())
+  ) {
+    logger.error('拒绝执行更新目录之外的安装文件');
+    saveConfig({ pendingUpdateVersion: '', pendingUpdateFile: '' });
+    return;
+  }
+  if (active.updateMode !== 'immediate' && island.getState().inClass) {
     logger.info(`更新 ${version} 已就绪，但正在上课，暂不安装`);
     return;
   }
-  if (mainWindowVisible()) {
+  if (active.updateMode === 'idle' && mainWindowVisible()) {
     logger.debug(`更新 ${version} 已就绪，但主窗口可见（人正在用），暂不安装`);
     return;
   }
-  if (!mainWindowIdleLongEnough()) {
+  if (active.updateMode === 'idle' && !mainWindowIdleLongEnough()) {
     const waited = mainWindowHiddenAt === null ? 0 : Math.round((Date.now() - mainWindowHiddenAt) / 1000);
     logger.debug(
       `更新 ${version} 已就绪，但主窗口隐藏仅 ${waited} 秒` +
@@ -276,14 +345,27 @@ export async function maybeInstallPendingUpdate(): Promise<void> {
   logger.info(`开始静默安装更新 ${version}：${installer}`);
   try {
     const exe = app.getPath('exe');
-    const command = `start "" /wait "${installer}" /S && start "" "${exe}"`;
-    const child = spawn('cmd.exe', ['/c', command], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
+    const quote = (value: string): string => "'" + value.replaceAll("'", "''") + "'";
+    const script =
+      `$ErrorActionPreference = 'Stop'; Wait-Process -Id ${process.pid} -ErrorAction SilentlyContinue; ` +
+      `$installer = Start-Process -FilePath ${quote(installer)} -ArgumentList '/S','--updated','--force-run' -Wait -PassThru; ` +
+      `if ($installer.ExitCode -ne 0 -and (Test-Path -LiteralPath ${quote(exe)})) { Start-Process -FilePath ${quote(exe)} }`;
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    const child = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded],
+      {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      },
+    );
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', reject);
     });
     child.unref();
-    // 安装脚本会等安装器结束后重新拉起应用；本进程随即退出（复用既有退出路径，保证配置已落盘）
+    // 安装器从实际安装目录启动新版；免安装版的旧 exe 可能随退出消失，只在安装失败时尝试恢复它。
     if (quitHandler) {
       quitHandler();
     } else {
@@ -293,7 +375,7 @@ export async function maybeInstallPendingUpdate(): Promise<void> {
   } catch (error) {
     installing = false;
     logger.error(
-      `启动更新安装失败（将在下次空闲时重试）：${error instanceof Error ? error.message : String(error)}`,
+      `启动更新安装失败（将在下次满足安装条件时重试）：${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }

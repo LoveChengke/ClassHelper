@@ -91,7 +91,8 @@ const archivedYears = computed(() => new Set(years.value.map((item) => item.enro
 
 function openCreate(): void {
   const suggested = summary.value?.suggestedEnrollmentYears ?? [];
-  createForm.enrollmentYear = suggested.find((year) => !archivedYears.value.has(year)) ?? suggested[0] ?? createForm.enrollmentYear;
+  createForm.enrollmentYear =
+    suggested.find((year) => !archivedYears.value.has(year)) ?? createForm.enrollmentYear;
   createForm.note = '';
   createVisible.value = true;
 }
@@ -137,7 +138,8 @@ onMounted(loadYears);
         <h2 class="page-title">毕业归档</h2>
         <p class="page-subtitle">
           按年度归档毕业的班级与学生、当年转出的学生，以及毕业班级发过的作业与通知。
-          <b>归档不删数据</b>；未毕业而升级的班级不归档，数据继续沿用
+          <b>归档不删数据</b>
+          ；未毕业而升级的班级不归档，数据继续沿用
         </p>
       </div>
       <div class="toolbar">
@@ -210,7 +212,13 @@ onMounted(loadYears);
     <!-- 届别详情：班级 / 毕业生 / 转出的学生 -->
     <el-drawer v-model="detailVisible" size="68%" :title="detail ? `${detail.name} · 归档详情` : '归档详情'">
       <div v-loading="detailLoading">
-        <el-alert v-if="detail?.note" type="info" :closable="false" style="margin-bottom: 12px" :title="detail.note" />
+        <el-alert
+          v-if="detail?.note"
+          type="info"
+          :closable="false"
+          style="margin-bottom: 12px"
+          :title="detail.note"
+        />
 
         <el-tabs v-model="activeTab">
           <el-tab-pane label="班级" name="classes">
@@ -255,7 +263,12 @@ onMounted(loadYears);
           </el-tab-pane>
 
           <el-tab-pane :label="`转出学生（${detail?.transferred.length ?? 0}）`" name="transferred">
-            <el-table :data="detail?.transferred ?? []" size="small" class="mt-12" empty-text="该届没有转出的学生">
+            <el-table
+              :data="detail?.transferred ?? []"
+              size="small"
+              class="mt-12"
+              empty-text="该届没有转出的学生"
+            >
               <el-table-column prop="studentNo" label="学号" width="140" />
               <el-table-column prop="name" label="姓名" width="120" />
               <el-table-column label="转出前班级" min-width="140">
@@ -272,7 +285,11 @@ onMounted(loadYears);
     </el-drawer>
 
     <!-- 归档班级的作业与通知（只读） -->
-    <el-drawer v-model="contentVisible" size="60%" :title="content ? `${content.className} · 作业与通知` : '作业与通知'">
+    <el-drawer
+      v-model="contentVisible"
+      size="60%"
+      :title="content ? `${content.className} · 作业与通知` : '作业与通知'"
+    >
       <div v-loading="contentLoading">
         <el-tabs>
           <el-tab-pane :label="`作业（${content?.homeworks.length ?? 0}）`">
@@ -288,7 +305,12 @@ onMounted(loadYears);
             </el-table>
           </el-tab-pane>
           <el-tab-pane :label="`通知（${content?.notifications.length ?? 0}）`">
-            <el-table :data="content?.notifications ?? []" size="small" class="mt-12" empty-text="没有通知记录">
+            <el-table
+              :data="content?.notifications ?? []"
+              size="small"
+              class="mt-12"
+              empty-text="没有通知记录"
+            >
               <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
               <el-table-column prop="content" label="内容" min-width="220" show-overflow-tooltip />
               <el-table-column label="发布时间" width="170">

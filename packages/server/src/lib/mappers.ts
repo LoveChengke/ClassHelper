@@ -3,7 +3,6 @@ import type {
   ArchivedClassDto,
   ArchivedYearDto,
   ClassDto,
-  ClassIslandNotificationChannel,
   ClassTeacherBrief,
   CourseBrief,
   CourseDto,
@@ -191,8 +190,6 @@ export interface ClassLike {
   teacherId: string;
   /** 本学期教学周数（班主任可调，默认 20） */
   termWeeks?: number;
-  /** 通知显示位置：both / client / classisland（由 ClassHelper 班级端设置） */
-  notificationChannel?: string | null;
   /** 班级端按学号查成绩的开关 */
   studentGradeQueryEnabled?: boolean | null;
   /** 毕业归档所属届别；null = 在读 */
@@ -209,11 +206,6 @@ export interface ClassLike {
   };
 }
 
-/** 通知显示位置：库里存字符串，出参收敛成联合类型（非法值一律按默认 both 处理） */
-export function toNotificationChannel(value: string | null | undefined): ClassIslandNotificationChannel {
-  return value === 'client' || value === 'classisland' ? value : 'both';
-}
-
 export function toClassDto(item: ClassLike): ClassDto {
   return {
     id: item.id,
@@ -223,7 +215,6 @@ export function toClassDto(item: ClassLike): ClassDto {
     classIndex: item.classIndex ?? null,
     teacherId: item.teacherId,
     termWeeks: item.termWeeks ?? 20,
-    notificationChannel: toNotificationChannel(item.notificationChannel),
     // 默认开启：老库补列时的默认值也是 true，两边保持一致
     studentGradeQueryEnabled: item.studentGradeQueryEnabled ?? true,
     archivedYearId: item.archivedYearId ?? null,

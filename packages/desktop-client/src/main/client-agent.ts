@@ -1,17 +1,20 @@
 import { spawn } from 'node:child_process';
 import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
 import { BrowserWindow, app, dialog } from 'electron';
 import {
   CLIENT_COMMAND_LABELS,
   CLIENT_HEARTBEAT_INTERVAL_MS,
   isNewerVersion,
   type ClientCommandDto,
+  type ApiResponse,
   type ClientCommandKind,
   type ClientHeartbeatRequest,
   type ClientHeartbeatResponse,
   type ClientUpdateInfoDto,
 } from '@classhelper/shared';
-import { maybeInstallPendingUpdate, considerUpdate } from './auto-update.js';
+import { maybeInstallPendingUpdate, considerUpdate, syncUpdatePolicy } from './auto-update.js';
 import { getConfig } from './config.js';
 import { island } from './island.js';
 import { logger } from './logger.js';
@@ -21,7 +24,7 @@ import { logger } from './logger.js';
  *
  * **为什么是"客户端定时拉"而不是服务端推**：教室机的连接经常断（代理、休眠、重启），
  * 而「这台机器是什么版本、要不要更新、有没有待执行命令」必须下次上线就能补上 —— 所以统一用
- * 「服务端记状态 + 客户端定时上报」的范式（与 ClassIsland 插件的上报同一套路），不引入新的长连接握手。
+ * 「服务端记状态 + 客户端定时上报」的范式，不引入新的长连接握手。
  * 每次上报的响应里同时带回「服务端指定的目标版本 + 待执行命令」。
  *
  * 三条边界：
@@ -111,7 +114,7 @@ function isAgentSuppressed(): boolean {
  * 上报里的"这台机器现在在干什么"。
  *
  * 取值就三种（服务端设备列表直接展示这段文字）：
- * - `上课中` —— 灵动岛按渲染进程上报的课表状态判定正在上课（此时绝不安装更新）；
+ * - `上课中` —— 灵动岛按渲染进程上报的课表状态判定正在上课（延后策略此时不安装更新）；
  * - `使用中` —— 主窗口可见，人正在用；
  * - `待机` —— 窗口隐藏（最小化到托盘），机器空闲。
  */
@@ -172,10 +175,12 @@ async function beat(): Promise<void> {
   let backoff = false;
   try {
     const body: ClientHeartbeatRequest = {
+      agentProtocol: 2,
       deviceKey: config.deviceKey,
       name: os.hostname(),
       clientVersion: app.getVersion(),
       platform: `${process.platform}-${process.arch}`,
+      autoUpdate: config.autoUpdate !== false,
       pendingVersion: pendingVersionOrNull(),
       stateNote: currentStateNote(),
     };
@@ -202,7 +207,9 @@ async function beat(): Promise<void> {
       return;
     }
 
-    const payload = (await response.json()) as ClientHeartbeatResponse;
+    const envelope = (await response.json()) as ApiResponse<ClientHeartbeatResponse>;
+    if (!envelope.success || !envelope.data?.deviceId) throw new Error('心跳响应格式不正确');
+    const payload = envelope.data;
     state.lastHeartbeatAt = new Date().toISOString();
     state.lastError = '';
     state.updateTargetVersion = payload.updateTargetVersion?.trim() ?? '';
@@ -211,15 +218,19 @@ async function beat(): Promise<void> {
         `${state.updateTargetVersion ? `，服务端要求升到 ${state.updateTargetVersion}` : ''}）`,
     );
 
-    void handleCommand(payload.command);
-    await handleUpdate(payload.update, payload.updateTargetVersion);
+    void handleCommand(payload.command).catch((error) => logger.error(`远控处理失败：${String(error)}`));
+    // 下载不能阻塞心跳，否则慢速下载期间远控和在线状态都会失效。
+    syncUpdatePolicy(payload);
+    void handleUpdate(payload.update, payload.updateTargetVersion).catch((error) =>
+      logger.error(`更新处理失败：${String(error)}`),
+    );
   } catch (error) {
     // 网络错误 / 超时 / JSON 解析失败：按原节奏重试
     state.lastError = error instanceof Error ? error.message : String(error);
     logger.warn(`客户端上报失败（将于 ${HEARTBEAT_INTERVAL_TEXT} 后重试）：${state.lastError}`);
   } finally {
     state.beating = false;
-    // 每次心跳（无论成败）都顺手看一下有没有下载好的更新该装了 —— 上课/窗口可见时会自动跳过
+    // 每次心跳后检查已下载的更新是否满足安装策略。
     void maybeInstallPendingUpdate();
     scheduleNext(backoff ? UNAUTHORIZED_BACKOFF_MS : CLIENT_HEARTBEAT_INTERVAL_MS);
   }
@@ -233,14 +244,45 @@ const HEARTBEAT_INTERVAL_TEXT = `${Math.round(CLIENT_HEARTBEAT_INTERVAL_MS / 100
  * 两道护栏缺一不可（用户要求「必须二次确认」）：
  * 1. **本机二次确认**：弹一个默认选中「取消」的对话框，60 秒不确认按取消处理 ——
  *    服务端那边虽然也确认过，但真正会被关掉的机器上必须有人当场知道；
- * 2. **同一条命令只弹一次**：它随每次心跳重复下发，用内存集合去重，避免 30 秒弹一个框。
+ * 2. **同一条命令只执行一次**：等待确认时内存去重，处理结果落盘，重启后也只重试回执。
  *
  * 执行后**必须回执**（`POST /api/clients/commands/:id/ack`，body 带 deviceKey）：
  * 否则服务端那条命令会一直挂在"待执行"里，Web 端看不到结果。回执失败时把结果暂存，
  * 下一次心跳只重试回执、不重复弹窗。
  */
 const inFlightCommands = new Set<string>();
-const unackedResults = new Map<string, { ok: boolean; result: string }>();
+type CommandOutcome = { ok: boolean; result: string };
+const commandResults = new Map<string, CommandOutcome>();
+let resultsLoaded = false;
+function commandResultsPath(): string {
+  return path.join(app.getPath('userData'), 'command-results.json');
+}
+function readCommandResults(): void {
+  if (resultsLoaded) return;
+  try {
+    const entries: unknown = JSON.parse(fs.readFileSync(commandResultsPath(), 'utf8'));
+    if (Array.isArray(entries))
+      for (const entry of entries.slice(-200)) {
+        if (
+          Array.isArray(entry) &&
+          typeof entry[0] === 'string' &&
+          typeof entry[1]?.ok === 'boolean' &&
+          typeof entry[1]?.result === 'string'
+        )
+          commandResults.set(entry[0], entry[1]);
+      }
+  } catch {
+    /* 首次运行尚无记录 */
+  }
+  resultsLoaded = true;
+}
+function rememberCommand(commandId: string, outcome: CommandOutcome): void {
+  readCommandResults();
+  commandResults.set(commandId, outcome);
+  while (commandResults.size > 200) commandResults.delete(commandResults.keys().next().value!);
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(commandResultsPath(), JSON.stringify([...commandResults]), 'utf8');
+}
 
 async function handleCommand(command: ClientCommandDto | null): Promise<void> {
   if (!command) return;
@@ -255,15 +297,15 @@ async function handleCommand(command: ClientCommandDto | null): Promise<void> {
     return;
   }
 
+  // 正在确认或执行时不能用预存的中间结果抢先回执。
+  if (inFlightCommands.has(command.id)) return;
   // 处理过但回执没送达：只重试回执
-  const pending = unackedResults.get(command.id);
+  readCommandResults();
+  const pending = commandResults.get(command.id);
   if (pending) {
     await ackCommand(command.id, pending.ok, pending.result);
     return;
   }
-  // 正在等本机确认：不要再弹第二个框
-  if (inFlightCommands.has(command.id)) return;
-
   inFlightCommands.add(command.id);
   try {
     const confirmed = await confirmCommand(label, command.payload);
@@ -273,6 +315,11 @@ async function handleCommand(command: ClientCommandDto | null): Promise<void> {
       await ackCommand(command.id, false, result);
       return;
     }
+    // 注销可能立刻结束本进程，先落盘，重启后不能再次执行同一条指令。
+    rememberCommand(command.id, {
+      ok: false,
+      result: '本机已确认并提交系统执行，最终结果未回传，请核对设备状态',
+    });
     const outcome = await executeCommand(command.kind);
     logger.warn(`远控命令「${label}」执行${outcome.ok ? '成功' : '失败'}：${outcome.result}`);
     await ackCommand(command.id, outcome.ok, outcome.result);
@@ -283,8 +330,11 @@ async function handleCommand(command: ClientCommandDto | null): Promise<void> {
 
 /** 本机二次确认对话框：默认「取消」，60 秒未操作按取消处理 */
 async function confirmCommand(label: string, note: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), COMMAND_CONFIRM_TIMEOUT_MS);
   const answered = dialog
     .showMessageBox({
+      signal: controller.signal,
       type: 'warning',
       title: '来自管理员的远程指令',
       message: `管理员要求本机「${label}」`,
@@ -294,13 +344,14 @@ async function confirmCommand(label: string, note: string): Promise<boolean> {
       cancelId: 0,
       noLink: true,
     })
-    .then((result) => result.response === 1)
+    .then((result) => !controller.signal.aborted && result.response === 1)
     .catch(() => false);
 
-  return Promise.race([
-    answered,
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), COMMAND_CONFIRM_TIMEOUT_MS)),
-  ]);
+  try {
+    return await answered;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** 执行系统命令：只支持 Windows（本项目客户端只发 Windows 版） */
@@ -308,32 +359,31 @@ async function executeCommand(kind: ClientCommandKind): Promise<{ ok: boolean; r
   if (process.platform !== 'win32') return { ok: false, result: '仅支持 Windows' };
 
   const commands: Record<ClientCommandKind, { file: string; args: string[] }> = {
-    shutdown: { file: 'shutdown.exe', args: ['/s', '/t', '0'] },
-    restart: { file: 'shutdown.exe', args: ['/r', '/t', '0'] },
+    shutdown: { file: 'shutdown.exe', args: ['/s', '/t', '5'] },
+    restart: { file: 'shutdown.exe', args: ['/r', '/t', '5'] },
     logoff: { file: 'shutdown.exe', args: ['/l'] },
     lock: { file: 'rundll32.exe', args: ['user32.dll,LockWorkStation'] },
   };
   const plan = commands[kind];
 
   try {
-    // detached + unref：不能等它退出（关机/注销会把本进程一起带走）
+    // 关机/重启预留 5 秒用于回执；检查系统命令进程的真实退出码。
     const child = spawn(plan.file, plan.args, { detached: true, stdio: 'ignore', windowsHide: true });
     /**
      * **必须监听 `error` 事件**：`spawn` 找不到可执行文件（或没权限）时不是抛异常，而是在
      * next tick 上发一个 `error` 事件 —— 只包 `try/catch` 的话，这种情况会一路走到
      * `return { ok: true }`，回执写着"已下达系统命令"，Web 端看起来一切正常，机器却纹丝不动。
-     * 等一个很短的窗口（200ms）确认没有立刻报错；真执行成功时子进程本来也要跑一会儿。
+     * 同时检查非零退出码，系统拒绝指令时不能回报成功。
      */
-    const failure = await new Promise<string | null>((resolve) => {
-      child.once('error', (error) => resolve(error.message));
-      setTimeout(() => resolve(null), 200);
+    return await new Promise((resolve) => {
+      child.once('error', (error) => resolve({ ok: false, result: error.message }));
+      child.once('exit', (code) =>
+        resolve({
+          ok: code === 0,
+          result: code === 0 ? '系统已接受指令' : `系统命令执行失败（退出码 ${code ?? '未知'}）`,
+        }),
+      );
     });
-    child.unref();
-    if (failure) {
-      logger.warn(`远控命令「${CLIENT_COMMAND_LABELS[kind] ?? kind}」无法执行：${failure}`);
-      return { ok: false, result: failure };
-    }
-    return { ok: true, result: '已下达系统命令' };
   } catch (error) {
     return { ok: false, result: error instanceof Error ? error.message : String(error) };
   }
@@ -341,6 +391,7 @@ async function executeCommand(kind: ClientCommandKind): Promise<{ ok: boolean; r
 
 /** 回执：服务端用 body 里的 deviceKey 校验"这条命令是发给这台机器的" */
 async function ackCommand(commandId: string, ok: boolean, result: string): Promise<void> {
+  rememberCommand(commandId, { ok, result });
   const config = getConfig();
   if (!config.token) return;
   try {
@@ -352,16 +403,13 @@ async function ackCommand(commandId: string, ok: boolean, result: string): Promi
     });
     if (!response.ok) {
       logger.warn(`远控命令回执失败（HTTP ${response.status}），将在下次心跳重试`);
-      unackedResults.set(commandId, { ok, result });
       return;
     }
-    unackedResults.delete(commandId);
     logger.info(`远控命令回执已送达（${ok ? '成功' : '失败'}）：${result}`);
   } catch (error) {
     logger.warn(
       `远控命令回执失败（${error instanceof Error ? error.message : String(error)}），将在下次心跳重试`,
     );
-    unackedResults.set(commandId, { ok, result });
   }
 }
 

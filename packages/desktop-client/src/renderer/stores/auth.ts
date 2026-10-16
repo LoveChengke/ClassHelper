@@ -5,8 +5,9 @@ import { authApi } from '../api/index.js';
 import { setApiBaseUrl, setTokenProvider } from '../api/http.js';
 import { cacheGet, cacheSet } from '../cache/db.js';
 import { normalizeServerUrl } from '../config.js';
-
-const PROFILE_KEY = 'me';
+import { profileCacheKey, setCacheScope } from '../cache/scope.js';
+let profileKey = '';
+let sessionServer = '';
 
 /**
  * 登录态。
@@ -58,10 +59,13 @@ export const useAuthStore = defineStore('auth', () => {
     loading.value = true;
     try {
       const payload: LoginResponse = await authApi.classLogin({ code, password });
+      profileKey = profileCacheKey(normalized, code);
+      sessionServer = normalized;
+      setCacheScope(normalized, payload.user.classId ?? payload.user.id);
       applyToken(payload.token);
       user.value = payload.user;
       offlineSession.value = false;
-      await cacheSet('profile', PROFILE_KEY, user.value);
+      await cacheSet('profile', profileKey, user.value).catch(() => undefined);
       await persistSession(normalized, code, payload.token);
     } finally {
       loading.value = false;
@@ -90,8 +94,11 @@ export const useAuthStore = defineStore('auth', () => {
       }
     }
 
-    const cachedProfile = await cacheGet<SessionUser>('profile', PROFILE_KEY).catch(() => null);
+    profileKey = profileCacheKey(serverUrl, username);
+    sessionServer = serverUrl;
+    const cachedProfile = await cacheGet<SessionUser>('profile', profileKey).catch(() => null);
     if (cachedProfile) user.value = cachedProfile.value;
+    setCacheScope(serverUrl, user.value?.classId ?? user.value?.id ?? `unresolved:${username}`);
 
     // 服务器刷新放到后台，绝不阻塞启动：离线时也能立刻进入界面看缓存数据
     if (token.value) void refreshProfile();
@@ -102,11 +109,14 @@ export const useAuthStore = defineStore('auth', () => {
   /** 后台刷新个人资料；服务器不可达时保持缓存资料与离线会话标记 */
   async function refreshProfile(): Promise<void> {
     if (!token.value) return;
+    const requestedToken = token.value;
     try {
       const profile = await authApi.me();
+      if (token.value !== requestedToken) return;
       user.value = profile;
+      setCacheScope(sessionServer, profile.classId ?? profile.id);
       offlineSession.value = false;
-      await cacheSet('profile', PROFILE_KEY, profile);
+      await cacheSet('profile', profileKey, profile).catch(() => undefined);
     } catch {
       offlineSession.value = Boolean(user.value);
     }
@@ -120,6 +130,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
     applyToken(null);
     user.value = null;
+    setCacheScope('', 'anonymous');
     offlineSession.value = false;
     if (window.desktop) await window.desktop.saveConfig({ token: null });
   }

@@ -54,7 +54,12 @@ function todayDayOfWeek(now = new Date()) {
  * @returns {Promise<{token: string, classId: string, className: string, courseId: string,
  *   scheduleId: string, inClass: boolean, period: object|null}>}
  */
-export async function setupInClassProbe({ baseUrl, username = 'teacher1', password = 'teacher123' } = {}) {
+export async function setupInClassProbe({
+  baseUrl,
+  username = 'teacher1',
+  password = 'teacher123',
+  classId,
+} = {}) {
   const base = (baseUrl ?? 'http://127.0.0.1:4000').replace(/\/$/, '');
 
   const login = await call(base, '/api/auth/login', {
@@ -67,7 +72,11 @@ export async function setupInClassProbe({ baseUrl, username = 'teacher1', passwo
   }
 
   const classes = await call(base, '/api/classes', { token });
-  const targetClass = Array.isArray(classes.payload?.data) ? classes.payload.data[0] : null;
+  const targetClass = Array.isArray(classes.payload?.data)
+    ? classId
+      ? classes.payload.data.find((item) => item.id === classId)
+      : classes.payload.data[0]
+    : null;
   if (!targetClass) throw new Error('探针失败：该教师名下没有班级，无法制造上课时段');
 
   const courses = await call(base, `/api/courses?classId=${encodeURIComponent(targetClass.id)}`, {

@@ -41,8 +41,12 @@ const filter = reactive({ classId: '', priority: '', keyword: '', date: '', crea
  */
 const days = ref<NotificationDaySummary[]>([]);
 const creators = ref<NotificationCreatorSummary[]>([]);
+let archiveRequest = 0;
+let refreshRequest = 0;
+let notificationRequest = 0;
 
 async function loadArchive(): Promise<void> {
+  const request = ++archiveRequest;
   const base = {
     ...(filter.classId ? { classId: filter.classId } : {}),
     ...(filter.priority ? { priority: filter.priority } : {}),
@@ -53,13 +57,19 @@ async function loadArchive(): Promise<void> {
       .creators({ ...base, ...(filter.date ? { date: filter.date } : {}) })
       .catch(() => ({ creators: [] as NotificationCreatorSummary[] })),
   ]);
+  if (request !== archiveRequest) return;
   days.value = dayList.days;
   creators.value = creatorList.creators;
+  if (filter.createdBy && !creatorList.creators.some((item) => item.id === filter.createdBy))
+    filter.createdBy = '';
 }
 
 /** 筛选变化后统一刷新：先更新归档候选，再拉当前筛选下的列表 */
 async function refreshList(): Promise<void> {
+  const request = ++refreshRequest;
+  notificationRequest += 1;
   await loadArchive();
+  if (request !== refreshRequest) return;
   await loadNotifications();
 }
 
@@ -74,10 +84,10 @@ const isSingleClass = computed(() => Boolean(filter.classId));
  * NotificationDto 只有 readCount（已读人数），没有 unreadCount / reads，
  * 已读率的分母只能自己算，所以进入页面时按班级各取一次学生名单长度。
  */
-const classStudentCounts = ref<Record<string, number>>({});
+const classStudentCounts = ref<Record<string, number | null>>({});
 
-function classSizeOf(classId: string): number {
-  return classStudentCounts.value[classId] ?? 0;
+function classSizeOf(classId: string): number | null {
+  return classStudentCounts.value[classId] ?? null;
 }
 
 async function loadClasses(): Promise<void> {
@@ -89,14 +99,15 @@ async function loadClasses(): Promise<void> {
 async function loadClassStudentCounts(): Promise<void> {
   const entries = await Promise.all(
     classes.value.map(async (item) => {
-      const students = await classApi.students(item.id).catch(() => []);
-      return [item.id, students.length] as const;
+      const students = await classApi.students(item.id).catch(() => null);
+      return [item.id, students?.length ?? null] as const;
     }),
   );
   classStudentCounts.value = Object.fromEntries(entries);
 }
 
 async function loadNotifications(): Promise<void> {
+  const request = ++notificationRequest;
   loading.value = true;
   try {
     const params: {
@@ -111,9 +122,10 @@ async function loadNotifications(): Promise<void> {
     if (filter.keyword.trim()) params.keyword = filter.keyword.trim();
     if (filter.date) params.date = filter.date;
     if (filter.createdBy) params.createdBy = filter.createdBy;
-    notifications.value = await notificationApi.list(params);
+    const list = await notificationApi.list(params);
+    if (request === notificationRequest) notifications.value = list;
   } finally {
-    loading.value = false;
+    if (request === notificationRequest) loading.value = false;
   }
 }
 
@@ -232,29 +244,36 @@ async function openCreate(): Promise<void> {
  * 判据只留一份，别在这里再写一遍）。
  */
 
+const submitFormSaving = ref(false);
 async function submitForm(): Promise<void> {
-  const valid = await formRef.value?.validate().catch(() => false);
-  if (!valid) return;
+  if (submitFormSaving.value) return;
+  submitFormSaving.value = true;
+  try {
+    const valid = await formRef.value?.validate().catch(() => false);
+    if (!valid) return;
 
-  const classIds = [...form.classIds];
-  if (classIds.length === 0) {
-    ElMessage.warning('请至少选择一个目标班级');
-    return;
-  }
-
-  // 上课时段发布紧急通知：先查询所有目标班级的上课状态，任一命中则弹全屏二次确认（3 秒倒计时）
-  if (form.priority === 'URGENT') {
-    const hit = await findClassInSession(classIds);
-    if (hit) {
-      urgentWarning.period = hit.period;
-      urgentWarning.title = form.title.trim();
-      urgentWarning.classIds = classIds;
-      urgentWarning.visible = true;
+    const classIds = [...form.classIds];
+    if (classIds.length === 0) {
+      ElMessage.warning('请至少选择一个目标班级');
       return;
     }
-  }
 
-  await doPublish(classIds, false);
+    // 上课时段发布紧急通知：先查询所有目标班级的上课状态，任一命中则弹全屏二次确认（3 秒倒计时）
+    if (form.priority === 'URGENT') {
+      const hit = await findClassInSession(classIds);
+      if (hit) {
+        urgentWarning.period = hit.period;
+        urgentWarning.title = form.title.trim();
+        urgentWarning.classIds = classIds;
+        urgentWarning.visible = true;
+        return;
+      }
+    }
+
+    await doPublish(classIds, false);
+  } finally {
+    submitFormSaving.value = false;
+  }
 }
 
 /** 单个班级的发布失败信息（用于汇总提示） */
@@ -270,50 +289,57 @@ interface PublishFailure {
  * 真正提交：调用服务端的**批量发布**端点（`POST /api/notifications/bulk`）一次提交，
  * 服务端逐班做权限断言与上课保护，并把每个班的结果回给我们。
  *
- * 为什么不再由前端对每个班各发一次请求：N 个班就是 N 次往返，权限/上课保护/ClassIsland 推送
+ * 为什么不再由前端对每个班各发一次请求：N 个班就是 N 次往返，权限/上课保护
  * 分散在 N 个响应里，前端还得自己合并；服务端批量端点把这些收敛成一份逐班结果（见 AGENTS.md §5）。
  * confirmDuringClass 为 true 表示教师已在上课警告里确认。
  */
+const doPublishSaving = ref(false);
 async function doPublish(classIds: string[], confirmDuringClass: boolean): Promise<void> {
-  if (classIds.length === 0) return;
+  if (doPublishSaving.value) return;
+  doPublishSaving.value = true;
+  try {
+    if (classIds.length === 0) return;
 
-  const result = await notificationApi.bulkCreate({
-    classIds,
-    title: form.title.trim(),
-    content: form.content,
-    priority: form.priority,
-    ...(confirmDuringClass ? { confirmDuringClass: true } : {}),
-  });
+    const result = await notificationApi.bulkCreate({
+      classIds,
+      title: form.title.trim(),
+      content: form.content,
+      priority: form.priority,
+      ...(confirmDuringClass ? { confirmDuringClass: true } : {}),
+    });
 
-  const successCount = result.succeeded;
-  const failures: PublishFailure[] = result.results
-    .filter((item) => !item.ok)
-    .map((item) => ({
-      classId: item.classId,
-      reason: item.message ?? '发布失败',
-      urgentConflict: item.code === 'URGENT_DURING_CLASS',
-      period: ((item.details ?? {}) as { current?: ClassPeriod | null }).current ?? null,
-    }));
+    const successCount = result.succeeded;
+    const failures: PublishFailure[] = result.results
+      .filter((item) => !item.ok)
+      .map((item) => ({
+        classId: item.classId,
+        reason: item.message ?? '发布失败',
+        urgentConflict: item.code === 'URGENT_DURING_CLASS',
+        period: ((item.details ?? {}) as { current?: ClassPeriod | null }).current ?? null,
+      }));
 
-  // 兜底：并发场景下服务端仍可能拦截（例如刚好上课铃响），对这批班级重新走一次二次确认
-  const conflicted = failures.filter((item) => item.urgentConflict);
-  const pendingConfirm = !confirmDuringClass && conflicted.length > 0;
-  if (pendingConfirm) {
-    urgentWarning.period = conflicted[0]?.period ?? null;
-    urgentWarning.title = form.title.trim();
-    urgentWarning.classIds = conflicted.map((item) => item.classId);
-    urgentWarning.visible = true;
-  }
+    // 兜底：并发场景下服务端仍可能拦截（例如刚好上课铃响），对这批班级重新走一次二次确认
+    const conflicted = failures.filter((item) => item.urgentConflict);
+    const pendingConfirm = !confirmDuringClass && conflicted.length > 0;
+    if (pendingConfirm) {
+      urgentWarning.period = conflicted[0]?.period ?? null;
+      urgentWarning.title = form.title.trim();
+      urgentWarning.classIds = conflicted.map((item) => item.classId);
+      urgentWarning.visible = true;
+    }
 
-  const reported = confirmDuringClass ? failures : failures.filter((item) => !item.urgentConflict);
-  reportPublishResult(successCount, reported);
+    const reported = confirmDuringClass ? failures : failures.filter((item) => !item.urgentConflict);
+    reportPublishResult(successCount, reported);
 
-  if (successCount > 0) {
-    // 有班级发布成功：关掉弹窗并刷新列表；只有"还有班级等着二次确认"时才保留弹窗内的数据。
-    // 注意这里是 pendingConfirm 而不是 !pendingConfirm —— 写成取反会让弹窗在**发布成功后仍然开着**，
-    // 老师以为没发出去再点一次「立即发布」，同一批班级就重复收到通知（还会重复广播与推 ClassIsland）。
-    formVisible.value = pendingConfirm;
-    await refreshList();
+    if (successCount > 0) {
+      // 有班级发布成功：关掉弹窗并刷新列表；只有"还有班级等着二次确认"时才保留弹窗内的数据。
+      // 注意这里是 pendingConfirm 而不是 !pendingConfirm —— 写成取反会让弹窗在**发布成功后仍然开着**，
+      // 老师以为没发出去再点一次「立即发布」，同一批班级就重复收到通知（还会重复广播）。
+      formVisible.value = pendingConfirm;
+      await refreshList();
+    }
+  } finally {
+    doPublishSaving.value = false;
   }
 }
 
@@ -379,6 +405,7 @@ function rowClassName({ row }: { row: NotificationDto }): string {
 }
 
 onMounted(async () => {
+  realtime.on(SOCKET_EVENTS.notificationDeleted, onNotificationEvent);
   await loadClasses();
   await refreshList();
   realtime.on(SOCKET_EVENTS.notificationNew, onNotificationEvent);
@@ -390,6 +417,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  realtime.off(SOCKET_EVENTS.notificationDeleted, onNotificationEvent);
   realtime.off(SOCKET_EVENTS.notificationNew, onNotificationEvent);
 });
 </script>
@@ -516,13 +544,18 @@ onUnmounted(() => {
               <el-tag :type="(row.readCount ?? 0) > 0 ? 'success' : 'info'" size="small" effect="light">
                 {{ (row.readCount ?? 0) > 0 ? `已读 ${row.readCount} 人` : '未读' }}
               </el-tag>
-              <div class="text-muted">共 {{ classSizeOf(row.classId) }} 人</div>
+              <div class="text-muted">
+                {{
+                  classSizeOf(row.classId) === null ? '班级人数暂不可用' : `共 ${classSizeOf(row.classId)} 人`
+                }}
+              </div>
             </template>
             <!-- 跨班视图（未选具体班级）：显示已读率百分比，分母按该通知所属班级算 -->
-            <template v-else>
+            <template v-else-if="classSizeOf(row.classId) !== null">
               <el-progress :percentage="readRate(row)" :stroke-width="10" />
               <span class="text-muted">{{ row.readCount ?? 0 }}/{{ classSizeOf(row.classId) }} 人</span>
             </template>
+            <span v-else class="text-muted">已读 {{ row.readCount ?? 0 }} 人 · 班级人数暂不可用</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
@@ -564,7 +597,7 @@ onUnmounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="formVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitForm">立即发布</el-button>
+        <el-button type="primary" :loading="submitFormSaving" @click="submitForm">立即发布</el-button>
       </template>
     </el-dialog>
 

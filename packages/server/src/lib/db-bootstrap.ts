@@ -90,6 +90,23 @@ async function loadAppliedMigrations(client: {
     `CREATE TABLE IF NOT EXISTS "${MIGRATION_LEDGER}" ("name" TEXT NOT NULL PRIMARY KEY, "appliedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   );
 
+  // 开发库/源码部署由 Prisma 管理迁移；覆盖安装时接纳其已完成记录，
+  // 不能重跑已被后续迁移改过的旧 SQL（例如已移除的 User.classId 索引）。
+  const prismaLedger = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_prisma_migrations'`,
+  );
+  if (prismaLedger.length > 0) {
+    const completed = await prisma.$queryRawUnsafe<Array<{ migration_name: string }>>(
+      `SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`,
+    );
+    for (const row of completed) {
+      await client.execute({
+        sql: `INSERT OR IGNORE INTO "${MIGRATION_LEDGER}" ("name") VALUES (?)`,
+        args: [row.migration_name],
+      } as never);
+    }
+  }
+
   const rows = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
     `SELECT name FROM "${MIGRATION_LEDGER}"`,
   );

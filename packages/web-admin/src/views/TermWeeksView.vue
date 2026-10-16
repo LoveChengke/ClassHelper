@@ -16,6 +16,8 @@ import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   MAX_TERM_WEEK,
+  validateTermWeeks,
+  isDayKey,
   type ClassDto,
   type HolidaySuggestionDto,
   type TermWeekDto,
@@ -33,7 +35,9 @@ const scope = ref('');
 const weeks = ref<TermWeekDto[]>([]);
 const termStartDate = ref('');
 
-const scopeLabel = computed(() => (scope.value ? (classes.value.find((item) => item.id === scope.value)?.name ?? scope.value) : '全校默认'));
+const scopeLabel = computed(() =>
+  scope.value ? (classes.value.find((item) => item.id === scope.value)?.name ?? scope.value) : '全校默认',
+);
 
 /** 有没有改动（保存按钮的可用状态） */
 const dirty = computed(() => {
@@ -91,6 +95,13 @@ async function autoGenerate(): Promise<void> {
 }
 
 async function save(): Promise<void> {
+  if (saving.value) return;
+  const errors = validateTermWeeks(weeks.value);
+  if (!isDayKey(termStartDate.value)) errors.unshift('请填写有效的学期开始日期');
+  if (errors.length) {
+    ElMessage.warning(errors[0]!);
+    return;
+  }
   if (weeks.value.length === 0) {
     await ElMessageBox.confirm(
       '当前没有逐周区间，保存后会回到"按学期开始日期线性推算"的方式。确认继续？',
@@ -163,12 +174,19 @@ onMounted(async () => {
       <div>
         <h2 class="page-title">学期周次</h2>
         <p class="page-subtitle">
-          逐周指定实际日期区间（调休、周末补课、错峰开学都能表达）。
-          保存后会随课表<b>下发给教室的 ClassHelper 班级端</b>，让教室里的"第几周"与这里一致
+          逐周指定实际日期区间（调休、周末补课、错峰开学都能表达）。 保存后会随课表
+          <b>下发给教室的 ClassHelper 班级端</b>
+          ，让教室里的"第几周"与这里一致
         </p>
       </div>
       <div class="toolbar">
-        <el-select v-model="scope" placeholder="全校默认" clearable style="width: 200px" @change="onScopeChange">
+        <el-select
+          v-model="scope"
+          placeholder="全校默认"
+          clearable
+          style="width: 200px"
+          @change="onScopeChange"
+        >
           <el-option label="全校默认（所有班级）" value="" />
           <el-option v-for="item in classes" :key="item.id" :label="item.name" :value="item.id" />
         </el-select>
@@ -184,7 +202,7 @@ onMounted(async () => {
       <template #title>
         当前配置范围：{{ scopeLabel }} · 共 {{ weeks.length }} 周
         <span v-if="term">（当前第 {{ term.currentWeek }} 教学周，学期周数上限 {{ term.maxWeek }}）</span>
-        <span v-if="term && !term.configured"> · 尚未逐周配置，按学期开始日期线性推算</span>
+        <span v-if="term && !term.configured">· 尚未逐周配置，按学期开始日期线性推算</span>
       </template>
       <template #default>
         留空某个班时，该班使用「全校默认」。班里有特殊安排（例如整周外出实习）时，再单独为它配一遍。
@@ -201,9 +219,7 @@ onMounted(async () => {
           placeholder="第 1 教学周的周一"
           style="width: 200px"
         />
-        <el-button type="primary" plain :loading="saving" @click="autoGenerate">
-          按开学日期生成
-        </el-button>
+        <el-button type="primary" plain :loading="saving" @click="autoGenerate">按开学日期生成</el-button>
         <span class="hint">先生成一份标准学期，再把调休那几周改掉 —— 比一周周填快得多</span>
       </div>
     </el-card>
@@ -213,7 +229,13 @@ onMounted(async () => {
       <template #header>
         <span>{{ holiday.year }} 年放假安排（参考，不会自动改周次）</span>
       </template>
-      <el-tag v-for="item in holiday.holidays" :key="item.startDate" size="small" effect="plain" class="holiday-tag">
+      <el-tag
+        v-for="item in holiday.holidays"
+        :key="item.startDate"
+        size="small"
+        effect="plain"
+        class="holiday-tag"
+      >
         {{ item.name }} {{ item.startDate }}
       </el-tag>
     </el-card>
@@ -229,7 +251,13 @@ onMounted(async () => {
       <el-table :data="weeks" empty-text="还没有逐周配置，可点「按开学日期生成」" max-height="560">
         <el-table-column label="教学周" width="110">
           <template #default="{ row }">
-            <el-input-number v-model="row.weekNumber" :min="1" :max="60" size="small" controls-position="right" />
+            <el-input-number
+              v-model="row.weekNumber"
+              :min="1"
+              :max="60"
+              size="small"
+              controls-position="right"
+            />
           </template>
         </el-table-column>
         <el-table-column label="日期区间" width="320">
@@ -256,7 +284,12 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column label="备注" min-width="180">
           <template #default="{ row }">
-            <el-input v-model="row.note" size="small" maxlength="64" placeholder="例如：国庆调休、期中考试周" />
+            <el-input
+              v-model="row.note"
+              size="small"
+              maxlength="64"
+              placeholder="例如：国庆调休、期中考试周"
+            />
           </template>
         </el-table-column>
         <el-table-column label="操作" width="90">

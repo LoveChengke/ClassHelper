@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { confirmAction } from '../../composables/confirm.js';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 import {
   HOMEWORK_PHRASE_DEFAULTS,
   HOMEWORK_PHRASE_MAX_COUNT,
@@ -93,9 +94,12 @@ async function manualSync(): Promise<void> {
 }
 
 async function clearCache(): Promise<void> {
-  await ElMessageBox.confirm('清空后离线时将无法查看历史数据，确认继续？', '清空离线缓存', {
-    type: 'warning',
-  });
+  if (
+    !(await confirmAction('清空后离线时将无法查看历史数据，确认继续？', '清空离线缓存', {
+      type: 'warning',
+    }))
+  )
+    return;
   await appStore.clearCache();
   ElMessage.success('离线缓存已清空');
 }
@@ -151,7 +155,7 @@ async function removePhrase(value: string): Promise<void> {
 }
 
 async function resetPhrases(): Promise<void> {
-  await ElMessageBox.confirm('恢复为默认快捷短语？', '恢复默认', { type: 'warning' });
+  if (!(await confirmAction('恢复为默认快捷短语？', '恢复默认', { type: 'warning' }))) return;
   phrases.value = [...HOMEWORK_PHRASE_DEFAULTS];
   await savePhrases();
   ElMessage.success('已恢复默认');
@@ -192,7 +196,7 @@ const updateTargetText = computed(() => {
 const pendingUpdateText = computed(() => {
   const pending = agent.value?.pendingUpdateVersion ?? '';
   if (!pending) return '无';
-  return `${pending}（已下载，空闲时自动安装）`;
+  return `${pending}（已下载，等待按服务端指定的时机安装）`;
 });
 
 const lastErrorText = computed(() => agent.value?.lastError?.trim() || '无');

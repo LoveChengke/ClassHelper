@@ -11,11 +11,10 @@
  * - 客户端**每 30 秒**上报一次心跳（`CLIENT_HEARTBEAT_INTERVAL_MS`），本页也跟着自动刷新一次；
  * - 命令 **10 分钟**内有效（`CLIENT_COMMAND_EXPIRE_MS`），过期自动失效，
  *   所以"下发成功"不等于"已经执行"——它只是排进了队列；
- * - 更新是**客户端自己挑时机装**的：先下载校验，只在该班不上课、且客户端窗口已隐藏 5 分钟后
- *   才静默安装 —— 这正是"推送"与"立刻重启"必须分开的两个动作。
+ * - 更新先下载校验，再按服务端指定的立即 / 放学后 / 空闲五分钟策略安装。
  *
- * 权限：查看/删除 `client:manage`、更新相关 `client:update-push`、远控 `remote:control`。
- * 教师默认没有这三个键（`lib/permissions.ts` 的默认模板只给 ADMIN），所以无权限的按钮是
+ * 权限：查看 `client:read`、删除 `client:manage`、更新 `client:update-push`、远控 `remote:control`。
+ * 教师默认可以查看；删除、更新和远控默认只给管理员。无权限的按钮是
  * **禁用 + tooltip 说明**而不是直接隐藏：让老师知道"有这件事、需要权限"，而不是以为系统没有。
  */
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
@@ -29,6 +28,7 @@ import {
   compareVersions,
   normalizeVersion,
   relativeTime,
+  formatDate,
   type ClassDto,
   type ClientCommandKind,
   type ClientDeviceDto,
@@ -227,15 +227,19 @@ const updateDialog = reactive({
   version: '',
   /** 清除服务端指定的版本（回到"不要求更新"） */
   clear: false,
+  mode: 'after-school' as 'idle' | 'immediate' | 'after-school',
+  afterSchoolTime: '17:00',
   submitting: false,
 });
 
 /** 弹窗标题带上台数，确认前就能看出会影响多少台 */
 const updateScopeHint = computed(() => {
-  if (updateDialog.clear) return '将清除下列范围设备的「指定版本」，已经下载好的包不会被删。';
+  if (updateDialog.clear) return '将清除下列范围设备的「指定版本」，已下载的包保留，但不再自动安装。';
   if (updateDialog.scope === 'all') return `全部 ${devices.value.length} 台设备`;
   if (updateDialog.scope === 'class') {
-    return updateDialog.classIds.length ? `所选 ${updateDialog.classIds.length} 个班级的在线与离线设备` : '请选择班级';
+    return updateDialog.classIds.length
+      ? `所选 ${updateDialog.classIds.length} 个班级的在线与离线设备`
+      : '请选择班级';
   }
   return selectedCount.value ? `已勾选的 ${selectedCount.value} 台设备` : '请先在表格里勾选设备';
 });
@@ -247,6 +251,8 @@ const updateSubmitDisabled = computed(() => {
   if (updateDialog.scope === 'class' && updateDialog.classIds.length === 0) return true;
   if (updateDialog.scope === 'selected' && selectedCount.value === 0) return true;
   if (!updateDialog.clear && !updateDialog.version) return true;
+  if (!updateDialog.clear && updateDialog.mode === 'after-school' && !updateDialog.afterSchoolTime)
+    return true;
   return false;
 });
 
@@ -265,6 +271,7 @@ async function openReleasesIfNeeded(): Promise<void> {
   if (releasesLoaded.value) return;
   try {
     await ensureReleases();
+    if (!updateDialog.version) updateDialog.version = readyReleases.value[0]?.version ?? '';
   } catch (error) {
     // 拦截器已经为"有响应"的错误弹过一次，这里只补"连响应都没有"的那类
     toastError(error);
@@ -287,10 +294,13 @@ async function submitUpdate(): Promise<void> {
   const version = updateDialog.clear ? '' : updateDialog.version;
 
   const detail = updateDialog.clear
-    ? '清除后这些设备不再被要求升级（已经下载好的安装包不会自动删除）。'
+    ? '清除后这些设备不再被要求升级（已经下载好的包保留，但取消自动安装）。'
     : `目标版本：v${normalizeVersion(version)}。\n\n` +
-      '客户端会先下载并校验安装包；只在该班不上课、且客户端窗口已隐藏 5 分钟后才静默安装。' +
-      '推送本身不会立刻重启任何一台机器。';
+      (updateDialog.mode === 'immediate'
+        ? '下载并校验完成后立即安装并重启客户端。'
+        : updateDialog.mode === 'after-school'
+          ? `等待今天放学后安装：不早于 ${updateDialog.afterSchoolTime}，且不早于本班最后一节课结束。`
+          : '等待不上课且窗口隐藏满 5 分钟后安装。');
 
   try {
     await ElMessageBox.confirm(detail, updateDialog.clear ? '确认清除更新指定' : '确认推送更新', {
@@ -310,6 +320,8 @@ async function submitUpdate(): Promise<void> {
       ...payload,
       version: updateDialog.clear ? null : version,
       clear: updateDialog.clear,
+      mode: updateDialog.mode,
+      afterSchoolTime: updateDialog.afterSchoolTime,
     });
     updateDialog.visible = false;
     reportPushResult(updateDialog.clear ? '清除更新指定' : `推送更新 v${normalizeVersion(version)}`, result);
@@ -515,6 +527,7 @@ async function openReleasesDrawer(): Promise<void> {
   releasesDrawer.visible = true;
   try {
     await ensureReleases();
+    if (!updateDialog.version) updateDialog.version = readyReleases.value[0]?.version ?? '';
   } catch (error) {
     toastError(error);
   }
@@ -542,6 +555,7 @@ async function fetchRelease(): Promise<void> {
     ElMessage.success(`已下载并登记 v${normalizeVersion(release.version)}（${formatSize(release.size)}）`);
     releasesDrawer.fetchVersion = '';
     await ensureReleases();
+    if (!updateDialog.version) updateDialog.version = readyReleases.value[0]?.version ?? '';
   } catch (error) {
     // 服务端把"GitHub 上没有这个版本 / 下载失败"都做成了 400 + 中文说明，拦截器已经弹过一次
     toastError(error);
@@ -564,14 +578,13 @@ async function registerRelease(): Promise<void> {
   try {
     const release = await clientReleaseApi.register({
       version,
-      ...(releasesDrawer.registerFileName.trim()
-        ? { fileName: releasesDrawer.registerFileName.trim() }
-        : {}),
+      ...(releasesDrawer.registerFileName.trim() ? { fileName: releasesDrawer.registerFileName.trim() } : {}),
     });
     ElMessage.success(`已登记 v${normalizeVersion(release.version)}（${release.fileName}）`);
     releasesDrawer.registerVersion = '';
     releasesDrawer.registerFileName = '';
     await ensureReleases();
+    if (!updateDialog.version) updateDialog.version = readyReleases.value[0]?.version ?? '';
   } catch (error) {
     toastError(error);
   } finally {
@@ -685,12 +698,16 @@ const deviceEmptyText = computed(() =>
         </el-tooltip>
 
         <el-tooltip
-          :disabled="can('client:manage')"
-          content="当前账号没有「管理客户端设备」权限（client:manage）"
+          :disabled="can('client:update-push')"
+          content="当前账号没有「管理安装包」权限（client:update-push）"
           placement="top"
         >
           <span>
-            <el-button :icon="'FolderOpened'" :disabled="!can('client:manage')" @click="openReleasesDrawer">
+            <el-button
+              :icon="'FolderOpened'"
+              :disabled="!can('client:update-push')"
+              @click="openReleasesDrawer"
+            >
               安装包管理
             </el-button>
           </span>
@@ -772,6 +789,33 @@ const deviceEmptyText = computed(() =>
           </template>
         </el-table-column>
 
+        <el-table-column label="安装时机" min-width="170">
+          <template #default="{ row }">
+            {{
+              row.updateTargetVersion
+                ? { immediate: '立即更新', 'after-school': '放学后更新', idle: '空闲时更新' }[
+                    row.updateMode as 'immediate' | 'after-school' | 'idle'
+                  ]
+                : '—'
+            }}
+            <div v-if="row.updateNotBefore" class="text-muted">
+              {{ formatDate(row.updateNotBefore, true) }}
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="最近指令" min-width="200">
+          <template #default="{ row }">
+            <template v-if="row.lastCommand">
+              {{ commandLabel(row.lastCommand.kind) }}：{{
+                row.lastCommand.result ||
+                (row.lastCommand.expiresAt && Date.parse(row.lastCommand.expiresAt) < Date.now()
+                  ? '已过期（设备未回执）'
+                  : '等待设备接收或本机确认')
+              }}
+            </template>
+            <span v-else>—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="更新" min-width="150">
           <template #default="{ row }">
             <template v-if="row.pendingVersion">
@@ -854,10 +898,29 @@ const deviceEmptyText = computed(() =>
         <el-form-item label="清除服务端指定的版本">
           <el-switch v-model="updateDialog.clear" />
           <span class="text-muted client-switch-hint">
-            打开后不再要求这批设备升级（已经下载好的安装包不会自动删除）。
+            打开后不再要求这批设备升级（已经下载好的包保留，但取消自动安装）。
           </span>
         </el-form-item>
 
+        <el-form-item v-if="!updateDialog.clear" label="安装时机">
+          <el-radio-group v-model="updateDialog.mode">
+            <el-radio value="immediate">立即更新</el-radio>
+            <el-radio value="after-school">放学后更新</el-radio>
+            <el-radio value="idle">空闲时更新</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="!updateDialog.clear && updateDialog.mode === 'after-school'" label="最早安装时间">
+          <el-time-select
+            v-model="updateDialog.afterSchoolTime"
+            start="00:00"
+            end="23:45"
+            step="00:15"
+            :clearable="false"
+          />
+          <span class="text-muted">
+            按服务器今天的日期；若课表结束更晚，等待最后一节课结束。离线设备上线后补执行。
+          </span>
+        </el-form-item>
         <el-form-item v-if="!updateDialog.clear" label="目标版本">
           <el-select
             v-model="updateDialog.version"
@@ -873,10 +936,11 @@ const deviceEmptyText = computed(() =>
             />
           </el-select>
           <p v-if="readyReleases.length === 0" class="client-note text-muted">
-            服务端还没有可用的安装包，请先去「安装包管理」从 GitHub 拉取一份（由服务器代替教室下载，教室机器不需要外网）。
+            服务端还没有可用的安装包，请先去「安装包管理」从 GitHub
+            拉取一份（由服务器代替教室下载，教室机器不需要外网）。
           </p>
           <p class="client-note text-muted">
-            客户端会先下载并校验；只在该班不上课、且客户端窗口已隐藏 5 分钟后才静默安装。
+            客户端会先下载并校验，再按所选时机安装；立即更新会重启客户端，请先确认课堂使用情况。
           </p>
         </el-form-item>
 
@@ -927,7 +991,13 @@ const deviceEmptyText = computed(() =>
 
         <el-form-item label="目标设备">
           <div class="client-target-list">
-            <el-tag v-for="device in selectedDevices" :key="device.id" class="client-tag" size="small" effect="plain">
+            <el-tag
+              v-for="device in selectedDevices"
+              :key="device.id"
+              class="client-tag"
+              size="small"
+              effect="plain"
+            >
               {{ device.name }}
             </el-tag>
             <span v-if="selectedDevices.length === 0" class="text-muted">未勾选设备</span>
@@ -961,7 +1031,13 @@ const deviceEmptyText = computed(() =>
 
     <!-- ------------------------------------------------ 批量结果明细 -->
     <el-dialog v-model="resultDialog.visible" :title="resultDialog.title" :width="isMobile ? '92%' : '640px'">
-      <el-alert class="client-banner" type="warning" :closable="false" show-icon :title="resultDialog.summary" />
+      <el-alert
+        class="client-banner"
+        type="warning"
+        :closable="false"
+        show-icon
+        :title="resultDialog.summary"
+      />
       <el-table :data="resultDialog.failures" max-height="320" empty-text="没有失败项">
         <el-table-column label="设备" min-width="160">
           <template #default="{ row }">{{ failureDeviceName(row) }}</template>
@@ -976,11 +1052,7 @@ const deviceEmptyText = computed(() =>
     </el-dialog>
 
     <!-- ------------------------------------------------ 安装包管理 -->
-    <el-drawer
-      v-model="releasesDrawer.visible"
-      :size="isMobile ? '94%' : '720px'"
-      title="客户端安装包管理"
-    >
+    <el-drawer v-model="releasesDrawer.visible" :size="isMobile ? '94%' : '720px'" title="客户端安装包管理">
       <p class="client-note text-muted">
         安装包缓存在服务端上。教室机器常常没有外网，因此由服务器替教室从 GitHub 下载；
         客户端更新时也是从本服务器下载，教室机器不需要外网。
@@ -1007,7 +1079,11 @@ const deviceEmptyText = computed(() =>
           </el-button>
           <p class="client-note text-muted">
             由服务器代为下载
-            {{ releasesDrawer.fetchVersion.trim() ? clientReleaseFileName(releasesDrawer.fetchVersion) : '安装包' }}
+            {{
+              releasesDrawer.fetchVersion.trim()
+                ? clientReleaseFileName(releasesDrawer.fetchVersion)
+                : '安装包'
+            }}
             ，可能要几分钟；期间按钮会一直转圈，请不要重复点击。
           </p>
         </div>
@@ -1073,7 +1149,12 @@ const deviceEmptyText = computed(() =>
               >
                 设为更新目标
               </el-button>
-              <el-button link type="danger" :disabled="!can('client:update-push')" @click="removeRelease(row)">
+              <el-button
+                link
+                type="danger"
+                :disabled="!can('client:update-push')"
+                @click="removeRelease(row)"
+              >
                 删除
               </el-button>
             </template>

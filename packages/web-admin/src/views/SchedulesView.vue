@@ -224,41 +224,48 @@ function openEdit(item: ScheduleDto): void {
   formVisible.value = true;
 }
 
+const submitFormSaving = ref(false);
 async function submitForm(): Promise<void> {
-  const valid = await formRef.value?.validate().catch(() => false);
-  if (!valid) return;
-  if (form.startTime >= form.endTime) {
-    ElMessage.warning('结束时间必须晚于开始时间');
-    return;
-  }
+  if (submitFormSaving.value) return;
+  submitFormSaving.value = true;
+  try {
+    const valid = await formRef.value?.validate().catch(() => false);
+    if (!valid) return;
+    if (form.startTime >= form.endTime) {
+      ElMessage.warning('结束时间必须晚于开始时间');
+      return;
+    }
 
-  const courseId = await resolveCourseId();
-  if (!courseId) {
-    ElMessage.warning('请选择科目');
-    return;
-  }
+    const courseId = await resolveCourseId();
+    if (!courseId) {
+      ElMessage.warning('请选择科目');
+      return;
+    }
 
-  const payload: CreateScheduleRequest = {
-    classId: query.classId,
-    courseId,
-    dayOfWeek: Number(form.dayOfWeek),
-    startTime: form.startTime,
-    endTime: form.endTime,
-    location: form.location || null,
-    weekStart: Number(form.weekStart),
-    weekEnd: Number(form.weekEnd),
-    weekParity: form.weekParity,
-  };
+    const payload: CreateScheduleRequest = {
+      classId: query.classId,
+      courseId,
+      dayOfWeek: Number(form.dayOfWeek),
+      startTime: form.startTime,
+      endTime: form.endTime,
+      location: form.location || null,
+      weekStart: Number(form.weekStart),
+      weekEnd: Number(form.weekEnd),
+      weekParity: form.weekParity,
+    };
 
-  if (editingId.value) {
-    await scheduleApi.update(editingId.value, payload);
-    ElMessage.success('课表已更新');
-  } else {
-    await scheduleApi.create(payload);
-    ElMessage.success('课表已新增');
+    if (editingId.value) {
+      await scheduleApi.update(editingId.value, payload);
+      ElMessage.success('课表已更新');
+    } else {
+      await scheduleApi.create(payload);
+      ElMessage.success('课表已新增');
+    }
+    formVisible.value = false;
+    await Promise.all([loadCourses(), loadSchedules()]);
+  } finally {
+    submitFormSaving.value = false;
   }
-  formVisible.value = false;
-  await Promise.all([loadCourses(), loadSchedules()]);
 }
 
 async function removeSchedule(item: ScheduleDto): Promise<void> {
@@ -446,7 +453,7 @@ onUnmounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="formVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitForm">保存</el-button>
+        <el-button type="primary" :loading="submitFormSaving" @click="submitForm">保存</el-button>
       </template>
     </el-dialog>
 

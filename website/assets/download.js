@@ -18,7 +18,7 @@
  *
  *   版本分段控件 → 一行状态 → 「装什么」分段控件 → 卡片（图标 / 名称 / 系统要求 / 主按钮 + 变体下拉）
  *
- * 默认停在**客户端**（进来最先要的多半是它），服务端与插件各是一个可切换的分组。
+ * 默认停在**客户端**（进来最先要的多半是它），服务端是另一个可切换的分组。
  * 两个分段控件共用同一套指示器实现；建完卡片会派发一次 `ch:content`，
  * 让 main.js 把按压反馈补挂上 —— 这些元素是拉到清单之后才出现的。
  */
@@ -167,29 +167,6 @@
               note: '安装脚本会自动取它核对压缩包',
               match: /^classhelper-server-linux-x64-.*\.tar\.gz\.sha256$/i,
               expect: (version) => `classhelper-server-linux-x64-${version}.tar.gz.sha256`,
-            },
-          ],
-        },
-      ],
-    },
-    {
-      key: 'plugin',
-      label: '插件',
-      note: {
-        text: '给教室那台已经装了 ClassIsland 的机器加装 —— 课表从这里上报，老师发的提醒弹到全屏。',
-      },
-      cards: [
-        {
-          mark: 'plugin',
-          name: 'ClassIsland 联动插件',
-          req: '装在教室已有的 ClassIsland 2.x 上 · 教室大屏',
-          desc: '上课时段的普通通知先收着，打下课铃补弹；紧急通知与叫人立刻全屏提醒，可以语音朗读。',
-          files: [
-            {
-              role: '下载 .cipx',
-              note: '在 ClassIsland 的插件页里选它安装',
-              match: /classislandplugin\.cipx$/i,
-              expect: () => 'ClassHelper.ClassIslandPlugin.cipx',
             },
           ],
         },

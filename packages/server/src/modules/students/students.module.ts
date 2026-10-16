@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermission, requireAnyPermission } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -33,7 +33,7 @@ router.use(authenticate());
  */
 router.get(
   '/',
-  requirePermission('roster:manage'),
+  requireAnyPermission('roster:read', 'roster:manage'),
   validate({ query: listStudentsQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -45,7 +45,7 @@ router.get(
 /** GET /api/students/transfers - 调班 / 转出历史（管理员看全部，也可按学生或班级过滤） */
 router.get(
   '/transfers',
-  requirePermission('roster:manage'),
+  requireAnyPermission('roster:read', 'roster:manage'),
   validate({ query: listTransfersQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);

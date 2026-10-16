@@ -476,7 +476,11 @@ async function main() {
 
   try {
     const { payload, elapsed } = await notificationWait;
-    record('ClassHelper 班级端 5 秒内收到 notification:new', elapsed < TIME_LIMIT_MS, `${elapsed}ms · ${payload?.title}`);
+    record(
+      'ClassHelper 班级端 5 秒内收到 notification:new',
+      elapsed < TIME_LIMIT_MS,
+      `${elapsed}ms · ${payload?.title}`,
+    );
   } catch (error) {
     record('ClassHelper 班级端 5 秒内收到 notification:new', false, error.message);
   }
@@ -534,7 +538,11 @@ async function main() {
 
   try {
     const { payload, elapsed } = await homeworkWait;
-    record('ClassHelper 班级端 5 秒内收到 homework:new', elapsed < TIME_LIMIT_MS, `${elapsed}ms · ${payload?.title}`);
+    record(
+      'ClassHelper 班级端 5 秒内收到 homework:new',
+      elapsed < TIME_LIMIT_MS,
+      `${elapsed}ms · ${payload?.title}`,
+    );
   } catch (error) {
     record('ClassHelper 班级端 5 秒内收到 homework:new', false, error.message);
   }
@@ -705,8 +713,8 @@ async function main() {
     '管理员设置某班某科的任课老师（PUT /subject-teachers）',
     adminAssignSubject.status === 200 &&
       (adminAssignSubject.payload?.data ?? []).some(
-        (item) => item.subjectName === probeSubject &&
-          item.teacherId === teacher2Login.payload?.data?.user?.id,
+        (item) =>
+          item.subjectName === probeSubject && item.teacherId === teacher2Login.payload?.data?.user?.id,
       ),
     `status=${adminAssignSubject.status}`,
   );
@@ -1145,11 +1153,7 @@ async function main() {
         token: adminToken,
         body: { assignments: [{ subjectName: '音乐', teacherId: teacher2Login.payload?.data?.user?.id }] },
       });
-      record(
-        '管理员分配任课老师成功（200）',
-        adminAssign.status === 200,
-        `status=${adminAssign.status}`,
-      );
+      record('管理员分配任课老师成功（200）', adminAssign.status === 200, `status=${adminAssign.status}`);
       // 解除 = 把该科还回班主任（Course.teacherId 是必填列，不能留空）
       const adminUnassign = await api(`/classes/${classId}/subject-teachers`, {
         method: 'PUT',
@@ -1183,8 +1187,9 @@ async function main() {
       // 新规则：**作业按科目授权**。
       // 科任老师只能布置自己任教科目（Course.teacherId）的作业；
       // 不指定科目的作业只有班主任与管理员能发 —— 两条都要验到。
-      const subjectCourse = (await api(`/courses?classId=${subjectClassId}`, { token: adminToken }))
-        .payload?.data?.find((item) => item.teacherId === teacher2Id);
+      const subjectCourse = (
+        await api(`/courses?classId=${subjectClassId}`, { token: adminToken })
+      ).payload?.data?.find((item) => item.teacherId === teacher2Id);
       const subjectHomework = await api('/homeworks', {
         method: 'POST',
         token: subjectClassId ? teacher2Token : teacherToken,
@@ -1215,8 +1220,9 @@ async function main() {
       );
       // 科任老师改**别人任教科目**的作业同样被拒
       if (subjectCourse) {
-        const otherCourse = (await api(`/courses?classId=${subjectClassId}`, { token: adminToken }))
-          .payload?.data?.find((item) => item.teacherId !== teacher2Id);
+        const otherCourse = (
+          await api(`/courses?classId=${subjectClassId}`, { token: adminToken })
+        ).payload?.data?.find((item) => item.teacherId !== teacher2Id);
         // 先确认"别人任教的科目"这个前提存在：缺了它，下面那条用例会因为"没带科目"
         // 而被拒（403），看着是绿的，其实没验到"非任教科目"这条规则。
         record(
@@ -1355,7 +1361,9 @@ async function main() {
       );
     }
 
-    const badDay = await api(`/notifications/days?classId=${classId}&from=2026-13-45`, { token: teacherToken });
+    const badDay = await api(`/notifications/days?classId=${classId}&from=2026-13-45`, {
+      token: teacherToken,
+    });
     record('通知归档接口拒绝非法日期（422）', badDay.status === 422, `status=${badDay.status}`);
 
     // 批量发布通知：一次提交多个班，返回逐班结果
@@ -1545,25 +1553,32 @@ async function main() {
         `含 homework:write=${teacher2ResetPermissions.includes('homework:write')}`,
     );
 
-    // 管理员固定拥有全部权限，不接受分配
+    // 管理员可以分配权限组，但始终保留两个管理入口
     const assignAdmin = await api(`/permissions/users/${adminMember?.id}/groups`, {
       method: 'PUT',
       token: adminToken,
       body: { groupIds: permissionGroupId ? [permissionGroupId] : [] },
     });
     record(
-      '管理员不接受权限组分配（PUT /users/:id/groups → 400）',
-      Boolean(adminMember) &&
-        assignAdmin.status === 400 &&
-        String(assignAdmin.payload?.message ?? '').includes('权限组'),
+      '管理员可以分配权限组（PUT /users/:id/groups → 200）',
+      Boolean(adminMember) && assignAdmin.status === 200 && assignAdmin.payload?.data?.fixed === false,
       `status=${assignAdmin.status} 响应=${assignAdmin.payload?.message ?? ''}`,
     );
+
+    await api(`/permissions/users/${adminMember?.id}/groups`, {
+      method: 'PUT',
+      token: adminToken,
+      body: { groupIds: [] },
+    });
 
     // 内置权限组不可删除：先找一个 builtin 的（**演示库当前没有内置组**，此时只报事实、不算失败）
     const groupsList = await api('/permissions/groups', { token: adminToken });
     const builtinGroup = (groupsList.payload?.data ?? []).find((item) => item.builtin === true) ?? null;
     if (builtinGroup) {
-      const deleteBuiltin = await api(`/permissions/groups/${builtinGroup.id}`, { method: 'DELETE', token: adminToken });
+      const deleteBuiltin = await api(`/permissions/groups/${builtinGroup.id}`, {
+        method: 'DELETE',
+        token: adminToken,
+      });
       record(
         '内置权限组不可删除（DELETE /permissions/groups/:id → 400）',
         deleteBuiltin.status === 400,
@@ -1607,7 +1622,11 @@ async function main() {
 
     // 心跳不强求权限键（教室端会话权限集为空），但**必须登录**：没有 JWT 一律 401
     const heartbeatNoAuth = await api('/clients/heartbeat', { method: 'POST', body: heartbeatBase });
-    const heartbeat = await api('/clients/heartbeat', { method: 'POST', token: adminToken, body: heartbeatBase });
+    const heartbeat = await api('/clients/heartbeat', {
+      method: 'POST',
+      token: adminToken,
+      body: heartbeatBase,
+    });
     const heartbeatData = heartbeat.payload?.data;
     record(
       '客户端心跳 POST /clients/heartbeat（未登录 401 / 登录后 200 且返回 deviceId 与 command 字段）',
@@ -1644,7 +1663,11 @@ async function main() {
     const command = await api('/clients/commands', {
       method: 'POST',
       token: adminToken,
-      body: { deviceIds: [device?.id ?? heartbeatData?.deviceId ?? 'none'], kind: 'lock', note: 'E2E 远控用例' },
+      body: {
+        deviceIds: [device?.id ?? heartbeatData?.deviceId ?? 'none'],
+        kind: 'lock',
+        note: 'E2E 远控用例',
+      },
     });
     const heartbeatWithCommand = await api('/clients/heartbeat', {
       method: 'POST',
@@ -1677,7 +1700,8 @@ async function main() {
     );
 
     const devicesAfterAck = await api('/clients/devices', { token: adminToken });
-    const ackedDevice = (devicesAfterAck.payload?.data ?? []).find((item) => item.deviceKey === deviceKey) ?? null;
+    const ackedDevice =
+      (devicesAfterAck.payload?.data ?? []).find((item) => item.deviceKey === deviceKey) ?? null;
     record(
       '回执后设备不再有待执行命令（pendingCommand 为空）',
       Boolean(ackedDevice) && ackedDevice.pendingCommand === null,
@@ -1803,7 +1827,9 @@ async function main() {
     });
     record(
       '开启大模型助手并固定为离线 mock（PUT /ai/settings）',
-      enableAi.status === 200 && enableAi.payload?.data?.enabled === true && enableAi.payload?.data?.provider === 'mock',
+      enableAi.status === 200 &&
+        enableAi.payload?.data?.enabled === true &&
+        enableAi.payload?.data?.provider === 'mock',
       `status=${enableAi.status} enabled=${enableAi.payload?.data?.enabled} provider=${enableAi.payload?.data?.provider}`,
     );
 
@@ -1916,8 +1942,7 @@ async function main() {
     const diagnosticsText = JSON.stringify(diagnostics.payload?.data ?? {});
     record(
       '运行诊断 GET /system/diagnostics（200 且不泄漏 apiKey/password/token/secret）',
-      diagnostics.status === 200 &&
-        !/apiKey|password|token|secret/i.test(diagnosticsText),
+      diagnostics.status === 200 && !/apiKey|password|token|secret/i.test(diagnosticsText),
       `status=${diagnostics.status} 字段=${Object.keys(diagnostics.payload?.data ?? {}).join(',')}`,
     );
   }
@@ -2930,8 +2955,8 @@ async function main() {
     body: { username: 'smoke_denied_teacher', name: '越权教师', password: 'smoke123456' },
   });
   record(
-    '仅管理员可录入教师（教师读取/新建均 403）',
-    teacherSeesTeachers.status === 403 && teacherCreatesTeacher.status === 403,
+    '教师名单只读与管理分离（默认教师可读取，但不能新建）',
+    teacherSeesTeachers.status === 200 && teacherCreatesTeacher.status === 403,
     `列表=${teacherSeesTeachers.status} 新建=${teacherCreatesTeacher.status} message=${teacherCreatesTeacher.payload?.message ?? ''}`,
   );
 
@@ -3187,8 +3212,6 @@ async function main() {
     'Notification',
     'NotificationRead',
     'Grade',
-    'IntegrationDevice',
-    'ClassIslandPush',
     'PermissionGroup',
     'PermissionGroupItem',
     'UserPermissionGroup',
@@ -3511,12 +3534,11 @@ async function main() {
   // force 只对管理员生效：教师带 force=1 也必须命中缓存（否则任意登录用户都能刷爆匿名限流）
   const updateTeacherForced = await api('/update/check?force=1', { token: teacherToken });
   record(
-    '更新检查：教师可查（公开信息），但 force 仅管理员生效',
+    '更新检查：默认教师可查，强制刷新需要 update:force',
     updateTeacherForced.status === 200 &&
       updateTeacherForced.payload?.data?.checkedAt === updateData.checkedAt,
     `status=${updateTeacherForced.status} 命中缓存=${updateTeacherForced.payload?.data?.checkedAt === updateData.checkedAt}`,
   );
-
 
   /* ---------------------------------------------------------------- 13. 学期周次（仅管理员可写） */
   // 需求：「第几周的周次数据可以由 admin 修改，并对所有 ClassIsland 下发修改」。
@@ -3624,61 +3646,12 @@ async function main() {
     `configured=${termRestored.payload?.data?.configured}`,
   );
 
-  /* ---------------------------------------------------------------- 14. 课表同步方向反转 */
-
-  // 自建一台临时设备（收尾删掉）：不依赖演示库里有没有接入过设备
-  const tempDevice = await api('/integrations/devices', {
-    method: 'POST',
-    token: adminToken,
-    body: { classId, name: 'E2E 课表方向校验设备' },
-  });
-  const tempDeviceId = tempDevice.payload?.data?.device?.id;
+  const retiredIntegration = await api('/integrations/devices', { token: adminToken });
   record(
-    '课表方向：新建设备默认「服务端自动下发、不自动回传」',
-    tempDevice.status === 201 &&
-      tempDevice.payload?.data?.device?.syncScheduleToServer === false &&
-      tempDevice.payload?.data?.device?.mirrorScheduleToClassIsland === true,
-    `status=${tempDevice.status} syncScheduleToServer=${tempDevice.payload?.data?.device?.syncScheduleToServer} mirrorScheduleToClassIsland=${tempDevice.payload?.data?.device?.mirrorScheduleToClassIsland}`,
+    '退役联动接口不再提供服务',
+    retiredIntegration.status === 404,
+    `status=${retiredIntegration.status}`,
   );
-
-  if (tempDeviceId) {
-    const pullRequest = await api(`/integrations/devices/${tempDeviceId}/request-schedule`, {
-      method: 'POST',
-      token: adminToken,
-    });
-    record(
-      '从教室机器获取课表：管理员可发起（POST /request-schedule）',
-      pullRequest.status === 200 && pullRequest.payload?.data?.requested === true,
-      `status=${pullRequest.status} ${pullRequest.payload?.message ?? ''}`,
-    );
-
-    // 置位后再读设备列表应当看到待办（插件下一次心跳看到就会立刻把课表推上来）
-    const afterRequest = await api(`/integrations/devices?classId=${classId}`, { token: adminToken });
-    const requestedDevice = (afterRequest.payload?.data ?? []).find((item) => item.id === tempDeviceId);
-    record(
-      '从教室机器获取课表：待办标记已落库（插件下次心跳会照做）',
-      requestedDevice?.requestScheduleReport === true,
-      `requestScheduleReport=${requestedDevice?.requestScheduleReport}`,
-    );
-
-    // 教师对**别人班**的设备不能发起
-    const deniedPull = await api(`/integrations/devices/${tempDeviceId}/request-schedule`, {
-      method: 'POST',
-      token: teacher2Token,
-    });
-    record(
-      '从教室机器获取课表：非本班教师被拒绝（403）',
-      deniedPull.status === 403,
-      `status=${deniedPull.status}`,
-    );
-
-    // 收尾：删掉临时设备
-    const removedDevice = await api(`/integrations/devices/${tempDeviceId}`, {
-      method: 'DELETE',
-      token: adminToken,
-    });
-    record('课表方向用例收尾：临时设备已删除', removedDevice.status === 200, `status=${removedDevice.status}`);
-  }
 
   socket.close();
 

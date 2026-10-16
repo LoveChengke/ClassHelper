@@ -44,7 +44,7 @@ const current = ref<HomeworkDto | null>(null);
 const attachmentHref = computed(() => {
   const value = current.value?.attachmentUrl;
   if (!value) return '';
-  return value.startsWith('/') || /^https?:\/\//i.test(value) ? value : '';
+  return (/^\/(?![\/\\])/.test(value) && !value.includes('\\')) || /^https?:\/\//i.test(value) ? value : '';
 });
 
 const classStudents = ref<Array<{ id: string; name: string }>>([]);
@@ -143,10 +143,15 @@ async function loadClasses(): Promise<void> {
 }
 
 async function loadCourses(): Promise<void> {
-  courses.value = filter.classId ? await courseApi.list(filter.classId) : [];
+  const classId = filter.classId;
+  courses.value = [];
+  const list = classId ? await courseApi.list(classId) : [];
+  if (classId === filter.classId) courses.value = list;
 }
 
+let homeworkRequest = 0;
 async function loadHomeworks(): Promise<void> {
+  const request = ++homeworkRequest;
   loading.value = true;
   try {
     const params: { classId?: string; courseId?: string; keyword?: string; date?: string } = {};
@@ -155,17 +160,17 @@ async function loadHomeworks(): Promise<void> {
     if (filter.keyword.trim()) params.keyword = filter.keyword.trim();
     // 按天查看：选了日期就只列那一天的作业
     if (filter.date) params.date = filter.date;
-    homeworks.value = await homeworkApi.list(params);
+    const list = await homeworkApi.list(params);
+    if (request === homeworkRequest) homeworks.value = list;
   } finally {
-    loading.value = false;
+    if (request === homeworkRequest) loading.value = false;
   }
 }
 
 async function onClassChange(): Promise<void> {
+  homeworkRequest += 1;
   filter.courseId = '';
-  await loadCourses();
-  await loadDayMarks();
-  await loadHomeworks();
+  await Promise.all([loadCourses(), loadDayMarks(), loadHomeworks()]);
 }
 
 /** 拉取"哪些天有作业"（日期选择器高亮）；范围取今天前后各 45 天 */
@@ -238,17 +243,20 @@ const canCreateCourse = computed(() => {
 });
 
 async function loadFormCourses(): Promise<void> {
+  const classId = form.classId;
+  formCourses.value = [];
   if (!form.classId) {
     formCourses.value = [];
     return;
   }
   formCoursesLoading.value = true;
   try {
-    formCourses.value = await courseApi.list(form.classId);
+    const list = await courseApi.list(classId);
+    if (classId === form.classId) formCourses.value = list;
   } catch {
-    formCourses.value = [];
+    if (classId === form.classId) formCourses.value = [];
   } finally {
-    formCoursesLoading.value = false;
+    if (classId === form.classId) formCoursesLoading.value = false;
   }
 }
 
@@ -329,36 +337,43 @@ async function resolveCourseId(): Promise<string | null> {
   }
 }
 
+const submitFormSaving = ref(false);
 async function submitForm(): Promise<void> {
-  const valid = await formRef.value?.validate().catch(() => false);
-  if (!valid) return;
-
-  let courseId: string | null;
+  if (submitFormSaving.value) return;
+  submitFormSaving.value = true;
   try {
-    courseId = await resolveCourseId();
-  } catch {
-    // 建课失败的提示已在 resolveCourseId 里给出，这里保持弹窗打开让老师改选
-    return;
-  }
+    const valid = await formRef.value?.validate().catch(() => false);
+    if (!valid) return;
 
-  const payload = {
-    classId: form.classId,
-    courseId,
-    title: form.title.trim(),
-    content: form.content,
-    attachmentUrl: form.attachmentUrl.trim() || null,
-    assignDate: form.assignDate || dayKeyLocal(new Date()),
-  };
+    let courseId: string | null;
+    try {
+      courseId = await resolveCourseId();
+    } catch {
+      // 建课失败的提示已在 resolveCourseId 里给出，这里保持弹窗打开让老师改选
+      return;
+    }
 
-  if (editingId.value) {
-    await homeworkApi.update(editingId.value, payload);
-    ElMessage.success('作业已更新');
-  } else {
-    await homeworkApi.create(payload);
-    ElMessage.success('作业已发布，实时推送已发出');
+    const payload = {
+      classId: form.classId,
+      courseId,
+      title: form.title.trim(),
+      content: form.content,
+      attachmentUrl: form.attachmentUrl.trim() || null,
+      assignDate: form.assignDate || dayKeyLocal(new Date()),
+    };
+
+    if (editingId.value) {
+      await homeworkApi.update(editingId.value, payload);
+      ElMessage.success('作业已更新');
+    } else {
+      await homeworkApi.create(payload);
+      ElMessage.success('作业已发布，实时推送已发出');
+    }
+    formVisible.value = false;
+    await loadHomeworks();
+  } finally {
+    submitFormSaving.value = false;
   }
-  formVisible.value = false;
-  await loadHomeworks();
 }
 
 /* ------------------------------------------------------------------ 批量布置（多班同发） */
@@ -396,51 +411,58 @@ function classNameOf(classId: string): string {
   return classes.value.find((item) => item.id === classId)?.name ?? classId;
 }
 
+const submitBulkSaving = ref(false);
 async function submitBulk(): Promise<void> {
-  if (bulkForm.classIds.length === 0) {
-    ElMessage.warning('请至少选择一个目标班级');
-    return;
-  }
-  if (!bulkForm.title.trim()) {
-    ElMessage.warning('请输入作业标题');
-    return;
-  }
-  if (!bulkForm.content.trim()) {
-    ElMessage.warning('请输入作业内容');
-    return;
-  }
-
-  bulkSending.value = true;
+  if (submitBulkSaving.value) return;
+  submitBulkSaving.value = true;
   try {
-    const result = await homeworkApi.bulkCreate({
-      classIds: bulkForm.classIds,
-      subjectName: bulkForm.subjectName || null,
-      title: bulkForm.title.trim(),
-      content: bulkForm.content,
-      assignDate: bulkForm.assignDate || null,
-      attachmentUrl: bulkForm.attachmentUrl.trim() || null,
-    });
-
-    const failures = result.results.filter((item) => !item.ok);
-    if (failures.length === 0) {
-      ElMessage.success(`作业已发布到 ${result.succeeded} 个班级，实时推送已发出`);
-    } else {
-      const detail = failures
-        .map((item) => `${classNameOf(item.classId)}（${item.message ?? '失败'}）`)
-        .join('；');
-      ElMessage({
-        type: result.succeeded > 0 ? 'warning' : 'error',
-        message: `成功 ${result.succeeded} 个班，失败 ${failures.length} 个班｜${detail}`,
-        duration: 8000,
-        showClose: true,
-      });
+    if (bulkForm.classIds.length === 0) {
+      ElMessage.warning('请至少选择一个目标班级');
+      return;
+    }
+    if (!bulkForm.title.trim()) {
+      ElMessage.warning('请输入作业标题');
+      return;
+    }
+    if (!bulkForm.content.trim()) {
+      ElMessage.warning('请输入作业内容');
+      return;
     }
 
-    // 全部失败时把弹窗留着，方便老师改科目/改班级后直接重试
-    bulkVisible.value = result.succeeded === 0;
-    if (result.succeeded > 0) await loadHomeworks();
+    bulkSending.value = true;
+    try {
+      const result = await homeworkApi.bulkCreate({
+        classIds: bulkForm.classIds,
+        subjectName: bulkForm.subjectName || null,
+        title: bulkForm.title.trim(),
+        content: bulkForm.content,
+        assignDate: bulkForm.assignDate || null,
+        attachmentUrl: bulkForm.attachmentUrl.trim() || null,
+      });
+
+      const failures = result.results.filter((item) => !item.ok);
+      if (failures.length === 0) {
+        ElMessage.success(`作业已发布到 ${result.succeeded} 个班级，实时推送已发出`);
+      } else {
+        const detail = failures
+          .map((item) => `${classNameOf(item.classId)}（${item.message ?? '失败'}）`)
+          .join('；');
+        ElMessage({
+          type: result.succeeded > 0 ? 'warning' : 'error',
+          message: `成功 ${result.succeeded} 个班，失败 ${failures.length} 个班｜${detail}`,
+          duration: 8000,
+          showClose: true,
+        });
+      }
+
+      // 全部失败时把弹窗留着，方便老师改科目/改班级后直接重试
+      bulkVisible.value = result.succeeded === 0;
+      if (result.succeeded > 0) await loadHomeworks();
+    } finally {
+      bulkSending.value = false;
+    }
   } finally {
-    bulkSending.value = false;
+    submitBulkSaving.value = false;
   }
 }
 
@@ -572,12 +594,7 @@ onUnmounted(() => {
             style="width: 100%"
           >
             <el-option-group v-if="ownFormCourses.length" label="我的科目">
-              <el-option
-                v-for="item in ownFormCourses"
-                :key="item.id"
-                :label="item.name"
-                :value="item.id"
-              />
+              <el-option v-for="item in ownFormCourses" :key="item.id" :label="item.name" :value="item.id" />
             </el-option-group>
             <el-option-group
               v-if="canCreateCourse && !formCoursesLoading && newSubjectOptions.length"
@@ -623,7 +640,9 @@ onUnmounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="formVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitForm">{{ editingId ? '保存' : '发布' }}</el-button>
+        <el-button type="primary" :loading="submitFormSaving" @click="submitForm">
+          {{ editingId ? '保存' : '发布' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -670,13 +689,7 @@ onUnmounted(() => {
           <el-input v-model="bulkForm.title" maxlength="120" show-word-limit />
         </el-form-item>
         <el-form-item label="内容" required>
-          <el-input
-            v-model="bulkForm.content"
-            type="textarea"
-            :rows="5"
-            maxlength="5000"
-            show-word-limit
-          />
+          <el-input v-model="bulkForm.content" type="textarea" :rows="5" maxlength="5000" show-word-limit />
         </el-form-item>
         <el-form-item label="附件链接">
           <el-input v-model="bulkForm.attachmentUrl" placeholder="https://..." />
@@ -684,7 +697,7 @@ onUnmounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="bulkVisible = false">取消</el-button>
-        <el-button type="primary" :loading="bulkSending" @click="submitBulk">
+        <el-button type="primary" :loading="bulkSending || submitBulkSaving" @click="submitBulk">
           发布到 {{ bulkForm.classIds.length }} 个班级
         </el-button>
       </template>
@@ -762,7 +775,11 @@ onUnmounted(() => {
           description="该班还没有学生，请先在学生名单里添加"
         />
         <el-checkbox-group v-model="notSubmittedIds">
-          <el-checkbox v-for="student in submissionStudents" :key="student.studentId" :value="student.studentId">
+          <el-checkbox
+            v-for="student in submissionStudents"
+            :key="student.studentId"
+            :value="student.studentId"
+          >
             {{ student.name }}（学号 {{ student.studentNo }}）
           </el-checkbox>
         </el-checkbox-group>
@@ -797,10 +814,6 @@ onUnmounted(() => {
   margin-left: 10px;
   opacity: 0.65;
   font-size: 12px;
-}
-
-.text-danger {
-  color: #f56c6c;
 }
 
 .form-hint {

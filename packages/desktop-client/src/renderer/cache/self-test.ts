@@ -1,5 +1,27 @@
 import { cacheGet, cacheRemove, cacheSet, cacheStats } from './db.js';
 import { fetchWithCache } from './index.js';
+import { setCacheScope } from './scope.js';
+
+export async function cacheIsolationSelfTest(): Promise<SmokeCheckResult> {
+  const key = `scope-check-${Date.now()}`;
+  try {
+    setCacheScope('http://scope-a.invalid', 'class-a');
+    await cacheSet('grades', key, ['班级甲']);
+    setCacheScope('http://scope-a.invalid', 'class-b');
+    if (await cacheGet('grades', key)) return { ok: false, detail: '跨班级读到了缓存' };
+    setCacheScope('http://scope-b.invalid', 'class-a');
+    if (await cacheGet('grades', key)) return { ok: false, detail: '跨服务端读到了缓存' };
+    setCacheScope('http://scope-a.invalid', 'class-a');
+    const own = await cacheGet<string[]>('grades', key);
+    await cacheRemove('grades', key);
+    return { ok: own?.value[0] === '班级甲', detail: '换班和换服务端均隔离，原班缓存仍可读取' };
+  } finally {
+    setCacheScope('', 'anonymous');
+  }
+}
+
+/** 联网自检与造数、清理始终使用同一服务端。 */
+let smokeServerUrl = 'http://127.0.0.1:4000';
 
 export interface SmokeCheckResult {
   ok: boolean;
@@ -208,7 +230,7 @@ async function seedSmokeContent(
   need: { homework: boolean; notification: boolean },
 ): Promise<SmokeCheckResult> {
   if (!classId) return { ok: false, detail: '缺少班级，无法自建数据' };
-  const serverUrl = 'http://127.0.0.1:4000';
+  const serverUrl = smokeServerUrl;
   const stamp = `自检 ${new Date().toLocaleTimeString('zh-CN')}`;
 
   try {
@@ -275,7 +297,7 @@ async function cleanupTemporaryContent(): Promise<string> {
   if (!temporaryContent) return '';
   const { token, homeworks, notifications } = temporaryContent;
   temporaryContent = null;
-  const serverUrl = 'http://127.0.0.1:4000';
+  const serverUrl = smokeServerUrl;
   const removals = [
     ...homeworks.map((id) => `/api/homeworks/${id}`),
     ...notifications.map((id) => `/api/notifications/${id}`),
@@ -298,6 +320,7 @@ async function cleanupTemporaryContent(): Promise<string> {
 export async function onlineScenario(credentials?: {
   code: string;
   password: string;
+  serverUrl?: string;
 }): Promise<SmokeCheckResult> {
   const [{ useAuthStore }, { useAppStore }, { useRealtimeStore }, api, cache] = await Promise.all([
     import('../stores/auth.js'),
@@ -311,7 +334,8 @@ export async function onlineScenario(credentials?: {
   const appStore = useAppStore();
   const realtime = useRealtimeStore();
 
-  const serverUrl = 'http://127.0.0.1:4000';
+  const serverUrl = credentials?.serverUrl ?? smokeServerUrl;
+  smokeServerUrl = serverUrl;
   const detail: string[] = [];
 
   try {
@@ -441,7 +465,7 @@ export async function islandRealtimeScenario(): Promise<{
     import('../island/bridge.js'),
   ]);
   const auth = useAuthStore();
-  const serverUrl = 'http://127.0.0.1:4000';
+  const serverUrl = smokeServerUrl;
   const classId = auth.classId ?? null;
   if (!classId) return { ok: false, detail: '当前学生没有班级，无法投递通知' };
 
@@ -499,7 +523,7 @@ export async function islandRealtimeCleanup(
   teacherToken: string,
 ): Promise<SmokeCheckResult> {
   try {
-    const response = await fetch(`http://127.0.0.1:4000/api/notifications/${notificationId}`, {
+    const response = await fetch(`${smokeServerUrl}/api/notifications/${notificationId}`, {
       method: 'DELETE',
       headers: { authorization: `Bearer ${teacherToken}` },
     });
@@ -544,7 +568,7 @@ export async function scheduleTimelineSelfTest(): Promise<SmokeCheckResult> {
     import('../router/index.js'),
   ]);
   const auth = useAuthStore();
-  const serverUrl = 'http://127.0.0.1:4000';
+  const serverUrl = smokeServerUrl;
   const classId = auth.classId ?? null;
   if (!classId) return { ok: false, detail: '当前学生没有班级，无法构造课表' };
 
@@ -1172,6 +1196,7 @@ export async function aboutPageSelfTest(): Promise<SmokeCheckResult> {
 export function registerSmokeHooks(): void {
   window.__classhelperSmoke__ = {
     cacheSelfTest,
+    cacheIsolationSelfTest,
     offlineScenario,
     layoutNavigationSelfTest,
     onlineScenario,

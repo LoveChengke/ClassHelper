@@ -17,7 +17,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.saveConfig,
     (_event, patch: Partial<DesktopStoredConfig>): DesktopStoredConfig => {
-      return saveConfig(patch ?? {});
+      // 更新安装记录只允许主进程内部写入，渲染进程不得借配置通道指定可执行文件。
+      const allowed = { ...patch };
+      delete allowed.pendingUpdateFile;
+      delete allowed.pendingUpdateVersion;
+      return saveConfig(allowed);
     },
   );
 

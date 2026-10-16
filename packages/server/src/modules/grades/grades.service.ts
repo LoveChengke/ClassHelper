@@ -287,13 +287,16 @@ export async function updateGradeLevels(
     }
 
     await prisma.$transaction(
-      input.items.map((item) =>
-        prisma.grade.update({ where: { id: item.id }, data: { level: item.level } }),
-      ),
+      input.items.map((item) => prisma.grade.update({ where: { id: item.id }, data: { level: item.level } })),
     );
 
-    const sample = byId.get(input.items[0]!.id);
-    if (sample) emitToClass(sample.classId, SOCKET_EVENTS.gradeUpdated, { bulk: true, count: input.items.length });
+    const counts = new Map<string, number>();
+    for (const item of input.items) {
+      const classId = byId.get(item.id)!.classId;
+      counts.set(classId, (counts.get(classId) ?? 0) + 1);
+    }
+    for (const [classId, count] of counts)
+      emitToClass(classId, SOCKET_EVENTS.gradeUpdated, { bulk: true, count });
     return { updated: input.items.length };
   }
 
@@ -301,6 +304,7 @@ export async function updateGradeLevels(
   const classId = input.classId!;
   await assertCanManageSubjectContent(user, classId, input.courseId ?? null, '调整成绩等级');
   const levelType = input.levelType!;
+  if (levelType === 'custom') throw ApiError.badRequest('自定义等级不能由分数推算，请逐条填写等级');
   const records = await prisma.grade.findMany({
     where: {
       classId,
@@ -316,10 +320,7 @@ export async function updateGradeLevels(
         where: { id: item.id },
         data: {
           levelType,
-          level:
-            levelType === 'percent'
-              ? gradeLevel(gradePercent(item.score, item.totalScore))
-              : item.level,
+          level: gradeLevel(gradePercent(item.score, item.totalScore)),
         },
       }),
     ),

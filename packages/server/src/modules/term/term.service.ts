@@ -14,7 +14,6 @@ import { MAX_TERM_WEEK, loadTermContext, resolveCurrentWeek } from '../../lib/te
 import { SETTING_KEYS, setSetting } from '../../lib/settings.js';
 import { emitToClass } from '../../realtime/bus.js';
 import { SOCKET_EVENTS } from '@classhelper/shared';
-import { notifyScheduleChanged } from '../integrations/integrations.service.js';
 import type { AutoTermWeeksInput, UpdateTermWeeksInput } from './term.schemas.js';
 
 /**
@@ -28,7 +27,7 @@ import type { AutoTermWeeksInput, UpdateTermWeeksInput } from './term.schemas.js
  *   3. 也可以直接改某个班的开学日期（`Class.termStartDate`）。
  *
  * `classId = ''` 表示**全校默认**；某个班有自己的配置时优先用它。
- * 改完之后会把新的课表口径（含周次区间）**下发给该班所有在线的 ClassIsland**。
+ * 改完之后广播课表更新，客户端重新读取当前周次。
  */
 
 /** 把 null/undefined 归一成空串（空串 = 全校默认） */
@@ -70,7 +69,10 @@ export async function getTermWeeks(user: TokenPayload, classId?: string | null):
  * 校验：日期格式、起止顺序、**区间不重叠**（重叠会让"当前第几周"出现歧义）。
  * 保存后把新的周次口径下发给该班所有在线设备。
  */
-export async function updateTermWeeks(user: TokenPayload, input: UpdateTermWeeksInput): Promise<TermWeeksDto> {
+export async function updateTermWeeks(
+  user: TokenPayload,
+  input: UpdateTermWeeksInput,
+): Promise<TermWeeksDto> {
   assertCanManageClasses(user);
   const scope = scopeOf(input.classId);
 
@@ -118,9 +120,7 @@ export async function updateTermWeeks(user: TokenPayload, input: UpdateTermWeeks
     await setSetting(SETTING_KEYS.termStartDate, input.termStartDate);
   }
 
-  logger.info(
-    `学期周次已更新：范围=${scope || '全校默认'} 周数=${input.weeks.length} 由 ${user.name} 执行`,
-  );
+  logger.info(`学期周次已更新：范围=${scope || '全校默认'} 周数=${input.weeks.length} 由 ${user.name} 执行`);
   await publishTermChange(scope);
   return getTermWeeks(user, scope || null);
 }
@@ -219,19 +219,11 @@ export async function suggestHolidays(year?: number): Promise<HolidaySuggestionD
 
 /* ------------------------------------------------------------------ 内部工具 */
 
-/**
- * 周次变了要把新的口径**下发给教室的 ClassIsland**（需求：「对所有 ClassIsland 下发修改」）。
- *
- * 逐周区间没法直接塞进 ClassIsland 的模型（它按"教学周序号 + 单双周"组织课表），
- * 因此实际下发的是**学期开始日期**与**各周次的起止**，随镜像课表一起走：
- * 插件据此校正"现在是第几周"，并让课表的周次口径与教室里的实际日历对齐。
- */
+/** 周次变更后通知班级客户端刷新课表。 */
 async function publishTermChange(scope: string): Promise<void> {
   if (scope) {
     emitToClass(scope, SOCKET_EVENTS.classUpdated, { classId: scope, action: 'updated' });
-    await notifyScheduleChanged(scope).catch((error) => {
-      logger.warn(`周次变更后下发课表失败（数据已保存）：${String(error)}`);
-    });
+    emitToClass(scope, SOCKET_EVENTS.scheduleUpdated, { classId: scope, action: 'imported' });
     return;
   }
 
@@ -242,6 +234,6 @@ async function publishTermChange(scope: string): Promise<void> {
   });
   for (const item of classes) {
     emitToClass(item.id, SOCKET_EVENTS.classUpdated, { classId: item.id, action: 'updated' });
-    await notifyScheduleChanged(item.id).catch(() => undefined);
+    emitToClass(item.id, SOCKET_EVENTS.scheduleUpdated, { classId: item.id, action: 'imported' });
   }
 }

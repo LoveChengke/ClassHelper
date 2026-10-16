@@ -7,6 +7,7 @@ import { env } from './config/env.js';
 import { disconnectPrisma, pingDatabase } from './lib/db.js';
 import { ensureInitialAdmin, ensureSchema } from './lib/db-bootstrap.js';
 import { logger } from './lib/logger.js';
+import { backfillNotificationDates } from './lib/backfill-notification-dates.js';
 import { refreshDeveloperMode } from './lib/settings.js';
 import { resolveWebDistDir } from './lib/web-static.js';
 import { initRealtime } from './realtime/socket.js';
@@ -51,6 +52,8 @@ async function prepareDatabase(): Promise<void> {
 }
 
 await prepareDatabase();
+const backfilledDates = await backfillNotificationDates();
+if (backfilledDates) logger.info(`已补齐 ${backfilledDates} 条历史通知的所属日期`);
 
 // 开发者模式的内存缓存：错误中间件每请求都要问一次，不可能为此查库（见 lib/settings.ts）
 await refreshDeveloperMode();

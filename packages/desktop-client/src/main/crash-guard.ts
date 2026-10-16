@@ -10,8 +10,7 @@ import { logger } from './logger.js';
  *
  * 1. `render-process-gone` —— 渲染进程没了（崩溃 / 被杀），**静默重建窗口**；
  * 2. `unresponsive` —— 界面卡住超过 10 秒还没缓过来，同样重建；期间恢复（`responsive`）就取消；
- * 3. `uncaughtException` / `unhandledRejection` —— 主进程的未捕获错误，
- *    记完整堆栈，并且**只有在本机确认空闲时**才重启自己。
+ * 3. `uncaughtException` 只在本机空闲时重启；普通 `unhandledRejection` 仅记录堆栈。
  *
  * 两条限流（照抄灵动岛 supervisor 的口径，避免"崩溃 → 重建 → 立刻又崩"死循环刷日志）：
  * **10 分钟内最多 3 次**，超了只记日志、停下来等人工处理。
@@ -27,7 +26,7 @@ const UNRESPONSIVE_GRACE_MS = 10_000;
 
 export interface CrashGuardOptions {
   /** 销毁并重建主窗口（index.ts 里复用原有的"建窗 + 载入界面"逻辑） */
-  recoverMainWindow: () => void;
+  recoverMainWindow: () => void | Promise<void>;
   /** 本机是否空闲（不在上课且主窗口不可见）—— 决定主进程崩溃后能不能自动重启 */
   isIdle: () => boolean;
   /** 退出应用（复用既有的退出路径，保证配置落盘） */
@@ -56,7 +55,7 @@ export function installCrashGuard(guard: CrashGuardOptions): void {
     logger.error(
       `主窗口渲染进程异常退出：reason=${details.reason} exitCode=${details.exitCode}（准备重建窗口）`,
     );
-    recoverWindow(`渲染进程退出（${details.reason}）`);
+    void recoverWindow(`渲染进程退出（${details.reason}）`);
   });
 
   app.on('child-process-gone', (_event, details) => {
@@ -72,7 +71,6 @@ export function installCrashGuard(guard: CrashGuardOptions): void {
 
   process.on('unhandledRejection', (reason) => {
     logger.error('主进程未处理的 Promise 拒绝：', reason);
-    restartIfIdle('unhandledRejection');
   });
 }
 
@@ -107,18 +105,17 @@ function armUnresponsiveTimer(): void {
   unresponsiveTimer = setTimeout(() => {
     unresponsiveTimer = null;
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    recoverWindow('界面无响应超过 10 秒');
+    void recoverWindow('界面无响应超过 10 秒');
   }, UNRESPONSIVE_GRACE_MS);
 }
 
 function isMainWindowContents(id: number): boolean {
-  // 主窗口引用还没建立（启动早期）时按"就是它"处理，避免漏掉重建
-  if (!mainWindow || mainWindow.isDestroyed()) return true;
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
   return mainWindow.webContents.id === id;
 }
 
 /** 静默重建主窗口（限流） */
-function recoverWindow(reason: string): void {
+async function recoverWindow(reason: string): Promise<void> {
   const recover = options?.recoverMainWindow;
   if (recovering) return;
   if (!recover) {
@@ -145,7 +142,7 @@ function recoverWindow(reason: string): void {
       win.hide();
     }
     logger.warn(`开始重建主窗口（${reason}，本窗口期第 ${windowRecoverAt.length} 次）`);
-    recover();
+    await recover();
   } catch (error) {
     logger.error(`重建主窗口失败：${error instanceof Error ? error.message : String(error)}`);
   } finally {

@@ -11,7 +11,6 @@ import {
   type ClassDetailDto,
   type ClassDto,
   type AutoTermWeeksRequest,
-  type ClassHelperStatusListDto,
   type ClassPlanImportResultDto,
   type ClassPlanPreviewDto,
   type ClassStatusDto,
@@ -31,7 +30,6 @@ import {
   type BulkPublishResult,
   type NotificationCreatorsDto,
   type NotificationDaysDto,
-  type CreateIntegrationDeviceRequest,
   type CreateNotificationRequest,
   type CreatePermissionGroupRequest,
   type CreateScheduleRequest,
@@ -51,8 +49,6 @@ import {
   type HomeworkDaysDto,
   type HomeworkDto,
   type HomeworkSubmissionsDto,
-  type IntegrationDeviceDto,
-  type IntegrationDeviceTokenDto,
   type LoginRequest,
   type LoginResponse,
   type MyPermissionsDto,
@@ -64,8 +60,6 @@ import {
   type PushClientUpdateRequest,
   type ScheduleDto,
   type ScheduleWeekView,
-  type SendClassIslandNotificationRequest,
-  type SendClassIslandNotificationResult,
   type SessionUser,
   type StudentDto,
   type StudentGradeDetailDto,
@@ -84,7 +78,6 @@ import {
   type UpdateClassAccountRequest,
   type UpdateClassRequest,
   type UpdateInfo,
-  type UpdateIntegrationDeviceRequest,
   type UpdatePermissionGroupRequest,
   type UpdateStudentRequest,
   type UpdateTermWeeksRequest,
@@ -131,14 +124,10 @@ export const classApi = {
   assignSubjectTeachers: (
     id: string,
     assignments: Array<{ courseId?: string | null; subjectName: string; teacherId?: string | null }>,
-  ): Promise<SubjectTeacherDto[]> =>
-    api.put(`${API_PATHS.classes}/${id}/subject-teachers`, { assignments }),
+  ): Promise<SubjectTeacherDto[]> => api.put(`${API_PATHS.classes}/${id}/subject-teachers`, { assignments }),
   /** 设置 / 重置班级账号（班级码 + 班级密码）：仅管理员 */
   updateAccount: (id: string, payload: UpdateClassAccountRequest): Promise<ClassDto> =>
     api.patch(`${API_PATHS.classes}/${id}/class-account`, payload),
-  /** 班级端按学号查成绩的开关 */
-  getGradeQuery: (id: string): Promise<{ studentGradeQueryEnabled: boolean }> =>
-    api.get(`${API_PATHS.classes}/${id}/student-grade-query`),
   setGradeQuery: (id: string, enabled: boolean): Promise<{ studentGradeQueryEnabled: boolean }> =>
     api.patch(`${API_PATHS.classes}/${id}/student-grade-query`, { enabled }),
   /** 学年升级：只改年级，不归档、数据沿用 */
@@ -152,8 +141,6 @@ export const courseApi = {
   list: (classId?: string): Promise<CourseDto[]> =>
     api.get(API_PATHS.courses, classId ? { classId } : undefined),
   create: (payload: CreateCourseRequest): Promise<CourseDto> => api.post(API_PATHS.courses, payload),
-  update: (id: string, payload: { name: string }): Promise<CourseDto> =>
-    api.patch(`${API_PATHS.courses}/${id}`, payload),
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.courses}/${id}`),
 };
 
@@ -299,7 +286,10 @@ export const gradeApi = {
   ): Promise<{ updated: number }> => api.patch(`${API_PATHS.grades}/levels`, payload),
   /** 按**学号**查某个学生的成绩明细（教师端"按学号查成绩"） */
   studentDetail: (studentNo: string, classId?: string): Promise<StudentGradeDetailDto> =>
-    api.get(`${API_PATHS.grades}/student/${encodeURIComponent(studentNo)}`, classId ? { classId } : undefined),
+    api.get(
+      `${API_PATHS.grades}/student/${encodeURIComponent(studentNo)}`,
+      classId ? { classId } : undefined,
+    ),
   /** 某班出现过的考试（含"是否计入总分"） */
   listExams: (classId: string): Promise<ExamDto[]> => api.get(`${API_PATHS.grades}/exams`, { classId }),
   /** 设置"这次考试是否把所有科目相加做总分排名" */
@@ -335,13 +325,6 @@ export const studentApi = {
   /** 某个学生的调班 / 转出历史 */
   transfersOf: (id: string): Promise<PaginatedResult<StudentTransferDto>> =>
     api.get(`${API_PATHS.students}/${id}/transfers`),
-  /** 调班历史（可按学生或班级过滤） */
-  transfers: (params?: {
-    studentId?: string;
-    classId?: string;
-    page?: number;
-    pageSize?: number;
-  }): Promise<PaginatedResult<StudentTransferDto>> => api.get(`${API_PATHS.students}/transfers`, params),
 };
 
 /* ------------------------------------------------------------------ 仪表盘 */
@@ -495,54 +478,6 @@ export const importApi = {
   }): Promise<ClassPlanImportResultDto> => api.post(`${API_PATHS.imports}/class-plan`, payload),
 };
 
-/* ------------------------------------------------------------------ ClassIsland 联动 */
-
-/**
- * 联动设备管理 + 提醒下发。
- *
- * 设备令牌（chci_...）只在**创建**与**重置**两个接口的返回值里出现一次，
- * 其余接口永远只回 tokenHint（前缀提示），因此拿到 token 后要立刻提示老师复制保存。
- */
-export const integrationApi = {
-  listDevices: (classId?: string): Promise<IntegrationDeviceDto[]> =>
-    api.get(`${API_PATHS.integrations}/devices`, classId ? { classId } : undefined),
-  createDevice: (payload: CreateIntegrationDeviceRequest): Promise<IntegrationDeviceTokenDto> =>
-    api.post(`${API_PATHS.integrations}/devices`, payload),
-  updateDevice: (id: string, payload: UpdateIntegrationDeviceRequest): Promise<IntegrationDeviceDto> =>
-    api.patch(`${API_PATHS.integrations}/devices/${id}`, payload),
-  /** 重置令牌：旧令牌立即失效，插件需要重新填写 */
-  resetToken: (id: string): Promise<IntegrationDeviceTokenDto> =>
-    api.post(`${API_PATHS.integrations}/devices/${id}/token`, {}),
-  removeDevice: (id: string): Promise<{ id: string }> =>
-    api.delete(`${API_PATHS.integrations}/devices/${id}`),
-  /**
-   * 「**从教室机器获取一次课表**」：置一个待办，插件在下一次心跳把当前课表推上来。
-   *
-   * 自动回传（`syncScheduleToServer`）现在默认关闭 —— 它会在老师手排课之后
-   * 被教室的旧课表悄悄覆盖。要取教室的课表就点这个按钮（前端会先弹警告）。
-   */
-  requestSchedule: (id: string): Promise<{ requested: boolean; deviceName: string; nextHeartbeatHint: string }> =>
-    api.post(`${API_PATHS.integrations}/devices/${id}/request-schedule`, {}),
-  /**
-   * 「**下发一次课表到教室**」：置一个待办，插件在下一次心跳拉取本班课表并写进 ClassIsland，
-   * 同时把同一天同一单双周相位下冲突的旧课表**停用**（只停用、不删除）。
-   *
-   * 与 `requestSchedule` 反方向、同样是一次性动作 —— 课表同步不再有"一直同步"的开关
-   * （那会让教室课表被反复重写，见 AGENTS.md §5 第 59 条与插件侧说明）。
-   */
-  mirrorSchedule: (id: string): Promise<{ requested: boolean; deviceName: string; nextHeartbeatHint: string }> =>
-    api.post(`${API_PATHS.integrations}/devices/${id}/mirror-schedule`, {}),
-  /** 把一条提醒下发到该班的 ClassIsland 设备（ClassIsland 上全屏弹出） */
-  notify: (payload: SendClassIslandNotificationRequest): Promise<SendClassIslandNotificationResult> =>
-    api.post(`${API_PATHS.integrations}/classisland/notify`, payload),
-  /**
-   * **ClassHelper 班级端在线状态**：管理员看全部班级，教师看自己班主任/任课的班级。
-   * 每条含班级、设备名/设备号、在线离线、最后在线时间、最后心跳时间。
-   */
-  classHelperStatus: (): Promise<ClassHelperStatusListDto> =>
-    api.get(`${API_PATHS.integrations}/classisland/status`),
-};
-
 /* ------------------------------------------------------------------ 数据库管理（仅管理员） */
 
 /**
@@ -629,7 +564,7 @@ export const permissionApi = {
  * 「客户端设备」页的接口。
  *
  * 权限（与后端 `clients.module.ts` 逐个对齐）：
- * - `list` / `remove`：`client:manage`
+ * - `list`：查看、设备管理、远控、更新任一权限；`remove`：`client:manage`
  * - `commands`：`remote:control`（关机 / 重启 / 注销 / 锁屏，机器上还会再弹一次确认框）
  * - `pushUpdate`：`client:update-push`
  */
@@ -660,7 +595,7 @@ const CLIENT_RELEASE_FETCH_TIMEOUT_MS = 10 * 60 * 1000;
  * 教室机器常常没有外网，所以安装包由**服务端替教室下载**再缓存：
  * Web 端不直连 GitHub（CSP 的 connect-src 只放行 self 与 WebSocket，见 AGENTS.md §5 第 52 条）。
  *
- * 权限：`list` 要 `client:manage`，`fetch` / `register` / `remove` 要 `client:update-push`。
+ * 权限：`list` 要查看、设备管理或更新任一权限；`fetch` / `register` / `remove` 要 `client:update-push`。
  */
 export const clientReleaseApi = {
   /** 服务端已缓存的安装包列表 */
@@ -673,11 +608,7 @@ export const clientReleaseApi = {
    * 就报"请求超时"，用户会以为失败而重复点。这里与服务端取同一个上限。
    */
   fetch: (version: string): Promise<ClientReleaseDto> =>
-    api.post(
-      `${API_PATHS.update}/client/fetch`,
-      { version },
-      { timeout: CLIENT_RELEASE_FETCH_TIMEOUT_MS },
-    ),
+    api.post(`${API_PATHS.update}/client/fetch`, { version }, { timeout: CLIENT_RELEASE_FETCH_TIMEOUT_MS }),
   /** 登记一份已经手工放进 `data/client-releases/<版本>/` 的安装包 */
   register: (payload: { version: string; fileName?: string; notes?: string }): Promise<ClientReleaseDto> =>
     api.post(`${API_PATHS.update}/client/releases`, payload),

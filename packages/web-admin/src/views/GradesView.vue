@@ -62,7 +62,8 @@ const averagePercent = computed(() => {
   return Math.round((sum / grades.value.length) * 10) / 10;
 });
 
-const examOptions = computed(() => [...new Set(grades.value.map((item) => item.examName))]);
+const exams = ref<Array<{ name: string; countInTotal: boolean }>>([]);
+const examOptions = computed(() => exams.value.map((item) => item.name));
 
 /* ------------------------------------------------------------ 考试口径（计入总分）
 
@@ -75,26 +76,45 @@ const examOptions = computed(() => [...new Set(grades.value.map((item) => item.e
  */
 const examCountInTotal = ref(false);
 const examSaving = ref(false);
+const examLoading = ref(false);
+let examRequest = 0;
 
 async function loadExamFlag(): Promise<void> {
-  if (!filter.classId || !filter.examName) {
+  const request = ++examRequest;
+  const { classId, examName } = filter;
+  if (!classId) {
+    exams.value = [];
     examCountInTotal.value = false;
     return;
   }
-  const list = await gradeApi.listExams(filter.classId).catch(() => []);
-  examCountInTotal.value = list.find((item) => item.name === filter.examName)?.countInTotal === true;
+  examLoading.value = true;
+  try {
+    const list = await gradeApi.listExams(classId);
+    if (request !== examRequest || classId !== filter.classId || examName !== filter.examName) return;
+    exams.value = list;
+    examCountInTotal.value = list.find((item) => item.name === examName)?.countInTotal === true;
+  } catch {
+    if (request === examRequest) {
+      exams.value = [];
+      examCountInTotal.value = false;
+    }
+  } finally {
+    if (request === examRequest) examLoading.value = false;
+  }
 }
 
 async function setExamCountInTotal(value: boolean): Promise<void> {
-  if (!filter.classId || !filter.examName) return;
+  if (examSaving.value || examLoading.value || !filter.classId || !filter.examName) return;
+  const { classId, examName } = filter;
   examSaving.value = true;
   try {
     const saved = await gradeApi.setExam({
-      classId: filter.classId,
-      name: filter.examName,
+      classId,
+      name: examName,
       countInTotal: value,
     });
-    examCountInTotal.value = saved.countInTotal;
+    if (classId === filter.classId && examName === filter.examName)
+      examCountInTotal.value = saved.countInTotal;
   } catch {
     // 失败时回读真实值，避免开关停在一个假状态上（拦截器已经弹过原因）
     await loadExamFlag();
@@ -104,7 +124,11 @@ async function setExamCountInTotal(value: boolean): Promise<void> {
 }
 
 // 换了班级或考试就重新读一次口径（加载成绩的 watch 只管列表）
-watch(() => [filter.classId, filter.examName], () => void loadExamFlag(), { immediate: true });
+watch(
+  () => [filter.classId, filter.examName],
+  () => void loadExamFlag(),
+  { immediate: true },
+);
 
 async function loadClasses(): Promise<void> {
   classes.value = await classApi.list();
@@ -237,25 +261,32 @@ function openSingle(): void {
   singleVisible.value = true;
 }
 
+const submitSingleSaving = ref(false);
 async function submitSingle(): Promise<void> {
-  if (!singleForm.studentId || !singleForm.examName.trim()) {
-    ElMessage.warning('请选择学生并填写考试名称');
-    return;
+  if (submitSingleSaving.value) return;
+  submitSingleSaving.value = true;
+  try {
+    if (!singleForm.studentId || !singleForm.examName.trim()) {
+      ElMessage.warning('请选择学生并填写考试名称');
+      return;
+    }
+    await gradeApi.create({
+      classId: filter.classId,
+      courseId: await resolveCourseId(singleForm.courseId),
+      studentId: singleForm.studentId,
+      examName: singleForm.examName.trim(),
+      score: singleForm.score,
+      totalScore: singleForm.totalScore,
+      levelType: singleForm.levelType,
+      // percent 口径留空时由服务端按得分率换算，所以这里只传用户真的填了的值
+      ...(singleForm.level.trim() ? { level: singleForm.level.trim() } : {}),
+    });
+    ElMessage.success('成绩已录入，已实时推送给教室端');
+    singleVisible.value = false;
+    await loadGrades();
+  } finally {
+    submitSingleSaving.value = false;
   }
-  await gradeApi.create({
-    classId: filter.classId,
-    courseId: await resolveCourseId(singleForm.courseId),
-    studentId: singleForm.studentId,
-    examName: singleForm.examName.trim(),
-    score: singleForm.score,
-    totalScore: singleForm.totalScore,
-    levelType: singleForm.levelType,
-    // percent 口径留空时由服务端按得分率换算，所以这里只传用户真的填了的值
-    ...(singleForm.level.trim() ? { level: singleForm.level.trim() } : {}),
-  });
-  ElMessage.success('成绩已录入，已实时推送给教室端');
-  singleVisible.value = false;
-  await loadGrades();
 }
 
 /* ------------------------------------------------------------ 批量录入 */
@@ -267,7 +298,9 @@ const bulkForm = reactive({
   totalScore: 100,
   levelType: 'percent' as GradeLevelType,
 });
-const bulkRows = ref<Array<{ studentId: string; name: string; studentNo: string; score: number | null; level: string }>>([]);
+const bulkRows = ref<
+  Array<{ studentId: string; name: string; studentNo: string; score: number | null; level: string }>
+>([]);
 
 function openBulk(): void {
   if (students.value.length === 0) {
@@ -288,35 +321,42 @@ function openBulk(): void {
   bulkVisible.value = true;
 }
 
+const submitBulkSaving = ref(false);
 async function submitBulk(): Promise<void> {
-  const items = bulkRows.value
-    .filter((row) => row.score !== null && row.score !== undefined)
-    .map((row) => ({
-      studentId: row.studentId,
-      score: Number(row.score),
-      ...(row.level.trim() ? { level: row.level.trim() } : {}),
-    }));
+  if (submitBulkSaving.value) return;
+  submitBulkSaving.value = true;
+  try {
+    const items = bulkRows.value
+      .filter((row) => row.score !== null && row.score !== undefined)
+      .map((row) => ({
+        studentId: row.studentId,
+        score: Number(row.score),
+        ...(row.level.trim() ? { level: row.level.trim() } : {}),
+      }));
 
-  if (items.length === 0) {
-    ElMessage.warning('至少录入一位学生的成绩');
-    return;
-  }
-  if (!bulkForm.examName.trim()) {
-    ElMessage.warning('请填写考试名称');
-    return;
-  }
+    if (items.length === 0) {
+      ElMessage.warning('至少录入一位学生的成绩');
+      return;
+    }
+    if (!bulkForm.examName.trim()) {
+      ElMessage.warning('请填写考试名称');
+      return;
+    }
 
-  const result = await gradeApi.bulkCreate({
-    classId: filter.classId,
-    courseId: await resolveCourseId(bulkForm.courseId),
-    examName: bulkForm.examName.trim(),
-    totalScore: bulkForm.totalScore,
-    levelType: bulkForm.levelType,
-    items,
-  });
-  ElMessage.success(`已录入 ${result.count} 条成绩并广播到班级`);
-  bulkVisible.value = false;
-  await loadGrades();
+    const result = await gradeApi.bulkCreate({
+      classId: filter.classId,
+      courseId: await resolveCourseId(bulkForm.courseId),
+      examName: bulkForm.examName.trim(),
+      totalScore: bulkForm.totalScore,
+      levelType: bulkForm.levelType,
+      items,
+    });
+    ElMessage.success(`已录入 ${result.count} 条成绩并广播到班级`);
+    bulkVisible.value = false;
+    await loadGrades();
+  } finally {
+    submitBulkSaving.value = false;
+  }
 }
 
 /* ------------------------------------------------------------ 等级：单个 / 批量编辑 */
@@ -361,7 +401,9 @@ async function submitLevelBatch(): Promise<void> {
       courseId: await resolveCourseId(levelBatchForm.courseId),
       levelType: levelBatchForm.levelType,
     });
-    ElMessage.success(`已把 ${result.updated} 条成绩改成「${GRADE_LEVEL_TYPE_LABELS[levelBatchForm.levelType]}」`);
+    ElMessage.success(
+      `已把 ${result.updated} 条成绩改成「${GRADE_LEVEL_TYPE_LABELS[levelBatchForm.levelType]}」`,
+    );
     levelBatchVisible.value = false;
     await loadGrades();
   } finally {
@@ -486,8 +528,11 @@ onUnmounted(() => {
     </div>
 
     <el-alert type="info" :closable="false" style="margin-top: 8px">
-      成绩按<b>科目</b>授权：科任老师只能录入 / 修改 / 删除<b>自己任教科目</b>的成绩；
-      班主任若不教这一科，同样改不了这一科（不指定科目的内容归班主任与管理员）。
+      成绩按
+      <b>科目</b>
+      授权：科任老师只能录入 / 修改 / 删除
+      <b>自己任教科目</b>
+      的成绩； 班主任若不教这一科，同样改不了这一科（不指定科目的内容归班主任与管理员）。
     </el-alert>
 
     <!-- 考试口径：这次考试要不要把所有科目相加做总分排名（按「班级 + 考试名」记，
@@ -498,7 +543,8 @@ onUnmounted(() => {
         <el-tag effect="plain">{{ filter.examName }}</el-tag>
         <el-switch
           :model-value="examCountInTotal"
-          :loading="examSaving"
+          :loading="examSaving || examLoading"
+          :disabled="examSaving || examLoading"
           data-test="exam-count-in-total"
           active-text="所有科目相加，排总分榜"
           inactive-text="只排单科，不合总分"
@@ -564,7 +610,9 @@ onUnmounted(() => {
         <el-table-column label="等级" width="180">
           <template #default="{ row }">
             <div class="level-cell">
-              <el-tag size="small" effect="plain">{{ GRADE_LEVEL_TYPE_LABELS[row.levelType as GradeLevelType] }}</el-tag>
+              <el-tag size="small" effect="plain">
+                {{ GRADE_LEVEL_TYPE_LABELS[row.levelType as GradeLevelType] }}
+              </el-tag>
               <!-- 单个编辑：percent 口径下相当于手动覆盖自动换算的结果 -->
               <el-select
                 v-if="canManageGrades"
@@ -580,7 +628,9 @@ onUnmounted(() => {
                   :value="item"
                 />
               </el-select>
-              <span v-else>{{ row.level || `${gradeLevel(gradePercent(row.score, row.totalScore))} 等` }}</span>
+              <span v-else>
+                {{ row.level || `${gradeLevel(gradePercent(row.score, row.totalScore))} 等` }}
+              </span>
             </div>
           </template>
         </el-table-column>
@@ -610,7 +660,12 @@ onUnmounted(() => {
         </el-form-item>
         <el-form-item label="科目">
           <el-select v-model="singleForm.courseId" clearable filterable style="width: 100%">
-            <el-option v-for="item in ownCourses" :key="item.id" :label="`${item.name}（${item.teacher?.name ?? ''}）`" :value="item.id" />
+            <el-option
+              v-for="item in ownCourses"
+              :key="item.id"
+              :label="`${item.name}（${item.teacher?.name ?? ''}）`"
+              :value="item.id"
+            />
             <el-option-group v-if="canCreateCourse && subjectOptions.length" label="统一科目（自动建课）">
               <el-option
                 v-for="name in subjectOptions"
@@ -649,14 +704,19 @@ onUnmounted(() => {
             style="width: 100%"
           >
             <el-option v-for="item in DEFAULT_LETTER_LEVELS" :key="item" :label="item" :value="item" />
-            <el-option v-for="item in ['优', '良', '合格', '待提高']" :key="item" :label="item" :value="item" />
+            <el-option
+              v-for="item in ['优', '良', '合格', '待提高']"
+              :key="item"
+              :label="item"
+              :value="item"
+            />
           </el-select>
         </el-form-item>
       </el-form>
       <div class="dialog-hint">{{ GRADE_LEVEL_TYPE_HINTS[singleForm.levelType] }}</div>
       <template #footer>
         <el-button @click="singleVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitSingle">录入并推送</el-button>
+        <el-button type="primary" :loading="submitSingleSaving" @click="submitSingle">录入并推送</el-button>
       </template>
     </el-dialog>
 
@@ -665,12 +725,7 @@ onUnmounted(() => {
       <el-form :model="bulkForm" label-width="90px" inline>
         <el-form-item label="科目">
           <el-select v-model="bulkForm.courseId" clearable filterable style="width: 150px">
-            <el-option
-              v-for="item in ownCourses"
-              :key="item.id"
-              :label="item.name"
-              :value="item.id"
-            />
+            <el-option v-for="item in ownCourses" :key="item.id" :label="item.name" :value="item.id" />
             <el-option-group v-if="canCreateCourse && subjectOptions.length" label="统一科目（自动建课）">
               <el-option
                 v-for="name in subjectOptions"
@@ -709,9 +764,21 @@ onUnmounted(() => {
         </el-table-column>
         <el-table-column label="等级（留空则自动换算）">
           <template #default="{ row }">
-            <el-select v-model="row.level" size="small" allow-create filterable clearable style="width: 140px">
+            <el-select
+              v-model="row.level"
+              size="small"
+              allow-create
+              filterable
+              clearable
+              style="width: 140px"
+            >
               <el-option v-for="item in DEFAULT_LETTER_LEVELS" :key="item" :label="item" :value="item" />
-              <el-option v-for="item in ['优', '良', '合格', '待提高']" :key="item" :label="item" :value="item" />
+              <el-option
+                v-for="item in ['优', '良', '合格', '待提高']"
+                :key="item"
+                :label="item"
+                :value="item"
+              />
             </el-select>
           </template>
         </el-table-column>
@@ -719,15 +786,17 @@ onUnmounted(() => {
 
       <template #footer>
         <el-button @click="bulkVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitBulk">提交并广播</el-button>
+        <el-button type="primary" :loading="submitBulkSaving" @click="submitBulk">提交并广播</el-button>
       </template>
     </el-dialog>
 
     <!-- 批量改等级：把一个考试某门课整批改成另一种等级口径 -->
     <el-dialog v-model="levelBatchVisible" title="批量修改等级" width="520px">
       <el-alert type="info" :closable="false" style="margin-bottom: 12px">
-        把某个考试某门课的成绩<b>整批</b>换成另一种等级口径。百分制会按得分率重新换算 A~E，
-        等级制 / 自定义则直接套用所选口径（原有等级文本保留，可再到表格里逐条微调）。
+        把某个考试某门课的成绩
+        <b>整批</b>
+        换成另一种等级口径。百分制会按得分率重新换算 A~E， 等级制 /
+        自定义则直接套用所选口径（原有等级文本保留，可再到表格里逐条微调）。
       </el-alert>
       <el-form :model="levelBatchForm" label-width="90px">
         <el-form-item label="科目">
@@ -751,7 +820,7 @@ onUnmounted(() => {
         <el-form-item label="改为">
           <el-select v-model="levelBatchForm.levelType" style="width: 100%">
             <el-option
-              v-for="type in GRADE_LEVEL_TYPES"
+              v-for="type in GRADE_LEVEL_TYPES.filter((item) => item !== 'custom')"
               :key="type"
               :label="GRADE_LEVEL_TYPE_LABELS[type]"
               :value="type"

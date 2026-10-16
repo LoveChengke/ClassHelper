@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { confirmAction } from '../../composables/confirm.js';
 import { computed, onMounted, ref } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 import { formatDate, relativeTime, type UpdateInfo } from '@classhelper/shared';
 import type { ClientAgentStatus, DesktopAppInfo } from '../../../types/desktop.js';
 import { useAppStore } from '../../stores/app.js';
@@ -198,9 +199,12 @@ const cacheRows = computed(() =>
 );
 
 async function clearCache(): Promise<void> {
-  await ElMessageBox.confirm('清空后离线时将无法查看历史数据，确认继续？', '清空离线缓存', {
-    type: 'warning',
-  });
+  if (
+    !(await confirmAction('清空后离线时将无法查看历史数据，确认继续？', '清空离线缓存', {
+      type: 'warning',
+    }))
+  )
+    return;
   await appStore.clearCache();
   ElMessage.success('离线缓存已清空');
 }

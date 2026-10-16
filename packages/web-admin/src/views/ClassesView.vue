@@ -22,6 +22,8 @@ import { classApi, courseApi, teacherApi } from '@/api';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useResponsive } from '@/composables/useResponsive';
+import TableImportDialog from '@/components/TableImportDialog.vue';
+const relationImportVisible = ref(false);
 
 const auth = useAuthStore();
 const realtime = useRealtimeStore();
@@ -109,40 +111,47 @@ function openEdit(row: ClassDto): void {
   formVisible.value = true;
 }
 
+const submitFormSaving = ref(false);
 async function submitForm(): Promise<void> {
-  const valid = await formRef.value?.validate().catch(() => false);
-  if (!valid) return;
+  if (submitFormSaving.value) return;
+  submitFormSaving.value = true;
+  try {
+    const valid = await formRef.value?.validate().catch(() => false);
+    if (!valid) return;
 
-  if (editingId.value) {
-    await classApi.update(editingId.value, {
-      grade: form.grade,
-      enrollmentYear: form.enrollmentYear,
-      classIndex: form.classIndex,
-      termWeeks: form.termWeeks,
-    });
-    // 编辑弹窗里也能直接换班主任（仅管理员；班主任决定谁能管这个班的课表与成绩）
-    if (isAdmin.value && form.headTeacherId) {
-      const target = classes.value.find((item) => item.id === editingId.value);
-      if (target && target.teacher?.id !== form.headTeacherId) {
-        await classApi.assignHeadTeacher(editingId.value, form.headTeacherId);
+    if (editingId.value) {
+      await classApi.update(editingId.value, {
+        grade: form.grade,
+        enrollmentYear: form.enrollmentYear,
+        classIndex: form.classIndex,
+        termWeeks: form.termWeeks,
+      });
+      // 编辑弹窗里也能直接换班主任（仅管理员；班主任决定谁能管这个班的课表与成绩）
+      if (isAdmin.value && form.headTeacherId) {
+        const target = classes.value.find((item) => item.id === editingId.value);
+        if (target && target.teacher?.id !== form.headTeacherId) {
+          await classApi.assignHeadTeacher(editingId.value, form.headTeacherId);
+        }
       }
+      ElMessage.success('班级已更新');
+    } else {
+      await classApi.create({
+        grade: form.grade,
+        enrollmentYear: form.enrollmentYear,
+        classIndex: form.classIndex,
+        // 学期周数：新建时也要提交。原先只提交名称/年级/班级码，表单里填的周数被直接丢弃，
+        // 服务端落库恒为默认 20，用户看到的是"设置了没生效"且没有任何提示。
+        termWeeks: form.termWeeks,
+        ...(form.code.trim() ? { code: form.code.trim().toUpperCase() } : {}),
+        ...(isAdmin.value && form.headTeacherId ? { teacherId: form.headTeacherId } : {}),
+      });
+      ElMessage.success(`班级 ${previewName.value} 创建成功`);
     }
-    ElMessage.success('班级已更新');
-  } else {
-    await classApi.create({
-      grade: form.grade,
-      enrollmentYear: form.enrollmentYear,
-      classIndex: form.classIndex,
-      // 学期周数：新建时也要提交。原先只提交名称/年级/班级码，表单里填的周数被直接丢弃，
-      // 服务端落库恒为默认 20，用户看到的是"设置了没生效"且没有任何提示。
-      termWeeks: form.termWeeks,
-      ...(form.code.trim() ? { code: form.code.trim().toUpperCase() } : {}),
-      ...(isAdmin.value && form.headTeacherId ? { teacherId: form.headTeacherId } : {}),
-    });
-    ElMessage.success(`班级 ${previewName.value} 创建成功`);
+    formVisible.value = false;
+    await loadClasses();
+  } finally {
+    submitFormSaving.value = false;
   }
-  formVisible.value = false;
-  await loadClasses();
 }
 
 /* ------------------------------------------------------------ 更换班主任（仅管理员） */
@@ -469,6 +478,13 @@ onUnmounted(() => {
           @clear="loadClasses"
         />
         <el-button :icon="'Search'" @click="loadClasses">查询</el-button>
+        <el-button
+          v-if="auth.can('import:class-teachers')"
+          :icon="'Upload'"
+          @click="relationImportVisible = true"
+        >
+          导入任课关系
+        </el-button>
         <el-button v-if="isAdmin" type="primary" :icon="'Plus'" @click="openCreate">新建班级</el-button>
       </div>
     </div>
@@ -530,7 +546,9 @@ onUnmounted(() => {
       <el-alert type="info" :closable="false" show-icon class="mb-12">
         <template #title>
           教室机器以「班级」为主体登录：班级码 + 班级密码。登录后本机代表整个班级，
-          作业完成、通知已读都会按全班记录。<b>学生没有个人账号，不能登录</b>。
+          作业完成、通知已读都会按全班记录。
+          <b>学生没有个人账号，不能登录</b>
+          。
         </template>
       </el-alert>
       <el-form label-width="90px">
@@ -601,7 +619,7 @@ onUnmounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="formVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitForm">保存</el-button>
+        <el-button type="primary" :loading="submitFormSaving" @click="submitForm">保存</el-button>
       </template>
     </el-dialog>
 
@@ -656,7 +674,9 @@ onUnmounted(() => {
               <el-table-column prop="name" label="姓名" width="120" />
               <el-table-column label="状态" width="100">
                 <template #default="{ row }">
-                  <el-tag size="small" effect="plain">{{ STUDENT_STATUS_LABELS[row.status as StudentStatus] }}</el-tag>
+                  <el-tag size="small" effect="plain">
+                    {{ STUDENT_STATUS_LABELS[row.status as StudentStatus] }}
+                  </el-tag>
                 </template>
               </el-table-column>
               <el-table-column label="加入时间" width="180">
@@ -692,11 +712,17 @@ onUnmounted(() => {
 
           <el-tab-pane label="任课老师" name="subjects">
             <el-alert type="info" :closable="false" class="mt-12">
-              这是「班级 + 科目 + 教师」的任课关系：<b>科任老师只能发布 / 修改 / 删除自己任教科目的作业和成绩</b>；
-              班主任若不教这一科，同样改不了这一科。同一位老师既可以是班主任、又可以教某一科 ——
+              这是「班级 + 科目 + 教师」的任课关系：
+              <b>科任老师只能发布 / 修改 / 删除自己任教科目的作业和成绩</b>
+              ； 班主任若不教这一科，同样改不了这一科。同一位老师既可以是班主任、又可以教某一科 ——
               系统里只有他一个账号，权限自动合并，不会重复建号。
             </el-alert>
-            <el-table :data="detail?.subjectTeachers ?? []" size="small" class="mt-12" empty-text="还没有配置任课老师">
+            <el-table
+              :data="detail?.subjectTeachers ?? []"
+              size="small"
+              class="mt-12"
+              empty-text="还没有配置任课老师"
+            >
               <el-table-column prop="subjectName" label="科目" width="140" />
               <el-table-column label="任课老师" width="260">
                 <template #default="{ row }">
@@ -735,7 +761,12 @@ onUnmounted(() => {
               >
                 <el-option v-for="name in assignableSubjects" :key="name" :label="name" :value="name" />
               </el-select>
-              <el-select v-model="subjectDraft.teacherId" placeholder="选择任课老师" style="width: 220px" filterable>
+              <el-select
+                v-model="subjectDraft.teacherId"
+                placeholder="选择任课老师"
+                style="width: 220px"
+                filterable
+              >
                 <el-option
                   v-for="item in teachers"
                   :key="item.id"
@@ -743,7 +774,9 @@ onUnmounted(() => {
                   :value="item.id"
                 />
               </el-select>
-              <el-button type="primary" :loading="subjectSaving" @click="saveSubjectTeacher">设为任课老师</el-button>
+              <el-button type="primary" :loading="subjectSaving" @click="saveSubjectTeacher">
+                设为任课老师
+              </el-button>
             </div>
           </el-tab-pane>
 
@@ -770,12 +803,17 @@ onUnmounted(() => {
               <div>
                 <div class="setting-title">学年升级</div>
                 <div class="text-muted">
-                  把本班年级改成下一学年（例如高一 → 高二）。<b>升级不归档</b>：
-                  班级记录、学生名单、学号、作业与成绩全部沿用，只动「年级」这一个字段。
+                  把本班年级改成下一学年（例如高一 → 高二）。
+                  <b>升级不归档</b>
+                  ： 班级记录、学生名单、学号、作业与成绩全部沿用，只动「年级」这一个字段。
                 </div>
               </div>
               <div class="toolbar">
-                <el-input v-model="promoteForm.grade" placeholder="升级后的年级，如 高二" style="width: 200px" />
+                <el-input
+                  v-model="promoteForm.grade"
+                  placeholder="升级后的年级，如 高二"
+                  style="width: 200px"
+                />
                 <el-button type="primary" :loading="promoteForm.saving" @click="promote">升级</el-button>
               </div>
             </div>
@@ -813,6 +851,7 @@ onUnmounted(() => {
       </template>
     </el-dialog>
   </div>
+  <TableImportDialog v-model="relationImportVisible" kind="classTeachers" @imported="loadClasses" />
 </template>
 
 <style scoped>

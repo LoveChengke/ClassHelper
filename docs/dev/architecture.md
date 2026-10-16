@@ -18,7 +18,6 @@ description: 目录结构、技术栈、模块化设计与几条贯穿全局的�
 | 校验   | zod                                                                  | 4.6                                                        |
 | Web 端 | Vue + Vite + Element Plus + Pinia + Vue Router + Axios               | 3.5 / 8.3 / 2.14 / 4.0 / 5.3 / 1.20                        |
 | 客户端 | Electron + Vue + Element Plus + Pinia + Socket.IO Client + IndexedDB | 44.3 / 3.5 / 2.14 / 4.0 / 4.8                              |
-| 插件   | .NET 8 / C# + Avalonia（ClassIsland 插件 API 2.0）                   | net8.0                                                     |
 | 打包   | electron-builder（nsis / portable）+ NSIS                            | 26.15                                                      |
 | 文档站 | docfx                                                                | 2.81                                                       |
 
@@ -56,7 +55,7 @@ class-helper/
 │   ├── get-started/ app/ management/ dev/   # 四个章节
 │   ├── templates/classhelper/   # docfx 模板覆盖（_master.tmpl + public/main.css + 图标）
 │   ├── images/                  # 展示图：文档站 / README / 官网共用的同一份（1× 逻辑像素）
-│   ├── screenshots/             # 回归测试留档的截图（island / client / web-mobile / classisland），页面不展示
+│   ├── screenshots/             # 回归测试留档的截图（island / client / web-mobile），页面不展示
 │   ├── build.mjs                # 构建入口（注入版本号与 404 的 base）
 │   ├── serve.mjs                # 本地预览（:5181）
 │   └── _site/                   # 构建产物（gitignore）
@@ -69,7 +68,7 @@ class-helper/
     │   ├── prisma/schema.prisma # 数据模型（24 个 model，只有一份，切库改 provider）
     │   ├── prisma/migrations/   # 迁移历史（10 个）
     │   ├── prisma/seed.ts       # 种子数据（会清空业务表后重建演示数据）
-    │   ├── scripts/             # verify-e2e.mjs / verify-classisland.mjs / apply-column-migrations.cjs
+    │   ├── scripts/             # verify-e2e.mjs / apply-column-migrations.cjs
     │   └── src/
     │       ├── app.ts           # Express 装配（探针 + 限流 + 模块挂载 + 静态托管 + 兜底）
     │       ├── index.ts         # 启动入口（自检 + HTTP + Socket.IO + 优雅退出）
@@ -80,7 +79,6 @@ class-helper/
     │       ├── middleware/      # auth / error / validate / security(helmet + 限流 + 耗时日志)
     │       ├── realtime/        # socket.ts（房间）+ bus.ts（事件总线）
     │       └── modules/         # 15 个功能模块 + registry.ts（模块注册表）
-    ├── classisland-plugin/      # ClassIsland 联动插件（.NET 8 / C#，独立于 pnpm workspace）
     │   ├── manifest.yml
     │   ├── src/Plugin.cs
     │   ├── src/Services/        # BridgeService / ScheduleMapper / ClassPlanWriter /
@@ -105,7 +103,7 @@ class-helper/
 后端每个功能是一个独立目录，统一契约：
 
 ```ts
-// packages/server/src/modules/registry.ts（当前 21 个模块）
+// packages/server/src/modules/registry.ts（当前 20 个模块）
 export const apiModules: ApiModule[] = [
   authModule,
   aiModule, // 大模型助手（只解析不落库，见 docs/dev/api.md）
@@ -116,7 +114,6 @@ export const apiModules: ApiModule[] = [
   notificationsModule,
   callsModule,
   importsModule,
-  integrationsModule,
   gradesModule,
   studentsModule,
   teachersModule,
@@ -141,18 +138,18 @@ export const apiModules: ApiModule[] = [
 
 这些都是长期演进中固化下来的，改代码前值得先看（完整版在 `AGENTS.md`）：
 
-| 约定                         | 为什么                                                                                                       |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **统一响应与校验**           | 用 `lib/http.ts` 的 `sendOk/sendCreated`，用 `middleware/validate.ts` 挂 zod，错误交给 `middleware/error.ts` |
-| **功能级准入看权限键**       | 路由挂 `requirePermission('…')` / `requireAnyPermission(…)`，角色只是默认模板（`ROLE_DEFAULT_PERMISSIONS`）—— 见 `docs/dev/permissions.md` |
+| 约定                         | 为什么                                                                                                                                       |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| **统一响应与校验**           | 用 `lib/http.ts` 的 `sendOk/sendCreated`，用 `middleware/validate.ts` 挂 zod，错误交给 `middleware/error.ts`                                 |
+| **功能级准入看权限键**       | 路由挂 `requirePermission('…')` / `requireAnyPermission(…)`，角色只是默认模板（`ROLE_DEFAULT_PERMISSIONS`）—— 见 `docs/dev/permissions.md`   |
 | **权限判在服务层**           | 权限组只管功能级；班级维度与科目维度仍用 `lib/access.ts` 的断言（`assertCanManageSubjectContent` 等），**权限组不可覆盖** —— 前端隐藏 ≠ 权限 |
-| **周一为新一周的第一天**     | 周次口径唯一：`resolveCurrentWeek(TERM_START_DATE, now, MAX_TERM_WEEK)`                                      |
-| **作业按 `assignDate` 归类** | 用 `createdAt`（UTC）会在晚上把作业算到第二天                                                                |
-| **新增实时事件要改三处**     | 服务端 bus/socket、Web 端订阅、客户端订阅（灵动岛也依赖）                                                    |
-| **跨桥接只传纯数据**         | 传 Vue 的 `ref.value` 会在进入 preload 之前就抛 `could not be cloned`                                        |
-| **桌面端产物里不得有凭据**   | asar 可直接解包；构建有 `check-bundle-secrets` 门禁                                                          |
-| **图标只有一个图形源**       | 别改 `scripts/icons/` 的派生逻辑，换图标就换 `build/classhelper.{png,ico}`                                   |
-| **前端不写死颜色**           | 深色主题靠语义令牌，写死的颜色在深色下会露馅                                                                 |
+| **周一为新一周的第一天**     | 周次口径唯一：`resolveCurrentWeek(TERM_START_DATE, now, MAX_TERM_WEEK)`                                                                      |
+| **作业按 `assignDate` 归类** | 用 `createdAt`（UTC）会在晚上把作业算到第二天                                                                                                |
+| **新增实时事件要改三处**     | 服务端 bus/socket、Web 端订阅、客户端订阅（灵动岛也依赖）                                                                                    |
+| **跨桥接只传纯数据**         | 传 Vue 的 `ref.value` 会在进入 preload 之前就抛 `could not be cloned`                                                                        |
+| **桌面端产物里不得有凭据**   | asar 可直接解包；构建有 `check-bundle-secrets` 门禁                                                                                          |
+| **图标只有一个图形源**       | 别改 `scripts/icons/` 的派生逻辑，换图标就换 `build/classhelper.{png,ico}`                                                                   |
+| **前端不写死颜色**           | 深色主题靠语义令牌，写死的颜色在深色下会露馅                                                                                                 |
 
 ## 本地开发
 

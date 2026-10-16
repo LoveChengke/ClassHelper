@@ -1,6 +1,13 @@
 import { Router } from 'express';
 import { sendCreated, sendOk, ApiError } from '../../lib/http.js';
-import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
+import {
+  authenticate,
+  getAuthUser,
+  hasAuthPermission,
+  requireAnyPermission,
+  requirePermission,
+  requireStaffPermission,
+} from '../../middleware/auth.js';
 import { validate, validatedBody, validatedParams } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import * as clientReleases from './client-releases.service.js';
@@ -28,9 +35,8 @@ router.use(authenticate());
  * 权限：任何已登录用户都能查（信息本身来自公开仓库）。`force=1` 绕过服务端缓存，
  * 但**只有管理员生效** —— 否则任意登录用户都能靠刷这个参数把匿名限流打满。
  */
-router.get('/check', async (req, res) => {
-  const user = getAuthUser(req);
-  const force = req.query.force === '1' && user.role === 'ADMIN';
+router.get('/check', requireStaffPermission('update:check'), async (req, res) => {
+  const force = req.query.force === '1' && hasAuthPermission(req, 'update:force');
   sendOk(res, await updateService.checkForUpdates({ force }), '更新检查完成');
 });
 
@@ -42,9 +48,13 @@ router.get('/check', async (req, res) => {
  * 教室机器没有外网，所以"统一推送更新"必须有这一层中继：服务端替它们把安装包拉下来，
  * 客户端再从 `/client/download/:version` 取。
  */
-router.get('/client/releases', requirePermission('client:manage'), async (_req, res) => {
-  sendOk(res, await clientReleases.listReleases(), '获取安装包列表成功');
-});
+router.get(
+  '/client/releases',
+  requireAnyPermission('client:read', 'client:manage', 'client:update-push'),
+  async (_req, res) => {
+    sendOk(res, await clientReleases.listReleases(), '获取安装包列表成功');
+  },
+);
 
 /**
  * POST /api/update/client/fetch - 让服务端从 GitHub 下载某个版本的客户端安装包并登记

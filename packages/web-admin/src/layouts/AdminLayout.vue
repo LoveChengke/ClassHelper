@@ -82,7 +82,6 @@ function openAssistant(): void {
  * - 成绩录入：管理员 + 教师；页面内只对"管理员或所选班级的班主任"显示写入/导入按钮
  *   （需求 6：成绩与表格导入老师端可用且不越权；科任老师只能看，写入会被后端 403）
  * - 作业 / 通知：所有教师
- * - ClassIsland 联动：管理员 + 教师（设备令牌按班签发，页面内再按"能否管理该班"控制按钮）
  * - 数据库管理：仅管理员（备份/恢复/导入导出/一键切换是最高危操作，后端同样 requireRole('ADMIN')）
  * - 权限组管理 / 客户端设备：`roles` 只是粗筛（管理员 + 教师），真正的门控是**生效权限**
  *   （`permission:manage` / `client:manage`）—— 教师被某个权限组授予它之后同样该看见
@@ -102,6 +101,15 @@ const menuItems: MenuItem[] = [
   { path: '/classes', title: '班级管理', icon: 'School', roles: ['ADMIN'] },
   { path: '/students', title: '学生管理', icon: 'User', roles: ['ADMIN'] },
   { path: '/teachers', title: '教师管理', icon: 'UserFilled', roles: ['ADMIN'] },
+  { path: '/term-weeks', title: '学期周次', icon: 'Calendar', roles: ['ADMIN'] },
+  { path: '/archives', title: '毕业归档', icon: 'FolderOpened', roles: ['ADMIN'] },
+  {
+    path: '/permissions',
+    title: '权限组',
+    icon: 'Lock',
+    roles: ['ADMIN', 'TEACHER'],
+    permission: 'permission:manage',
+  },
   { path: '/schedules', title: '课表管理', icon: 'Calendar', roles: ['ADMIN', 'TEACHER'] },
   { path: '/homeworks', title: '作业发布', icon: 'Notebook', roles: ['ADMIN', 'TEACHER'] },
   { path: '/notifications', title: '通知发布', icon: 'Bell', roles: ['ADMIN', 'TEACHER'] },
@@ -119,20 +127,9 @@ const menuItems: MenuItem[] = [
     path: '/clients',
     title: '客户端',
     icon: 'Monitor',
-    // 与「权限组」同样按**生效权限**门控：教师默认没有 client:manage（见 shared/permissions.ts
-    // 的默认模板只给 ADMIN），所以这里不能只写 roles —— 被权限组授予后教师也该看见。
-    //
-    // 2026-10-11 起这一项**合并了原来的「ClassIsland 联动」**：两页讲的是同一件事的两半
-    // （同一个教室里，插件管大屏、桌面端管灵动岛），分开只会让人"先想清楚该进哪一页"，
-    // 批量下发更是无从下手。页内按 device:manage / client:update-push / remote:control
-    // 分别显示或禁用按钮，与后端三个接口的权限一一对应。
-    // 门控用 `classisland:notify` 而不是 `client:manage`：这一页同时承载「向教室下发提醒」，
-    // 而那个权限默认给 ADMIN + TEACHER（`client:manage` 只给 ADMIN）。用后者会把教师
-    // 挡在门外，等于把「联动页发提醒」这条老师日常要用的入口一并收走。
-    // 页内的设备管理 / 远控 / 下发更新仍各自要 device:manage / remote:control /
-    // client:update-push，与后端的三个接口一一对应。
+    // 按生效权限展示入口；页内分别校验设备管理、远控和更新权限。
     roles: ['ADMIN', 'TEACHER'],
-    permission: 'classisland:notify',
+    permission: 'client:read',
   },
   {
     path: '/ai-settings',
@@ -151,8 +148,7 @@ const menuItems: MenuItem[] = [
  *
  * 两道筛子：`roles` 是粗筛（角色级，与后端 `requireRole` 对齐），`permission` 是细筛
  * （生效权限级）——「权限组」必须走后者：教师被权限组授予 `permission:manage` 后
- * 角色还是 TEACHER，靠 `roles` 判断不出来。管理员在 `can()` 里短路为 true，
- * 所以这里不会因为权限还没拉回来而少显示一项。
+ * 角色还是 TEACHER，靠 `roles` 判断不出来。所有角色都等待生效权限，加载失败时不放行。
  */
 const visibleMenuItems = computed(() =>
   menuItems.filter((item) => {
@@ -304,7 +300,7 @@ function bindMenuScroller(): void {
  */
 onMounted(() => {
   // 生效权限（`GET /permissions/me`）：菜单里的「权限组」要等它回来才显示。
-  // 失败不阻塞布局（store 内已静默吞掉），管理员在 can() 里短路、不受这一拍影响。
+  // 失败不阻塞布局，带权限要求的入口保持关闭。
   void auth.ensurePermissions();
   syncIndicator();
   bindMenuScroller();
@@ -368,6 +364,17 @@ if (import.meta.env.DEV) {
   for (const item of menuItems) {
     if (!knownPaths.has(item.path)) {
       console.error(`[AdminLayout] 菜单项未注册对应路由：${item.path}`);
+    }
+  }
+  for (const item of router.getRoutes()) {
+    if (
+      item.path !== '/' &&
+      item.path !== '/login' &&
+      item.meta.title &&
+      !item.redirect &&
+      !menuItems.some((menu) => menu.path === item.path)
+    ) {
+      console.error(`[AdminLayout] 页面缺少菜单入口：${item.path}`);
     }
   }
 }
@@ -536,11 +543,7 @@ const tourSteps = computed(() => [
            外层裁剪框贴着**菜单视口**（菜单列可滚动，激活项滚出去时指示器要一起被裁掉），
            pointer-events:none 是必需的 —— 它盖在菜单项上，否则会把点击吃掉。 -->
       <div class="nav-indicator-clip" :style="indicatorClipStyle" aria-hidden="true">
-        <div
-          class="nav-indicator"
-          :class="{ 'is-following': indicatorFollowing }"
-          :style="indicatorStyle"
-        />
+        <div class="nav-indicator" :class="{ 'is-following': indicatorFollowing }" :style="indicatorStyle" />
       </div>
       <el-menu :default-active="activeMenu" class="layout-menu" @select="handleMenuSelect">
         <el-menu-item

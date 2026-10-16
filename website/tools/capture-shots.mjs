@@ -90,7 +90,6 @@ const DESKTOP_PAGES = [
   { name: 'web-homeworks', route: '/homeworks', title: '作业发布' },
   { name: 'web-notifications', route: '/notifications', title: '通知发布', pickClass: '高二(3)班' },
   { name: 'web-grades', route: '/grades', title: '成绩录入' },
-  { name: 'web-integrations', route: '/integrations', title: 'ClassIsland 联动' },
   { name: 'web-database', route: '/database', title: '数据库管理' },
 ];
 

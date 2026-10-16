@@ -44,7 +44,7 @@
         <a class="brand" href="#top" data-press="0.96">
           <img class="brand-mark" src="assets/icon.png" alt="" width="32" height="32" />
           <span class="brand-name">ClassHelper</span>
-          <span class="brand-ver">1.3.2</span>
+          <span class="brand-ver">1.3.3</span>
         </a>
         <nav class="topnav" aria-label="页内导航">
           <span class="nav-pill" aria-hidden="true"></span>
@@ -93,7 +93,7 @@
             </div>
 
             <ul class="hero-badges intro-seq" style="--intro-delay: 300ms">
-              <li>v1.3.2</li>
+              <li>v1.3.3</li>
               <li>Windows 10/11</li>
               <li>Linux · Docker</li>
               <li>触摸屏可用</li>
@@ -176,8 +176,8 @@
 
           <ul class="facts">
             <li>装着 SQLite 就能跑，需要时一键换到 MySQL —— 数据也跟着搬过去。</li>
-            <li>课表由教室的 ClassIsland 上报，不用在小助手这边再排一遍。</li>
-            <li>教室把通知交给哪个端，由教室那台机器自己选：客户端、大屏，或者两边都弹。</li>
+            <li>课表由教师在管理端维护，教室客户端实时接收变更。</li>
+            <li>通知实时送达客户端与灵动岛，普通提醒会等待下课再显示。</li>
           </ul>
         </div>
       </section>
@@ -189,9 +189,9 @@
         <div class="wrap">
           <h2 class="h2">装什么，挑一下</h2>
           <p class="lead narrow">
-            四个交付物互不依赖安装顺序，但
+            三个交付物互不依赖安装顺序，但
             <strong>服务端要先有一台机器跑着</strong>
-            ，另外三个才连得上。 下面的版本与文件清单是当场从本仓库的 GitHub Releases
+            ，管理端与客户端才连得上。 下面的版本与文件清单是当场从本仓库的 GitHub Releases
             读出来的：显示什么，就真能下到什么。
           </p>
 
@@ -210,7 +210,6 @@
               <span class="dl-seg-indicator" id="group-indicator" aria-hidden="true"></span>
               <button class="dl-seg-item" type="button" role="tab" data-value="client">客户端</button>
               <button class="dl-seg-item" type="button" role="tab" data-value="server">服务端</button>
-              <button class="dl-seg-item" type="button" role="tab" data-value="plugin">插件</button>
             </div>
             <p class="dl-pick-note" id="group-note" role="status"></p>
           </div>
@@ -262,7 +261,7 @@
             </li>
             <li>
               <p class="pipe-step">两端弹出</p>
-              <p class="pipe-body">灵动岛展开成卡片，ClassIsland 同时全屏提醒，可以语音朗读。</p>
+              <p class="pipe-body">灵动岛展开成卡片，客户端同步显示通知。</p>
             </li>
           </ol>
         </div>
@@ -312,13 +311,13 @@
               </div>
               <div class="outcome">
                 <p class="outcome-what">普通通知</p>
-                <p class="outcome-where">教室大屏 · ClassIsland</p>
+                <p class="outcome-where">教室大屏 · ClassHelper</p>
                 <p class="outcome-say" id="o-normal-screen">先收着，下课补弹</p>
               </div>
               <div class="outcome outcome-alert">
                 <p class="outcome-what">紧急通知 / 叫人</p>
-                <p class="outcome-where">教室大屏 · ClassIsland</p>
-                <p class="outcome-say" id="o-urgent-screen">立刻全屏弹出，不打断也拦不住</p>
+                <p class="outcome-where">教室大屏 · ClassHelper</p>
+                <p class="outcome-say" id="o-urgent-screen">灵动岛立即展开提醒</p>
               </div>
               <div class="outcome">
                 <p class="outcome-what">不管什么时候</p>
@@ -346,14 +345,14 @@
 
       <section class="band band-paper" id="parts">
         <div class="wrap">
-          <h2 class="h2">一份代码，四个交付物</h2>
+          <h2 class="h2">一份代码，三个交付物</h2>
           <p class="lead narrow">
             一个 pnpm monorepo。三端共用同一份类型与权限矩阵，所以不会出现「Web 端说有、客户端说没有」。
           </p>
 
           <div class="table-scroll">
             <table class="sheet">
-              <caption class="sr-only">四个交付物、它们的形态与使用者</caption>
+              <caption class="sr-only">三个交付物、它们的形态与使用者</caption>
               <thead>
                 <tr>
                   <th scope="col">交付物</th>
@@ -368,7 +367,7 @@
                     Express 5 + Prisma 7 + Socket.IO，接口前缀
                     <code>/api</code>
                   </td>
-                  <td>其它三端</td>
+                  <td>管理端与客户端</td>
                 </tr>
                 <tr>
                   <th scope="row">Web 管理端</th>
@@ -379,11 +378,6 @@
                   <th scope="row">桌面客户端</th>
                   <td>Electron + Vue 3，带灵动岛与系统托盘，断网可用</td>
                   <td>教室机器、学生机</td>
-                </tr>
-                <tr>
-                  <th scope="row">ClassIsland 联动插件</th>
-                  <td>.NET 8 插件，装进教室已有的 ClassIsland 里</td>
-                  <td>教室大屏</td>
                 </tr>
               </tbody>
             </table>
@@ -466,7 +460,8 @@
                   <p class="feature-tag">#成绩</p>
                   <h4 class="feature-title">单条、批量，或者整张表导进来，还带排名</h4>
                   <p class="feature-body">
-                    重复判定按「同班 + 同学生 + 同考试 + 同课程」，导入报错精确到 Excel 行号。单科排名自动出；这次考试要不要把各科相加排总分榜，你说了算。
+                    重复判定按「同班 + 同学生 + 同考试 + 同课程」，导入报错精确到 Excel
+                    行号。单科排名自动出；这次考试要不要把各科相加排总分榜，你说了算。
                   </p>
                 </div>
                 <div class="feature-block">
@@ -480,21 +475,22 @@
                   <p class="feature-tag">#权限</p>
                   <h4 class="feature-title">谁能做什么，点着勾</h4>
                   <p class="feature-body">
-                    建权限组、把账号分进去。没分组的按角色默认生效，分组之后只按组的并集算 —— 既能放权，也能收权。
+                    建权限组、把账号分进去。没分组的按角色默认生效，分组之后只按组的并集算 ——
+                    既能放权，也能收权。
                   </p>
                 </div>
                 <div class="feature-block">
                   <p class="feature-tag">#教室机器</p>
-                  <h4 class="feature-title">一个班一张卡，两条链路一起管</h4>
+                  <h4 class="feature-title">统一管理设备、远控与更新</h4>
                   <p class="feature-body">
-                    大屏（ClassIsland）和灵动岛（客户端）的状态放在同一张卡上，勾几个班就能批量下发课表或更新；想下发或取回课表，点一下才发生 —— 教室和这边不会互相自动覆盖。
+                    统一查看客户端在线状态、版本与远控结果，按设备或班级下发更新；可立即安装，或等待放学后安装。
                   </p>
                 </div>
                 <div class="feature-block">
                   <p class="feature-tag">#大模型助手</p>
                   <h4 class="feature-title">说一句话就发出去</h4>
                   <p class="feature-body">
-                    它只把话解析成待确认的卡片，你点了才落库 —— 权限、上课时段、ClassIsland 推送还是原来那套。
+                    它只把话解析成待确认的卡片，你点了才落库 —— 权限与上课时段保护仍复用既有流程。
                   </p>
                 </div>
                 <div class="feature-block">
@@ -693,16 +689,6 @@
               <span class="ledger-what">对打包后 / 已安装的那份 EXE 复跑同一套冒烟</span>
               <span class="ledger-num"><span data-ticker="105">105</span></span>
             </div>
-            <div class="ledger-row">
-              <code class="ledger-cmd">pnpm verify:classisland</code>
-              <span class="ledger-what">设备令牌、课表上报、提醒下发与回执、镜像契约、幽灵行清理</span>
-              <span class="ledger-num"><span data-ticker="42">42</span></span>
-            </div>
-            <div class="ledger-row">
-              <code class="ledger-cmd">pnpm verify:classisland-plugin</code>
-              <span class="ledger-what">插件清单、注册完整性、C# DTO 与服务端校验逐字段对齐</span>
-              <span class="ledger-num"><span data-ticker="68">68</span></span>
-            </div>
           </div>
 
           <p class="ledger-foot">
@@ -746,7 +732,7 @@
               ClassHelper
               <span>Class Helper</span>
             </p>
-            <p class="foot-ver">版本 1.3.2 · 源码公开 · 装在你自己的机器上</p>
+            <p class="foot-ver">版本 1.3.3 · 源码公开 · 装在你自己的机器上</p>
           </div>
         </div>
         <nav class="foot-nav" aria-label="相关链接">

@@ -752,13 +752,13 @@
       }
       if (say.normalScreen) {
         say.normalScreen.textContent = period.inClass
-          ? '暂存起来，打下课铃补弹（插件订阅课程事件）。'
-          : '直接全屏弹出。';
+          ? '暂存起来，下课后由客户端补弹。'
+          : '由客户端与灵动岛显示。';
       }
       if (say.urgentScreen) {
         say.urgentScreen.textContent = period.inClass
-          ? '立刻全屏弹出，可以语音朗读 —— 老师正在等学生。'
-          : '立刻全屏弹出，可以语音朗读。';
+          ? '灵动岛立即展开 —— 老师正在等学生。'
+          : '灵动岛立即展开提醒。';
       }
     }
 
@@ -946,11 +946,7 @@
           kind: 'screen',
           cap: '成绩录入 —— 单条 / 批量 / 表格导入，重复判定按「同班同学生同考试同课程」',
         },
-        {
-          file: 'web-integrations.jpg',
-          kind: 'screen',
-          cap: 'ClassIsland 联动 —— 设备在线状态、当前节次、回传与镜像开关',
-        },
+
         {
           file: 'web-classes.jpg',
           kind: 'screen',

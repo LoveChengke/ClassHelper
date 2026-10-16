@@ -1,4 +1,5 @@
 import { cacheGet, cacheSet, type CacheStore } from './db.js';
+import { getCacheScope } from './scope.js';
 
 export interface CachedFetchResult<T> {
   data: T;
@@ -23,13 +24,19 @@ export async function fetchWithCache<T>(
   loader: () => Promise<T>,
   fallback: T,
 ): Promise<CachedFetchResult<T>> {
+  const scope = getCacheScope();
   try {
     const data = await loader();
-    await cacheSet(store, key, data);
+    if (scope !== getCacheScope())
+      return { data: fallback, fromCache: false, updatedAt: null, error: '会话已切换' };
+    // 网络成功但本地磁盘不可用时，仍返回刚获取的数据。
+    await cacheSet(store, key, data, scope).catch(() => undefined);
     return { data, fromCache: false, updatedAt: Date.now(), error: null };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const cached = await cacheGet<T>(store, key).catch(() => null);
+    const cached = await cacheGet<T>(store, key, scope).catch(() => null);
+    if (scope !== getCacheScope())
+      return { data: fallback, fromCache: false, updatedAt: null, error: '会话已切换' };
     if (cached) {
       return { data: cached.value, fromCache: true, updatedAt: cached.updatedAt, error: message };
     }

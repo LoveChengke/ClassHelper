@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { runQuickSmoke } from './smoke-quick.js';
 import path from 'node:path';
 import { app, BrowserWindow, desktopCapturer, screen } from 'electron';
 import type { NativeImage } from 'electron';
@@ -1150,7 +1151,10 @@ async function runIslandChecks(
   const shotAppearance: Parameters<typeof island.setAppearance>[0] = {
     accent: process.env.ELECTRON_SMOKE_ISLAND_ACCENT ?? '#e91e8c',
   };
-  if (process.env.ELECTRON_SMOKE_ISLAND_STYLE === 'black' || process.env.ELECTRON_SMOKE_ISLAND_STYLE === 'glass') {
+  if (
+    process.env.ELECTRON_SMOKE_ISLAND_STYLE === 'black' ||
+    process.env.ELECTRON_SMOKE_ISLAND_STYLE === 'glass'
+  ) {
     shotAppearance.style = process.env.ELECTRON_SMOKE_ISLAND_STYLE;
   } else if (!process.env.ELECTRON_SMOKE_ISLAND_STYLE) {
     shotAppearance.style = 'tinted';
@@ -4125,67 +4129,17 @@ async function runSettingsPageMarginCheck(
   };
 }
 async function runSettingsPageChannelCheck(win: BrowserWindow): Promise<{ ok: boolean; detail: string }> {
-  const result = (await win.webContents
-    .executeJavaScript(
-      `(async () => {
-         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-         const before = (await window.desktop.getConfig()).notificationChannel;
-         location.hash = '#/settings/reminder';
-
-         // 找到「通知显示位置」那张卡片里的单选组
-         let group = null;
-         for (let i = 0; i < 40 && !group; i += 1) {
-           await wait(100);
-           group = Array.from(document.querySelectorAll('.el-card')).find((card) =>
-             (card.querySelector('.el-card__header')?.textContent ?? '').includes('ClassIsland 联动'),
-           );
-         }
-         if (!group) return { ok: false, detail: '设置页没有「ClassIsland 联动」卡片' };
-         const radios = Array.from(group.querySelectorAll('.el-radio'));
-          // 注意：这段脚本本身是外层模板字符串，里面不能再出现反引号（会截断外层字符串）
-          if (radios.length < 3) return { ok: false, detail: '单选项只有 ' + radios.length + ' 个' };
-
-         // 点第二个（只在 ClassHelper 客户端弹），断言配置真的写下去了
-         radios[1].click();
-         await wait(600);
-         const afterClient = (await window.desktop.getConfig()).notificationChannel;
-         const clientChecked = radios[1].classList.contains('is-checked');
-
-         // 再点回第一个（两端都弹），避免影响后续用例
-         radios[0].click();
-         await wait(600);
-         const afterBoth = (await window.desktop.getConfig()).notificationChannel;
-
-         location.hash = '#/schedule';
-         return { ok: true, before, afterClient, afterBoth, clientChecked, labels: radios.map((n) => n.textContent.trim()) };
-       })()`,
-    )
-    .catch((error: unknown) => ({
-      ok: false as const,
-      detail: `执行失败：${error instanceof Error ? error.message : String(error)}`,
-    }))) as
-    | {
-        ok: true;
-        before: string;
-        afterClient: string;
-        afterBoth: string;
-        clientChecked: boolean;
-        labels: string[];
-      }
-    | { ok: false; detail: string }
-    | null;
-
-  if (result?.ok) {
-    return {
-      ok: result.afterClient === 'client' && result.clientChecked && result.afterBoth === 'both',
-      detail:
-        `单选项=[${result.labels.join(' / ')}]，` +
-        `选择「只在 ClassHelper 客户端弹」后配置 ${result.before} → ${result.afterClient}（选中=${result.clientChecked}），` +
-        `切回后 ${result.afterBoth}`,
-    };
-  }
-  return { ok: false, detail: result?.detail ?? '未执行' };
+  const text = await win.webContents.executeJavaScript(`(async () => {
+    location.hash = '#/settings/reminder';
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return document.body.innerText;
+  })()`);
+  return {
+    ok: text.includes('通知提醒') && !text.includes('ClassIsland 联动'),
+    detail: '通知统一由客户端提醒',
+  };
 }
+
 /**
  * Electron 冒烟验证（ELECTRON_SMOKE_TEST=1 时触发，跑完自动退出）。
  * 覆盖：preload 桥接、渲染进程挂载、登录页 DOM、IndexedDB 缓存读写、离线回退，
@@ -4227,6 +4181,7 @@ async function runTrayAndShutdownChecks(mainWin: BrowserWindow, record: Recorder
   );
 }
 export async function runSmokeTest(win: BrowserWindow): Promise<void> {
+  if (process.env.ELECTRON_SMOKE_MODE !== 'visual') return runQuickSmoke(win);
   const results: SmokeResult[] = [];
   const record = (name: string, ok: boolean, detail = ''): void => {
     results.push({ name, ok, detail });
@@ -4395,10 +4350,14 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     // 班级账号凭据由 scripts/smoke.mjs 通过管理端接口准备（渲染进程读不到 process.env）
     const classCode = process.env.ELECTRON_SMOKE_CLASS_CODE ?? '';
     const classPassword = process.env.ELECTRON_SMOKE_CLASS_PASSWORD ?? '';
+    const serverUrl = (process.env.ELECTRON_SMOKE_API ?? 'http://127.0.0.1:4000/api').replace(
+      /\/api\/?$/,
+      '',
+    );
     const online = await win.webContents.executeJavaScript(
       `(async () => {
          if (!window.__classhelperSmoke__) return { ok: false, detail: '渲染进程未注册冒烟钩子' };
-         return await window.__classhelperSmoke__.onlineScenario(${JSON.stringify({ code: classCode, password: classPassword })});
+         return await window.__classhelperSmoke__.onlineScenario(${JSON.stringify({ code: classCode, password: classPassword, serverUrl })});
        })()`,
     );
     record(
@@ -4413,9 +4372,9 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     const settingsAppearance = await runSettingsPageAppearanceCheck(win);
     record('设置页真实 UI：拖拽滑块即时改变灵动岛外观', settingsAppearance.ok, settingsAppearance.detail);
 
-    // 通知显示位置（客户端自己选）：提醒弹在 ClassHelper 还是 ClassIsland
+    // 提醒设置：仅保留本机通知与教师管理的成绩查询状态
     const settingsChannel = await runSettingsPageChannelCheck(win);
-    record('设置页真实 UI：切换「通知显示位置」写回本地配置', settingsChannel.ok, settingsChannel.detail);
+    record('设置页真实 UI：提醒规则展示且无退役联动入口', settingsChannel.ok, settingsChannel.detail);
 
     // 改密入口（2026-10-01 用户要求移除：班级密码只由管理员在 Web 端维护）——负断言防退化
     const settingsPassword = await runSettingsPagePasswordEntryCheck(win);

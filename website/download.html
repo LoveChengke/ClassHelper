@@ -6,19 +6,19 @@
     <title>下载 ClassHelper —— 挑版本、挑平台</title>
     <meta
       name="description"
-      content="从 GitHub Releases 直接下载 ClassHelper：教室机器要的班级端、服务器要的服务端（Windows 安装程序 / Linux 压缩包）、教室大屏要的 ClassIsland 联动插件。版本与文件清单取自本仓库的发布页，显示什么就能下什么。"
+      content="从 GitHub Releases 直接下载 ClassHelper：教室机器要的班级端、服务器要的服务端（Windows 安装程序 / Linux 压缩包）。版本与文件清单取自本仓库的发布页，显示什么就能下什么。"
     />
     <meta name="theme-color" content="#16231e" />
     <meta property="og:title" content="下载 ClassHelper" />
     <meta
       property="og:description"
-      content="班级端、服务端（Windows / Linux）、ClassIsland 联动插件 —— 选好版本，下面显示什么就能下什么。"
+      content="班级端、服务端（Windows / Linux） —— 选好版本，下面显示什么就能下什么。"
     />
     <meta property="og:type" content="website" />
     <!-- 页面上所有版本号与文件名都从这一行起步：脚本会去 GitHub Releases 取真实清单，
          取不到时（离线、被限流）就按这份版本号 + 发布命名约定拼直链。
          它和根 package.json 一起由 `pnpm version:bump` 维护 —— 别在这儿单独改。 -->
-    <meta name="ch-version" content="1.3.2" />
+    <meta name="ch-version" content="1.3.3" />
     <link rel="icon" href="assets/icon.png" />
     <link rel="apple-touch-icon" href="assets/icon.png" />
 
@@ -80,7 +80,7 @@
               <span class="reveal-line reveal-grad">再挑要装的那一份</span>
             </h1>
 
-            <p class="hero-sub intro-seq" style="--intro-delay: 150ms">班级端 · 服务端 · ClassIsland 插件</p>
+            <p class="hero-sub intro-seq" style="--intro-delay: 150ms">班级端 · 服务端</p>
 
             <p class="lead intro-seq" style="--intro-delay: 200ms">
               下面的版本与文件清单是当场从本仓库的 GitHub Releases 读出来的：文件名、体积都照抄发布页，
@@ -127,7 +127,6 @@
             <ul class="hero-badges intro-seq" style="--intro-delay: 350ms">
               <li>Windows 10/11 x64</li>
               <li>Linux x64 · Docker</li>
-              <li>ClassIsland 2.x 插件</li>
               <li>包内自带 Node 运行时</li>
             </ul>
           </div>
@@ -139,9 +138,9 @@
         <div class="wrap">
           <h2 class="h2">装什么，挑一下</h2>
           <p class="lead narrow">
-            四个交付物互不依赖安装顺序，但
+            三个交付物互不依赖安装顺序，但
             <strong>服务端要先有一台机器跑着</strong>
-            ，另外三个才连得上 —— 不确定就先切到「服务端」看一眼。
+            ，管理端与客户端才连得上 —— 不确定就先切到「服务端」看一眼。
           </p>
 
           <div class="dl-groups">
@@ -150,7 +149,6 @@
               <span class="dl-seg-indicator" id="group-indicator" aria-hidden="true"></span>
               <button class="dl-seg-item" type="button" role="tab" data-value="client">客户端</button>
               <button class="dl-seg-item" type="button" role="tab" data-value="server">服务端</button>
-              <button class="dl-seg-item" type="button" role="tab" data-value="plugin">插件</button>
             </div>
             <p class="dl-pick-note" id="group-note" role="status"></p>
           </div>

@@ -50,6 +50,9 @@ const bridge: DesktopBridge = {
   islandPush: (payload: { notification: IslandNotification; context?: IslandPushContext }): void => {
     ipcRenderer.send('island:push', payload);
   },
+  islandRemoveNotification: (id: string): void => {
+    ipcRenderer.send('island:remove-notification', id);
+  },
   islandSetClassState: (payload: IslandClassStatePayload): void => {
     ipcRenderer.send('island:class-state', payload);
   },

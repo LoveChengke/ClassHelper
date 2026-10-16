@@ -5,10 +5,7 @@ import { booleanFlagSchema } from '../../lib/schemas.js';
 export const notificationPrioritySchema = z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']);
 
 /** 本地日期（YYYY-MM-DD）：按天归档/筛选用它，不要用 createdAt 的 UTC 切片 */
-const dayKeySchema = z
-  .string()
-  .trim()
-  .refine(isDayKey, { message: '日期格式应为 YYYY-MM-DD' });
+const dayKeySchema = z.string().trim().refine(isDayKey, { message: '日期格式应为 YYYY-MM-DD' });
 
 export const listNotificationsQuerySchema = z.object({
   classId: z.string().min(1).optional(),
@@ -52,14 +49,11 @@ export const notificationScopeQuerySchema = z.object({
 /**
  * 一次给多个班级发同一条通知（批量发布）。
  *
- * 上限 50 个班是刻意设的：批量发布是逐班串行落库 + 逐班推 ClassIsland，
+ * 上限 50 个班是刻意设的：批量发布是逐班串行落库与广播，
  * 一次塞几百个班会长时间占住请求，也会把教室大屏刷屏。
  */
 export const bulkCreateNotificationSchema = z.object({
-  classIds: z
-    .array(z.string().min(1))
-    .min(1, '请至少选择一个班级')
-    .max(50, '一次最多发布 50 个班级'),
+  classIds: z.array(z.string().min(1)).min(1, '请至少选择一个班级').max(50, '一次最多发布 50 个班级'),
   title: z.string().trim().min(1, '请输入通知标题').max(120),
   content: z.string().min(1, '请输入通知内容').max(5000),
   priority: notificationPrioritySchema.optional(),

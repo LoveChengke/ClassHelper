@@ -1,6 +1,24 @@
 # AGENTS.md — ClassHelper（Class Helper）
 
 本文件写给在本仓库里干活的 AI 编码代理。先读这里，再动代码。
+
+**2026-10-16 更新**：当前仓库位于 `F:\ClassHelper`，F 盘可用。ClassIsland 联动插件、设备令牌、提醒通道与镜像接口已退役；离线课表 JSON 导入和界面设计参考保留。下文历史联动部署记录不再适用。
+客户端维护只走 `/api/clients/*`，页面为 `ClientsView.vue`；默认权限按数据库中对应角色的默认组生效。
+**2026-10-17 更新**：日常 `verify:desktop` / `verify:packaged` 默认是后台快速检查，不创建可见灵动岛或托盘；
+完整桌面动画、透明度与截图验收必须显式加 `--visual`（`pnpm verify:desktop:visual`）。
+下文关于置顶验证窗口、鼠标穿透与截图时序的历史约定仅适用于视觉模式。不要为了日常修改反复占用用户桌面。
+联网冒烟显式启用，使用临时教师和班级；禁止回退到真实班级、重置其密码或向其发送测试通知。
+
+本次 PowerShell 会话的 PATH 不含 pnpm：需要先把 `C:\Users\hck16\AppData\Local\deepseek-harness\bin`
+加到 PATH 前面，再按下文设置 `DSH_NODE` 和 `DSH_PNPM_BIN`。Git Bash 外层找不到 pnpm 时可执行：
+
+```bash
+export DSH_NODE='D:\Node.js\node.exe'
+export DSH_PNPM_BIN='C:\Users\hck16\AppData\Local\node\corepack\v1\pnpm\11.8.0\bin\pnpm.cjs'
+node "C:/Users/hck16/AppData/Local/node/corepack/v1/pnpm/11.8.0/bin/pnpm.cjs" typecheck
+```
+
+外层直接调用用于解决找不到命令；环境变量让内部嵌套的 pnpm 仍使用真实运行时。
 文中「本机环境」「已知坑」两节按**实测**写成；若与本机现状不符，以本机实测为准并顺手改掉这里。
 
 ---
@@ -9,13 +27,12 @@
 
 班级信息管理系统，**pnpm monorepo**，一份代码产出多个交付物：
 
-| 交付物               | 位置                          | 形态                                                                           |
-| -------------------- | ----------------------------- | ------------------------------------------------------------------------------ |
-| 后端服务             | `packages/server`             | Express 5 + Prisma 7 + Socket.IO，`/api` 前缀                                  |
-| Web 管理端           | `packages/web-admin`          | Vue 3 + Vite + Element Plus（教师/管理员用，PWA 可安装）                       |
-| 桌面客户端           | `packages/desktop-client`     | Electron + Vue 3（学生用，含「灵动岛」浮窗）                                   |
-| 共享契约             | `packages/shared`             | 三端共用的类型 / 常量 / 权限 / 工具函数                                        |
-| ClassIsland 联动插件 | `packages/classisland-plugin` | .NET 8 / C#（装在教室的 ClassIsland 上：上报课表与上课状态、弹出老师发的提醒） |
+| 交付物     | 位置                      | 形态                                                     |
+| ---------- | ------------------------- | -------------------------------------------------------- |
+| 后端服务   | `packages/server`         | Express 5 + Prisma 7 + Socket.IO，`/api` 前缀            |
+| Web 管理端 | `packages/web-admin`      | Vue 3 + Vite + Element Plus（教师/管理员用，PWA 可安装） |
+| 桌面客户端 | `packages/desktop-client` | Electron + Vue 3（学生用，含「灵动岛」浮窗）             |
+| 共享契约   | `packages/shared`         | 三端共用的类型 / 常量 / 权限 / 工具函数                  |
 
 核心链路：
 
@@ -28,9 +45,6 @@
         ▼
  Socket.IO ──► class:{classId} 房间 ──► 学生桌面客户端实时更新 UI
 
-ClassIsland（教室机器）──► ClassHelper 联动插件 ──► /api/integrations/classisland/*（设备令牌鉴权）
-                                   ▲                                  │
-                                   └──── 老师下发的提醒（上报返回值里顺带带回）◄┘
 ```
 
 - 远端：`LoveChengke/ClassHelper`（仓库名大小写不敏感，本地 remote 存的是小写 `classhelper.git`）
@@ -137,7 +151,7 @@ packages/server/
                              password schemas session term version(读 package.json) web-static
   src/middleware/            auth validate error security
   src/realtime/              socket.ts（房间）+ bus.ts（事件总线）
-  src/modules/               21 个功能模块 + registry.ts + module.types.ts
+  src/modules/               20 个功能模块 + registry.ts + module.types.ts
                              （含 archives 毕业归档、term 学期周次、permissions 权限组、
                                clients 客户端心跳与远控、system 开发者模式/开机自启、ai 大模型助手）
 packages/web-admin/src/      api stores router layouts views(18) components(5) composables styles config.ts
@@ -150,37 +164,27 @@ packages/desktop-client/
   src/renderer/              ClassHelper 班级端渲染进程：api / cache(IndexedDB) / stores / views / island / router
   src/types/desktop.d.ts     主进程 ↔ 渲染进程契约
   scripts/                   build-main / dev / smoke / dist-win
-packages/classisland-plugin/ .NET 8 插件（独立于 pnpm workspace，不参与 pnpm install）
-  manifest.yml               清单：id=classhelper.classisland.bridge / apiVersion=2.0.0.0 / version=1.2.0.0
-  ClassHelper.ClassIslandPlugin.csproj（TargetFramework=net8.0）
-  src/Plugin.cs              入口：读配置 → 注册提醒提供方 / 设置页 / BridgeService
-  src/Models/PluginSettings.cs
-  src/Services/              BridgeService（上报·接收·镜像）/ ScheduleMapper / ClassPlanWriter
-                             ClassHelperNotificationProvider（把提醒显示到 ClassIsland 上）
-  src/Views/BridgeSettingsPage.axaml(.cs)：Avalonia 设置页
-  src/Interop/ClassHelperClient.cs：HTTP 客户端 + 与服务端逐个字段对齐的 DTO
-  scripts/                   build.mjs（编译 / 打包 .cipx）/ verify.mjs（静态契约校验，实测 74 项）
 ```
 
 ---
 
 ## 3. 本机环境（2026-09-30 实测）
 
-| 项               | 状态                                                                                                                                                                       |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Node             | **v22.15.0**（`D:\Node.js\node.exe`；根 `engines` 要求 ≥ 20.19，Prisma 7 的 engine 约束是 `^20.19 \|\| ^22.12 \|\| >=24.0`，v22.15 都满足）                                                  |
+| 项               | 状态                                                                                                                                                                                                |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Node             | **v22.15.0**（`D:\Node.js\node.exe`；根 `engines` 要求 ≥ 20.19，Prisma 7 的 engine 约束是 `^20.19 \|\| ^22.12 \|\| >=24.0`，v22.15 都满足）                                                         |
 | pnpm             | 11.8.0（`packageManager` 锁定 11.8.0）。本机可用的本体在 `C:\Users\hck16\AppData\Local\node\corepack\v1\pnpm\11.8.0\bin\pnpm.cjs`；PATH 里那个 `pnpm.ps1` 是 DSH 桌面端的转发壳，**别绕它**（见下） |
-| npm registry     | `https://registry.npmjs.org/`（仓库内无 `.npmrc`，取全局配置）                                                                                                             |
-| 依赖             | 已装（707 包，`pnpm install` 实测 2m45s）                                                                                                                                  |
-| 后端 `.env`      | 已由 `.env.example` 生成（**gitignored**），`JWT_SECRET` 为本机随机值，`TERM_START_DATE=2026-09-07`                                                                        |
-| Prisma Client    | 已生成到 `packages/server/src/generated/prisma`（gitignored）                                                                                                              |
-| 数据库           | SQLite `packages/server/prisma/dev.db`：10 个迁移已应用、种子已写入（用户 18 / 班级 3 / 课程 54 / 课表 93 / 作业 15 / 通知 12 / 成绩 90）                                  |
-| `shared/dist`    | 已构建（`pnpm build:shared`）—— **它是三端与 seed 的前置产物，缺了会 `ERR_MODULE_NOT_FOUND`**                                                                              |
-| Electron 二进制  | 已手动装好（`node_modules/.pnpm/electron@44.3.0/node_modules/electron/dist/electron.exe`，246 MB）                                                                         |
-| .NET SDK         | ✅ **8.0.425**（`C:\Program Files\dotnet\sdk`，`dotnet --list-sdks` 有输出）⇒ 插件可编译/打包；**别再照旧文档说"没装"**（`dotnet` 在 PATH 里，`--list-sdks` 才是权威判据） |
-| ClassIsland      | **2.1.0.1，装在 `D:\Classisland`**（启动器 `D:\Classisland\ClassIsland.exe`，实际进程 `D:\Classisland\app-2.1.0.1-0\ClassIsland.Desktop.exe`）                             |
-| ClassIsland 数据 | 数据根 **`D:\Classisland\data`**：`Config/`、`Profiles/`、`Plugins/`（当前为空，尚未装本插件）、`Logs/`、`Cache/`、`Settings.json`                                         |
-| 桌面会话         | 有（`ClassIsland.Desktop.exe` 跑在 session 1）；**Electron GUI 在 AI 会话里也能跑**（需先修完整性标签，见 §7 第 7 条）                                                     |
+| npm registry     | `https://registry.npmjs.org/`（仓库内无 `.npmrc`，取全局配置）                                                                                                                                      |
+| 依赖             | 已装（707 包，`pnpm install` 实测 2m45s）                                                                                                                                                           |
+| 后端 `.env`      | 已由 `.env.example` 生成（**gitignored**），`JWT_SECRET` 为本机随机值，`TERM_START_DATE=2026-09-07`                                                                                                 |
+| Prisma Client    | 已生成到 `packages/server/src/generated/prisma`（gitignored）                                                                                                                                       |
+| 数据库           | SQLite `packages/server/prisma/dev.db`：10 个迁移已应用、种子已写入（用户 18 / 班级 3 / 课程 54 / 课表 93 / 作业 15 / 通知 12 / 成绩 90）                                                           |
+| `shared/dist`    | 已构建（`pnpm build:shared`）—— **它是三端与 seed 的前置产物，缺了会 `ERR_MODULE_NOT_FOUND`**                                                                                                       |
+| Electron 二进制  | 已手动装好（`node_modules/.pnpm/electron@44.3.0/node_modules/electron/dist/electron.exe`，246 MB）                                                                                                  |
+| .NET SDK         | ✅ **8.0.425**（`C:\Program Files\dotnet\sdk`，`dotnet --list-sdks` 有输出）⇒ 插件可编译/打包；**别再照旧文档说"没装"**（`dotnet` 在 PATH 里，`--list-sdks` 才是权威判据）                          |
+| ClassIsland      | **2.1.0.1，装在 `D:\Classisland`**（启动器 `D:\Classisland\ClassIsland.exe`，实际进程 `D:\Classisland\app-2.1.0.1-0\ClassIsland.Desktop.exe`）                                                      |
+| ClassIsland 数据 | 数据根 **`D:\Classisland\data`**：`Config/`、`Profiles/`、`Plugins/`（当前为空，尚未装本插件）、`Logs/`、`Cache/`、`Settings.json`                                                                  |
+| 桌面会话         | 有（`ClassIsland.Desktop.exe` 跑在 session 1）；**Electron GUI 在 AI 会话里也能跑**（需先修完整性标签，见 §7 第 7 条）                                                                              |
 
 > **旧文档里的 `F:\classisland` / `F:\data` 已失效**：本机只有 `C:` 与 `D:`，`F:` 盘不存在。
 > 另有一份旧副本在 `C:\Users\胡\Desktop\classisland`（数据在它自己的 `data/` 下，2026-09-18 用过），当前以 `D:\Classisland` 为准。
@@ -218,9 +222,9 @@ packages/classisland-plugin/ .NET 8 插件（独立于 pnpm workspace，不参�
       `typecheck` 报出 `[pnpm] pnpm not found`。要么别设，要么先 `Remove-Item Env:DSH_PNPM`。
     - 也不要用 `node <pnpm.cjs> <script>` 绕开壳：只在**不带嵌套调用**的脚本上凑效
       （`check:icons` / `lint` 能用），`typecheck` 这类内部还要再 `pnpm -r` 的会二次翻车。
+
 - 反过来说：本机 **Node v22.15.0 够用**（根 `engines` ≥ 20.19，Prisma 7 允许 `^22.12`），
   不需要为了跑命令去装 v24；上面那条 `runtime not found` 纯粹是壳的版本门槛，不是环境不满足要求。
-
 
 ### 从零重建环境（本机实测可行的顺序）
 
@@ -239,16 +243,14 @@ pnpm db:seed                                           # 写演示数据
 #   工作目录 node_modules/.pnpm/electron@44.3.0/node_modules/electron
 ELECTRON_MIRROR=https://cdn.npmmirror.com/binaries/electron/ node install.js
 
-# ClassIsland 插件（.NET 8 SDK 已装：8.0.425）
-pnpm build:classisland-plugin
 ```
 
 ### 演示账号（`pnpm db:seed` 产出）
 
-| 角色           | 用户名                          | 密码         |
-| -------------- | ------------------------------- | ------------ |
-| 管理员         | `admin`                         | `admin123`   |
-| 教师           | `teacher1` / `teacher2`         | `teacher123` |
+| 角色                       | 用户名                          | 密码         |
+| -------------------------- | ------------------------------- | ------------ |
+| 管理员                     | `admin`                         | `admin123`   |
+| 教师                       | `teacher1` / `teacher2`         | `teacher123` |
 | ClassHelper 班级端班级账号 | 班级码 `G101` / `G102` / `G203` | `123456`     |
 
 > 密码是**种子脚本里硬编码**的（`admin123` / `teacher123` / 班级 `123456`）；
@@ -267,42 +269,38 @@ pnpm build:classisland-plugin
 
 ## 4. 常用命令
 
-| 命令                                                      | 说明                                                                                                  |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `pnpm dev`                                                | 并行启动 shared(tsc watch) + 后端(4000) + Web 端(5173)                                                |
-| `pnpm dev:server` / `pnpm dev:web`                        | 只启动后端 / 只启动 Web 端                                                                            |
-| `pnpm dev:desktop`                                        | 客户端开发模式（Vite 5174 + Electron，热更新）                                                        |
-| `pnpm build`                                              | 构建 shared + 后端 + Web 端 + 客户端                                                                  |
-| `pnpm build:shared`                                       | 只构建 shared（改完 `packages/shared` 必须跑）                                                        |
-| `pnpm build:desktop`                                      | 只构建客户端（esbuild 主进程/preload + Vite 渲染进程）                                                |
-| `pnpm build:classisland-plugin`                           | 构建 ClassIsland 联动插件（.NET 8；缓存/临时目录自动指到 `.cache/`）                                  |
-| `pnpm dist:classisland-plugin`                            | 打包插件为 `.cipx` 并归集到 `releases/classisland-plugin/<版本>/`                                     |
-| `pnpm typecheck`                                          | 全仓库类型检查（含 `vue-tsc`）                                                                        |
-| `pnpm lint` / `pnpm lint:fix`                             | ESLint                                                                                                |
-| `pnpm check:icons`                                        | 图标注册表门禁（两端 build 已内联，这里可单独跑；见 §5 第 53 条）                                     |
-| `pnpm format` / `pnpm format:check`                       | Prettier（`format:check` 在 master 基线上本就失败，见 §7 第 21 条）                                   |
-| `pnpm db:generate`                                        | 生成 Prisma Client                                                                                    |
-| `pnpm db:migrate`                                         | `prisma migrate dev`（本机不可靠，别用；见 §7）                                                       |
-| `pnpm --filter @classhelper/server db:deploy`             | 应用已有迁移（**本机推荐**；根 scripts 里没有 `db:deploy`）                                           |
-| `pnpm db:seed` / `pnpm db:reset`                          | 写种子 / 重置并重播种子                                                                               |
-| `pnpm db:studio`                                          | Prisma Studio                                                                                         |
-| `pnpm db:switch:mysql` / `db:switch:sqlite`               | 改写 `schema.prisma` 的 provider（配合 `docs/management/mysql.md`）                                              |
-| `pnpm verify:e2e`                                         | 后端端到端验收（**需后端已启动**；2026-10-06 实测 205 项全过）                                        |
-| `pnpm verify:web`                                         | Web 管理端真实点击回归（Electron 驱动，需后端已启动且 Web 产物已构建）                                |
-| `pnpm verify:desktop`                                     | 客户端冒烟（Electron，无人工点击）                                                                    |
-| `pnpm verify:packaged`                                    | 对**打包后/已安装**的客户端 EXE 跑同一套冒烟（`--exe` 指定路径）                                      |
-| `pnpm verify:classisland`                                 | ClassIsland 联动链路（设备令牌 / 上报 / 提醒下发与回执 / 镜像契约 / 幽灵行清理；实测 44 项）          |
-| `pnpm verify:classisland-plugin`                          | 插件静态契约校验（清单一致性 / 注册完整性 / C# DTO ↔ 服务端 zod 与路由 / 已修复坑的护栏；实测 74 项） |
-| `pnpm dist:server` / `dist:win` / `dist:all`              | 打包服务端安装程序 / 客户端安装包 / 全部                                                              |
-| `pnpm dist:server:linux`                                  | 打包 **Linux 服务端安装包**（`classhelper-server-linux-x64-<版本>.tar.gz` + `.sha256`）—— 见 §5 第 59 条 |
-| `pnpm icons`                                              | 从 `build/classhelper.png` 派生全部图标（PWA / favicon / 托盘 / 安装包 / 插件 / 官网 / 文档站 / 界面内品牌标） |
-| `pnpm version:check`                                      | 逐处列出并比对 14 个落点的版本号，不一致即 exit 1（见 §4.4「版本迭代」）                              |
-| `pnpm version:bump patch\|minor\|major`                   | **改版本号的唯一入口**：一次改写全部 14 处（含插件清单、C# 里的常量、官网上手写的三处，以及下载页的兜底值） |
-| `pnpm docs:build`                                         | 构建文档站到 `docs/_site`（需要 .NET SDK 8 + `dotnet tool install -g docfx`）                         |
-| `pnpm docs:serve`                                         | 构建文档站并起本地预览 → http://127.0.0.1:5181                                                        |
-| `pnpm docs:check`                                         | 构建文档站并把 docfx 的警告当错误（发布前用；最常见的警告是"某个 .md 没被任何 toc.yml 引用"）          |
-| `pnpm pages:build`                                        | 把官网（根）与文档站（/docs/）拼成一份 GitHub Pages 产物到 `.cache/pages`（CI 用；见 §4.4）           |
-| `pnpm dev:site`                                           | 构建文档站后起官网预览 → http://127.0.0.1:5180（文档站挂在同端口的 /docs/ 下，与线上同形）            |
+| 命令                                          | 说明                                                                                                     |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                                    | 并行启动 shared(tsc watch) + 后端(4000) + Web 端(5173)                                                   |
+| `pnpm dev:server` / `pnpm dev:web`            | 只启动后端 / 只启动 Web 端                                                                               |
+| `pnpm dev:desktop`                            | 客户端开发模式（Vite 5174 + Electron，热更新）                                                           |
+| `pnpm build`                                  | 构建 shared + 后端 + Web 端 + 客户端                                                                     |
+| `pnpm build:shared`                           | 只构建 shared（改完 `packages/shared` 必须跑）                                                           |
+| `pnpm build:desktop`                          | 只构建客户端（esbuild 主进程/preload + Vite 渲染进程）                                                   |
+| `pnpm typecheck`                              | 全仓库类型检查（含 `vue-tsc`）                                                                           |
+| `pnpm lint` / `pnpm lint:fix`                 | ESLint                                                                                                   |
+| `pnpm check:icons`                            | 图标注册表门禁（两端 build 已内联，这里可单独跑；见 §5 第 53 条）                                        |
+| `pnpm format` / `pnpm format:check`           | Prettier（`format:check` 在 master 基线上本就失败，见 §7 第 21 条）                                      |
+| `pnpm db:generate`                            | 生成 Prisma Client                                                                                       |
+| `pnpm db:migrate`                             | `prisma migrate dev`（本机不可靠，别用；见 §7）                                                          |
+| `pnpm --filter @classhelper/server db:deploy` | 应用已有迁移（**本机推荐**；根 scripts 里没有 `db:deploy`）                                              |
+| `pnpm db:seed` / `pnpm db:reset`              | 写种子 / 重置并重播种子                                                                                  |
+| `pnpm db:studio`                              | Prisma Studio                                                                                            |
+| `pnpm db:switch:mysql` / `db:switch:sqlite`   | 改写 `schema.prisma` 的 provider（配合 `docs/management/mysql.md`）                                      |
+| `pnpm verify:e2e`                             | 后端端到端验收（**需后端已启动**；2026-10-06 实测 205 项全过）                                           |
+| `pnpm verify:web`                             | Web 管理端真实点击回归（Electron 驱动，需后端已启动且 Web 产物已构建）                                   |
+| `pnpm verify:desktop`                         | 客户端冒烟（Electron，无人工点击）                                                                       |
+| `pnpm verify:packaged`                        | 对**打包后/已安装**的客户端 EXE 跑同一套冒烟（`--exe` 指定路径）                                         |
+| `pnpm dist:server` / `dist:win` / `dist:all`  | 打包服务端安装程序 / 客户端安装包 / 全部                                                                 |
+| `pnpm dist:server:linux`                      | 打包 **Linux 服务端安装包**（`classhelper-server-linux-x64-<版本>.tar.gz` + `.sha256`）—— 见 §5 第 59 条 |
+| `pnpm icons`                                  | 从 `build/classhelper.png` 派生全部图标（PWA / favicon / 托盘 / 安装包 / 官网 / 文档站 / 界面内品牌标）  |
+| `pnpm version:check`                          | 逐处列出并比对 12 个落点的版本号，不一致即 exit 1（见 §4.4「版本迭代」）                                 |
+| `pnpm version:bump patch\|minor\|major`       | **改版本号的唯一入口**：一次改写全部 12 处（含官网三处及下载页兜底值）                                   |
+| `pnpm docs:build`                             | 构建文档站到 `docs/_site`（需要 .NET SDK 8 + `dotnet tool install -g docfx`）                            |
+| `pnpm docs:serve`                             | 构建文档站并起本地预览 → http://127.0.0.1:5181                                                           |
+| `pnpm docs:check`                             | 构建文档站并把 docfx 的警告当错误（发布前用；最常见的警告是"某个 .md 没被任何 toc.yml 引用"）            |
+| `pnpm pages:build`                            | 把官网（根）与文档站（/docs/）拼成一份 GitHub Pages 产物到 `.cache/pages`（CI 用；见 §4.4）              |
+| `pnpm dev:site`                               | 构建文档站后起官网预览 → http://127.0.0.1:5180（文档站挂在同端口的 /docs/ 下，与线上同形）               |
 
 ### 端口
 
@@ -336,12 +334,12 @@ releases/
 
 **`releases/` 里只放交付物，不放"解包出来的那一份"。** 这条是硬约定，2026-10-11 统一过一遍：
 
-| 曾经有的目录 | 它是什么 | 现在 |
-| --- | --- | --- |
-| `client/<版本>/免安装/` | electron-builder 的 `win-unpacked`（约 323MB） | 只在打包过程中存在，生成两个 exe 后由 `tidyArtifacts()` 删除 |
-| `server/<版本>/免安装/` | `pnpm dist:server` 组装的运行时（约 335MB） | 组装到 `.cache/server-staging/<版本>/win/`，打完 NSIS 即删 |
-| `server/<版本>/linux-x64/classhelper-server-linux-x64/` | tar.gz 的解包留档（约 265MB） | 打完 tar.gz 即删（内容与 tar 完全一样） |
-| `classisland-plugin/<版本>/免安装/` | `.cipx` 的解压副本 | 不再产出（`.cipx` 本身就是 zip，解压即用） |
+| 曾经有的目录                                            | 它是什么                                       | 现在                                                         |
+| ------------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------ |
+| `client/<版本>/免安装/`                                 | electron-builder 的 `win-unpacked`（约 323MB） | 只在打包过程中存在，生成两个 exe 后由 `tidyArtifacts()` 删除 |
+| `server/<版本>/免安装/`                                 | `pnpm dist:server` 组装的运行时（约 335MB）    | 组装到 `.cache/server-staging/<版本>/win/`，打完 NSIS 即删   |
+| `server/<版本>/linux-x64/classhelper-server-linux-x64/` | tar.gz 的解包留档（约 265MB）                  | 打完 tar.gz 即删（内容与 tar 完全一样）                      |
+| `classisland-plugin/<版本>/免安装/`                     | `.cipx` 的解压副本                             | 不再产出（`.cipx` 本身就是 zip，解压即用）                   |
 
 理由：这些都是 300MB 量级的**中间物**，而且长得跟交付物一样像"该拷走的东西" ——
 五个客户端版本 + 七个服务端版本堆下来就是 4.8GB，其中 3.4GB 是重复的中间物。
@@ -362,13 +360,13 @@ releases/
 pnpm dist:server          # 服务端 Windows（首次会跑一次 npm install；重试可加 --reuse-deps 跳过）
 pnpm dist:server:linux    # Linux 安装包（**必须在 Linux 上跑**，见 §5 第 59 条 ④）
 pnpm dist:win             # 客户端：安装包 + 便携版
-pnpm dist:classisland-plugin
 ```
 
 `dist-win.mjs` 用 `--config.directories.output` 覆盖 electron-builder 自己的输出目录，打包成功后
 再把原始布局整理成上面的分层（`*.exe` → `安装包/`、`*.yml` → `构建中间/`），**最后删掉 `win-unpacked/`**；
 显式传 `-c.directories.output=<路径>` 时不再覆盖，整理以传入路径为准。
 两条别动的顺序约束：
+
 - **删 `win-unpacked` 必须排在整理之后**：portable 目标就是拿这份解包结果做自解压包，
   提前删会让 `-portable.exe` 直接失败。
 - **输出目录的完整性标签要在打包前压回 Low**：上一轮收尾把它标成 Medium 之后，7za（自身带 Low）
@@ -417,8 +415,6 @@ pnpm lint && pnpm typecheck && pnpm check:icons && pnpm docs:check
 
 # ③ 跑验收（另开一个终端跑着 pnpm dev:server）
 pnpm verify:e2e
-pnpm verify:classisland
-pnpm verify:classisland-plugin
 pnpm build:desktop && pnpm verify:desktop
 pnpm build && pnpm verify:web
 
@@ -446,8 +442,8 @@ gh release upload v<版本> \
 > / `-x64-portable.exe`，服务端 `ClassHelper 服务端-<版本>-x64-setup.exe`），而 Release 上的名字
 > 是给别人看、要贴进脚本的 —— 一律用 ASCII 形式，与构建产物一一对应（内容相同、sha256 相同）：
 >
-> | 构建产物                    | Release 上的名字                            |
-> | --------------------------- | ------------------------------------------- |
+> | 构建产物                    | Release 上的名字                             |
+> | --------------------------- | -------------------------------------------- |
 > | `<客户端>-x64-setup.exe`    | `ClassHelper-<版本>-x64-client-setup.exe`    |
 > | `<客户端>-x64-portable.exe` | `ClassHelper-<版本>-x64-client-portable.exe` |
 > | `<服务端>-x64-setup.exe`    | `ClassHelper-<版本>-x64-server-setup.exe`    |
@@ -484,12 +480,12 @@ gh workflow run release-linux-server.yml -f tag=v<版本> -f attach=true
 
 `pnpm dist:all` 只产出安装包。**每次版本迭代都要把这四样一起做掉**，少一样都算「发到一半」：
 
-| #  | 交付物        | 落在哪                                                       | 怎么做                                                                                                     |
-| -- | ------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| ①  | **更新日志**  | GitHub Release 的正文                                         | 手写，草稿放 `releases/ReleaseNotes-<版本>.md`（与它描述的产物同一层），用 `gh release create/edit --notes-file` 发布。**不要**只挂 `--generate-notes` 的自动列表 |
-| ②  | **Linux 服务端包** | Release 上的 `classhelper-server-linux-x64-<版本>.tar.gz` | tag 推上去由 `release-linux-server.yml` 构建；**推完必须去 Actions 确认没红**                              |
-| ③  | **文档**      | `docs/reference.md`（功能说明 + 验收对照表）与相关章节          | 新增功能补对应小节；改交付形态一并改 §2 / §7 与 `docs/dev/*`                                               |
-| ④  | **官网与 README** | `website/index.html`（功能块）、`website/download.html`（兜底版本号）、`README.md`（功能清单） | 新功能补进功能块 / 清单；页面里的版本号由 `pnpm version:bump` 覆盖，不用手写                                |
+| #   | 交付物             | 落在哪                                                                                         | 怎么做                                                                                                                                                            |
+| --- | ------------------ | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ①   | **更新日志**       | GitHub Release 的正文                                                                          | 手写，草稿放 `releases/ReleaseNotes-<版本>.md`（与它描述的产物同一层），用 `gh release create/edit --notes-file` 发布。**不要**只挂 `--generate-notes` 的自动列表 |
+| ②   | **Linux 服务端包** | Release 上的 `classhelper-server-linux-x64-<版本>.tar.gz`                                      | tag 推上去由 `release-linux-server.yml` 构建；**推完必须去 Actions 确认没红**                                                                                     |
+| ③   | **文档**           | `docs/reference.md`（功能说明 + 验收对照表）与相关章节                                         | 新增功能补对应小节；改交付形态一并改 §2 / §7 与 `docs/dev/*`                                                                                                      |
+| ④   | **官网与 README**  | `website/index.html`（功能块）、`website/download.html`（兜底版本号）、`README.md`（功能清单） | 新功能补进功能块 / 清单；页面里的版本号由 `pnpm version:bump` 覆盖，不用手写                                                                                      |
 
 更新日志的骨架照 1.2.0 / 1.3.0 那两份：**一句话定位 → 分节讲功能 → ⚠️ 升级须知（含自动应用的迁移）→
 验收表 → 产物表**。验收表里**只写真跑过的数字**，没跑就直说没跑，别照抄上一版的。
@@ -529,7 +525,7 @@ https://lovechengke.github.io/ClassHelper/docs/     ← 文档站（docfx 构建
 
 - 顶栏的版本徽标取自根 `package.json`（`docs/build.mjs` 用 `--metadata _chVersion=…` 注入），
   **不要在文档里再写一份版本号**；官网首页那排芯片里的 `v1.1.2` 与下载页的
-  `<meta name="ch-version">` 是手写的，发版时要一起改（都在 `pnpm version:bump` 的 14 个落点里）；
+  `<meta name="ch-version">` 是手写的，发版时要一起改（都在 `pnpm version:bump` 的 12 个落点里）；
 - 下载页的版本清单**不在站点里存副本**：每次打开都由 `assets/download.js` 当场读
   GitHub Releases（匿名接口 60 次/小时/IP），读不到才退回上面那个 meta 按发布命名约定拼直链。
   所以发完 Release 不用重新部署这一页，但**兜底值必须跟着发版改**；
@@ -552,7 +548,7 @@ term / dashboard / database / update / permissions / clients / system`。
    `middleware/validate.ts` 挂 zod schema；错误交给 `middleware/error.ts`，不要各写一套。
 3. **鉴权 = JWT + RBAC + 班级内角色。** 路由级用 `requireRole('ADMIN', 'TEACHER')`；班级维度用
    `@classhelper/shared` 的 `resolveClassRole` → `ADMIN / HEAD（班主任）/ SUBJECT（科任）/
-   CLASS_DEVICE（班级端）/ NONE`，权限判 `canManageSchedule` / `canPublishNotification` /
+CLASS_DEVICE（班级端）/ NONE`，权限判 `canManageSchedule` / `canPublishNotification` /
    `canManageRoster` / `canManageGrades` / `canManageSubjectContent` 等
    （人类可读矩阵是 `PERMISSION_MATRIX`），**不要在页面里另写一套规则**。
 4. **学生不是账号 —— 这是表结构保证的，别在代码里"兼容"学生账号。**
@@ -592,26 +588,19 @@ term / dashboard / database / update / permissions / clients / system`。
 11. **Web 端设计令牌集中。** 圆角/投影写在 `packages/web-admin/src/styles/index.css` 的 `:root`
     （`--ch-radius-xl/lg/md/sm/pill`、`--ch-shadow-sm/md`），组件里**不要写死数值**；Element Plus 通过覆盖它的
     CSS 变量对齐。手机小屏（≤768px）用抽屉导航 + 卡片内横向滚动，新增页面沿用 `useResponsive.ts` + `.table-card`。
-12. **ClassIsland 联动是独立鉴权通道，不要塞进 JWT。** 插件用设备令牌（`X-ClassIsland-Token`，库里只存 sha256，
-    明文前缀为 `chci_`）调 `/api/integrations/classisland/*`；Web 端管理设备仍走 JWT + `requireRole`。
-    新增插件接口时，路由挂 `integrations.module.ts`，并在 `integrations.schemas.ts` 里写 zod —— 插件侧的 C# DTO
-    必须**逐字段对齐**（`pnpm verify:classisland-plugin` 会校验字段名与路由）。
-13. **课表镜像契约必须带 `startTime`/`endTime`。** ClassIsland 的 `ClassPlan.Classes[i]` 强制与时间表里
-    **第 i 个 `TimeType == 0`（上课）的时间点**对齐：镜像下发少一个时间点，整份课表就会错位，
-    而且表现为"课表看着有内容、每节课都对不上"，极难排查。
-14. **所有发布入口共用同一份 ClassIsland 推送实现**（`integrations.service.ts` 的 `pushToClassIsland`）：
-    通知发布 / 叫人 / 联动页的下发都走它。新增「发通知」类入口时**必须**复用，不要再各写一套 ——
-    否则又会出现「某个页面发的通知不联动 ClassIsland」。
-15. **提醒弹在哪个端由教室客户端选**，值存在 `Class.notificationChannel`（`both` / `client` / `classisland`）：
-    客户端设置页写它（班级账号也有写权限，见 `PATCH /api/classes/:id/notification-channel`），
-    服务端据此决定是否推 ClassIsland（`shouldPushToClassIsland`）。改动这条链路要同时动三处：
-    客户端设置页与本地配置、`lib/mappers` 的 DTO、服务端推送判断。
+12. 联动专用约定已退役；离线 JSON 导入继续保留。
+
+13. 联动专用约定已退役；离线 JSON 导入继续保留。
+
+14. 联动专用约定已退役；离线 JSON 导入继续保留。
+
+15. 联动专用约定已退役；离线 JSON 导入继续保留。
+
 16. **灵动岛的左右边距只在「左/右停靠」时生效**：默认是「顶部居中」，水平锚点就是屏幕中线，
     此时调 marginX 不会有任何变化（设置页会把滑块置灰并说明，别把这个提示删掉 ——
     用户就是因此以为「调了不生效」）。上下边距与所有停靠位置都相关，不受影响。
-17. **镜像进 ClassIsland 的课表要带课间**：每两节之间补一段（上一节下课 → 下一节上课），
-    **最后一节之后不补**（放学）。实现见 `ClassPlanWriter.BuildTimeLayout`（自己按课目时间算），
-    服务端合成节次时间表同口径。
+17. 联动专用约定已退役；离线 JSON 导入继续保留。
+
 18. **提醒分两类，决定"上课时段弹不弹"**：`ClassIslandPush.kind` = `notification`（通知类，上课时段
     客户端与插件都**暂存**、下课补弹）/`call`（叫人，算「主动通知」，立刻弹）；紧急（`URGENT`）同样立刻弹。
     插件侧的实现在 `ClassHelperNotificationProvider`（`_deferred` + `FlushDeferred`，订阅课程事件），
@@ -636,16 +625,8 @@ term / dashboard / database / update / permissions / clients / system`。
 22. **灵动岛位置由「屏幕工作区 + 边距」算，默认边距 8px（`DEFAULT_ISLAND_APPEARANCE.marginX/marginY`）**：
     改默认值会直接改外观，`verify:desktop` 的「停靠位置生效（6 个锚点）」断言的是像素坐标，一动就红。
     新增边距类设置请只改"可调范围"，别动默认值（夹紧规则收口在主进程 `normalizeIslandAppearance`）。
-23. **课表行有"来源"字段 `Schedule.source`**（`manual` / `classisland`）。插件每次全量上报时，
-    服务端只清理「`source='classisland'` 且本次未再上报」的行 —— 这样老师在 ClassIsland 里删掉/挪动一节
-    能真正同步下来（原先 merge 只 upsert，服务端会永远留着幽灵课），**老师在小助手这边手排的课一律不删**。
-    因此：**新增写课表的入口要显式定 source**（Web 端录入/导入保持默认 `manual`，只有插件上报用 `classisland`），
-    否则要么幽灵课清不掉，要么手排的课被误删。回归用例见 `verify:classisland` 的「幽灵行清理」两条。
-    **`source` 只在 create 时确定，update 一律保持原值。** merge 的去重键是「星期 + 开始时间 + 单双周」，
-    老师在 Web 端手排的同一时间槽会被上报"收养"；若收养时把来源改成 `classisland`，
-    下一次清理就会把这行手排的课删掉 —— 这个坑踩过一次：种子课表被删掉 2 行，
-    `verify:e2e` 的「上课状态接口」用例（AGENTS.md §7 已列为脆弱用例）随即报红。
-    同步时**不要**覆盖 `weekStart/weekEnd`：插件上报契约里没有周次范围，硬写"整学期"会把老师设的「第 1~10 周」抹掉。
+23. 联动专用约定已退役；离线 JSON 导入继续保留。
+
 24. **两个登录入口都必须挂 `loginRateLimiter()`**（`app.ts` 用数组形式同时挂 `/auth/login` 与 `/auth/class-login`）。
     班级密码默认是 `123456`、班级码是固定字符集，班级登录曾是唯一没有暴力破解防护的入口。
     另外 `auth.service.login` 里**角色判定必须在密码校验之前**：否则"密码错(401) / 密码对但学生账号已停用(403)"
@@ -1271,15 +1252,7 @@ term / dashboard / database / update / permissions / clients / system`。
     直接写会撞 `User` 外键（见 §5 第 20 条「教室机器能录入作业」）。
     班级端的成绩查询受 `Class.studentGradeQueryEnabled` 这个**按班开关**控制（默认开启）。
 
-65. **课表同步的主方向是「服务端 → 教室」，教室不再自动回传。**
-    `IntegrationDevice.mirrorScheduleToClassIsland` 默认 **true**（服务端改完课表自动下发），
-    `syncScheduleToServer` 默认 **false**。要取教室的课表走
-    `POST /integrations/devices/:id/request-schedule` —— 它只置一个待办
-    （`requestScheduleReport`），插件在下一次心跳看到就把课表推上来并清除标记。
-    Web 端点击前**必须弹警告**（会覆盖 / 合并本班课表）。
-    插件侧对应 `ReportSettingsDto.scheduleRequested` + `ReportAsync(..., forceSchedule: true)`，
-    且补发发生在**镜像之前**（顺序反了会把刚拿到的课表盖掉）——
-    `verify:classisland-plugin` 有 6 条护栏盯着这段契约，别删。
+65. 联动专用约定已退役；离线 JSON 导入继续保留。
 
 66. **学期周次可以逐周配，别再用"开学日期 + 每周七天"硬推。**
     `TermWeek`（`classId = ''` 表示全校默认）存每一周的 `startDate`/`endDate`；
@@ -1296,8 +1269,8 @@ term / dashboard / database / update / permissions / clients / system`。
     `packages/shared/src/permissions.ts`（`PERMISSION_KEYS` 39 键 / `PERMISSION_LABELS` /
     `PERMISSION_CATEGORIES` / `PERMISSION_DEFAULT_ROLES` / `ROLE_DEFAULT_PERMISSIONS`）。
     有效权限由 `packages/server/src/lib/permissions.ts` 的 `loadEffectivePermissions()` 算：
-    ADMIN=全集且 `permission:manage`/`system:manage` 不可剥夺；CLASS_DEVICE=空集（不受分组影响）；
-    有分组=并集（**可以比角色默认更少**，这就是"能收权"）；无分组=角色默认模板。
+    ADMIN 按可编辑默认组/已分配组取权限，且 `permission:manage`/`system:manage` 不可剥夺；CLASS_DEVICE=空集（不受分组影响）；
+    有分组=并集（**可以比角色默认更少**，这就是"能收权"）；无分组=数据库对应角色的默认组。
     它**每请求实时查库**（不缓存），所以改完分组立刻生效。
     **不可松的边界**：权限组只管功能/路由级；班级维度的科目规则（`assertCanManageSubjectContent`）
     故意不可被权限组覆盖，否则「班主任布置别人科目作业」的老 bug 会从新路长回来。
@@ -1323,7 +1296,7 @@ term / dashboard / database / update / permissions / clients / system`。
     **`executeCommand()` 必须显式监听子进程的 `error` 事件**（2026-10-11 修）：
     `spawn` 找不到可执行文件 / 没权限时**不抛异常**，而是在 next tick 发一个异步 `error` 事件 ——
     只包 `try/catch` 会一路走到 `return { ok: true }`，回执写着"已下达系统命令"，机器却纹丝不动。
-    现在等 200ms 的窗口确认没立刻报错，失败如实回执。
+    现在等待进程退出并检查退出码，失败如实回执；关机/重启延迟 5 秒留出回执时间。
 
     **「点了没反应」必须看得出来**：命令被取消 / 过期后就从 `pendingCommand` 里消失，Web 端原本一片空白，
     而最常见的两种失败恰恰是"本机没人确认（60 秒自动取消）"与"下达时机器离线"。
@@ -1337,7 +1310,7 @@ term / dashboard / database / update / permissions / clients / system`。
     所以 `POST /api/update/client/fetch` 由**服务端**下载到 `<serverRoot>/../data/client-releases/<版本>/`
     并登记 sha256+size，`GET /api/update/client/download/:version` **故意不挂权限键**（班级端要能下载）。
     版本号一律先用 `^[0-9A-Za-z._-]+$` 校验（防路径穿越）。客户端自动安装的三条护栏：
-    **没有 sha256 就拒收**、**必须等到"非上课 + 主窗口隐藏满 `CLIENT_UPDATE_IDLE_MS`（5 分钟）"**、
+    **没有 sha256 就拒收**、**按下发策略等待：立即 / 放学后 / 空闲五分钟**、
     冒烟模式**永不安装**。
 
 71. **通知与作业一样按「所属日期」归档，批量发布在服务端做。** `Notification.assignDate` 与
@@ -1387,28 +1360,9 @@ term / dashboard / database / update / permissions / clients / system`。
     `app.relaunch()`；**冒烟模式绝不重启**（会杀掉验证实例）。
     自愈模块在 `packages/desktop-client/src/main/crash-guard.ts`，限流与 `isIdle` 判据别放宽。
 
-78. **课表同步只有两个「一次性动作」，没有"一直同步"的开关。**（2026-10-11 定稿）
-    教室 → 服务端走 `IntegrationDevice.requestScheduleReport`（Web 端「获取课表」），
-    服务端 → 教室走新增的 `requestMirrorSchedule`（「下发课表」）—— 两者都是**待办标记**：
-    Web 端置位，插件在下一次心跳看到就做一次，做完由服务端清标记。
-    插件侧的 `UploadSchedule` / `MirrorSchedule` 两个本机开关**已删除**：定时上报现在只报
-    **运行状态**（当前上什么课），课表只在 `forceSchedule` 时才上传。
-    **为什么改**：原先默认 `ReportIntervalSeconds = 15` + 两个开关都开，等于教室课表每 15 秒被重写一次、
-    服务端每 15 秒 merge + 清理一次幽灵行 —— 老师看到的是"课表被反复删改"（线上实测）。
-    配套：`pullClassPlanForDevice` 拉取成功即清 `requestMirrorSchedule`；插件的
-    `ClassPlanWriter.Apply(…, force: true)` 会**停用**同一天同一单双周相位下冲突的旧课表
-    （只停用不删除，别改成删除）。契约锁在 `verify:classisland-plugin` 的两条断言里。
+78. 联动专用约定已退役；离线 JSON 导入继续保留。
 
-79. **「客户端」页 = 「ClassIsland 联动」+「客户端设备」合并成的一页。**（2026-10-11）
-    路由 `/clients`（`ClientHubView.vue`）：一个班一张卡片，两条链路的状态放一起，
-    勾选可批量下发课表 / 更新，点卡片进详情。入口权限用 **`classisland:notify`**
-    （默认 ADMIN + TEACHER）而不是 `client:manage`（只给 ADMIN）—— 这一页同时承载
-    「向教室下发提醒」，老师要用；用后者会把教师整个挡在门外。
-    页内按钮再各自按 `device:manage` / `remote:control` / `client:update-push` 显示或禁用。
-    两个旧页面**还留着路由但已从侧栏摘掉**（`meta.hidden: true`，`AdminLayout` 的 `menuItems` 是手写列表）：
-    `IntegrationsView` 留提醒下发与联动步骤，`ClientsView` 留客户端安装包缓存管理
-    （不先把包拉下来就没有版本可下发），从详情抽屉里的两条链接进。
-    **别把这两页删掉或把它们的路由一起摘了**，会丢功能。
+79. 联动专用约定已退役；离线 JSON 导入继续保留。
 
 80. **考试成绩的"总分"是考试的属性，不是分数的属性。** `Exam`（班级 + 考试名 + `countInTotal`）
     单独一张表，与 `Grade` 只按名字弱关联（不建外键：成绩删光设置还在，补录时口径不丢）。
@@ -1422,14 +1376,12 @@ term / dashboard / database / update / permissions / clients / system`。
 81. **成绩查询开关（`Class.studentGradeQueryEnabled`）只有教师 / 管理员能改。**
     原先班级端自己也能改（`updateStudentGradeQuery` 里的 `isClassDevice` 分支），
     等于把"学校说不给看"变成一台机器说了算；现在班级端只读（客户端那个开关也撤掉了，
-    只显示状态）。**注意别拿"通知显示位置（`Class.notificationChannel`）也是班级端自己改"来类比** ——
-    那个确实是现场偏好，两者不再是一套模式。
+    只显示状态）。成绩查询开关仅教师/管理员可改。
 
 82. **全校学期开始日期是 `AppSetting` 的 `term.startDate`，管理员在「学期周次」页直接改。**
     原先这一级只能来自 `.env` 的 `TERM_START_DATE`，填错了得动文件 + 重启。
     现在 `loadTermContext()` 的三级回落是「`Class.termStartDate` → 全校设置 → `.env`」，
     逐周区间仍是「班级 → 全校默认 → 纯线性」。改完 `resolveCurrentWeek` 立刻按新日期算。
-
 
 ## 6. 代码风格
 
@@ -1635,13 +1587,13 @@ term / dashboard / database / update / permissions / clients / system`。
 
 ### 已知脆弱用例（不是环境问题，别去"修环境"）
 
-| 用例                                          | 触发条件                                                                                                                                                                                                                                                        |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `verify:e2e`「上课状态接口（at=周一 08:10）」 | 种子把「周一第 1 节」限制在第 1 周，且用例把 `2026-09-07` 当第 1 周。`TERM_START_DATE` 对齐到 `2026-09-07` 即全绿（本机 `.env` 已这样配；`.env.example` 仍是 `2026-02-23`，重置 `.env` 时记得改回来）                                                           |
-| `verify:desktop`「课表今天时间轴」            | 凌晨约 00:00–03:00 时「已结束」探针被夹紧成 0 长度而被过滤，`已结束=false` 判定失败                                                                                                                                                                             |
-| `verify:web`「课表科目为全校统一目录」        | 种子给每个班建满了全部科目，下拉里没有可自动建课的「统一科目」分组                                                                                                                                                                                              |
+| 用例                                          | 触发条件                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `verify:e2e`「上课状态接口（at=周一 08:10）」 | 种子把「周一第 1 节」限制在第 1 周，且用例把 `2026-09-07` 当第 1 周。`TERM_START_DATE` 对齐到 `2026-09-07` 即全绿（本机 `.env` 已这样配；`.env.example` 仍是 `2026-02-23`，重置 `.env` 时记得改回来）                                                                                                                                      |
+| `verify:desktop`「课表今天时间轴」            | 凌晨约 00:00–03:00 时「已结束」探针被夹紧成 0 长度而被过滤，`已结束=false` 判定失败                                                                                                                                                                                                                                                        |
+| `verify:web`「课表科目为全校统一目录」        | 种子给每个班建满了全部科目，下拉里没有可自动建课的「统一科目」分组                                                                                                                                                                                                                                                                         |
 | `verify:desktop`「作业看板全屏自适应」        | 演示数据里某天有 6 条长作业、而冒烟窗口只有 ~543px 高时，`computeScale` 算出的缩放低于下限 0.45 被 `Math.max(minScale, …)` **钳住**，于是必然溢出（实测 565 > 543）。判据用的是 `host.clientHeight` / `inner.offsetHeight`，**这两个是布局属性、transform 不影响**，所以与动效层无关；数据在冒烟里建了又删，每次跑出来的高度还会差几十像素 |
-| 岛交互 / 岛动画 / 岛截图留档这几个用例        | **AI 会话里会间歇性失败**：同一份产物连跑两次，失败项会在「点击展开 / 紧急展开动画 / 各状态截图留档」之间跳（2026-09-30 实测三轮结果各不相同）。根因是置顶透明小窗的 rAF 被限流、形变采样抓不到帧，属时序敏感；**先原样重跑一次再动手改代码**，别把偶发当成回归 |
+| 岛交互 / 岛动画 / 岛截图留档这几个用例        | **AI 会话里会间歇性失败**：同一份产物连跑两次，失败项会在「点击展开 / 紧急展开动画 / 各状态截图留档」之间跳（2026-09-30 实测三轮结果各不相同）。根因是置顶透明小窗的 rAF 被限流、形变采样抓不到帧，属时序敏感；**先原样重跑一次再动手改代码**，别把偶发当成回归                                                                            |
 
 ---
 
@@ -1653,8 +1605,6 @@ pnpm typecheck           # 全仓库类型检查
 
 pnpm dev:server          # 另开终端
 pnpm verify:e2e          # 后端端到端（2026-10-06 实测 205 项全过）
-pnpm verify:classisland  # ClassIsland 联动链路（实测 44 项）
-pnpm verify:classisland-plugin          # 插件静态契约（不需要后端，实测 74 项）
 pnpm build:desktop && pnpm verify:desktop   # 客户端冒烟（AI 会话可跑，先看 §7 第 7 条）
 pnpm build && pnpm verify:web               # Web 端真实点击回归（同上）
 ```
@@ -1680,21 +1630,6 @@ ssh root@<主机> "bash /tmp/verify-linux.sh --admin-password-stdin" < <(printf 
 升级/回滚链路要加 `--full --package <新版本包>`（会真的替换一次程序文件）。
 **改过这条链路就要在真机上跑一遍**——脚本写在 Windows 上跑不出问题，`set -e` 的坑、
 systemd 的 `EnvironmentFile` 解析、glibc 差异都只有在 Linux 上才暴露。
-
-改动到 ClassIsland 插件时，额外跑 `pnpm dist:classisland-plugin` 确认能打出 `.cipx`；
-本机已装 ClassIsland 2.1.0.1（`D:\Classisland`）与 .NET 8 SDK（8.0.425），因此**真机验证是可行的**
-（直接 `pnpm build:classisland-plugin` 编译，再按 §7 第 12 条部署）：
-
-```powershell
-# 1) 退出 ClassIsland（DLL 被占用时无法覆盖）→ 2) 覆盖插件 → 3) 重新启动
-Get-Process ClassIsland.Desktop | Stop-Process -Force
-Copy-Item packages\classisland-plugin\bin\Release\ClassHelper.ClassIslandPlugin.dll D:\Classisland\data\Plugins\classhelper.classisland.bridge\ -Force
-Start-Process D:\Classisland\ClassIsland.exe -WorkingDirectory D:\Classisland
-# 4) 在 Web 端「ClassIsland 联动」发一条提醒，看日志里依次出现：
-#    取到待弹出提醒 → 已弹出提醒 →（播完）已确认提醒
-```
-
-交付时要说明"编译 / 打包 / 静态契约已过，运行期需在装了 ClassIsland 的机器上实测"。
 
 改动涉及打包/交付形态时，额外跑 `pnpm dist:all`（或 `dist:server` + `dist:win`），
 并用 `pnpm verify:packaged --exe "<客户端路径>"` 对**打包后的副本**复验 ——
@@ -1738,16 +1673,15 @@ DATABASE_PROVIDER=sqlite DATABASE_URL="file:./prune-test.db" \
 
 ### 这次删了什么、留了什么
 
-| | 内容 | 量 |
-| --- | --- | --- |
-| 删 | `releases/**/免安装/`（客户端 4 版 + 服务端 4 版 + 插件 4 版） | 2.57 GB |
-| 删 | `releases/server/{0.1.0,1.0.0,1.0.0-重构建20261005}`（旧产品名"班级小助手"时期的孤立目录） | 204 MB |
-| 删 | `releases/server/{1.1.0,1.1.2}/linux-x64/classhelper-server-linux-x64/`（tar.gz 的解包留档） | 530 MB |
-| 删 | `releases/server/1.1.2/安装包/班级小助手服务端-1.1.2-x64-setup.exe`（改名前的重复包） | 62 MB |
-| 删 | `.cache/` 里的草稿：smoke 日志与 JSON、`ui-smoke-profile`、`pages`、`tmp`、截图目录、`ci-*.html/css`、`beui-*`、`release-notes-*`、一次性脚本、`dev.db.bak-*` | 276 MB |
-| 删 | 根目录 `ClassHelper video.cachedbg3.log`（0 字节）、`.acl-recovery/`（沙箱 ACL 修复的一次性备份） | ~0 |
-| 删 | `packages/classisland-plugin/{bin,obj,cipx}`（构建产物，gitignored，重跑即生成） | 1.1 MB |
-| **留** | `.cache/{nuget,npm-cache,dotnet-home,mingit}`（工具缓存，按用户要求一个都不删） | 2.4 GB |
+|        | 内容                                                                                                                                                          | 量      |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| 删     | `releases/**/免安装/`（客户端 4 版 + 服务端 4 版 + 插件 4 版）                                                                                                | 2.57 GB |
+| 删     | `releases/server/{0.1.0,1.0.0,1.0.0-重构建20261005}`（旧产品名"班级小助手"时期的孤立目录）                                                                    | 204 MB  |
+| 删     | `releases/server/{1.1.0,1.1.2}/linux-x64/classhelper-server-linux-x64/`（tar.gz 的解包留档）                                                                  | 530 MB  |
+| 删     | `releases/server/1.1.2/安装包/班级小助手服务端-1.1.2-x64-setup.exe`（改名前的重复包）                                                                         | 62 MB   |
+| 删     | `.cache/` 里的草稿：smoke 日志与 JSON、`ui-smoke-profile`、`pages`、`tmp`、截图目录、`ci-*.html/css`、`beui-*`、`release-notes-*`、一次性脚本、`dev.db.bak-*` | 276 MB  |
+| 删     | 根目录 `ClassHelper video.cachedbg3.log`（0 字节）、`.acl-recovery/`（沙箱 ACL 修复的一次性备份）                                                             | ~0      |
+| **留** | `.cache/{nuget,npm-cache,dotnet-home,mingit}`（工具缓存，按用户要求一个都不删）                                                                               | 2.4 GB  |
 
 合计释放 **约 3.7 GB**，`releases/` 从 4.8 GB 降到 1.4 GB，其余是安装包本体。
 
@@ -1772,4 +1706,3 @@ DATABASE_PROVIDER=sqlite DATABASE_URL="file:./prune-test.db" \
   就在打包过程中拷出来（或直接跑 `pnpm --filter @classhelper/server start`）。
 - **别在 `releases/` 下留"临时跑一下"的东西**：需要看解包内容就解压 `-portable.exe` 到 `%TEMP%`。
 - 判断某个目录能不能删，就问一句：**"它能不能用仓库里的脚本一条命令重建？"** 能就删。
-

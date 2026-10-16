@@ -2,13 +2,7 @@
  * 主进程与渲染进程之间的桥接契约（preload 通过 contextBridge 暴露）。
  * 渲染进程只依赖这些最小 API，不接触 Node.js。
  */
-import type {
-  ClassIslandNotificationChannel,
-  IslandAppearance,
-  IslandNotification,
-  IslandState,
-  UpdateInfo,
-} from '@classhelper/shared';
+import type { IslandAppearance, IslandNotification, IslandState, UpdateInfo } from '@classhelper/shared';
 import type { ClientAgentStatus } from '../main/client-agent.js';
 
 /** 服务端联动状态：渲染进程要显示它，因此在这里转出（`desktop.d.ts` 是两端契约的单一入口） */
@@ -45,13 +39,6 @@ export interface DesktopStoredConfig {
    * 录入作业时点一下就追加到标题/内容里，少打字（例如 P、大本、背诵）。
    */
   homeworkPhrases: string[];
-  /**
-   * 通知显示位置（both / client / classisland）。
-   *
-   * 这台教室机器"提醒到底弹在哪个端"由它决定：值同时存本地（决定本机要不要弹窗/上岛）
-   * 与班级记录（服务端据此决定要不要推给 ClassIsland）。
-   */
-  notificationChannel: ClassIslandNotificationChannel;
   /**
    * 是否已看过「初次启动引导」。
    *
@@ -170,6 +157,7 @@ export interface DesktopBridge {
   /* 灵动岛 */
   /** 把一条通知投递到灵动岛（payload 必须是纯数据，说明见 saveConfig） */
   islandPush(payload: { notification: IslandNotification; context?: IslandPushContext }): void;
+  islandRemoveNotification(id: string): void;
   /** 同步上课状态：进入上课隐藏，下课后自动弹出暂存通知 */
   islandSetClassState(payload: IslandClassStatePayload): void;
   /** 读取灵动岛当前状态（设置页/冒烟验证用） */
@@ -255,6 +243,7 @@ declare global {
     /** 冒烟验证钩子，仅在 ELECTRON_SMOKE_TEST=1 时由渲染进程注册 */
     __classhelperSmoke__?: {
       cacheSelfTest(): Promise<{ ok: boolean; detail: string }>;
+      cacheIsolationSelfTest(): Promise<{ ok: boolean; detail: string }>;
       offlineScenario(): Promise<{ ok: boolean; detail: string }>;
       layoutNavigationSelfTest(): Promise<{ ok: boolean; detail: string }>;
       onlineScenario(credentials?: {

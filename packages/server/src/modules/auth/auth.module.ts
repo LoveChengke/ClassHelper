@@ -16,7 +16,7 @@ import * as authService from './auth.service.js';
 
 const router = Router();
 
-/** POST /api/auth/login - 登录（公开）：教师 / 管理员 / 个人学生账号 */
+/** POST /api/auth/login - 登录（公开）：教师 / 管理员 */
 router.post('/login', validate({ body: loginSchema }), async (req, res) => {
   const result: LoginResponse = await authService.login(req.body as LoginInput);
   sendOk(res, result, '登录成功');
@@ -26,7 +26,7 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
  * POST /api/auth/class-login - 班级账号登录（公开，ClassHelper 班级端主入口）
  *
  * 班级码 + 班级密码 → 以「班级」为主体的 JWT（个人数据按全班读写）。
- * 个人学生账号仍可用 /auth/login 登录（向后兼容，客户端已不再展示该入口）。
+ * 学生仅为名单记录，没有个人登录账号。
  */
 router.post('/class-login', validate({ body: classLoginSchema }), async (req, res) => {
   const result: LoginResponse = await authService.classLogin(req.body as ClassLoginInput);

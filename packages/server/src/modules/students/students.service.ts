@@ -2,6 +2,7 @@ import type { PaginatedResult, StudentDto, StudentTransferDto } from '@classhelp
 import { normalizeStudentNo } from '@classhelper/shared';
 import {
   assertCanManageRoster,
+  assertClassAccess,
   classScopeWhere,
   isAdmin,
   resolveClassScope,
@@ -33,10 +34,7 @@ import type {
 const withClass = { class: { select: { name: true, grade: true } } } as const;
 
 /** 学生名单（按班级权限过滤） */
-export async function listStudents(
-  user: TokenPayload,
-  options: ListStudentsQuery,
-): Promise<StudentDto[]> {
+export async function listStudents(user: TokenPayload, options: ListStudentsQuery): Promise<StudentDto[]> {
   const scope = await resolveClassScope(user, options.classId);
 
   const students = await prisma.student.findMany({
@@ -178,7 +176,10 @@ export async function transferStudents(
   // 注意传的是**调班前**的 movable（classId 还是原班级）：历史里的"原班级"要按每条自己的来
   const transfers = await recordTransfer(user, movable, null, input.toClassId, mode, input.note ?? '');
 
-  notifyClassChange(movable.map((item) => item.classId), input.toClassId);
+  notifyClassChange(
+    movable.map((item) => item.classId),
+    input.toClassId,
+  );
   return { moved: movable.length, transfers };
 }
 
@@ -229,7 +230,10 @@ export async function transferOutStudents(
     })),
   });
 
-  notifyClassChange(pending.map((item) => item.classId), null);
+  notifyClassChange(
+    pending.map((item) => item.classId),
+    null,
+  );
 
   const created = await prisma.studentClassTransfer.findMany({
     where: { studentId: { in: pending.map((item) => item.id) }, mode: 'transfer-out' },
@@ -248,11 +252,20 @@ export async function listTransfers(
     throw ApiError.forbidden('查看全部调班历史需要管理员权限');
   }
 
+  if (options.classId) await assertClassAccess(user, options.classId);
+  if (options.studentId) {
+    const student = await prisma.student.findUnique({
+      where: { id: options.studentId },
+      select: { classId: true },
+    });
+    if (!student) throw ApiError.notFound('学生不存在');
+    if (student.classId) await assertClassAccess(user, student.classId);
+    else if (!isAdmin(user)) throw ApiError.forbidden('无权查看未分班学生的调班历史');
+  }
+
   const where = {
     ...(options.studentId ? { studentId: options.studentId } : {}),
-    ...(options.classId
-      ? { OR: [{ fromClassId: options.classId }, { toClassId: options.classId }] }
-      : {}),
+    ...(options.classId ? { OR: [{ fromClassId: options.classId }, { toClassId: options.classId }] } : {}),
   };
 
   const page = options.page ?? 1;
@@ -320,7 +333,10 @@ async function recordTransfer(
 async function loadClassNames(classIds: (string | null)[]): Promise<Map<string, string>> {
   const ids = [...new Set(classIds.filter((id): id is string => Boolean(id)))];
   if (ids.length === 0) return new Map();
-  const classes = await prisma.class.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
+  const classes = await prisma.class.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true },
+  });
   return new Map(classes.map((item) => [item.id, item.name]));
 }
 

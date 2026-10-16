@@ -1,6 +1,5 @@
 import {
   PERMISSION_CATEGORIES,
-  PERMISSION_DEFAULT_ROLES,
   PERMISSION_KEYS,
   PERMISSION_LABELS,
   ROLE_DEFAULT_PERMISSIONS,
@@ -18,7 +17,11 @@ import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
-import { ADMIN_UNREMOVABLE_PERMISSIONS, loadEffectivePermissions } from '../../lib/permissions.js';
+import {
+  ADMIN_UNREMOVABLE_PERMISSIONS,
+  ensureDefaultGroups,
+  loadEffectivePermissions,
+} from '../../lib/permissions.js';
 
 /**
  * 权限组服务：组 / 键 / 成员三件事的全部读写都收在这里。
@@ -32,6 +35,7 @@ const GROUP_SELECT = {
   name: true,
   description: true,
   builtin: true,
+  defaultRole: true,
   createdAt: true,
   updatedAt: true,
   items: { select: { key: true } },
@@ -43,6 +47,7 @@ type GroupRow = {
   name: string;
   description: string;
   builtin: boolean;
+  defaultRole: string | null;
   createdAt: Date;
   updatedAt: Date;
   items: { key: string }[];
@@ -89,7 +94,11 @@ function toGroupDto(row: GroupRow): PermissionGroupDto {
     name: row.name,
     description: row.description,
     builtin: row.builtin,
-    keys: row.items.map((item) => item.key).filter(knownKey).sort(byCatalogOrder),
+    defaultRole: row.defaultRole as UserRole | null,
+    keys: row.items
+      .map((item) => item.key)
+      .filter(knownKey)
+      .sort(byCatalogOrder),
     memberCount: row._count.users,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -97,8 +106,19 @@ function toGroupDto(row: GroupRow): PermissionGroupDto {
 }
 
 /** GET /api/permissions/catalog - 权限键目录（权限页整棵勾选树都按它渲染） */
-export function permissionCatalog(): PermissionCatalogDto {
+export async function permissionCatalog(): Promise<PermissionCatalogDto> {
+  await ensureDefaultGroups();
+  const defaults = await prisma.permissionGroup.findMany({
+    where: { defaultRole: { not: null } },
+    include: { items: true },
+  });
   const roles = Object.keys(ROLE_DEFAULT_PERMISSIONS) as UserRole[];
+  const keysForRole = (role: UserRole): PermissionKey[] => {
+    const keys =
+      defaults.find((group) => group.defaultRole === role)?.items.map((item) => item.key) ??
+      ROLE_DEFAULT_PERMISSIONS[role];
+    return normalizeKeys(role === 'ADMIN' ? [...keys, ...ADMIN_UNREMOVABLE_PERMISSIONS] : keys);
+  };
   return {
     keys: [...PERMISSION_KEYS],
     labels: { ...PERMISSION_LABELS },
@@ -107,17 +127,19 @@ export function permissionCatalog(): PermissionCatalogDto {
       keys: [...category.keys],
     })),
     defaultRoles: Object.fromEntries(
-      PERMISSION_KEYS.map((key) => [key, [...PERMISSION_DEFAULT_ROLES[key]]]),
+      PERMISSION_KEYS.map((key) => [key, roles.filter((role) => keysForRole(role).includes(key))]),
     ) as Record<PermissionKey, UserRole[]>,
-    roleDefaults: Object.fromEntries(
-      roles.map((role) => [role, [...ROLE_DEFAULT_PERMISSIONS[role]]]),
-    ) as Record<UserRole, PermissionKey[]>,
+    roleDefaults: Object.fromEntries(roles.map((role) => [role, keysForRole(role)])) as Record<
+      UserRole,
+      PermissionKey[]
+    >,
     unremovable: [...ADMIN_UNREMOVABLE_PERMISSIONS],
   };
 }
 
 /** GET /api/permissions/groups - 权限组列表（内置组排在最前，其余按创建时间） */
 export async function listGroups(): Promise<PermissionGroupDto[]> {
+  await ensureDefaultGroups();
   const rows = await prisma.permissionGroup.findMany({
     select: GROUP_SELECT,
     orderBy: [{ builtin: 'desc' }, { createdAt: 'asc' }],
@@ -201,17 +223,12 @@ export async function deleteGroup(groupId: string): Promise<{ id: string }> {
   // 键与成员关系都是 onDelete: Cascade，直接删组即可；
   // 组内成员随后"没有任何分组"，会回落角色默认模板（不会变成空权限）。
   await prisma.permissionGroup.delete({ where: { id: groupId } });
-  logger.info(
-    `删除权限组「${current.name}」（原成员 ${current._count.users} 个，已回到角色默认权限）`,
-  );
+  logger.info(`删除权限组「${current.name}」（原成员 ${current._count.users} 个，已回到角色默认权限）`);
   return { id: groupId };
 }
 
 /** 把一行 User（含分组关联）转成权限页用的成员 DTO */
-function toMemberDto(
-  row: MemberRow,
-  keysOfGroup: Map<string, PermissionKey[]>,
-): PermissionMemberDto {
+function toMemberDto(row: MemberRow, keysOfGroup: Map<string, PermissionKey[]>): PermissionMemberDto {
   const groupIds = row.permissionGroups.map((link) => link.groupId);
   const union = new Set<PermissionKey>();
   for (const groupId of groupIds) for (const key of keysOfGroup.get(groupId) ?? []) union.add(key);
@@ -231,7 +248,7 @@ function toMemberDto(
     role,
     groupIds,
     permissionCount,
-    fixed: role === 'ADMIN',
+    fixed: false,
   };
 }
 
@@ -249,11 +266,27 @@ export async function listMembers(): Promise<PermissionMemberDto[]> {
   const keysOfGroup = new Map<string, PermissionKey[]>(
     groups.map((group) => [
       group.id,
-      group.items.map((item) => item.key).filter(knownKey).sort(byCatalogOrder),
+      group.items
+        .map((item) => item.key)
+        .filter(knownKey)
+        .sort(byCatalogOrder),
     ]),
   );
 
-  return (rows as MemberRow[]).map((row) => toMemberDto(row, keysOfGroup));
+  return Promise.all(
+    (rows as MemberRow[]).map(async (row) => ({
+      ...toMemberDto(row, keysOfGroup),
+      permissionCount: (
+        await loadEffectivePermissions({
+          sub: row.id,
+          role: row.role as UserRole,
+          username: row.username,
+          name: row.name,
+          classId: null,
+        })
+      ).size,
+    })),
+  );
 }
 
 /** PUT /api/permissions/users/:id/groups - 整体替换某账号的权限组 */
@@ -265,9 +298,6 @@ export async function assignUserGroups(
   if (!user) throw ApiError.notFound('账号不存在');
 
   const row = user as MemberRow;
-  if (row.role === 'ADMIN') {
-    throw ApiError.badRequest('管理员固定拥有全部权限，不需要（也不能）分配权限组');
-  }
   if (row.role === 'CLASS_DEVICE') {
     throw ApiError.badRequest(
       'ClassHelper 班级端账号的能力由"班级内角色"决定（见权限矩阵），不参与权限组分配',
@@ -299,10 +329,24 @@ export async function assignUserGroups(
   const keysOfGroup = new Map<string, PermissionKey[]>(
     groups.map((group) => [
       group.id,
-      group.items.map((item) => item.key).filter(knownKey).sort(byCatalogOrder),
+      group.items
+        .map((item) => item.key)
+        .filter(knownKey)
+        .sort(byCatalogOrder),
     ]),
   );
-  return toMemberDto({ ...row, permissionGroups: groupIds.map((groupId) => ({ groupId })) }, keysOfGroup);
+  return {
+    ...toMemberDto({ ...row, permissionGroups: groupIds.map((groupId) => ({ groupId })) }, keysOfGroup),
+    permissionCount: (
+      await loadEffectivePermissions({
+        sub: row.id,
+        role: row.role as UserRole,
+        username: row.username,
+        name: row.name,
+        classId: null,
+      })
+    ).size,
+  };
 }
 
 /**
@@ -314,7 +358,7 @@ export async function assignUserGroups(
 export async function myPermissions(user: TokenPayload): Promise<MyPermissionsDto> {
   const permissions = await loadEffectivePermissions(user);
   const fromGroups =
-    user.classSession || user.role === 'CLASS_DEVICE' || user.role === 'ADMIN'
+    user.classSession || user.role === 'CLASS_DEVICE'
       ? false
       : (await prisma.userPermissionGroup.count({ where: { userId: user.sub } })) > 0;
 

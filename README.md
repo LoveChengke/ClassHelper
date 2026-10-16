@@ -17,7 +17,7 @@
 [![仓库大小](https://img.shields.io/github/repo-size/LoveChengke/ClassHelper?style=flat-square&color=3cb371)](https://github.com/LoveChengke/ClassHelper)
 
 ClassHelper是给中小学班级用的一套信息管理系统。<br/>
-**老师发一条通知，教室那台机器上的灵动岛和 [ClassIsland](https://classisland.tech) 会同时弹出来**；<br/>
+**老师发一条通知，教室客户端与灵动岛会实时提醒**；<br/>
 学生打开客户端就能看到当天的课表和作业。
 
 #### [🚀 软件下载](https://github.com/LoveChengke/ClassHelper/releases/latest) | [📚 使用文档](docs/index.md) | [🧭 完整参考](docs/reference.md) | [💬 反馈问题](https://github.com/LoveChengke/ClassHelper/issues)
@@ -26,17 +26,15 @@ ClassHelper是给中小学班级用的一套信息管理系统。<br/>
 
 ## 它由什么组成
 
-一份代码，四个交付物：
+一份代码，三个交付物：
 
-| 装在哪                     | 是什么                                                                             | 谁在用                 |
-| -------------------------- | ---------------------------------------------------------------------------------- | ---------------------- |
-| 教师的电脑 / 学校服务器    | **服务端**（Express + Prisma + Socket.IO），同时托管 Web 管理端                     | 其它三端               |
-| 浏览器（手机也行）         | **Web 管理端**（Vue 3 + Element Plus，PWA 可安装）                                  | 老师、班主任、管理员   |
-| 教室那台机器 / 学生电脑    | **桌面客户端**（Electron + Vue 3），含「灵动岛」浮窗、托盘、离线缓存                | 教室大屏、学生         |
-| 教室机器上的 ClassIsland   | **联动插件**（.NET 8 / C#），上报课表与上课状态、把老师的提醒弹到大屏上             | 教室机器               |
+| 装在哪                  | 是什么                                                               | 谁在用               |
+| ----------------------- | -------------------------------------------------------------------- | -------------------- |
+| 教师的电脑 / 学校服务器 | **服务端**（Express + Prisma + Socket.IO），同时托管 Web 管理端      | 管理端与客户端       |
+| 浏览器（手机也行）      | **Web 管理端**（Vue 3 + Element Plus，PWA 可安装）                   | 老师、班主任、管理员 |
+| 教室那台机器 / 学生电脑 | **桌面客户端**（Electron + Vue 3），含「灵动岛」浮窗、托盘、离线缓存 | 教室大屏、学生       |
 
-老师在 Web 端发布内容 → 服务端落库并按班级房间广播 → 客户端与灵动岛实时更新；
-落到 ClassIsland 上的那部分走设备令牌的独立通道，教室网络不好也不影响。
+老师在 Web 端发布内容 → 服务端落库并按班级房间广播 → 客户端与灵动岛实时更新。
 
 ## 功能
 
@@ -50,11 +48,9 @@ ClassHelper是给中小学班级用的一套信息管理系统。<br/>
 - [x] 通知发布：三档优先级；在**上课时段**发紧急通知会被拦下来并要求二次确认
 - [x] 叫人：点名某位同学到办公室，分「普通」与「紧急」两级
 - [x] 成绩录入：单条 / 批量 / 表格导入，带等级分布与得分率统计；单科排名自动出，可选「各科相加排总分榜」
-- [x] ClassIsland 联动：签发设备令牌、下发提醒、把课表镜像回教室大屏
+- [x] 客户端管理：查看设备在线状态与版本，远控关机、重启、注销与锁屏；推送更新可选立即、放学后或空闲时安装
 - [x] 数据库管理：连接体检、备份与恢复、SQLite ⇄ MySQL 一键切换
-- [x] 权限组：39 个权限键，建组分配账号 —— 没分组的按角色默认生效，分组后只按组的并集算
-- [x] 客户端（合并页）：一个班一张卡片，大屏与灵动岛两条链路一起看；勾选可批量下发课表 / 更新，点进去做逐台操作
-- [x] 课表同步按需：点「下发课表」把课表写进教室并停用冲突的旧课表，点「获取课表」把教室的课表取回来 —— 没有"一直同步"
+- [x] 权限组：37 个权限键，建组分配账号 —— 默认组可自定义，没分组的按角色默认组生效，分组后只按组的并集算
 - [x] 客户端设备：每台教室机器的版本、在线状态与最后心跳；一键推送更新，可下发关机 / 重启 / 注销 / 锁屏
 - [x] 大模型助手：一句话解析成待确认的作业 / 通知 / 叫人，点确认才落库
 - [x] 通知与作业批量发布：勾多个班一次发完，个别班失败不影响其余班级
@@ -83,13 +79,6 @@ ClassHelper是给中小学班级用的一套信息管理系统。<br/>
 - [x] 纯黑 / 毛玻璃 / 主题色渐变三种底
 - [x] 触摸屏（希沃白板这类一体机）也能点开
 
-### ClassIsland 联动
-
-- [x] 教室机器上报课表与上课状态，Web 端能看到「现在在上什么」
-- [x] 老师发的提醒在教室大屏上全屏弹出，支持语音朗读，播完回执不重复弹
-- [x] 可以把 ClassHelper排好的课表镜像回 ClassIsland，不影响老师原有的课表
-- [x] 提醒弹在客户端还是 ClassIsland，由教室那台机器自己选
-
 ### 部署与运维
 
 - [x] Windows 一键安装：内置 Node 运行时，双击安装、开机自启、自动建库建号
@@ -109,18 +98,17 @@ ClassHelper是给中小学班级用的一套信息管理系统。<br/>
 <details>
 <summary>展开其余页面……</summary>
 
-| 页面 | 截图 |
-| --- | --- |
-| 仪表盘 | <img src="docs/images/web-dashboard.jpg" alt="仪表盘" /> |
-| 班级管理 | <img src="docs/images/web-classes.jpg" alt="班级管理" /> |
-| 学生管理 | <img src="docs/images/web-students.jpg" alt="学生管理" /> |
-| 教师管理 | <img src="docs/images/web-teachers.jpg" alt="教师管理" /> |
-| 课表管理 | <img src="docs/images/web-schedules.jpg" alt="课表管理" /> |
-| 作业发布 | <img src="docs/images/web-homeworks.jpg" alt="作业发布" /> |
-| 通知发布 | <img src="docs/images/web-notifications.jpg" alt="通知发布" /> |
-| 成绩录入 | <img src="docs/images/web-grades.jpg" alt="成绩录入" /> |
-| ClassIsland 联动 | <img src="docs/images/web-integrations.jpg" alt="ClassIsland 联动" /> |
-| 数据库管理 | <img src="docs/images/web-database.jpg" alt="数据库管理" /> |
+| 页面       | 截图                                                           |
+| ---------- | -------------------------------------------------------------- |
+| 仪表盘     | <img src="docs/images/web-dashboard.jpg" alt="仪表盘" />       |
+| 班级管理   | <img src="docs/images/web-classes.jpg" alt="班级管理" />       |
+| 学生管理   | <img src="docs/images/web-students.jpg" alt="学生管理" />      |
+| 教师管理   | <img src="docs/images/web-teachers.jpg" alt="教师管理" />      |
+| 课表管理   | <img src="docs/images/web-schedules.jpg" alt="课表管理" />     |
+| 作业发布   | <img src="docs/images/web-homeworks.jpg" alt="作业发布" />     |
+| 通知发布   | <img src="docs/images/web-notifications.jpg" alt="通知发布" /> |
+| 成绩录入   | <img src="docs/images/web-grades.jpg" alt="成绩录入" />        |
+| 数据库管理 | <img src="docs/images/web-database.jpg" alt="数据库管理" />    |
 
 </details>
 
@@ -131,47 +119,46 @@ ClassHelper是给中小学班级用的一套信息管理系统。<br/>
 <details>
 <summary>展开其余页面……</summary>
 
-| 页面 | 截图 |
-| --- | --- |
-| 作业看板 | <img src="docs/images/client-homeworks.png" alt="作业看板" /> |
-| 通知 | <img src="docs/images/client-notifications.png" alt="通知" /> |
-| 成绩 | <img src="docs/images/client-grades.png" alt="成绩" /> |
-| 设置 · 灵动岛 | <img src="docs/images/client-settings-island.png" alt="设置 · 灵动岛" /> |
+| 页面                    | 截图                                                                       |
+| ----------------------- | -------------------------------------------------------------------------- |
+| 作业看板                | <img src="docs/images/client-homeworks.png" alt="作业看板" />              |
+| 通知                    | <img src="docs/images/client-notifications.png" alt="通知" />              |
+| 成绩                    | <img src="docs/images/client-grades.png" alt="成绩" />                     |
+| 设置 · 灵动岛           | <img src="docs/images/client-settings-island.png" alt="设置 · 灵动岛" />   |
 | 设置 · 外观（深色主题） | <img src="docs/images/client-settings-appearance.png" alt="设置 · 外观" /> |
 
 </details>
 
 ### 灵动岛
 
-| 形态 | 截图 | 说明 |
-| --- | --- | --- |
-| 新消息胶囊 | <img src="docs/images/island-4-pill.png" alt="新消息胶囊" /> | 非上课时段直接出现，点一下展开 |
-| 点开后的详情 | <img src="docs/images/island-5-clicked.png" alt="详情卡" /> | 标题、内容、时间 + 打开应用 / 标为已读 / 知道了 |
-| 多条消息列表 | <img src="docs/images/island-9-list.png" alt="多条消息列表" /> | 按重要程度排序，默认显示三条 |
-| 上课期间的紧急通知 | <img src="docs/images/island-3-urgent.png" alt="紧急通知" /> | 卡片内部红色呼吸光晕，无需点击 |
-| 下课后补弹 | <img src="docs/images/island-2-after-class.png" alt="下课后自动弹出" /> | 上课期间暂存的通知，下课后自动弹出来 |
-| 老师叫人 | <img src="docs/images/island-8-call.png" alt="叫人卡片" /> | 「请 XXX 同学找 XXX 老师」 |
-| 新作业 | <img src="docs/images/island-7-homework.png" alt="新作业" /> | 教室机器自己录的那条不会弹给自己 |
+| 形态               | 截图                                                                    | 说明                                            |
+| ------------------ | ----------------------------------------------------------------------- | ----------------------------------------------- |
+| 新消息胶囊         | <img src="docs/images/island-4-pill.png" alt="新消息胶囊" />            | 非上课时段直接出现，点一下展开                  |
+| 点开后的详情       | <img src="docs/images/island-5-clicked.png" alt="详情卡" />             | 标题、内容、时间 + 打开应用 / 标为已读 / 知道了 |
+| 多条消息列表       | <img src="docs/images/island-9-list.png" alt="多条消息列表" />          | 按重要程度排序，默认显示三条                    |
+| 上课期间的紧急通知 | <img src="docs/images/island-3-urgent.png" alt="紧急通知" />            | 卡片内部红色呼吸光晕，无需点击                  |
+| 下课后补弹         | <img src="docs/images/island-2-after-class.png" alt="下课后自动弹出" /> | 上课期间暂存的通知，下课后自动弹出来            |
+| 老师叫人           | <img src="docs/images/island-8-call.png" alt="叫人卡片" />              | 「请 XXX 同学找 XXX 老师」                      |
+| 新作业             | <img src="docs/images/island-7-homework.png" alt="新作业" />            | 教室机器自己录的那条不会弹给自己                |
 
 ### 手机上
 
 <details>
 <summary>展开……</summary>
 
-| 场景 | 截图 |
-| --- | --- |
-| 仪表盘 | <img src="docs/images/mobile-dashboard.jpg" alt="手机 · 仪表盘" /> |
+| 场景     | 截图                                                                     |
+| -------- | ------------------------------------------------------------------------ |
+| 仪表盘   | <img src="docs/images/mobile-dashboard.jpg" alt="手机 · 仪表盘" />       |
 | 通知发布 | <img src="docs/images/mobile-notifications.jpg" alt="手机 · 通知发布" /> |
 
 </details>
 
 ## 开始使用
 
-| 装在哪                  | 装什么                                            | 从 Releases 里拿                                                            |
-| ----------------------- | ------------------------------------------------- | --------------------------------------------------------------------------- |
-| 教师的电脑 / 学校服务器 | **服务端**（内含 Web 管理端与 Node 运行时）        | `ClassHelper-<版本>-x64-server-setup.exe`                                    |
-| 教室机器 / 学生电脑     | **学生客户端**                                    | `ClassHelper-<版本>-x64-client-setup.exe`，或 `-client-portable.exe` 免安装  |
-| 教室机器的 ClassIsland  | **联动插件**                                      | `ClassHelper.ClassIslandPlugin.cipx`                                         |
+| 装在哪                  | 装什么                                      | 从 Releases 里拿                                                            |
+| ----------------------- | ------------------------------------------- | --------------------------------------------------------------------------- |
+| 教师的电脑 / 学校服务器 | **服务端**（内含 Web 管理端与 Node 运行时） | `ClassHelper-<版本>-x64-server-setup.exe`                                   |
+| 教室机器 / 学生电脑     | **学生客户端**                              | `ClassHelper-<版本>-x64-client-setup.exe`，或 `-client-portable.exe` 免安装 |
 
 也可以在官网的[下载页](https://lovechengke.github.io/ClassHelper/download.html)上挑：
 选一个版本，四个包排成四张卡，文件名、体积与 SHA256 清单都在那儿 ——
@@ -198,13 +185,12 @@ curl -fsSL -o /tmp/classhelper-install.sh https://raw.githubusercontent.com/Love
 
 ## 开发
 
-| 层             | 选型                                                                     |
-| -------------- | ------------------------------------------------------------------------ |
-| 后端           | Node.js ≥ 20.19 + Express 5 + Prisma 7（SQLite / MySQL）+ Socket.IO      |
-| Web 管理端     | Vue 3 + Vite + Element Plus + Pinia                                      |
-| 桌面客户端     | Electron 44 + Vue 3 + IndexedDB 离线缓存（含独立的灵动岛渲染进程）        |
-| ClassIsland 插件 | .NET 8 / C# + Avalonia（ClassIsland 插件 API 2.0）                      |
-| 共享契约       | `packages/shared`：类型、常量、权限矩阵、动效令牌                        |
+| 层         | 选型                                                                |
+| ---------- | ------------------------------------------------------------------- |
+| 后端       | Node.js ≥ 20.19 + Express 5 + Prisma 7（SQLite / MySQL）+ Socket.IO |
+| Web 管理端 | Vue 3 + Vite + Element Plus + Pinia                                 |
+| 桌面客户端 | Electron 44 + Vue 3 + IndexedDB 离线缓存（含独立的灵动岛渲染进程）  |
+| 共享契约   | `packages/shared`：类型、常量、权限矩阵、动效令牌                   |
 
 ```bash
 pnpm install
@@ -218,11 +204,11 @@ pnpm dev                                               # 后端 4000 + Web 端 5
 
 `pnpm db:seed` 会写一套演示数据（1 管理员 / 2 教师 / 3 个班 / 15 名学生 / 课表 / 作业 / 通知 / 成绩）：
 
-| 角色           | 账号            | 密码         |
-| -------------- | --------------- | ------------ |
-| 管理员         | `admin`         | `admin123`   |
-| 教师           | `teacher1`      | `teacher123` |
-| ClassHelper 班级端（班级） | 班级码 `G101`   | `123456`     |
+| 角色                       | 账号          | 密码         |
+| -------------------------- | ------------- | ------------ |
+| 管理员                     | `admin`       | `admin123`   |
+| 教师                       | `teacher1`    | `teacher123` |
+| ClassHelper 班级端（班级） | 班级码 `G101` | `123456`     |
 
 - [AGENTS.md](AGENTS.md) —— 工程约定与开发环境注意事项，**改代码前先读它**
 - [docs/reference.md](docs/reference.md) —— 完整参考（功能行为、接口、验收记录）
@@ -239,3 +225,9 @@ pnpm dev                                               # 后端 4000 + Web 端 5
 如果这个项目对你有帮助，欢迎点亮 Star ⭐
 
 </div>
+
+### 客户端维护
+
+支持远程关机、重启、注销与锁屏（管理端和本机分别确认），可查看最近一次执行结果。
+统一更新支持立即安装、放学后安装或空闲时安装，支持取消下发。
+管理员与教师的默认权限组均可自定义；管理员保留权限管理和系统管理入口。

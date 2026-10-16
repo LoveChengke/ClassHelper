@@ -3,14 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app, safeStorage } from 'electron';
 import {
-  CLASSISLAND_NOTIFICATION_CHANNELS,
-  DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL,
   DEFAULT_ISLAND_APPEARANCE,
   DEFAULT_SERVER_URL,
   HOMEWORK_PHRASE_DEFAULTS,
   HOMEWORK_PHRASE_MAX_COUNT,
   HOMEWORK_PHRASE_MAX_LENGTH,
-  type ClassIslandNotificationChannel,
   type IslandAppearance,
 } from '@classhelper/shared';
 import { logger } from './logger.js';
@@ -33,8 +30,6 @@ interface PersistedConfig {
   island?: Partial<IslandAppearance>;
   /** 作业页展示偏好（向后兼容：旧配置文件没有该字段时用默认值补齐） */
   homeworkBoard?: Partial<HomeworkBoardSettings>;
-  /** 通知显示位置（向后兼容：旧配置文件没有该字段时按默认 both 补齐） */
-  notificationChannel?: ClassIslandNotificationChannel;
   /** 作业录入快捷短语（向后兼容：旧配置没有该字段时用默认那一组） */
   homeworkPhrases?: string[];
   /** 是否已看过初次启动引导（向后兼容：旧配置没有该字段视为没看过，首启弹一次） */
@@ -68,7 +63,6 @@ const DEFAULT_CONFIG: PersistedConfig = {
   tokenEncrypted: false,
   island: { ...DEFAULT_ISLAND_APPEARANCE },
   homeworkBoard: { ...DEFAULT_HOMEWORK_BOARD },
-  notificationChannel: DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL,
   homeworkPhrases: [...HOMEWORK_PHRASE_DEFAULTS],
   onboardingDone: false,
   theme: 'light',
@@ -105,15 +99,6 @@ function normalizeHomeworkPhrases(input?: string[]): string[] {
     if (result.length >= HOMEWORK_PHRASE_MAX_COUNT) break;
   }
   return result;
-}
-
-/** 通知显示位置的白名单校验：非法值一律回落到默认值，避免坏配置把提醒"静默吞掉" */
-function normalizeNotificationChannel(
-  input?: ClassIslandNotificationChannel,
-): ClassIslandNotificationChannel {
-  return CLASSISLAND_NOTIFICATION_CHANNELS.includes(input as ClassIslandNotificationChannel)
-    ? (input as ClassIslandNotificationChannel)
-    : DEFAULT_CLASSISLAND_NOTIFICATION_CHANNEL;
 }
 
 /** 作业页偏好的合法化（模式白名单、字号夹紧） */
@@ -218,7 +203,6 @@ function readPersistedFromDisk(): PersistedConfig {
       tokenEncrypted: parsed.tokenEncrypted === true,
       island: normalizeIslandAppearance(parsed.island),
       homeworkBoard: normalizeHomeworkBoard(parsed.homeworkBoard),
-      notificationChannel: normalizeNotificationChannel(parsed.notificationChannel),
       homeworkPhrases: normalizeHomeworkPhrases(parsed.homeworkPhrases),
       onboardingDone: parsed.onboardingDone === true,
       theme: normalizeTheme(parsed.theme),
@@ -381,7 +365,6 @@ function toDesktopConfig(state: ConfigCache): DesktopStoredConfig {
     token: state.token,
     island: normalizeIslandAppearance(persisted.island),
     homeworkBoard: normalizeHomeworkBoard(persisted.homeworkBoard),
-    notificationChannel: normalizeNotificationChannel(persisted.notificationChannel),
     homeworkPhrases: normalizeHomeworkPhrases(persisted.homeworkPhrases),
     onboardingDone: persisted.onboardingDone === true,
     theme: normalizeTheme(persisted.theme),
@@ -463,9 +446,6 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
   if (patch.homeworkPhrases !== undefined) {
     persisted.homeworkPhrases = normalizeHomeworkPhrases(patch.homeworkPhrases);
   }
-  if (patch.notificationChannel !== undefined) {
-    persisted.notificationChannel = normalizeNotificationChannel(patch.notificationChannel);
-  }
   // 引导只接受"已看过"：重看入口不走这里（看过与否只有 true 与"没看过"两种状态，
   // 想 re-arm 只能清配置 clearConfig）。传 false 一律忽略，避免任何调用点误把用户退回首启状态。
   if (patch.onboardingDone === true) {
@@ -493,7 +473,7 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
   if (patch.careMode !== undefined) {
     persisted.careMode = patch.careMode === true;
   }
-  // 待安装的更新只由主进程的 auto-update 模块写入；渲染进程传进来也照收（退出登录/重置走 clearConfig）
+  // 仅供主进程更新模块写入；IPC 层会剔除这两个字段。
   if (typeof patch.pendingUpdateVersion === 'string') {
     persisted.pendingUpdateVersion = patch.pendingUpdateVersion;
   }

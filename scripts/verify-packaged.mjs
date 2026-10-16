@@ -13,7 +13,7 @@
  * 联网用例需要后端在 http://127.0.0.1:4000（默认自动探测；探测不到时退化为离线用例）。
  * 退出码：0 = 两次启动都全绿且 `packaged: true`。
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,7 +38,8 @@ const installedExe = path.join(
 const exe = path.resolve(argOf('--exe') ?? installedExe);
 const classCode = argOf('--code') ?? process.env.ELECTRON_SMOKE_CLASS_CODE ?? 'G101';
 const classPassword = argOf('--password') ?? process.env.ELECTRON_SMOKE_CLASS_PASSWORD ?? '123456';
-const forceOffline = argv.includes('--offline');
+const mode = argv.includes('--visual') ? 'visual' : 'quick';
+const forceOffline = !argv.includes('--online') || argv.includes('--offline');
 
 if (!fs.existsSync(exe)) {
   console.error(`[packaged-smoke] 找不到打包后的 EXE：${exe}`);
@@ -47,6 +48,53 @@ if (!fs.existsSync(exe)) {
       'ClassHelper.exe）、或解压后的便携版所在目录',
   );
   process.exit(2);
+}
+if (mode === 'quick') {
+  const backgroundMarker = Buffer.from('ELECTRON_SMOKE_MODE');
+  const candidates = [
+    path.join(path.dirname(exe), 'resources/app.asar'),
+    path.join(path.dirname(exe), 'resources/app/dist/main/index.js'),
+  ];
+  let supportsBackground = candidates.some(
+    (file) => fs.existsSync(file) && fs.readFileSync(file).includes(Buffer.from('ELECTRON_SMOKE_MODE')),
+  );
+
+  // electron-builder 的 portable 目标把整个 app 放在 7z 自解压文件里，EXE 旁边没有 resources/。
+  // 从本仓库打包缓存里的 7za 只读取 app.asar 到内存，确认本次便携包也包含后台模式标记。
+  if (!supportsBackground && /-portable\.exe$/i.test(exe)) {
+    try {
+      const cacheDir = path.join(repoRoot, '.cache', 'electron-builder');
+      const sevenZip = fs
+        .readdirSync(cacheDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith('7zip@'))
+        .flatMap((entry) => {
+          const packageDir = path.join(cacheDir, entry.name);
+          return fs
+            .readdirSync(packageDir, { withFileTypes: true })
+            .filter((child) => child.isDirectory())
+            .map((child) => path.join(packageDir, child.name, 'bin', '7za.exe'));
+        })
+        .find((file) => fs.existsSync(file));
+
+      if (sevenZip) {
+        const payload = spawnSync(sevenZip, ['e', '-so', exe, 'resources/app.asar'], {
+          encoding: null,
+          maxBuffer: 32 * 1024 * 1024,
+          windowsHide: true,
+        });
+        supportsBackground = payload.status === 0 && payload.stdout?.includes(backgroundMarker);
+      }
+    } catch {
+      // 下方的提示会说明该产物未确认支持后台模式。
+    }
+  }
+
+  if (!supportsBackground) {
+    console.error(
+      '[packaged-smoke] 无法确认这个产物支持后台快速模式。请验证新构建的产物，或显式 --visual 执行桌面验收。',
+    );
+    process.exit(2);
+  }
 }
 
 let online = forceOffline ? '0' : null;
@@ -78,8 +126,10 @@ function launch(extraEnv) {
     const child = spawn(exe, [], {
       cwd: path.dirname(exe),
       stdio: 'inherit',
+      windowsHide: true,
       env: resolveElectronEnv({
         ELECTRON_SMOKE_TEST: '1',
+        ELECTRON_SMOKE_MODE: mode,
         ELECTRON_SMOKE_PROFILE: profileDir,
         ELECTRON_SMOKE_ONLINE: online,
         ELECTRON_SMOKE_CLASS_CODE: classCode,
@@ -118,7 +168,11 @@ try {
 }
 console.log('\n[packaged-smoke] 二次启动校验（单实例锁 / 句柄是否已释放）...');
 fs.rmSync(resultFile, { force: true });
-const secondCode = await launch({ ELECTRON_SMOKE_ONLINE: '0', ELECTRON_SMOKE_RESULT: resultFile });
+const secondCode = await launch({
+  ELECTRON_SMOKE_ONLINE: '0',
+  ELECTRON_SMOKE_MODE: 'quick',
+  ELECTRON_SMOKE_RESULT: resultFile,
+});
 const second = readResult();
 
 const ok =

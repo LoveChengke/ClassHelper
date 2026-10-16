@@ -48,23 +48,33 @@ function resolveImportKind(value: unknown): (typeof IMPORT_KINDS)[number] {
  * GET /api/imports/template?kind=grades|students|teachers&format=csv|xlsx - 下载导入模板
  * 成绩模板：管理员或班主任（空白模板，不含任何业务数据）；学生/教师名单模板：仅管理员
  */
-router.get('/template', requireAnyPermission('import:students', 'grade:import', 'import:teachers', 'import:schedule', 'import:class-teachers'), (req, res) => {
-  const kind = resolveImportKind(req.query.kind);
-  assertImportKindAllowed(kind, getAuthUser(req).role);
-  const format = req.query.format === 'xlsx' ? 'xlsx' : 'csv';
-  if (format === 'xlsx') {
-    const base64 = buildTemplateXlsx(kind);
-    res.setHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('content-disposition', `attachment; filename="template-${kind}.xlsx"`);
-    res.send(Buffer.from(base64, 'base64'));
-    return;
-  }
-  sendOk(
-    res,
-    { kind, format, fileName: `template-${kind}.csv`, content: buildTemplateCsv(kind) },
-    '模板生成成功',
-  );
-});
+router.get(
+  '/template',
+  requireAnyPermission(
+    'import:students',
+    'grade:import',
+    'import:teachers',
+    'import:schedule',
+    'import:class-teachers',
+  ),
+  (req, res) => {
+    const kind = resolveImportKind(req.query.kind);
+    assertImportKindAllowed(kind, getAuthUser(req).role);
+    const format = req.query.format === 'xlsx' ? 'xlsx' : 'csv';
+    if (format === 'xlsx') {
+      const base64 = buildTemplateXlsx(kind);
+      res.setHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('content-disposition', `attachment; filename="template-${kind}.xlsx"`);
+      res.send(Buffer.from(base64, 'base64'));
+      return;
+    }
+    sendOk(
+      res,
+      { kind, format, fileName: `template-${kind}.csv`, content: buildTemplateCsv(kind) },
+      '模板生成成功',
+    );
+  },
+);
 
 /**
  * POST /api/imports/table/preview - 上传表格并预览（解析 + 必填列校验 + 建议字段映射）
@@ -72,7 +82,13 @@ router.get('/template', requireAnyPermission('import:students', 'grade:import', 
  */
 router.post(
   '/table/preview',
-  requireAnyPermission('import:students', 'grade:import', 'import:teachers', 'import:schedule', 'import:class-teachers'),
+  requireAnyPermission(
+    'import:students',
+    'grade:import',
+    'import:teachers',
+    'import:schedule',
+    'import:class-teachers',
+  ),
   validate({ body: tableFileSchema }),
   (req, res) => {
     const input = validatedBody<TableFileInput>(req);
@@ -89,13 +105,19 @@ router.post(
  */
 router.post(
   '/table/commit',
-  requireAnyPermission('import:students', 'grade:import', 'import:teachers', 'import:schedule', 'import:class-teachers'),
+  requireAnyPermission(
+    'import:students',
+    'grade:import',
+    'import:teachers',
+    'import:schedule',
+    'import:class-teachers',
+  ),
   validate({ body: tableCommitSchema }),
   async (req, res) => {
     const input = validatedBody<TableCommitInput>(req);
     assertImportKindAllowed(input.kind, getAuthUser(req).role);
     // 教师名单与班级无关；成绩/学生名单必须带班级，否则拒绝（避免写到"全局"）
-    if (input.kind !== 'teachers' && !input.classId) {
+    if (input.kind !== 'teachers' && input.kind !== 'classTeachers' && !input.classId) {
       throw ApiError.badRequest('请先选择要导入的班级');
     }
     const result = await commitTable(getAuthUser(req), input);

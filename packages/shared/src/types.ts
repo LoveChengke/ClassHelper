@@ -405,10 +405,6 @@ export interface ClassDto {
   termWeeks: number;
   /** 本班学期开始日期（YYYY-MM-DD）；null = 用全局配置 */
   termStartDate?: string | null;
-  /** 是否已有启用中的 ClassIsland 联动设备（班级列表/课表页显示「已接入」徽标） */
-  classIslandConnected?: boolean;
-  /** 通知显示位置（由 ClassHelper 班级端设置，见 CLASSISLAND_NOTIFICATION_CHANNELS） */
-  notificationChannel?: ClassIslandNotificationChannel;
   /**
    * 是否允许 ClassHelper 班级端按学号查询本班学生的成绩明细（默认开启）。
    * 关闭后班级端查成绩一律 403，教师端不受影响。
@@ -1185,6 +1181,7 @@ export interface DashboardSummary {
 
 /** 服务端 -> 客户端事件名 */
 export interface ServerToClientEvents {
+  'notification:deleted': (payload: { id: string; classId: string }) => void;
   'notification:new': (payload: NotificationDto) => void;
   /** 叫人：定向广播给被叫学生 */
   'call:new': (payload: NotificationDto) => void;
@@ -1195,16 +1192,11 @@ export interface ServerToClientEvents {
   'grade:updated': (payload: GradeDto) => void;
   'schedule:updated': (payload: {
     classId: string;
-    /** imported = 由 ClassIsland 插件上报后整体刷新课表 */
+    /** imported = 导入或整体刷新课表 */
     action: 'created' | 'updated' | 'deleted' | 'imported';
     schedule?: ScheduleDto;
   }) => void;
   'class:updated': (payload: { classId: string; action: 'created' | 'updated' | 'deleted' }) => void;
-  /** ClassIsland 联动：设备上报了当前上课状态（Web 端实时展示「现在上什么课」） */
-  'classisland:state': (payload: ClassIslandStateEvent) => void;
-  /** ClassIsland 联动：老师发的提醒已下发给该班设备（Web 端据此提示「已送达」） */
-  'classisland:notification': (payload: ClassIslandNotificationEvent) => void;
-  /** 会话主体 id：教师/管理员是自己的账号 id，ClassHelper 班级端是班级 id */
   connected: (payload: { sessionId: string; role: UserRole; rooms: string[] }) => void;
 }
 
@@ -1286,365 +1278,6 @@ export interface TimeLayoutImportResult {
   merged: number;
   /** merge 时：新增节次数；replace 时为总节次数 */
   replaced: number;
-}
-
-/* ------------------------------------------------------------------ ClassIsland 联动（集成） */
-
-/**
- * 通知的显示位置（存在班级上，由教室的班级客户端在设置页里选）。
- * 服务端据此决定「发通知时要不要同时推给教室的 ClassIsland」。
- */
-export type ClassIslandNotificationChannel = 'both' | 'client' | 'classisland';
-
-/**
- * 联动方式：
- * - `plugin`：安装「ClassHelper 联动插件」，由插件把 ClassIsland 的当前状态与课表推给本服务；
- * - `import`：只把 ClassIsland 导出的档案 JSON 导入本服务（一次性，无实时联动）。
- */
-export type IntegrationMode = 'plugin' | 'import';
-
-/** 设备（一台安装了 ClassIsland 插件的机器）与班级的绑定关系 */
-export interface IntegrationDeviceDto {
-  id: string;
-  classId: string;
-  className?: string | null;
-  /** 设备显示名（默认取机器名） */
-  name: string;
-  /** 设备唯一标识（插件上报的机器码） */
-  deviceKey: string;
-  /** ClassIsland 版本，例如 2.1.0.0 */
-  classIslandVersion: string | null;
-  /** 插件版本 */
-  pluginVersion: string | null;
-  mode: IntegrationMode;
-  /** 是否接入：接入后插件才能上报状态/课表并接收通知 */
-  enabled: boolean;
-  /**
-   * 是否允许插件把 ClassIsland 的课表**自动**回传到本服务（覆盖/合并本班课表）。
-   * **默认关闭**：课表以服务端为准，自动回传会在老师手排课之后被教室的旧课表覆盖；
-   * 要取教室的课表请用「从教室机器获取课表」这个手动动作。
-   */
-  syncScheduleToServer: boolean;
-  /** 是否允许把班级课表镜像回 ClassIsland（由插件执行） */
-  mirrorScheduleToClassIsland: boolean;
-  /** 最后一次"带运行状态"的上报时间（心跳之外还有实际内容的那次） */
-  lastSeenAt: string | null;
-  /** 最后一次心跳时间（每次上报都刷新）；在线判定看它 */
-  lastHeartbeatAt: string | null;
-  /** 是否在线：最后一次心跳在 CLASS_HELPER_ONLINE_WINDOW_MS 之内 */
-  online: boolean;
-  /** 最后一次上报里 ClassIsland 是否已加载课表 */
-  classPlanLoaded: boolean;
-  /** 最后一次上报里的当前科目 */
-  currentSubject: string | null;
-  /** 最后一次上报里的当前时间点状态（OnClass / Breaking / AfterSchool / None / PrepareOnClass） */
-  currentTimeState: string | null;
-  /** 最后一次上报里的当前节次起止时间（HH:mm） */
-  currentPeriodStart: string | null;
-  currentPeriodEnd: string | null;
-  /** 最后一次上报里的下一节课科目 */
-  nextSubject: string | null;
-  /** 是否有待办的「立即上报一次课表」请求（Web 端点过之后置位，插件上报后清除） */
-  requestScheduleReport: boolean;
-  /** 令牌前缀提示（chci_xxxxxxxx…）：设备列表里用于区分多台设备各自用的令牌 */
-  tokenHint?: string;
-  /** 创建/重置接口一次性下发的纯文本设备令牌（其他接口永不返回） */
-  token?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** 创建/重置设备令牌的返回（token 只在这一次返回） */
-export interface IntegrationDeviceTokenDto {
-  device: IntegrationDeviceDto;
-  token: string;
-}
-
-export interface CreateIntegrationDeviceRequest {
-  classId: string;
-  name?: string;
-  mode?: IntegrationMode;
-  syncScheduleToServer?: boolean;
-  mirrorScheduleToClassIsland?: boolean;
-}
-
-export interface UpdateIntegrationDeviceRequest {
-  name?: string;
-  enabled?: boolean;
-  syncScheduleToServer?: boolean;
-  mirrorScheduleToClassIsland?: boolean;
-  mode?: IntegrationMode;
-}
-
-/* ------------------ ClassHelper 班级端在线状态（教师网页查看） ------------------ */
-
-/** 一台 ClassHelper 班级端设备的在线状态 */
-export interface ClassHelperDeviceStatusDto {
-  deviceId: string;
-  /** 设备显示名（默认取机器名） */
-  deviceName: string;
-  /** 设备/机器码 */
-  deviceKey: string;
-  /** 是否接入（停用的设备一律按离线展示） */
-  enabled: boolean;
-  /** 在线 = 最近一次心跳在 CLASS_HELPER_ONLINE_WINDOW_MS 之内 */
-  online: boolean;
-  /** 最后一次带运行状态的上报时间 */
-  lastSeenAt: string | null;
-  /** 最后一次心跳时间 */
-  lastHeartbeatAt: string | null;
-  pluginVersion: string | null;
-  classIslandVersion: string | null;
-}
-
-/**
- * 某个班的 ClassHelper 班级端在线状态。
- *
- * 范围：管理员看全部班级；普通教师看自己担任班主任的班级 ∪ 任课（有 Course）的班级。
- */
-export interface ClassHelperStatusDto {
-  classId: string;
-  className: string;
-  grade: string;
-  /** 该班绑定的全部设备（可能多台：讲台机 + 备用机） */
-  devices: ClassHelperDeviceStatusDto[];
-  /** 任一设备在线即视为该班在线 */
-  online: boolean;
-  /** 是否允许班级端按学号查询本班学生成绩明细 */
-  studentGradeQueryEnabled: boolean;
-}
-
-/** GET /api/integrations/classisland/status 的返回 */
-export interface ClassHelperStatusListDto {
-  /** 后端判定所用的服务器时间（前端据此算"距今多久"，避免依赖本机时钟） */
-  serverTime: string;
-  /** 在线判定窗口（毫秒） */
-  onlineWindowMs: number;
-  classes: ClassHelperStatusDto[];
-}
-
-/** 通知下发：把一条通知推给某班级的 ClassIsland 设备（在 ClassIsland 上全屏提醒） */
-export interface SendClassIslandNotificationRequest {
-  classId: string;
-  title: string;
-  content: string;
-  /** 显示时长（秒，1~120，默认 8）：映射到 ClassIsland 的 NotificationContent.Duration */
-  durationSeconds?: number;
-  /** 是否语音朗读（默认 false） */
-  speech?: boolean;
-  /** 语音朗读内容（留空则朗读 title + content） */
-  speechContent?: string;
-  /** 是否同时落库到班级通知中心（默认 true） */
-  saveToNotifications?: boolean;
-  /** 优先级（落库时使用，默认 NORMAL） */
-  priority?: NotificationPriority;
-}
-
-export interface SendClassIslandNotificationResult {
-  /** 已下发（在线）的设备数 */
-  delivered: number;
-  /** 目标设备总数 */
-  targetCount: number;
-  /** 一并落库的通知 id（saveToNotifications=false 时为 null） */
-  notificationId: string | null;
-  /**
-   * 本次被跳过的原因（没有跳过时为 null/undefined）。
-   * `channel-client` = 该班教室在客户端里选了"只在 ClassHelper 客户端显示"，
-   * 因此没有推送到 ClassIsland —— 让老师知道"不是没送达，是教室没要"。
-   */
-  skipped?: 'channel-client' | null;
-}
-
-/* ------------------ 插件上报（设备令牌鉴权，不是 JWT 会话） ------------------ */
-
-/** 插件上报的课表条目（已按本系统口径归一化） */
-export interface ClassIslandScheduleEntry {
-  /** 1=周一 … 7=周日（插件已从 ClassIsland 的 0=周日 转换） */
-  dayOfWeek: number;
-  startTime: string;
-  endTime: string;
-  subject: string;
-  teacherName?: string | null;
-  weekParity: WeekParity;
-  weekCountDiv: number;
-  weekCountDivTotal: number;
-  planName: string;
-}
-
-/** 插件上报的节次时间（时间表） */
-export interface ClassIslandTimeLayoutEntry {
-  index: number;
-  name: string;
-  startTime: string;
-  endTime: string;
-  type: 'class' | 'break' | 'divider' | 'action';
-  skipped: boolean;
-}
-
-/** POST /api/integrations/classisland/report —— 插件的一次上报 */
-export interface ClassIslandReportRequest {
-  /** 插件/应用版本，便于排查 */
-  pluginVersion?: string;
-  classIslandVersion?: string;
-  /** 本机运行状态 */
-  state?: {
-    inClass: boolean;
-    subject: string | null;
-    nextSubject: string | null;
-    /** 当前时间点状态字符串（ClassIsland TimeState） */
-    timeState: string | null;
-    periodStart: string | null;
-    periodEnd: string | null;
-    week: number | null;
-    classPlanLoaded: boolean;
-    /** 客户端本机时间，用于诊断时钟偏差 */
-    clientTime: string;
-  };
-  /** 课表（仅在 syncScheduleToServer 打开时有意义；不传表示本次不上报课表） */
-  schedule?: {
-    /** replace 覆盖本班课表 / merge 合并（默认） */
-    mode: 'replace' | 'merge';
-    entries: ClassIslandScheduleEntry[];
-  } | null;
-  /** 节次时间表 */
-  timeLayout?: {
-    name?: string;
-    mode: 'replace' | 'merge';
-    items: ClassIslandTimeLayoutEntry[];
-  } | null;
-}
-
-/** POST /api/integrations/classisland/report 的返回 */
-export interface ClassIslandReportResult {
-  /** 服务端是否接受并应用了课表 */
-  scheduleApplied: boolean;
-  scheduleCreated: number;
-  scheduleUpdated: number;
-  /** 自动补建/命中的课程名 */
-  courses: string[];
-  timeLayoutApplied: boolean;
-  /** 服务端当前教学周（插件可用来校正"第几周"） */
-  week: number;
-  /** 服务端时间（插件可用来校正时钟） */
-  serverTime: string;
-  /** 回传给插件的外观/行为设置：本轮需要下发的通知已随实时事件推送 */
-  settings: {
-    mirrorScheduleToClassIsland: boolean;
-    enabled: boolean;
-    /**
-     * 服务端请求插件**立刻上报一次课表**（Web 端点了「从教室机器获取课表」）。
-     * 两个课表方向都只由这类一次性待办触发，本机没有"自动回传 / 自动镜像"的开关。
-     */
-    scheduleRequested?: boolean;
-    /**
-     * 服务端请求插件**下发一次课表到教室**（Web 端点了「下发课表到教室」）。
-     * 插件看到就去拉本班课表并**强制替换**写进 ClassIsland（停用同一天同一单双周相位下
-     * 冲突的旧课表，只停用不删除）；拉取成功时由服务端清除这个待办。
-     */
-    mirrorRequested?: boolean;
-  };
-  /** 尚未在 ClassIsland 上确认过的一条提醒（插件可立即弹出） */
-  pendingNotification?: ClassIslandPushNotification | null;
-}
-
-/** 下发给 ClassIsland 的提醒（教师发通知 → 学生机器全屏弹出） */
-export interface ClassIslandPushNotification {
-  id: string;
-  title: string;
-  content: string;
-  /** 显示时长（秒） */
-  durationSeconds: number;
-  /** 语音朗读内容；null = 不朗读 */
-  speechContent: string | null;
-  createdAt: string;
-  /** 是否紧急（紧急时插件用更强的遮罩与更长的时长） */
-  urgent: boolean;
-  /**
-   * 提醒类型：
-   * - `notification`：通知类提醒 —— **上课时段插件会暂存，下课后才弹**；
-   * - `call`：叫人等「主动通知」—— 不论是否上课都立刻弹（老师正在等学生）。
-   */
-  kind: 'notification' | 'call';
-  classId: string;
-  className?: string | null;
-  teacherName?: string | null;
-}
-
-/** GET /api/integrations/classisland/pending 的返回（插件重连后补齐漏掉的通知） */
-export interface ClassIslandPendingResult {
-  notifications: ClassIslandPushNotification[];
-  serverTime: string;
-  week: number;
-}
-
-/** 插件拉取本班的整份课表（mirrorScheduleToClassIsland 打开时，插件把课表写回 ClassIsland） */
-export interface ClassIslandClassPlanPull {
-  /** ClassIsland 的口径：0=周日、1=周一 … 6=周六 */
-  classPlan: {
-    entries: {
-      /** ClassIsland 的 WeekDay：0=周日 … 6=周六 */
-      weekDay: number;
-      weekCountDiv: number;
-      weekCountDivTotal: number;
-      /** 科目名 */
-      subject: string;
-      teacherName: string | null;
-      /**
-       * 该课目的起止时间（HH:mm）。
-       *
-       * ClassIsland 的 `ClassPlan.Classes[i]` 必须与时间表里第 i 个上课点对齐，
-       * 因此插件要按这些时间重建时间表 —— 缺了它们整份镜像课表都会错位。
-       */
-      startTime: string;
-      endTime: string;
-      timeLayoutId: string;
-    }[];
-    timeLayouts: {
-      id: string;
-      name: string;
-      layouts: {
-        startTime: string;
-        endTime: string;
-        /** ClassIsland TimeType：0=上课、1=课间、2=分割线、3=行动 */
-        timeType: number;
-      }[];
-    }[];
-    /** 建议的档案名 */
-    profileName: string;
-    /** 教学周起始日期（用于插件设置 ClassIsland 的周次口径） */
-    termStartDate: string;
-  };
-  week: number;
-  /**
-   * 学期逐周区间（管理员在「学期周次」里配的）。
-   * 空数组 = 完全按 `termStartDate` 线性推算。
-   * ClassIsland 自身只认"教学周序号 + 单双周"，因此它拿这个主要是为了
-   * 校正"现在是第几周"、以及在设置页里展示教室所在的实际日期区间。
-   */
-  weekRanges?: Array<{ weekNumber: number; startDate: string; endDate: string }>;
-  serverTime: string;
-}
-
-/** Socket.IO 事件：ClassIsland 设备状态变化（Web 管理端实时展示） */
-export interface ClassIslandStateEvent {
-  classId: string;
-  deviceId: string;
-  deviceName: string;
-  inClass: boolean;
-  subject: string | null;
-  nextSubject: string | null;
-  timeState: string | null;
-  periodStart: string | null;
-  periodEnd: string | null;
-  week: number | null;
-  classPlanLoaded: boolean;
-  at: string;
-}
-
-/** Socket.IO 事件：有新提醒下发到 ClassIsland（插件与 Web 端都可据此刷新） */
-export interface ClassIslandNotificationEvent extends ClassIslandPushNotification {
-  /** 是下发给本班级设备，还是仅通知 Web 端展示 */
-  targetCount: number;
 }
 
 /** 客户端 -> 服务端事件名 */
@@ -1755,7 +1388,7 @@ export interface UpdateAssetDto {
  *
  * 两点约定：
  * 1. **`ok:false` 是正常结果，不是异常** —— 服务器没有外网、GitHub 限流、请求超时都会走到这里，
- *    调用方按"暂时查不到"呈现即可（与 ClassIsland 推送失败只记日志是同一种处理思路）。
+ *    调用方按"暂时查不到"呈现即可。
  * 2. **`currentVersion` 由调用方各自提供**：服务端比的是服务端版本、客户端比的是客户端版本。
  *    两边安装版本可能不同（例如教室机没跟着升级），所以不能由一端替另一端判断。
  */
@@ -1796,6 +1429,7 @@ export interface PermissionGroupDto {
   memberCount: number;
   /** 内置组（种子创建）不可删除，只允许改成员与键 */
   builtin: boolean;
+  defaultRole?: UserRole | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1860,6 +1494,8 @@ export interface MyPermissionsDto {
 /* ------------------------------------- 客户端设备 / 远控 / 客户端更新 */
 
 /** 远控命令种类（与 shared 的常量 `CLIENT_COMMAND_KINDS` 一一对应） */
+export type ClientUpdateMode = 'idle' | 'immediate' | 'after-school';
+
 export type ClientCommandKind = 'shutdown' | 'restart' | 'logoff' | 'lock';
 
 /** 一条下发给教室客户端电脑的命令 */
@@ -1891,6 +1527,8 @@ export interface ClientDeviceDto {
   autoUpdate: boolean;
   /** 服务端指定的目标版本；`''` = 不指定 */
   updateTargetVersion: string;
+  updateMode: ClientUpdateMode;
+  updateNotBefore: string | null;
   /** 已下载待安装的版本；`''` = 无 */
   pendingVersion: string;
   lastHeartbeatAt: string | null;
@@ -1915,10 +1553,13 @@ export interface ClientDeviceDto {
 
 /** `POST /api/clients/heartbeat`：客户端每 30 秒一次的上报 */
 export interface ClientHeartbeatRequest {
+  /** 旧版缺省为 1；第二版正确解析统一响应并支持安装时机。 */
+  agentProtocol?: number;
   deviceKey: string;
   name?: string;
   clientVersion?: string;
   platform?: string;
+  autoUpdate?: boolean;
   pendingVersion?: string | null;
   stateNote?: string;
 }
@@ -1940,6 +1581,8 @@ export interface ClientHeartbeatResponse {
   serverTime: string;
   /** 服务端要求升到的版本；null = 不要求 */
   updateTargetVersion: string | null;
+  updateMode: ClientUpdateMode;
+  updateNotBefore: string | null;
   /** 目标版本的安装包信息；null = 服务端还没有这份安装包（客户端只能提示手动更新） */
   update: ClientUpdateInfoDto | null;
   /** 待执行命令（最早的一条）；null = 无 */
@@ -1988,6 +1631,9 @@ export interface PushClientUpdateRequest {
   version?: string | null;
   /** true = 取消下发（回到"不要求更新"的状态） */
   clear?: boolean;
+  mode?: ClientUpdateMode;
+  /** 放学后策略的兜底时间；有课表时取最后一节课结束与此时间的较晚者 */
+  afterSchoolTime?: string;
 }
 
 /** `GET /api/update/client/releases`：服务端已缓存的客户端安装包 */

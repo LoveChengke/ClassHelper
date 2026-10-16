@@ -21,6 +21,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveElectronEnv, resolveElectronExecutable } from '../lib/electron-env.mjs';
 import { cleanupInClassProbe, setupInClassProbe } from './live-probe.mjs';
+import { provisionSmokeClass } from '../lib/smoke-class.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const electronDir = path.join(root, 'packages', 'desktop-client', 'node_modules', 'electron');
@@ -41,7 +42,14 @@ if (!fs.existsSync(executable)) {
 const entry = path.join(root, 'scripts', 'ui-smoke', 'main.cjs');
 const target = process.env.UI_SMOKE_URL ?? 'http://127.0.0.1:4000/';
 const resultFile = process.env.UI_SMOKE_RESULT ?? path.join(root, '.cache', 'ui-smoke-result.json');
-const profileDir = path.join(root, '.cache', 'ui-smoke-profile');
+const profileDir = path.join(root, '.cache', `ui-smoke-profile-${process.pid}`);
+const startedAt = Date.now();
+const context = await provisionSmokeClass({
+  base: `${new URL(target).origin}/api`,
+  admin: process.env.UI_SMOKE_ADMIN ?? 'admin',
+  adminPassword: process.env.UI_SMOKE_ADMIN_PASS ?? 'admin123',
+});
+if (!context) throw new Error('无法创建独立 UI 验证班级与教师，请检查测试服务端和管理员凭据');
 
 // 每次运行前清空浏览器配置目录，避免 Service Worker / 缓存影响结果
 fs.rmSync(profileDir, { recursive: true, force: true });
@@ -64,8 +72,9 @@ if (process.env.UI_SMOKE_SKIP_PROBE === '1') {
   try {
     probe = await setupInClassProbe({
       baseUrl: new URL(target).origin,
-      username: process.env.UI_SMOKE_USER ?? 'teacher1',
-      password: process.env.UI_SMOKE_PASS ?? 'teacher123',
+      username: context.teacherUsername,
+      password: context.teacherPassword,
+      classId: context.classId,
     });
     if (!probe.inClass) probeError = '探针课表已创建，但服务端仍未判定为上课时段';
     console.log(
@@ -82,8 +91,11 @@ if (process.env.UI_SMOKE_SKIP_PROBE === '1') {
 const child = spawn(executable, [entry], {
   cwd: root,
   stdio: 'inherit',
+  windowsHide: true,
   env: resolveElectronEnv({
     UI_SMOKE_URL: target,
+    UI_SMOKE_USER: context.teacherUsername,
+    UI_SMOKE_PASS: context.teacherPassword,
     UI_SMOKE_RESULT: resultFile,
     UI_SMOKE_PROFILE: profileDir,
     UI_SMOKE_URGENT_TITLE: urgentTitle,
@@ -91,8 +103,13 @@ const child = spawn(executable, [entry], {
     UI_SMOKE_PROBE_DETAIL: probeError,
   }),
 });
+const timeout = setTimeout(() => {
+  console.error('[ui-smoke] 后台验收超过 120 秒，终止验证进程');
+  child.kill();
+}, 120_000);
 
 child.on('exit', async (code) => {
+  clearTimeout(timeout);
   if (probe) {
     try {
       const removed = await cleanupInClassProbe(probe, { notificationTitle: urgentTitle });
@@ -106,6 +123,8 @@ child.on('exit', async (code) => {
     }
   }
 
+  await context.cleanup();
+  console.log(`[ui-smoke] 后台验收总耗时：${((Date.now() - startedAt) / 1000).toFixed(1)} 秒`);
   if (code === 0) {
     console.log(`[ui-smoke] 全部通过，结果文件：${resultFile}`);
   }

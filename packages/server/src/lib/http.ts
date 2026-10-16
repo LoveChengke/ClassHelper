@@ -2,8 +2,14 @@ import type { Response } from 'express';
 import type { ApiResponse } from '@classhelper/shared';
 
 /** 成功响应：{ success: true, data, message } */
-export function sendOk<T>(res: Response, data: T, message = 'ok', status = 200): void {
-  const body: ApiResponse<T> = { success: true, data, message };
+export function sendOk<T>(
+  res: Response,
+  data: T,
+  message = 'ok',
+  status = 200,
+  legacyFields: object = {},
+): void {
+  const body: ApiResponse<T> = { ...legacyFields, success: true, data, message };
   res.status(status).json(body);
 }
 

@@ -341,9 +341,7 @@ class IslandController {
       if (this.previewId && this.state.active?.id === this.previewId) return;
       const sinceActivated = Date.now() - this.state.updatedAt;
       if (this.isCursorOnIsland()) {
-        logger.info(
-          `灵动岛：忽略失焦（指针仍在岛上，判定为展开时的激活抖动）距上次状态=${sinceActivated}ms`,
-        );
+        logger.info(`灵动岛：忽略失焦（指针仍在岛上，判定为展开时的激活抖动）距上次状态=${sinceActivated}ms`);
         return;
       }
       // 触摸屏上没有"指针"可依据（isCursorOnIsland 恒为 false），只能用更宽的宽限期覆盖
@@ -828,10 +826,13 @@ class IslandController {
      */
     this.setState({ mode: 'pill', reason: 'closing' }, { skipWindow: true });
     const speed = clamp(this.appearance.speed, 0.5, 2, 1);
-    this.closeTimer = setTimeout(() => {
-      this.closeTimer = null;
-      this.finishClose();
-    }, Math.round(CLOSE_ANIMATION_MS / speed));
+    this.closeTimer = setTimeout(
+      () => {
+        this.closeTimer = null;
+        this.finishClose();
+      },
+      Math.round(CLOSE_ANIMATION_MS / speed),
+    );
   }
 
   /**
@@ -876,6 +877,13 @@ class IslandController {
     this.win = null;
   }
 
+  /** 教师撤回通知后，同时移除正在展示和等待下课的副本。 */
+  removeNotification(id: string): void {
+    this.state.queued = this.state.queued.filter((item) => item.id !== id);
+    if (this.state.active?.id === id) this.dismissActive();
+    else this.setState({});
+  }
+
   /* ------------------------------------------------------------ 内部实现 */
 
   private dismissActive(): void {
@@ -907,7 +915,6 @@ class IslandController {
     this.state.listExpanded = false;
     this.hide();
   }
-
 
   private activate(notification: IslandNotification, reason: IslandState['reason'], mode: IslandMode): void {
     this.clearTimers();
@@ -1010,11 +1017,7 @@ class IslandController {
         ? 'right'
         : 'center';
     const hValue =
-      hMode === 'left'
-        ? area.x + marginX
-        : hMode === 'right'
-          ? area.x + area.width - marginX
-          : center;
+      hMode === 'left' ? area.x + marginX : hMode === 'right' ? area.x + area.width - marginX : center;
     return { hMode, hValue, vMode, vValue };
   }
 
@@ -1834,7 +1837,6 @@ const PREVIEW_DURATION_MS = 30_000;
  */
 const MIN_CARD_HEIGHT = 120;
 
-
 /**
  * 渲染进程心跳（渲染进程每 5s 上报一次，间隔写死在 `src/island/IslandApp.vue`）：
  * 超过这个时间没上报就认为它已经卡死/不响应。
@@ -1866,6 +1868,9 @@ export const island = new IslandController();
 
 /** 注册灵动岛相关 IPC（主窗口渲染进程 -> 主进程；灵动岛渲染进程 -> 主进程） */
 export function registerIslandIpc(): void {
+  ipcMain.on('island:remove-notification', (_event, id: string) => {
+    if (typeof id === 'string') island.removeNotification(id);
+  });
   ipcMain.on(
     'island:push',
     (_event, payload: { notification: IslandNotification; context?: IslandPushContext }) => {
@@ -1884,13 +1889,28 @@ export function registerIslandIpc(): void {
     island.noteRendererAlive();
   });
 
-  ipcMain.handle('island:get-state', () => island.getState());
-
+  let appearancePatch: Partial<IslandAppearance> | null = null;
+  let appearanceTimer: ReturnType<typeof setTimeout> | null = null;
+  const flushAppearance = (): void => {
+    if (appearanceTimer) clearTimeout(appearanceTimer);
+    appearanceTimer = null;
+    if (appearancePatch) island.setAppearance(appearancePatch);
+    appearancePatch = null;
+  };
+  ipcMain.handle('island:get-state', () => {
+    flushAppearance();
+    return island.getState();
+  });
   ipcMain.on('island:set-appearance', (_event, patch: Partial<IslandAppearance>) => {
-    if (patch) island.setAppearance(patch);
+    if (!patch) return;
+    appearancePatch = { ...appearancePatch, ...patch };
+    if (!appearanceTimer) appearanceTimer = setTimeout(flushAppearance, 16);
   });
 
-  ipcMain.handle('island:get-appearance', () => island.getAppearance());
+  ipcMain.handle('island:get-appearance', () => {
+    flushAppearance();
+    return island.getAppearance();
+  });
 
   // 渲染进程命中测试结果 → **只用于立刻打开命中**（比 60ms 轮询更快）。
   // 关闭命中一律由主进程按真实光标决定：两边都下发 true/false 会互相覆盖，

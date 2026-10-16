@@ -254,7 +254,7 @@ const assignDialog = reactive({
 });
 
 function openAssign(member: PermissionMemberDto): void {
-  if (member.fixed) return; // 管理员固定拥有全部权限（服务端同样 400）
+  if (member.fixed) return;
   assignDialog.member = member;
   assignDialog.groupIds = [...member.groupIds];
   assignDialog.visible = true;
@@ -301,12 +301,10 @@ async function submitAssign(): Promise<void> {
       （服务端 lib/permissions.ts 的 loadEffectivePermissions）。
     -->
     <el-alert class="perm-banner" type="info" :closable="false" show-icon>
-      <template #title>
-        权限生效规则：有权限组时取各组的并集；没有任何组时使用角色默认模板。
-      </template>
+      <template #title>权限生效规则：有权限组时取各组的并集；没有任何组时使用角色默认模板。</template>
       <template #default>
         当前账号：{{ auth.roleLabel }}
-        <template v-if="myPermissionCount !== null"> · 生效权限 {{ myPermissionCount }} 项</template>
+        <template v-if="myPermissionCount !== null">· 生效权限 {{ myPermissionCount }} 项</template>
         · {{ auth.permissionsFromGroups ? '权限来自权限组' : '未分配权限组（走角色默认模板）' }}
       </template>
     </el-alert>
@@ -324,7 +322,9 @@ async function submitAssign(): Promise<void> {
       <el-tab-pane label="权限组" name="groups">
         <div class="toolbar tab-toolbar">
           <el-button type="primary" :icon="'Plus'" @click="openCreateGroup">新建权限组</el-button>
-          <span class="text-muted">内置权限组由系统预置，可以改名与调整权限，但不能删除。</span>
+          <span class="text-muted">
+            默认权限组可改名与调整权限，修改后对未分组账号立即生效；内置组不能删除。
+          </span>
         </div>
 
         <el-card shadow="never" class="table-card">
@@ -345,7 +345,9 @@ async function submitAssign(): Promise<void> {
             <el-table-column label="类型" width="100">
               <template #default="{ row }">
                 <el-tag size="small" effect="plain" :type="row.builtin ? 'info' : 'primary'">
-                  {{ row.builtin ? '内置' : '自定义' }}
+                  {{
+                    row.defaultRole ? `${roleLabel(row.defaultRole)}默认` : row.builtin ? '内置' : '自定义'
+                  }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -370,7 +372,7 @@ async function submitAssign(): Promise<void> {
       <el-tab-pane label="成员" name="members">
         <div class="toolbar tab-toolbar">
           <span class="text-muted">
-            只列出管理员与教师账号；管理员固定拥有全部权限，不能被分配权限组。
+            只列出管理员与教师账号；管理员始终保留权限与系统管理入口，可调整默认组或分配其他权限组。
           </span>
         </div>
 
@@ -402,7 +404,7 @@ async function submitAssign(): Promise<void> {
             </el-table-column>
             <el-table-column label="操作" width="130">
               <template #default="{ row }">
-                <el-tooltip :disabled="!row.fixed" content="管理员固定拥有全部权限" placement="top">
+                <el-tooltip :disabled="!row.fixed" content="管理员始终保留权限与系统管理入口" placement="top">
                   <span>
                     <el-button link type="primary" :disabled="row.fixed" @click="openAssign(row)">
                       分配权限组
@@ -469,7 +471,8 @@ async function submitAssign(): Promise<void> {
             </div>
           </div>
           <p class="perm-note text-muted">
-            保存时会整体替换该组的权限键（取消勾选 = 收回这项权限）；不填任何键则该组成员没有任何权限。
+            保存时会整体替换该组的权限键（取消勾选 =
+            收回这项权限）；不填任何键即收回组内权限；管理员始终保留权限与系统管理两个入口。
           </p>
         </el-form-item>
       </el-form>

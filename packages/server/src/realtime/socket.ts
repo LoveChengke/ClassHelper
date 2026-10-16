@@ -21,6 +21,7 @@ interface SocketData {
     name: string;
     role: UserRole;
     classId: string | null;
+    classSession: boolean;
   };
 }
 
@@ -60,6 +61,7 @@ export function initRealtime(httpServer: HttpServer): RealtimeServer {
         name: payload.name,
         role: payload.role,
         classId: payload.classId,
+        classSession: payload.classSession === true,
       };
       next();
     } catch {
@@ -79,6 +81,7 @@ export function initRealtime(httpServer: HttpServer): RealtimeServer {
           name: user.name,
           role: user.role,
           classId: user.classId,
+          classSession: user.classSession,
         });
         for (const classId of classIds) {
           await socket.join(SOCKET_ROOMS.class(classId));
@@ -107,6 +110,7 @@ export function initRealtime(httpServer: HttpServer): RealtimeServer {
             name: user.name,
             role: user.role,
             classId: user.classId,
+            classSession: user.classSession,
           });
           if (!allowed.includes(classId)) {
             ack?.({ ok: false, message: '无权订阅该班级' });
@@ -140,6 +144,6 @@ export function initRealtime(httpServer: HttpServer): RealtimeServer {
   };
   registerEmitter(emit);
 
-  logger.info('Socket.IO 实时通道已就绪（房间规则：class:{classId} / user:{id}）');
+  logger.info('Socket.IO 实时通道已就绪（房间规则：class:{classId} / session:{id}）');
   return io;
 }

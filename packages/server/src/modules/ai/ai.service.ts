@@ -1,6 +1,12 @@
-import { dayKeyLocal, type AiActionKind, type AiAuditDto, type AiInterpretResult, type AiSettingsDto } from '@classhelper/shared';
+import {
+  dayKeyLocal,
+  type AiActionKind,
+  type AiAuditDto,
+  type AiInterpretResult,
+  type AiSettingsDto,
+} from '@classhelper/shared';
 import { z } from 'zod';
-import { getAccessibleClassIds } from '../../lib/access.js';
+import { getAccessibleClassIds, assertClassAccess } from '../../lib/access.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -17,7 +23,7 @@ import type { AiInterpretInput, UpdateAiSettingsInput } from './ai.schemas.js';
  * 设计边界（照 approved 计划）：
  * 1. 模型只输出结构化意图（`{action, params, confidence}`），服务端用**与手动入口同一份 zod**
  *    二次校验后返回预览；真正落库由前端确认后调既有端点（`POST /homeworks` 等），
- *    于是权限断言、上课时段紧急通知保护、ClassIsland 推送全部自动复用（AGENTS.md §5 第 5/14 条）；
+ *    于是权限断言、上课时段紧急通知保护全部自动复用（AGENTS.md §5 第 5/14 条）；
  * 2. **密钥只进不出**：`AppSetting` 里存的是 `encryptSecret()` 的密文，任何 GET 都不回传；
  * 3. `provider: 'mock'` 用确定性规则离线解析 —— 自动化验收**绝不访问外网**（§5 第 52 条），
  *    真实模型走 `provider: 'openai'` 时的 `{baseUrl}/chat/completions`。
@@ -98,6 +104,7 @@ interface AssistantContext {
 }
 
 async function resolveContext(user: TokenPayload, classId?: string): Promise<AssistantContext> {
+  if (classId) await assertClassAccess(user, classId);
   const classIds = await getAccessibleClassIds(user);
   const classes = await prisma.class.findMany({
     where: { id: { in: classIds } },
@@ -201,7 +208,11 @@ async function callOpenAi(
       signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
     });
   } catch (error) {
-    throw new ApiError(504, 'AI_TIMEOUT', `无法连接大模型服务：${error instanceof Error ? error.message : String(error)}`);
+    throw new ApiError(
+      504,
+      'AI_TIMEOUT',
+      `无法连接大模型服务：${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 
   if (!response.ok) {
@@ -253,12 +264,13 @@ async function buildPreview(
 
   if (action === 'call_student') {
     const studentName = typeof params.studentName === 'string' ? params.studentName : '';
-    const student = studentName && classId
-      ? await prisma.student.findFirst({
-          where: { classId, name: studentName },
-          select: { id: true, name: true },
-        })
-      : null;
+    const student =
+      studentName && classId
+        ? await prisma.student.findFirst({
+            where: { classId, name: studentName },
+            select: { id: true, name: true },
+          })
+        : null;
     if (!student) warnings.push(studentName ? `没找到学生「${studentName}」` : '没识别出学生姓名');
     return {
       summary: `叫${student?.name ?? (studentName || '某位同学')}到老师这里`,
@@ -281,7 +293,11 @@ export async function interpret(user: TokenPayload, input: AiInterpretInput): Pr
     throw new ApiError(400, 'AI_NOT_CONFIGURED', '助手功能还没开启，请管理员在「大模型设置」里打开');
   }
   if (settings.provider === 'openai' && (!settings.hasApiKey || !settings.baseUrl)) {
-    throw new ApiError(400, 'AI_NOT_CONFIGURED', '还没配置大模型服务地址或密钥，请管理员在「大模型设置」里填写');
+    throw new ApiError(
+      400,
+      'AI_NOT_CONFIGURED',
+      '还没配置大模型服务地址或密钥，请管理员在「大模型设置」里填写',
+    );
   }
 
   const context = await resolveContext(user, input.classId);
@@ -301,7 +317,10 @@ export async function interpret(user: TokenPayload, input: AiInterpretInput): Pr
   const warnings: string[] = [];
   try {
     if (reply.action === 'create_homework') {
-      const parsed = homeworkParamsSchema.parse({ ...reply.params, classId: reply.params.classId ?? input.classId });
+      const parsed = homeworkParamsSchema.parse({
+        ...reply.params,
+        classId: reply.params.classId ?? input.classId,
+      });
       action = 'create_homework';
       params = parsed as unknown as Record<string, unknown>;
     } else if (reply.action === 'create_notification') {
@@ -312,7 +331,10 @@ export async function interpret(user: TokenPayload, input: AiInterpretInput): Pr
       action = 'create_notification';
       params = parsed as unknown as Record<string, unknown>;
     } else if (reply.action === 'call_student') {
-      const parsed = callParamsSchema.parse({ ...reply.params, classId: reply.params.classId ?? input.classId });
+      const parsed = callParamsSchema.parse({
+        ...reply.params,
+        classId: reply.params.classId ?? input.classId,
+      });
       action = 'call_student';
       params = parsed as unknown as Record<string, unknown>;
     }
@@ -321,6 +343,16 @@ export async function interpret(user: TokenPayload, input: AiInterpretInput): Pr
     logger.warn(`助手参数校验失败：${error instanceof Error ? error.message : String(error)}`);
   }
 
+  if (typeof params.classId === 'string') {
+    await assertClassAccess(user, params.classId);
+    if (typeof params.courseId === 'string') {
+      const course = await prisma.course.findFirst({
+        where: { id: params.courseId, classId: params.classId },
+        select: { id: true },
+      });
+      if (!course) throw ApiError.badRequest('科目不属于所选班级');
+    }
+  }
   const preview = await buildPreview(action, params);
   preview.warnings = [...preview.warnings, ...warnings];
   if (settings.provider === 'mock') preview.warnings.push('当前是离线示例解析（未配置真实模型），请仔细核对');
@@ -330,7 +362,8 @@ export async function interpret(user: TokenPayload, input: AiInterpretInput): Pr
       userId: user.sub,
       prompt: input.text,
       intent: action,
-      status: 'pending',
+      // 审计只记录解析，不代表前端确认后的业务操作已执行。
+      status: action === 'unknown' ? 'unrecognized' : 'interpreted',
       message: preview.summary,
       rawReply: JSON.stringify(reply).slice(0, 2000),
     },

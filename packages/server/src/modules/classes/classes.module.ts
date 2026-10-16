@@ -2,12 +2,7 @@ import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
 import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
-import {
-  validate,
-  validatedBody,
-  validatedParams,
-  validatedQuery,
-} from '../../middleware/validate.js';
+import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
   addStudentSchema,
@@ -19,14 +14,12 @@ import {
   promoteClassesSchema,
   updateClassAccountSchema,
   updateClassSchema,
-  updateNotificationChannelSchema,
   updateStudentGradeQuerySchema,
   type AddStudentInput,
   type AssignSubjectTeachersInput,
   type CreateClassInput,
   type UpdateClassAccountInput,
   type UpdateClassInput,
-  type UpdateNotificationChannelInput,
   type UpdateStudentGradeQueryInput,
 } from './classes.schemas.js';
 import * as classService from './classes.service.js';
@@ -73,10 +66,15 @@ router.get('/:id', validate({ params: idParamSchema }), async (req, res) => {
 });
 
 /** POST /api/classes - 创建班级（称呼由入学年份 + 班号生成，如「2026级1班」） */
-router.post('/', requirePermission('class:manage'), validate({ body: createClassSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  sendCreated(res, await classService.createClass(user, req.body as CreateClassInput), '班级创建成功');
-});
+router.post(
+  '/',
+  requirePermission('class:manage'),
+  validate({ body: createClassSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    sendCreated(res, await classService.createClass(user, req.body as CreateClassInput), '班级创建成功');
+  },
+);
 
 /** PATCH /api/classes/:id - 编辑班级（年级 / 届别 / 教学周数），仅管理员 */
 router.patch(
@@ -161,54 +159,8 @@ router.put(
 );
 
 /**
- * GET /api/classes/:id/classisland-status - 本班 ClassHelper 班级端 / ClassIsland 联动状态
- *
- * 教室机器（ClassHelper 班级端）也能读：客户端「设置 → ClassIsland 联动」据此显示状态。
- */
-router.get('/:id/classisland-status', validate({ params: idParamSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { id } = validatedParams<{ id: string }>(req);
-  sendOk(res, await classService.getClassIslandStatus(user, id), '获取联动状态成功');
-});
-
-/**
- * GET /api/classes/:id/notification-channel - 读取"通知显示到哪个端"
- *
- * 教室的 ClassHelper 班级端登录后会拉这个值，据此决定自己是弹窗/上岛还是静默；
- * 教师/管理员也能读（Web 端展示用）。
- */
-router.get('/:id/notification-channel', validate({ params: idParamSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { id } = validatedParams<{ id: string }>(req);
-  sendOk(res, await classService.getNotificationChannel(user, id), '获取通知显示位置成功');
-});
-
-/**
- * PATCH /api/classes/:id/notification-channel - 设置"通知显示到哪个端"
- *
- * **由教室的 ClassHelper 班级端自己选**，教师/管理员也可改。
- */
-router.patch(
-  '/:id/notification-channel',
-  validate({ params: idParamSchema, body: updateNotificationChannelSchema }),
-  async (req, res) => {
-    const user = getAuthUser(req);
-    const { id } = validatedParams<{ id: string }>(req);
-    sendOk(
-      res,
-      await classService.updateNotificationChannel(
-        user,
-        id,
-        validatedBody<UpdateNotificationChannelInput>(req),
-      ),
-      '通知显示位置已更新',
-    );
-  },
-);
-
-/**
  * GET /api/classes/:id/student-grade-query - 本班是否允许班级端按学号查成绩明细
- * PATCH 同路径 - 开关它（班级端自己可改，教师/管理员也可改）
+ * PATCH 同路径 - 教师/管理员按班级管理权限设置，班级端只读
  */
 router.get('/:id/student-grade-query', validate({ params: idParamSchema }), async (req, res) => {
   const user = getAuthUser(req);
@@ -224,11 +176,7 @@ router.patch(
     const { id } = validatedParams<{ id: string }>(req);
     sendOk(
       res,
-      await classService.updateStudentGradeQuery(
-        user,
-        id,
-        validatedBody<UpdateStudentGradeQueryInput>(req),
-      ),
+      await classService.updateStudentGradeQuery(user, id, validatedBody<UpdateStudentGradeQueryInput>(req)),
       '成绩查询开关已更新',
     );
   },

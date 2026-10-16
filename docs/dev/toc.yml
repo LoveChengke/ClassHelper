@@ -12,11 +12,11 @@
   href: permissions.md
 - name: 动效层与主题
   href: motion.md
-- name: ClassIsland 插件
-  href: classisland-plugin.md
 - name: 灵动岛设计令牌
   href: winisland-design-tokens.md
 - name: 验收与测试
   href: testing.md
+- name: 2026-10-17 审查修复记录
+  href: review-2026-10-17.md
 - name: 版本迭代与发布
   href: release.md

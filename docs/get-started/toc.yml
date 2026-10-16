@@ -10,7 +10,5 @@
   href: setup-class.md
 - name: 装 ClassHelper 班级端
   href: client.md
-- name: 接入 ClassIsland
-  href: classisland.md
 - name: 发布第一条内容
   href: first-content.md

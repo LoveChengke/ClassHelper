@@ -10,33 +10,31 @@ description: 改版本号、跑验收、打安装包、发 GitHub Release、发�
 > **版本号按「发布」迭代，不按「提交」迭代。**
 
 日常的 `feat` / `fix` 提交**不动版本号**。只有当你要产出一批安装包、在 GitHub 上开一个 Release 时，
-才走一次完整的版本迭代。理由很实际：安装包、`.cipx`、Docker 镜像 tag、文档站的版本徽标、
 更新检查接口全都按版本号对齐；每次提交都动它，等于每天都在发版，用户那边的「检查更新」就废了。
 
 | 算一次发布                              | 不算                         |
 | --------------------------------------- | ---------------------------- |
 | 攒够一批功能 / 修好一个用户能感知的 bug | 改注释、改文档、重构、加测试 |
 | 要给别人一份新安装包                    | 只在自己机器上跑             |
-| 插件单独发补丁（只动插件第 4 段版本号） | —                            |
 
 ## 每次发版必须一起交付的四样东西
 
 打安装包只是其中一件。**少一样都算「发到一半」**：
 
-| #  | 交付物            | 落在哪                                                             | 怎么做                                                       |
-| -- | ----------------- | ------------------------------------------------------------------ | ------------------------------------------------------------ |
-| ①  | **更新日志**      | GitHub Release 的正文                                               | 手写，草稿放 `releases/ReleaseNotes-<版本>.md`，用 `--notes-file` 发布。别只挂自动生成的列表 |
-| ②  | **Linux 服务端包** | Release 上的 `classhelper-server-linux-x64-<版本>.tar.gz`           | tag 推上去由 CI 构建；**推完去 Actions 确认没红**（见第 7 步）  |
-| ③  | **文档**          | `docs/reference.md`（功能说明 + 验收对照表）与相关章节                | 新增功能补对应小节；改交付形态一并改第 2 章 / 第 7 章          |
-| ④  | **官网与 README** | `website/index.html`、`website/download.html`、`README.md`          | 新功能补进官网功能块与 README 功能清单；版本号由脚本覆盖       |
+| #   | 交付物             | 落在哪                                                     | 怎么做                                                                                       |
+| --- | ------------------ | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| ①   | **更新日志**       | GitHub Release 的正文                                      | 手写，草稿放 `releases/ReleaseNotes-<版本>.md`，用 `--notes-file` 发布。别只挂自动生成的列表 |
+| ②   | **Linux 服务端包** | Release 上的 `classhelper-server-linux-x64-<版本>.tar.gz`  | tag 推上去由 CI 构建；**推完去 Actions 确认没红**（见第 7 步）                               |
+| ③   | **文档**           | `docs/reference.md`（功能说明 + 验收对照表）与相关章节     | 新增功能补对应小节；改交付形态一并改第 2 章 / 第 7 章                                        |
+| ④   | **官网与 README**  | `website/index.html`、`website/download.html`、`README.md` | 新功能补进官网功能块与 README 功能清单；版本号由脚本覆盖                                     |
 
 更新日志的骨架（照 1.2.0 / 1.3.0 那两份写）：
 **一句话定位 → 分节讲功能 → ⚠️ 升级须知（含会自动应用的迁移）→ 验收表 → 产物表**。
 验收表里**只写真跑过的数字**，没跑就直说没跑，不要照抄上一版的。
 
-## 版本号写在哪（14 处 / 12 个文件）
+## 版本号写在哪（12 处 / 12 个文件）
 
-同一个版本号分散在 14 个落点上，**手工改必然漏一处**，而漏掉的那处不会报错：
+同一个版本号分散在 12 个落点上，**手工改必然漏一处**，而漏掉的那处不会报错：
 
 | 文件                                                             | 内容                               |
 | ---------------------------------------------------------------- | ---------------------------------- |
@@ -44,8 +42,6 @@ description: 改版本号、跑验收、打安装包、发 GitHub Release、发�
 | `packages/{shared,server,web-admin,desktop-client}/package.json` | 各包的版本                         |
 | `deploy/package.runtime.json`                                    | 安装包 / 容器里的运行时依赖清单    |
 | `deploy/docker-compose.yml`、`docker-compose.sqlite.yml`         | 镜像 tag 的默认值                  |
-| `packages/classisland-plugin/manifest.yml`                       | 插件清单（四段：`x.y.z.0`）        |
-| `packages/classisland-plugin/src/Services/BridgeService.cs`      | 插件上报的 `PluginVersion` 常量    |
 | `website/index.html` × 3                                         | 官网顶栏徽标 / 首屏芯片 / 页脚     |
 | `website/download.html`（`<meta name="ch-version">`）            | 下载页读不到版本清单时的兜底版本号 |
 
@@ -64,9 +60,6 @@ pnpm version:check              # 再确认一次
 ```
 
 脚本按表逐个改写，**任何一处没匹配到或匹配到多处就直接失败退出**，不做"尽力而为"的部分改写。
-
-> 插件版本是 **四段** `x.y.z.0`：前三段跟产品版本走，第 4 段留给"只改插件、不动产品版本"的补丁发布。
-> `--bump` / `--set` 会把第 4 段归零；要单独发插件补丁就手工改那两处（清单 + `BridgeService.cs`）。
 
 ## 一次完整的发布
 
@@ -94,8 +87,6 @@ pnpm docs:check                 # 文档站构建（警告即失败）
 pnpm dev:server                 # 另开一个终端跑着
 
 pnpm verify:e2e
-pnpm verify:classisland
-pnpm verify:classisland-plugin
 
 pnpm build:desktop && pnpm verify:desktop
 pnpm build && pnpm verify:web
@@ -107,7 +98,7 @@ pnpm build && pnpm verify:web
 ### 4. 打安装包
 
 ```bash
-pnpm dist:all                   # = dist:server + dist:win + dist:classisland-plugin
+
 ```
 
 产物落在 `releases/<组件>/<版本>/`：`安装包/`（交付物）、`构建中间/`（可重新生成）。
@@ -127,7 +118,7 @@ pnpm verify:packaged --exe "releases/client/<版本>/安装包/ClassHelper-<版�
 ### 5. 生成跨组件哈希清单
 
 `releases/SHA256SUMS-<版本>.txt` 是**人读的**（表头 + 体积 + 说明），由发布流程维护，
-本地只写 Windows 与插件那几行：
+本地只写 Windows那几行：
 
 ```bash
 cd releases/client/<版本>/安装包 && sha256sum *.exe > ../../../SHA256SUMS-<版本>.txt  # 按实际文件名整理
@@ -156,7 +147,6 @@ mkdir -p .cache/release-staging
 cp "releases/client/$V/安装包/"*-x64-setup.exe    ".cache/release-staging/ClassHelper-$V-x64-client-setup.exe"
 cp "releases/client/$V/安装包/"*-x64-portable.exe ".cache/release-staging/ClassHelper-$V-x64-client-portable.exe"
 cp "releases/server/$V/安装包/"*-x64-setup.exe    ".cache/release-staging/ClassHelper-$V-x64-server-setup.exe"
-cp "releases/classisland-plugin/$V/安装包/ClassHelper.ClassIslandPlugin.cipx" .cache/release-staging/
 
 gh release create v$V --title "ClassHelper v$V（<一句话定位>）" --notes-file "releases/ReleaseNotes-$V.md"
 gh release upload v$V .cache/release-staging/* "releases/SHA256SUMS-$V.txt" --clobber
@@ -176,7 +166,7 @@ gh release upload v$V .cache/release-staging/* "releases/SHA256SUMS-$V.txt" --cl
 构建 Linux 包（ubuntu runner）。它跑完之后会：
 
 1. 把 `classhelper-server-linux-x64-<版本>.tar.gz` 与 `.sha256` 挂到 Release 上；
-2. **把 Linux 那一行合并进** `SHA256SUMS-<版本>.txt`（保留 Windows / 插件那几行）。
+2. **把 Linux 那一行合并进** `SHA256SUMS-<版本>.txt`（保留 Windows那几行）。
 
 > **顺序很重要**：Linux workflow 是在最后一步才去合并 SHA256SUMS 的，
 > 所以第 5 步那份清单必须**先上传**。万一手速反了（workflow 先跑完、你后上传），
@@ -213,7 +203,7 @@ https://lovechengke.github.io/ClassHelper/docs/     ← 文档站
 
 文档站顶栏的版本徽标取自根 `package.json`，所以第 1 步改完就跟着变了；
 官网首屏那排芯片、顶栏徽标与页脚里的版本号，以及下载页那个兜底版本号，
-也都是**由 `pnpm version:bump` 一起改的**（它们是那 14 个落点里的四个）。
+也都是**由 `pnpm version:bump` 一起改的**（它们是那 12 个落点里的四个）。
 
 > 官网的「立即下载」会跳到 `/download.html`，那一页的版本清单是**当场**从 GitHub Releases 读的
 > （读不到才退回上面那个兜底版本号），所以发完 Release 不用重新部署那一页 —— 但**兜底值要跟着发版一起改**，
@@ -221,7 +211,7 @@ https://lovechengke.github.io/ClassHelper/docs/     ← 文档站
 
 ### 9. 检查
 
-- [ ] Release 页面上四个组件都在，`SHA256SUMS-<版本>.txt` 里 Windows / 插件 / Linux 三种行齐全；
+- [ ] Release 页面上三个组件都在，`SHA256SUMS-<版本>.txt` 里 Windows / Linux 三种行齐全；
 - [ ] 文档站能打开，顶栏版本号是新版；
 - [ ] 装一台机器试一遍（或至少跑 `pnpm verify:packaged`）。
 

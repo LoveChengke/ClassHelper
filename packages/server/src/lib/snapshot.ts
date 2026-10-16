@@ -50,8 +50,6 @@ export const SNAPSHOT_TABLES = [
   'Notification',
   'NotificationRead',
   'Grade',
-  'IntegrationDevice',
-  'ClassIslandPush',
   'ClientDevice',
   'ClientCommand',
   'ClientRelease',
@@ -132,7 +130,11 @@ export function assertValidSnapshot(value: unknown): asserts value is DatabaseSn
   }
 }
 
-async function setForeignKeys(prisma: PrismaClient, provider: DatabaseProvider, enabled: boolean): Promise<void> {
+async function setForeignKeys(
+  prisma: PrismaClient,
+  provider: DatabaseProvider,
+  enabled: boolean,
+): Promise<void> {
   const sql =
     provider === 'mysql'
       ? `SET FOREIGN_KEY_CHECKS=${enabled ? 1 : 0}`
@@ -164,7 +166,12 @@ export async function restoreSnapshot(
       }
     }
     for (const table of SNAPSHOT_TABLES) {
-      const rows = snapshot.data[table];
+      const rows = snapshot.data[table].map((row) => {
+        if (table !== 'Class' || typeof row !== 'object' || row === null) return row;
+        const copy = { ...(row as Record<string, unknown>) };
+        delete copy.notificationChannel;
+        return copy;
+      });
       for (let index = 0; index < rows.length; index += CHUNK_SIZE) {
         await delegates[table].createMany({ data: rows.slice(index, index + CHUNK_SIZE) });
       }

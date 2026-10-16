@@ -23,7 +23,6 @@ import { logger } from '../../lib/logger.js';
 import { toNotificationDto } from '../../lib/mappers.js';
 import { personalIdWhere, resolvePersonalIds } from '../../lib/session.js';
 import { emitToClass } from '../../realtime/bus.js';
-import { pushToClassIsland, shouldPushToClassIsland } from '../integrations/integrations.service.js';
 import { computeClassStatus } from '../schedules/schedules.service.js';
 import type { CreateNotificationInput } from './notifications.schemas.js';
 
@@ -94,7 +93,9 @@ export async function listNotifications(
     take: 200,
   });
 
-  return notifications.map((item) => toNotificationDto(item, { studentIds: personalIds, withStatus: isStaff }));
+  return notifications.map((item) =>
+    toNotificationDto(item, { studentIds: personalIds, withStatus: isStaff }),
+  );
 }
 
 /**
@@ -157,7 +158,7 @@ export async function listNotificationCreators(
 /**
  * 批量发布通知：一次给多个班级发同一条内容。
  *
- * 逐班串行调用 `createNotification`（复用同一套权限断言 + 上课保护 + 实时广播 + ClassIsland 推送），
+ * 逐班串行调用 `createNotification`（复用同一套权限断言 + 上课保护 + 实时广播），
  * 某个班失败只记进结果，不影响其他班 —— 前端拿到逐班结果后自己决定怎么展示与重试。
  */
 export async function bulkCreateNotifications(
@@ -235,54 +236,7 @@ export async function createNotification(
   const dto = toNotificationDto(created, { withStatus: true });
   emitToClass(created.classId, SOCKET_EVENTS.notificationNew, dto);
 
-  // 同一条通知也推到教室的 ClassIsland 上（"老师发通知 → 教室大屏弹出"不该只在联动页生效）。
-  // 是否真的推送由**教室客户端**在设置页里选的显示位置决定（见 Class.notificationChannel）：
-  // 选了"只弹 ClassHelper 客户端"就不打扰 ClassIsland。
-  await pushToClassIslandIfEnabled({
-    classId: created.classId,
-    title: created.title,
-    content: created.content,
-    priority,
-    createdBy: user.sub,
-    notificationId: created.id,
-    teacherName: created.creator?.name ?? created.creator?.username ?? null,
-  });
-
   return dto;
-}
-
-/**
- * 通知类发布入口的公共尾巴：按班级的显示位置决定要不要推 ClassIsland。
- *
- * 推失败**不能**影响通知本身已经发布成功这件事 —— 教室机器离线、插件没装都不该让老师收到 500，
- * 因此这里把异常收敛成日志告警。
- */
-async function pushToClassIslandIfEnabled(input: {
-  classId: string;
-  title: string;
-  content: string;
-  priority: string;
-  createdBy: string;
-  notificationId: string;
-  teacherName: string | null;
-}): Promise<void> {
-  try {
-    if (!(await shouldPushToClassIsland(input.classId))) {
-      logger.info(`通知未推送 ClassIsland：班级=${input.classId} 已选择"只在 ClassHelper 客户端显示"`);
-      return;
-    }
-    await pushToClassIsland({
-      classId: input.classId,
-      title: input.title,
-      content: input.content,
-      urgent: input.priority === 'URGENT',
-      createdBy: input.createdBy,
-      notificationId: input.notificationId,
-      teacherName: input.teacherName,
-    });
-  } catch (error) {
-    logger.warn(`通知推送 ClassIsland 失败（通知本身已发布）：${String(error)}`);
-  }
 }
 
 export async function deleteNotification(user: TokenPayload, notificationId: string): Promise<void> {
@@ -290,6 +244,10 @@ export async function deleteNotification(user: TokenPayload, notificationId: str
   if (!current) throw ApiError.notFound('通知不存在');
   await assertCanPublishNotification(user, current.classId);
   await prisma.notification.delete({ where: { id: notificationId } });
+  emitToClass(current.classId, SOCKET_EVENTS.notificationDeleted, {
+    id: notificationId,
+    classId: current.classId,
+  });
 }
 
 /**

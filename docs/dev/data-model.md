@@ -32,52 +32,30 @@ description: 24 张表的职责、跨库通用约定、迁移历史与启动时�
 
 ## 24 张表
 
-| 表                     | 职责                                       | 值得注意的字段                                                                                        |
-| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `User`                 | **纯账号表**：管理员 / 教师 / ClassHelper 班级端 | `username`（教师即**工号**，班级端即班级码）、`role`、`phone`、`careMode`（关怀模式偏好，目前只由本机界面读写）；**学生不在这里** |
-| `Student`              | 学生名单记录（**没有账号**）               | `studentNo`（学号，唯一，唯一标识与查询键）、`classId`、`status`、`archivedYearId`                     |
-| `StudentClassTransfer` | 调班 / 转出历史                            | 班级 id 与班级名**都存快照且不建外键**（班级删了历史仍要能读）、`mode`（single｜batch｜transfer-out）  |
-| `ArchivedYear`         | 毕业归档的届别档案                         | `enrollmentYear`（届别，唯一）、`graduationYear`、归档时的统计快照                                     |
-| `Class`                | 班级                                       | `name`（**「2026级1班」**，由 `enrollmentYear` + `classIndex` 生成）、`code` + `passwordHash`（班级端账号）、`termWeeks`、`termStartDate`、`notificationChannel`、`studentGradeQueryEnabled`、`archivedYearId` |
-| `TermWeek`             | 学期逐周日期区间                           | `classId`（**空串 = 全校默认**）、`weekNumber`、`startDate` / `endDate`                                |
-| `Course`               | 课程 = **「班级 + 科目 + 教师」任课关系**   | `teacherId` 就是该班该科的任课老师；`@@unique([classId, name])`                                        |
-| `Schedule`             | 课表条目                                   | `weekStart` / `weekEnd` / `weekParity`（单双周）/ `source`（manual｜classisland）                      |
-| `Homework`             | 作业                                       | `assignDate`（所属日期）、`attachmentUrl`；`dueAt` 是已下线的遗留列                                    |
-| `HomeworkStatus`       | 学生作业完成状态                           | `@@unique([homeworkId, studentId])`                                                                    |
-| `Notification`         | 通知                                       | `priority`、`assignDate`（所属本地日期，禁止 UTC 切片）；`@@index([classId, assignDate])` 供按天归档 |
-| `NotificationRead`     | 已读记录                                   | `@@unique([notificationId, studentId])`                                                                |
-| `TimeLayout`           | 节次时间配置（ClassIsland 同款 JSON 导入得到） | `items` 是 JSON 字符串：`[{ index, name, startTime, endTime, type, skipped }]`                         |
-| `Grade`                | 成绩                                       | `studentId`、`score` / `totalScore`、`levelType`（percent｜letter｜custom）与 `level`                  |
-| `IntegrationDevice`    | ClassHelper 班级端 / ClassIsland 联动设备   | `tokenHash`（只存 sha256）、`lastHeartbeatAt`（在线判定）、`lastSeenAt`（最后一次带状态的上报）、三个方向开关 |
-| `ClassIslandPush`      | 下发给 ClassIsland 的提醒                   | `kind`（notification｜call）、`ackedAt`、`expiresAt`                                                   |
-| `PermissionGroup`      | 权限组（角色之上的**默认模板**）             | `name`（唯一）、`builtin`（内置组不可删）；生效集合见 [角色与权限](permissions.md)                      |
-| `PermissionGroupItem`  | 权限组里的一个权限键（一行一个键）           | `@@unique([groupId, key])`；键取值必须是 shared 的 `PERMISSION_KEYS` 之一                              |
-| `UserPermissionGroup`  | 账号 ←→ 权限组 的分配关系（可属多个组）      | `@@unique([userId, groupId])`；**没有任何行 = 回落角色默认模板**                                       |
-| `AppSetting`           | 全局键值设置（大模型配置 / 开发者模式）      | `key` 即主键、`value` 存字符串（复杂结构存 JSON）；密钥类值做 AES-256-GCM 加密后存这里（**只进不出**）  |
-| `ClientDevice`         | ClassHelper 客户端设备（教室 / 学生机）      | `deviceKey`（唯一，客户端生成）、`classId`、`clientVersion`、`updateTargetVersion`、`lastHeartbeatAt`（**在线判定看它**） |
-| `ClientCommand`        | 下发给客户端的远控指令                       | `kind`（shutdown｜restart｜logoff｜lock）、`expiresAt`（10 分钟）、`ackedAt` / `result`、`cancelledAt`  |
-| `ClientRelease`        | 服务端缓存的客户端安装包                     | `version`（唯一，白名单校验防路径穿越）、`fileName`、`sha256`、`size`；文件在 `data/client-releases/`  |
-| `AiAudit`              | 大模型指令审计（意图与结果，不记密钥）        | `userId`、`prompt`、`intent`、`status`（pending｜confirmed｜rejected｜failed）、`rawReply`             |
+| 表                                                                             | 职责                                             | 值得注意的字段                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------ | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `User`                                                                         | **纯账号表**：管理员 / 教师 / ClassHelper 班级端 | `username`（教师即**工号**，班级端即班级码）、`role`、`phone`、`careMode`（关怀模式偏好，目前只由本机界面读写）；**学生不在这里**                                                                   |
+| `Student`                                                                      | 学生名单记录（**没有账号**）                     | `studentNo`（学号，唯一，唯一标识与查询键）、`classId`、`status`、`archivedYearId`                                                                                                                  |
+| `StudentClassTransfer`                                                         | 调班 / 转出历史                                  | 班级 id 与班级名**都存快照且不建外键**（班级删了历史仍要能读）、`mode`（single｜batch｜transfer-out）                                                                                               |
+| `ArchivedYear`                                                                 | 毕业归档的届别档案                               | `enrollmentYear`（届别，唯一）、`graduationYear`、归档时的统计快照                                                                                                                                  |
+| `Class`                                                                        | 班级                                             | `name`（**「2026级1班」**，由 `enrollmentYear` + `classIndex` 生成）、`code` + `passwordHash`（班级端账号）、`termWeeks`、`termStartDate`、`studentGradeQueryEnabled`、`archivedYearId`             |
+| `TermWeek`                                                                     | 学期逐周日期区间                                 | `classId`（**空串 = 全校默认**）、`weekNumber`、`startDate` / `endDate`                                                                                                                             |
+| `Course`                                                                       | 课程 = **「班级 + 科目 + 教师」任课关系**        | `teacherId` 就是该班该科的任课老师；`@@unique([classId, name])`                                                                                                                                     |
+| `Schedule`                                                                     | 课表条目                                         | `weekStart` / `weekEnd` / `weekParity`（单双周）/ `source`（manual）                                                                                                                                |
+| `Homework`                                                                     | 作业                                             | `assignDate`（所属日期）、`attachmentUrl`；`dueAt` 是已下线的遗留列                                                                                                                                 |
+| `HomeworkStatus`                                                               | 学生作业完成状态                                 | `@@unique([homeworkId, studentId])`                                                                                                                                                                 |
+| `Notification`                                                                 | 通知                                             | `priority`、`assignDate`（所属本地日期，禁止 UTC 切片）；`@@index([classId, assignDate])` 供按天归档                                                                                                |
+| `NotificationRead`                                                             | 已读记录                                         | `@@unique([notificationId, studentId])`                                                                                                                                                             |
+| `TimeLayout`                                                                   | 节次时间配置（ClassIsland 同款 JSON 导入得到）   | `items` 是 JSON 字符串：`[{ index, name, startTime, endTime, type, skipped }]`                                                                                                                      |
+| `Grade`                                                                        | 成绩                                             | `studentId`、`score` / `totalScore`、`levelType`（percent｜letter｜custom）与 `level`                                                                                                               |
+| `PermissionGroup`                                                              | 权限组（角色之上的**默认模板**）                 | `name`（唯一）、`builtin`（内置组不可删）；生效集合见 [角色与权限](permissions.md)                                                                                                                  |
+| `PermissionGroupItem`                                                          | 权限组里的一个权限键（一行一个键）               | `@@unique([groupId, key])`；键取值必须是 shared 的 `PERMISSION_KEYS` 之一                                                                                                                           |
+| `UserPermissionGroup`                                                          | 账号 ←→ 权限组 的分配关系（可属多个组）          | `@@unique([userId, groupId])`；**没有任何行 = 回落角色默认模板**                                                                                                                                    |
+| `AppSetting`                                                                   | 全局键值设置（大模型配置 / 开发者模式）          | `key` 即主键、`value` 存字符串（复杂结构存 JSON）；密钥类值做 AES-256-GCM 加密后存这里（**只进不出**）                                                                                              |
+| `ClientDevice`                                                                 | ClassHelper 客户端设备（教室 / 学生机）          | `deviceKey`（唯一，客户端生成）、`classId`、`clientVersion`、`updateTargetVersion`、`lastHeartbeatAt`（**客户端在线判定看 `ClientDevice.lastHeartbeatAt`**：每 30 秒心跳，90 秒内有成功上报即在线。 |
+| 更新目标、安装策略与最早安装时间持久化在设备记录中，离线设备下次上线继续领取。 |
 
-### 几个容易忽略的设计
-
-**`ClassIslandPush` 与 `IntegrationDevice`** —— 提醒是**落库**的，不是"发出去就算"。
-设备离线时通知不丢：插件重连后拉取未确认的那条立即弹出，弹完回执（`ackedAt`）。
-`expiresAt` 防止学生几天后突然弹出旧提醒。
-
-**在线判定看 `lastHeartbeatAt`，不看 `lastSeenAt`** —— 同一台设备的上报其实有两种：
-心跳（每 60 秒一次，只表明"我还在线"）与带状态的上报（课表 / 上课状态）。
-合成一个字段后无法区分"在线但一直没新状态"和"整个失联"，所以拆开：
-`lastHeartbeatAt` 每次上报都刷（60 秒窗口判在线），`lastSeenAt` 只在带运行状态时刷。
-
-**课表同步方向：服务端 → 教室是主方向。**
-`IntegrationDevice.mirrorScheduleToClassIsland` 默认 **true**（服务端自动下发），
-`syncScheduleToServer` 默认 **false**（教室不再自动回传）。要取教室的课表，走
-`POST /integrations/devices/:id/request-schedule` 这个**人工动作**（前端点击前会弹警告）——
-自动回传会在老师手排课之后被教室的旧课表悄悄覆盖。
-
-**`Schedule.source`** —— 决定插件上报时能清理哪些行：只清 `classisland` 来源且本次未再上报的行。
-**`source` 只在 create 时确定，update 一律保持原值**（否则手排的课会被"收养"后又被清掉）。
+**`Schedule.source`** —— 联动退役后历史同步课表统一归为 `manual`，保留排课数据。
 
 **`Homework.dueAt`** —— 截止时间功能已下线，UI 与接口都不再读写它。
 保留列是为了**不对已安装的库做破坏性迁移**；新库里它恒为 `null`。
@@ -148,7 +126,7 @@ add_permission_groups_and_clients
    生成骨架，再手工补数据搬运语句；
 3. 改完核对 **`SNAPSHOT_TABLES`**（新增 / 删除表要同步）与 `deleteTeacher` 的护栏清单
    （它必须覆盖 `Class.teacherId` / `Course.teacherId` / `Homework.createdBy` /
-   `Notification.createdBy` 四项；`ClassIslandPush.createdBy` 是裸列、无外键、不级联，不用加）；
+   `Notification.createdBy` 四项）；
    再回到 `packages/server/scripts/apply-column-migrations.cjs` 补上可 `ALTER TABLE` 的简单列。
 
 模型总数与迁移个数会随版本增长，以 `schema.prisma` 与 `prisma/migrations/` 的实际内容为准；

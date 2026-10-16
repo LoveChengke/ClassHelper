@@ -20,7 +20,6 @@
  *   packages/web-admin/public/favicon.png               标签页图标（64）
  *   packages/web-admin/public/favicon.svg               标签页图标（内嵌 128 位图的 SVG 壳）
  *   packages/web-admin/public/logo.png                  **界面内**的品牌标（侧栏 / 登录页，128）
- *   packages/classisland-plugin/icon.png                ClassIsland 插件图标（256）
  *   packages/desktop-client/build/classhelper.{png,ico} 图标源在客户端的镜像
  *   packages/desktop-client/build/icon.{png,ico}        electron-builder 的**兜底约定名**
  *                                                       （`win.icon` 显式指向 classhelper.ico，
@@ -204,13 +203,15 @@ app.whenReady().then(async () => {
     writeIfChanged(path.join(webPublic, 'icon-512.png'), pngBySize.get(512));
     writeIfChanged(path.join(webPublic, 'apple-touch-icon.png'), pngBySize.get(180));
     writeIfChanged(path.join(webPublic, 'favicon.png'), pngBySize.get(64));
-    writeIfChanged(path.join(webPublic, 'favicon.svg'), Buffer.from(buildFaviconSvg(pngBySize.get(128)), 'utf8'));
+    writeIfChanged(
+      path.join(webPublic, 'favicon.svg'),
+      Buffer.from(buildFaviconSvg(pngBySize.get(128)), 'utf8'),
+    );
     // 界面内的品牌标（侧栏 / 登录页）。与 favicon 分开一份的理由：favicon 是给浏览器标签页用的，
     // 而这张是**渲染进页面**的（`<img src="/logo.png">`），尺寸与缓存策略都不该混在一起。
     writeIfChanged(path.join(webPublic, 'logo.png'), pngBySize.get(128));
 
     // ── ClassIsland 插件（清单同目录的 icon.png，ClassIsland 按约定读取） ──────
-    writeIfChanged(path.join(ROOT, 'packages', 'classisland-plugin', 'icon.png'), pngBySize.get(256));
 
     // ── 桌面客户端 ──────────────────────────────────────────────────────────
     // classhelper.* 是源的镜像；icon.* 是 electron-builder 的兜底约定名（默认找 build/icon.ico），

@@ -104,6 +104,15 @@ export function requirePermission(...keys: PermissionKey[]): RequestHandler {
   };
 }
 
+/** 班级端按班级范围开放读取；教师/管理员仍按可编辑的功能权限校验。 */
+export function requireStaffPermission(...keys: PermissionKey[]): RequestHandler {
+  const guard = requirePermission(...keys);
+  return (req, res, next) => {
+    if (req.auth?.user.role === 'CLASS_DEVICE') return next();
+    return guard(req, res, next);
+  };
+}
+
 /**
  * 权限守卫（任一满足）：只要拥有其中**一个**权限键就放行。
  *
@@ -119,7 +128,9 @@ export function requireAnyPermission(...keys: PermissionKey[]): RequestHandler {
     const permissions = req.auth.permissions ?? new Set<PermissionKey>();
     if (keys.length > 0 && !keys.some((key) => permissions.has(key))) {
       const labels = keys.map((key) => `「${PERMISSION_LABELS[key]}」`).join('、');
-      next(ApiError.forbidden(`当前账号缺少权限（${labels} 中至少需要一项），请联系管理员在「权限组」里分配`));
+      next(
+        ApiError.forbidden(`当前账号缺少权限（${labels} 中至少需要一项），请联系管理员在「权限组」里分配`),
+      );
       return;
     }
     next();

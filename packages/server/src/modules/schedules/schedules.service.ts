@@ -115,6 +115,10 @@ export async function createSchedule(user: TokenPayload, input: CreateScheduleIn
   await assertCanManageSchedule(user, input.classId);
   await assertCourseInClass(input.courseId, input.classId);
 
+  const weekStart = input.weekStart ?? 1;
+  const weekEnd = input.weekEnd ?? termWeeks;
+  if (weekStart > weekEnd) throw ApiError.badRequest('起始周次不能大于结束周次');
+
   const created = await prisma.schedule.create({
     data: {
       classId: input.classId,
@@ -123,8 +127,8 @@ export async function createSchedule(user: TokenPayload, input: CreateScheduleIn
       startTime: input.startTime,
       endTime: input.endTime,
       location: input.location ?? null,
-      weekStart: input.weekStart ?? 1,
-      weekEnd: input.weekEnd ?? termWeeks,
+      weekStart,
+      weekEnd,
       // 单双周：默认 ALL（每周），与旧数据行为一致
       weekParity: input.weekParity ?? 'ALL',
     },

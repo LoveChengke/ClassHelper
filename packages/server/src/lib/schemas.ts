@@ -46,7 +46,7 @@ export const attachmentUrlSchema = z
   .max(500)
   .refine(
     (value) =>
-      value === '' || value.startsWith('/') || /^https?:\/\//i.test(value),
+      value === '' || (/^\/(?![\/\\])/.test(value) && !value.includes('\\')) || /^https?:\/\//i.test(value),
     { message: '附件链接需为 http(s):// 地址或站内相对路径' },
   )
   .nullish();

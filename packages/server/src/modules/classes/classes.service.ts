@@ -1,10 +1,4 @@
-import type {
-  ClassDetailDto,
-  ClassDto,
-  ClassIslandNotificationChannel,
-  StudentDto,
-  SubjectTeacherDto,
-} from '@classhelper/shared';
+import type { ClassDetailDto, ClassDto, StudentDto, SubjectTeacherDto } from '@classhelper/shared';
 import { SOCKET_EVENTS, formatClassName } from '@classhelper/shared';
 import { env } from '../../config/env.js';
 import {
@@ -13,7 +7,6 @@ import {
   assertCanManageRoster,
   assertClassAccess,
   classScopeIdFilter,
-  isClassDevice,
   isStaff,
   resolveClassScope,
 } from '../../lib/access.js';
@@ -24,23 +17,15 @@ import {
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
-import {
-  toClassDto,
-  toCourseDto,
-  toNotificationChannel,
-  toStudentDto,
-  toTeacherBrief,
-} from '../../lib/mappers.js';
+import { toClassDto, toCourseDto, toStudentDto, toTeacherBrief } from '../../lib/mappers.js';
 import { emitToClass } from '../../realtime/bus.js';
 import type {
   AddStudentInput,
   AssignSubjectTeachersInput,
   CreateClassInput,
   UpdateClassInput,
-  UpdateNotificationChannelInput,
   UpdateStudentGradeQueryInput,
 } from './classes.schemas.js';
-import { attachIntegrationFlag } from '../integrations/integrations.service.js';
 import { logger } from '../../lib/logger.js';
 
 const countSelect = {
@@ -106,8 +91,7 @@ export async function listClasses(user: TokenPayload, keyword?: string): Promise
     orderBy: [{ enrollmentYear: 'desc' }, { classIndex: 'asc' }, { grade: 'asc' }],
   });
 
-  // 附上「是否已接入 ClassIsland」徽标：Web 端班级列表/课表页据此提示
-  return attachIntegrationFlag(classes.map((item) => toClassDtoWithAccount(user, item)));
+  return classes.map((item) => toClassDtoWithAccount(user, item));
 }
 
 /** 班级详情：学生名单 + 课程 + 班主任 + 各科任课老师 */
@@ -261,7 +245,10 @@ export async function assignSubjectTeachers(
           .teacherId;
 
     const existing = assignment.courseId
-      ? await prisma.course.findUnique({ where: { id: assignment.courseId }, select: { id: true, classId: true } })
+      ? await prisma.course.findUnique({
+          where: { id: assignment.courseId },
+          select: { id: true, classId: true },
+        })
       : await prisma.course.findUnique({
           where: { classId_name: { classId, name: assignment.subjectName } },
           select: { id: true, classId: true },
@@ -481,98 +468,6 @@ export async function removeStudent(user: TokenPayload, classId: string, student
   emitToClass(classId, SOCKET_EVENTS.classUpdated, { classId, action: 'updated' });
 }
 
-/* ---------------------------------------------------------------- ClassHelper 班级端状态 */
-
-/**
- * 本班的 ClassHelper 联动状态（教室机器上的「联动」面板展示）。
- *
- * 为什么单独开一个接口：设备列表（/integrations/devices）是管理面，只对教师/管理员开放；
- * 而教室机器（ClassHelper 班级端）需要知道"本班接没接 ClassIsland、最后什么时候上报的"，
- * 才能给出准确的提示（例如没接就别选"只在 ClassIsland 上弹"）。
- */
-export async function getClassIslandStatus(
-  user: TokenPayload,
-  classId: string,
-): Promise<{
-  connected: boolean;
-  deviceName: string | null;
-  deviceCount: number;
-  onlineCount: number;
-  lastSeenAt: string | null;
-  lastHeartbeatAt: string | null;
-  pluginVersion: string | null;
-  classIslandVersion: string | null;
-}> {
-  await assertClassAccess(user, classId);
-  const devices = await prisma.integrationDevice.findMany({
-    where: { classId, enabled: true, mode: 'plugin' },
-    select: {
-      name: true,
-      lastSeenAt: true,
-      lastHeartbeatAt: true,
-      pluginVersion: true,
-      classIslandVersion: true,
-    },
-    orderBy: { lastHeartbeatAt: 'desc' },
-  });
-
-  const latest = devices[0];
-  const window = 60_000;
-  return {
-    connected: devices.length > 0,
-    deviceName: latest?.name ?? null,
-    deviceCount: devices.length,
-    onlineCount: devices.filter(
-      (item) => item.lastHeartbeatAt && Date.now() - item.lastHeartbeatAt.getTime() < window,
-    ).length,
-    lastSeenAt: latest?.lastSeenAt ? latest.lastSeenAt.toISOString() : null,
-    lastHeartbeatAt: latest?.lastHeartbeatAt ? latest.lastHeartbeatAt.toISOString() : null,
-    pluginVersion: latest?.pluginVersion ?? null,
-    classIslandVersion: latest?.classIslandVersion ?? null,
-  };
-}
-
-/* ---------------------------------------------------------------- 班级端设置 */
-
-/**
- * 读取班级的通知显示位置（both / client / classisland）。
- * 这是**教室机器**要读的值：登录后拉一次，把自己的弹窗行为对齐到同一个选择。
- */
-export async function getNotificationChannel(
-  user: TokenPayload,
-  classId: string,
-): Promise<{ notificationChannel: ClassIslandNotificationChannel }> {
-  await assertClassAccess(user, classId);
-  const record = await prisma.class.findUnique({
-    where: { id: classId },
-    select: { notificationChannel: true },
-  });
-  return { notificationChannel: toNotificationChannel(record?.notificationChannel) };
-}
-
-/**
- * 设置班级的通知显示位置。
- *
- * 允许两类人改：**该班的 ClassHelper 班级端**（需求就是"由教室机器自己选"）
- * 与教师 / 管理员（Web 端也能改，便于老师统一要求）。
- */
-export async function updateNotificationChannel(
-  user: TokenPayload,
-  classId: string,
-  input: UpdateNotificationChannelInput,
-): Promise<{ notificationChannel: ClassIslandNotificationChannel }> {
-  await assertClassAccess(user, classId);
-  if (!isClassDevice(user) && !isStaff(user)) {
-    throw ApiError.forbidden('只有 ClassHelper 班级端或教师/管理员可以修改通知显示位置');
-  }
-
-  const channel = toNotificationChannel(input.notificationChannel);
-  await prisma.class.update({ where: { id: classId }, data: { notificationChannel: channel } });
-  emitToClass(classId, SOCKET_EVENTS.classUpdated, { classId, action: 'updated' });
-  logger.info(`班级通知显示位置已更新：classId=${classId} channel=${channel} by=${user.sub}`);
-  return { notificationChannel: channel };
-}
-
 /**
  * 读取「是否允许 ClassHelper 班级端按学号查询本班学生成绩明细」。
  * 班级端设置页用它渲染开关的当前状态。
@@ -595,10 +490,7 @@ export async function getStudentGradeQuery(
  * 设置「是否允许 ClassHelper 班级端查看本班成绩与排名」。
  *
  * **只有教师 / 管理员能改**（需求：「成绩查询由服务端控制，客户端只读」）。
- * 原先班级端自己也能改这个开关 —— 教室机器能给自己开成绩查询，等于把
- * "学校说不给看"变成了一台机器说了算；而与它同一套模式的「通知显示位置」
- * （`Class.notificationChannel`）**仍然由班级端自己改**，那个确实是现场偏好，
- * 两者别再按"同一个模式"去理解。关闭后班级端查成绩一律 403，教师端不受影响。
+ * 关闭后班级端查成绩一律 403，教师端不受影响。
  */
 export async function updateStudentGradeQuery(
   user: TokenPayload,

@@ -18,6 +18,7 @@ const currentDir = __dirname;
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const isSmokeTest = process.env.ELECTRON_SMOKE_TEST === '1';
+const isQuickSmoke = isSmokeTest && process.env.ELECTRON_SMOKE_MODE !== 'visual';
 
 /**
  * 这次启动是否需要"直接进托盘、不弹窗"——开机自启专用（见 `applyAutoLaunch()`）。
@@ -73,6 +74,7 @@ function createWindow(options: { hidden?: boolean } = {}): BrowserWindow {
     title: 'ClassHelper',
     // 冒烟验证时不弹窗，避免打扰使用者；开机自启（--hidden）时直接进托盘
     show: !isSmokeTest && options.hidden !== true,
+    focusable: !isQuickSmoke,
     autoHideMenuBar: true,
     backgroundColor: theme === 'dark' ? '#161719' : '#f3f3f3',
     webPreferences: {
@@ -81,6 +83,8 @@ function createWindow(options: { hidden?: boolean } = {}): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      backgroundThrottling: false,
+      offscreen: isQuickSmoke,
     },
   });
 
@@ -98,6 +102,12 @@ function createWindow(options: { hidden?: boolean } = {}): BrowserWindow {
 
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null;
+  });
+  win.on('close', (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    win.hide();
+    logger.info('主窗口已隐藏到系统托盘（后台继续运行）');
   });
 
   // 崩溃自愈与「空闲安装更新」都要盯着主窗口：窗口重建后换的是新实例，因此每次建窗都重挂一次
@@ -117,7 +127,7 @@ function ensureMainWindow(options: { hidden?: boolean } = {}): BrowserWindow | n
   if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
   try {
     mainWindow = createWindow(options);
-    void loadRenderer(mainWindow);
+    void loadRenderer(mainWindow).catch((error) => logger.error('重建主窗口加载失败', error));
   } catch (error) {
     logger.error(`创建主窗口失败：${error instanceof Error ? error.message : String(error)}`);
     mainWindow = null;
@@ -172,95 +182,95 @@ if (!gotLock) {
     showMainWindow();
   });
 
-  app.whenReady().then(async () => {
-    // 日志级别跟开发者模式走：debug 只在开启时才输出（设置页「开发者模式」）
-    logger.setVerbose(getConfig().developerMode === true);
-    registerIpcHandlers();
-    registerIslandIpc();
+  app
+    .whenReady()
+    .then(async () => {
+      // 日志级别跟开发者模式走：debug 只在开启时才输出（设置页「开发者模式」）
+      logger.setVerbose(getConfig().developerMode === true);
+      registerIpcHandlers();
+      registerIslandIpc();
 
-    // 开机自启：登录项要与配置保持一致（用户在设置页改过之后由 IPC 立即同步）
-    applyAutoLaunch();
+      // 开机自启：登录项要与配置保持一致（用户在设置页改过之后由 IPC 立即同步）
+      applyAutoLaunch();
 
-    mainWindow = createWindow({ hidden: startHidden });
-    await loadRenderer(mainWindow);
+      mainWindow = createWindow({ hidden: startHidden });
 
-    // 崩溃自愈：主窗口渲染进程崩溃 / 界面无响应时静默重建；主进程崩溃且本机空闲时自动重启
-    installCrashGuard({
-      recoverMainWindow: () => {
-        const alive = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
-        if (alive) {
-          alive.hide();
-          alive.destroy();
-        }
-        mainWindow = ensureMainWindow();
-      },
-      isIdle: () =>
-        island.getState().inClass === false &&
-        mainWindow?.isVisible() !== true &&
-        !BrowserWindow.getAllWindows().some((win) => !win.isDestroyed() && win.isVisible()),
-      quitApp: () => quitApp(),
-    });
-    // 空闲安装更新：先把手动退出的回调交给 auto-update（它不能再 import 本文件，否则循环导入）
-    setQuitHandler(() => quitApp());
-
-    // 灵动岛：独立的置顶透明小窗口（桌面中上方）
-    try {
-      await island.init(devServerUrl ? `${devServerUrl.replace(/\/+$/, '')}/island.html` : null);
-      // 点击灵动岛里的"打开应用"时把主窗口拉到前台
-      island.setOpenAppHandler(() => {
-        if (!mainWindow || mainWindow.isDestroyed()) return;
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.show();
-        mainWindow.focus();
+      // 崩溃自愈：主窗口渲染进程崩溃 / 界面无响应时静默重建；主进程崩溃且本机空闲时自动重启
+      installCrashGuard({
+        recoverMainWindow: async () => {
+          const alive = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+          if (alive) {
+            alive.hide();
+            alive.destroy();
+          }
+          mainWindow = createWindow({ hidden: true });
+          await loadRenderer(mainWindow);
+        },
+        isIdle: () =>
+          island.getState().inClass === false &&
+          mainWindow?.isVisible() !== true &&
+          !BrowserWindow.getAllWindows().some((win) => !win.isDestroyed() && win.isVisible()),
+        quitApp: () => quitApp(),
       });
-      // 灵动岛点"标为已读"：转交主窗口渲染进程调用接口并刷新通知中心
-      island.setMarkReadHandler((id) => {
-        if (!mainWindow || mainWindow.isDestroyed()) return;
-        mainWindow.webContents.send('island:mark-read', id);
-      });
-      // 多条通知时的"标为已读"是**整批**操作：一次把列表里的通知都标上
-      island.setMarkAllReadHandler((ids) => {
-        if (!mainWindow || mainWindow.isDestroyed()) return;
-        mainWindow.webContents.send('island:mark-all-read', ids);
-      });
-    } catch (error) {
-      logger.error('灵动岛初始化失败（不影响主功能）', error);
-    }
+      await loadRenderer(mainWindow).catch((error) => logger.error('主窗口启动加载失败', error));
+      // 空闲安装更新：先把手动退出的回调交给 auto-update（它不能再 import 本文件，否则循环导入）
+      setQuitHandler(() => quitApp());
 
-    // 关闭主窗口 → 隐藏到系统托盘（需求 5），只有托盘"退出"才真正结束进程
-    // 注意：必须在冒烟验证之前挂载，否则 close() 会真的销毁窗口
-    mainWindow?.on('close', (event) => {
-      if (isQuitting) return;
-      event.preventDefault();
-      mainWindow?.hide();
-      logger.info('主窗口已隐藏到系统托盘（后台继续运行，左键托盘图标可恢复）');
-    });
-
-    try {
-      createTray({
-        onShow: () => showMainWindow(),
-        onHide: () => mainWindow?.hide(),
-        onQuit: () => quitApp(),
-      });
-    } catch (error) {
-      logger.warn(`系统托盘初始化失败（不影响主功能）：${error instanceof Error ? error.message : error}`);
-    }
-
-    // 启动后自动查一次更新（延迟几秒，不跟首屏抢带宽）；冒烟模式下自动跳过，见 main/update.ts
-    scheduleStartupUpdateCheck(() => mainWindow);
-
-    // 服务端统一下发：定时上报本机状态并领取「待执行命令 / 统一更新」（冒烟默认不上报）
-    startClientAgent();
-
-    if (isSmokeTest) {
+      // 灵动岛：独立的置顶透明小窗口（桌面中上方）
       try {
-        await runSmokeTest(mainWindow);
+        if (!isQuickSmoke)
+          await island.init(devServerUrl ? `${devServerUrl.replace(/\/+$/, '')}/island.html` : null);
+        // 点击灵动岛里的"打开应用"时把主窗口拉到前台
+        island.setOpenAppHandler(() => {
+          if (!mainWindow || mainWindow.isDestroyed()) return;
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.show();
+          mainWindow.focus();
+        });
+        // 灵动岛点"标为已读"：转交主窗口渲染进程调用接口并刷新通知中心
+        island.setMarkReadHandler((id) => {
+          if (!mainWindow || mainWindow.isDestroyed()) return;
+          mainWindow.webContents.send('island:mark-read', id);
+        });
+        // 多条通知时的"标为已读"是**整批**操作：一次把列表里的通知都标上
+        island.setMarkAllReadHandler((ids) => {
+          if (!mainWindow || mainWindow.isDestroyed()) return;
+          mainWindow.webContents.send('island:mark-all-read', ids);
+        });
       } catch (error) {
-        console.error('[SMOKE] 冒烟验证异常', error);
-        app.exit(1);
+        logger.error('灵动岛初始化失败（不影响主功能）', error);
       }
-    }
-  });
+
+      try {
+        if (!isQuickSmoke)
+          createTray({
+            onShow: () => showMainWindow(),
+            onHide: () => mainWindow?.hide(),
+            onQuit: () => quitApp(),
+          });
+      } catch (error) {
+        logger.warn(`系统托盘初始化失败（不影响主功能）：${error instanceof Error ? error.message : error}`);
+      }
+
+      // 启动后自动查一次更新（延迟几秒，不跟首屏抢带宽）；冒烟模式下自动跳过，见 main/update.ts
+      scheduleStartupUpdateCheck(() => mainWindow);
+
+      // 服务端统一下发：定时上报本机状态并领取「待执行命令 / 统一更新」（冒烟默认不上报）
+      startClientAgent();
+
+      if (isSmokeTest) {
+        try {
+          await runSmokeTest(mainWindow);
+        } catch (error) {
+          console.error('[SMOKE] 冒烟验证异常', error);
+          app.exit(1);
+        }
+      }
+    })
+    .catch((error) => {
+      logger.error('应用初始化失败', error);
+      if (isSmokeTest) app.exit(1);
+    });
 
   /** 显示主窗口（托盘左键 / 托盘菜单 / 二次启动 / 灵动岛"打开应用"） */
   function showMainWindow(): void {
@@ -326,10 +336,9 @@ if (!gotLock) {
     logger.info(`应用退出清理：${summary}`);
   });
 
-  app.on('activate', async () => {
+  app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      const win = ensureMainWindow();
-      if (win) await loadRenderer(win);
+      ensureMainWindow();
     }
   });
 }

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CLASSISLAND_NOTIFICATION_CHANNELS, MAX_TERM_WEEK, SUBJECT_CATALOG, isDayKey } from '@classhelper/shared';
+import { MAX_TERM_WEEK, SUBJECT_CATALOG, isDayKey } from '@classhelper/shared';
 import {
   classIndexSchema,
   enrollmentYearSchema,
@@ -99,10 +99,7 @@ export const assignSubjectTeachersSchema = z.object({
           .trim()
           .min(1, '请选择或填写科目')
           .max(32)
-          .refine(
-            (value) => value.length > 0,
-            { message: '科目名不能为空' },
-          ),
+          .refine((value) => value.length > 0, { message: '科目名不能为空' }),
         teacherId: z.string().min(1).nullish(),
       }),
     )
@@ -112,17 +109,6 @@ export const assignSubjectTeachersSchema = z.object({
 /** 设置 / 更改班主任（仅管理员） */
 export const assignHeadTeacherSchema = z.object({
   teacherId: z.string().min(1, '请选择班主任'),
-});
-
-/**
- * 通知显示位置（both / client / classisland）。
- * 由 **ClassHelper 班级端**在设置页里改，教师/管理员也可以在 Web 端改。
- */
-export const updateNotificationChannelSchema = z.object({
-  notificationChannel: z.enum(
-    CLASSISLAND_NOTIFICATION_CHANNELS as unknown as [string, ...string[]],
-    { message: '显示位置只能是 both / client / classisland' },
-  ),
 });
 
 /** 班级端按学号查询成绩明细的开关 */
@@ -138,7 +124,6 @@ export const classStudentParamSchema = z.object({
 export type CreateClassInput = z.infer<typeof createClassSchema>;
 export type UpdateClassInput = z.infer<typeof updateClassSchema>;
 export type UpdateClassAccountInput = z.infer<typeof updateClassAccountSchema>;
-export type UpdateNotificationChannelInput = z.infer<typeof updateNotificationChannelSchema>;
 export type UpdateStudentGradeQueryInput = z.infer<typeof updateStudentGradeQuerySchema>;
 export type AddStudentInput = z.infer<typeof addStudentSchema>;
 export type AssignSubjectTeachersInput = z.infer<typeof assignSubjectTeachersSchema>;

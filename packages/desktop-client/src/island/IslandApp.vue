@@ -208,7 +208,7 @@ function rowBadgeClass(item: IslandNotification): string {
   const itemKind = rowKind(item);
   if (itemKind === 'call') return 'badge-call';
   if (itemKind === 'homework') return 'badge-homework';
-  return `badge-${item.priority.toLowerCase()}`;
+  return `badge-${(item.priority ?? 'NORMAL').toLowerCase()}`;
 }
 
 function rowSubText(item: IslandNotification): string {
@@ -674,37 +674,37 @@ onMounted(async () => {
             再随卡片变窄被省略号收回（用户反馈的"新消息那行字往右跳一下再缩回"）。
           -->
           <span class="pill-inner">
-          <span class="pill-icon" :class="{ urgent: isUrgent, call: isCall, homework: isHomework }">
-            <svg v-if="isHomework" viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M6 3h9a3 3 0 0 1 3 3v13.5a.5.5 0 0 1-.75.43L15 18.5l-2.25 1.43a.5.5 0 0 1-.53 0L10 18.5l-2.25 1.43a.5.5 0 0 1-.53 0L5 18.5V5a2 2 0 0 1 1-2Zm2 4v1.6h7V7H8Zm0 3.4V12h7v-1.6H8Z"
-              />
-            </svg>
-            <svg v-else-if="isCall" viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M4 10v4a1 1 0 0 0 1 1h2l4 3.5a1 1 0 0 0 1.65-.76V5.26A1 1 0 0 0 11 4.5L7 8H5a1 1 0 0 0-1 1Zm12.5-2.9a1 1 0 0 1 1.4.1 8 8 0 0 1 0 9.6 1 1 0 1 1-1.5-1.3 6 6 0 0 0 0-7 1 1 0 0 1 .1-1.4Z"
-              />
-            </svg>
-            <svg v-else viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M12 2a6 6 0 0 0-6 6v3.1L4.6 14a1 1 0 0 0 .9 1.5h13a1 1 0 0 0 .9-1.5L18 11.1V8a6 6 0 0 0-6-6Zm0 20a3 3 0 0 0 3-2.6H9A3 3 0 0 0 12 22Z"
-              />
-            </svg>
-          </span>
-          <span class="pill-text">
-            <span class="pill-title">{{ pillSummaryTitle }}</span>
-            <span class="pill-sub">
-              <template v-if="pendingCount > 1">点击查看</template>
-              <template v-else>{{ notification?.teacherName || '老师' }} · 点击查看</template>
+            <span class="pill-icon" :class="{ urgent: isUrgent, call: isCall, homework: isHomework }">
+              <svg v-if="isHomework" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M6 3h9a3 3 0 0 1 3 3v13.5a.5.5 0 0 1-.75.43L15 18.5l-2.25 1.43a.5.5 0 0 1-.53 0L10 18.5l-2.25 1.43a.5.5 0 0 1-.53 0L5 18.5V5a2 2 0 0 1 1-2Zm2 4v1.6h7V7H8Zm0 3.4V12h7v-1.6H8Z"
+                />
+              </svg>
+              <svg v-else-if="isCall" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M4 10v4a1 1 0 0 0 1 1h2l4 3.5a1 1 0 0 0 1.65-.76V5.26A1 1 0 0 0 11 4.5L7 8H5a1 1 0 0 0-1 1Zm12.5-2.9a1 1 0 0 1 1.4.1 8 8 0 0 1 0 9.6 1 1 0 1 1-1.5-1.3 6 6 0 0 0 0-7 1 1 0 0 1 .1-1.4Z"
+                />
+              </svg>
+              <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M12 2a6 6 0 0 0-6 6v3.1L4.6 14a1 1 0 0 0 .9 1.5h13a1 1 0 0 0 .9-1.5L18 11.1V8a6 6 0 0 0-6-6Zm0 20a3 3 0 0 0 3-2.6H9A3 3 0 0 0 12 22Z"
+                />
+              </svg>
             </span>
-          </span>
-          <!-- 多类型时把类型也做成小圆点，收起状态一眼看出有什么 -->
-          <span v-if="pendingCount > 1 && pendingTypes.length > 1" class="pill-types" aria-hidden="true">
-            <span v-for="item in pendingTypes" :key="item" class="pill-type">{{ item }}</span>
-          </span>
+            <span class="pill-text">
+              <span class="pill-title">{{ pillSummaryTitle }}</span>
+              <span class="pill-sub">
+                <template v-if="pendingCount > 1">点击查看</template>
+                <template v-else>{{ notification?.teacherName || '老师' }} · 点击查看</template>
+              </span>
+            </span>
+            <!-- 多类型时把类型也做成小圆点，收起状态一眼看出有什么 -->
+            <span v-if="pendingCount > 1 && pendingTypes.length > 1" class="pill-types" aria-hidden="true">
+              <span v-for="item in pendingTypes" :key="item" class="pill-type">{{ item }}</span>
+            </span>
             <span class="pill-chevron" aria-hidden="true">
               <svg viewBox="0 0 24 24">
                 <path

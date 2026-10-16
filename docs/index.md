@@ -5,18 +5,17 @@ description: ClassHelper（Class Helper）的官方文档：安装部署、功�
 
 # ClassHelper文档
 
-ClassHelper（Class Helper）是给中小学班级用的一套信息管理系统。**一份代码，四个交付物**：
-装在服务器上的后端、给老师用的 Web 管理端、装在教室机器的桌面客户端（ClassHelper 班级端 / 教室大屏），
-以及装在 [ClassIsland](https://classisland.tech) 上的联动插件。
+ClassHelper（Class Helper）是给中小学班级用的一套信息管理系统。**一份代码，三个交付物**：
+装在服务器上的后端、给老师用的 Web 管理端、装在教室机器的桌面客户端（ClassHelper 班级端 / 教室大屏）。
 
 <p class="ch-tagline">
-老师发一条通知，教室那台机器上的灵动岛和 ClassIsland 会同时弹出来；学生打开客户端就能看到当天的课表和作业。
+老师发一条通知，教室那台机器上的客户端和灵动岛会实时显示；学生打开客户端就能看到当天的课表和作业。
 </p>
 
 <div class="ch-cards">
   <a class="ch-card" href="get-started/index.md">
     <span class="ch-card-title">第一次装</span>
-    <span class="ch-card-desc">从零把服务端、管理端、ClassHelper 班级端和 ClassIsland 插件跑起来，大约半小时。</span>
+    <span class="ch-card-desc">从零把服务端、管理端、ClassHelper 班级端跑起来，大约半小时。</span>
   </a>
   <a class="ch-card" href="app/index.md">
     <span class="ch-card-title">已经在用了</span>
@@ -54,8 +53,7 @@ ClassHelper（Class Helper）是给中小学班级用的一套信息管理系统
 
 ## 这套系统的三件事
 
-**一、老师发，教室弹。** Web 端发布的内容通过 Socket.IO 按班级房间广播，客户端与灵动岛实时更新；
-落到 ClassIsland 上的那部分走设备令牌的独立通道，走 HTTP 上报，不依赖教室机器的网络环境有多好。
+**一、老师发，教室弹。** Web 端发布的内容通过 Socket.IO 按班级房间广播，客户端与灵动岛实时更新。
 
 **二、上课时段不打扰。** 「上课时段」由课表实时判定，普通通知只进队列、下课自动补弹，
 紧急通知和叫人则立刻弹出来 —— 服务端强制拦截，绕开界面直接调接口一样会被拦。

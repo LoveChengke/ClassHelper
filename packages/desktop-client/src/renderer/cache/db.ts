@@ -1,3 +1,5 @@
+import { getCacheScope, scopedKey } from './scope.js';
+
 /**
  * IndexedDB 缓存层（无第三方依赖）。
  *
@@ -37,7 +39,8 @@ let databasePromise: Promise<IDBDatabase> | null = null;
 function openDatabase(): Promise<IDBDatabase> {
   if (databasePromise) return databasePromise;
 
-  databasePromise = new Promise<IDBDatabase>((resolve, reject) => {
+  let failed = false;
+  const opening = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onupgradeneeded = () => {
@@ -49,12 +52,36 @@ function openDatabase(): Promise<IDBDatabase> {
       }
     };
 
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error('IndexedDB 打开失败'));
-    request.onblocked = () => reject(new Error('IndexedDB 被其它窗口占用'));
+    request.onsuccess = () => {
+      const db = request.result;
+      if (failed) {
+        db.close();
+        return;
+      }
+      const reset = (): void => {
+        if (databasePromise === opening) databasePromise = null;
+      };
+      db.onversionchange = () => {
+        db.close();
+        reset();
+      };
+      db.onclose = reset;
+      resolve(db);
+    };
+    request.onerror = () => {
+      failed = true;
+      reject(request.error ?? new Error('IndexedDB 打开失败'));
+    };
+    request.onblocked = () => {
+      failed = true;
+      reject(new Error('IndexedDB 被其它窗口占用'));
+    };
   });
-
-  return databasePromise;
+  databasePromise = opening;
+  void opening.catch(() => {
+    if (databasePromise === opening) databasePromise = null;
+  });
+  return opening;
 }
 
 function runRequest<T>(
@@ -67,7 +94,8 @@ function runRequest<T>(
       new Promise<T>((resolve, reject) => {
         const transaction = db.transaction(store, mode);
         const request = action(transaction.objectStore(store));
-        request.onsuccess = () => resolve(request.result as T);
+        transaction.oncomplete = () => resolve(request.result as T);
+        transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB 事务已中止'));
         request.onerror = () => reject(request.error ?? new Error('IndexedDB 操作失败'));
       }),
   );
@@ -89,14 +117,28 @@ function toPlain<T>(value: T): T {
   }
 }
 
-export async function cacheSet<T>(store: CacheStore, key: string, value: T): Promise<void> {
-  const record: CacheRecord<T> = { key, value: toPlain(value), updatedAt: Date.now() };
+export async function cacheSet<T>(
+  store: CacheStore,
+  key: string,
+  value: T,
+  scope = getCacheScope(),
+): Promise<void> {
+  const record: CacheRecord<T> = {
+    key: store === 'profile' ? key : scopedKey(key, scope),
+    value: toPlain(value),
+    updatedAt: Date.now(),
+  };
   await runRequest<IDBValidKey>(store, 'readwrite', (objectStore) => objectStore.put(record));
 }
 
-export function cacheGet<T>(store: CacheStore, key: string): Promise<CacheRecord<T> | null> {
+export function cacheGet<T>(
+  store: CacheStore,
+  key: string,
+  scope = getCacheScope(),
+): Promise<CacheRecord<T> | null> {
+  const resolvedKey = store === 'profile' ? key : scopedKey(key, scope);
   return runRequest<CacheRecord<T> | undefined>(store, 'readonly', (objectStore) =>
-    objectStore.get(key),
+    objectStore.get(resolvedKey),
   ).then((record) => record ?? null);
 }
 
@@ -105,7 +147,8 @@ export function cacheList<T>(store: CacheStore): Promise<Array<CacheRecord<T>>> 
 }
 
 export async function cacheRemove(store: CacheStore, key: string): Promise<void> {
-  await runRequest<undefined>(store, 'readwrite', (objectStore) => objectStore.delete(key));
+  const resolvedKey = store === 'profile' ? key : scopedKey(key);
+  await runRequest<undefined>(store, 'readwrite', (objectStore) => objectStore.delete(resolvedKey));
 }
 
 export async function cacheClearStore(store: CacheStore): Promise<void> {

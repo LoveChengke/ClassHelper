@@ -47,7 +47,7 @@ export const createScheduleSchema = z
     message: '结束时间必须晚于开始时间',
     path: ['endTime'],
   })
-  .refine((data) => (data.weekStart ?? 1) <= (data.weekEnd ?? 20), {
+  .refine((data) => data.weekEnd === undefined || (data.weekStart ?? 1) <= data.weekEnd, {
     message: '起始周次不能大于结束周次',
     path: ['weekEnd'],
   });

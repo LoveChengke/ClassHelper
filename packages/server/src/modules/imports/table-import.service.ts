@@ -334,7 +334,16 @@ export async function commitGrades(user: TokenPayload, input: TableCommitInput):
   });
   // 学号在库里已归一化为大写，比对前统一一次
   const byStudentNo = new Map(students.map((item) => [normalizeStudentNo(item.studentNo), item]));
-  const byName = new Map(students.map((item) => [item.name.toLowerCase(), item]));
+  const nameCounts = new Map<string, number>();
+  for (const item of students) {
+    const key = item.name.trim().toLowerCase();
+    nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+  }
+  const byName = new Map(
+    students
+      .filter((item) => nameCounts.get(item.name.trim().toLowerCase()) === 1)
+      .map((item) => [item.name.trim().toLowerCase(), item]),
+  );
   const courses = await prisma.course.findMany({
     where: { classId },
     select: { id: true, name: true, teacherId: true },
@@ -370,9 +379,19 @@ export async function commitGrades(user: TokenPayload, input: TableCommitInput):
       errors.push({ row: rowNumber, message: '缺少学生标识（学号与姓名至少填写一个）' });
       continue;
     }
+    if (
+      !byStudentNo.has(normalizeStudentNo(studentNo)) &&
+      (nameCounts.get(name.trim().toLowerCase()) ?? 0) > 1
+    ) {
+      errors.push({
+        row: rowNumber,
+        message: `该班有 ${nameCounts.get(name.trim().toLowerCase())} 个同名同学「${name}」，请填写正确学号`,
+      });
+      continue;
+    }
     const student =
       (studentNo ? byStudentNo.get(normalizeStudentNo(studentNo)) : undefined) ??
-      (name ? byName.get(name.toLowerCase()) : undefined);
+      (name ? byName.get(name.trim().toLowerCase()) : undefined);
     if (!student) {
       errors.push({ row: rowNumber, message: `找不到该班学生：${studentNo || name}` });
       continue;
@@ -492,7 +511,8 @@ export async function commitStudents(user: TokenPayload, input: TableCommitInput
   const classByName = new Map<string, { id: string; name: string }>();
   for (const item of allClasses) {
     const key = item.name.toLowerCase();
-    if (classByName.has(key)) classByName.delete(key); // 重名 → 标记为不可用
+    if (classByName.has(key))
+      classByName.delete(key); // 重名 → 标记为不可用
     else classByName.set(key, item);
   }
 
@@ -555,10 +575,7 @@ export async function commitStudents(user: TokenPayload, input: TableCommitInput
       }
       if (existing.classId !== classId) {
         // 换班要留痕，与手动调班同一种历史
-        const [from, to] = await Promise.all([
-          classNameOf(existing.classId),
-          classNameOf(classId),
-        ]);
+        const [from, to] = await Promise.all([classNameOf(existing.classId), classNameOf(classId)]);
         await prisma.studentClassTransfer.create({
           data: {
             studentId: existing.id,
@@ -681,7 +698,9 @@ export async function commitTeachers(user: TokenPayload, input: TableCommitInput
     errors,
     warnings,
   };
-  logger.info(`教师名单导入：模式=${input.mode} 新增=${inserted} 更新=${updated} 跳过=${skipped} 失败=${errors.length}`);
+  logger.info(
+    `教师名单导入：模式=${input.mode} 新增=${inserted} 更新=${updated} 跳过=${skipped} 失败=${errors.length}`,
+  );
   return result;
 }
 
@@ -698,7 +717,10 @@ export async function commitTeachers(user: TokenPayload, input: TableCommitInput
  * 后面几行指向的还是同一个账号（`useTeacherNo` 打开时按工号匹配，关闭时按姓名唯一匹配），
  * 因此"班主任同时是科任老师"只会有一条教师记录，权限在 `resolveClassRole` 里合并。
  */
-export async function commitClassTeachers(user: TokenPayload, input: TableCommitInput): Promise<ImportResult> {
+export async function commitClassTeachers(
+  user: TokenPayload,
+  input: TableCommitInput,
+): Promise<ImportResult> {
   await assertImportAllowed(user, undefined, 'classTeachers');
   const buffer = decodeBase64(input.contentBase64);
   const parsed = parseTable(buffer, input.fileName);
@@ -891,12 +913,13 @@ async function classNameOf(classId: string | null): Promise<string> {
   return record?.name ?? '';
 }
 
-/** 角色列解析：只认「管理员」类词；其余（含空）返回 null 交给调用方取默认值 */
+/** 只接受明确的角色值；空值或未识别值保留原角色，避免意外降级。 */
 function parseTeacherRole(cell: string): 'TEACHER' | 'ADMIN' | null {
   const value = cell.trim().toUpperCase();
   if (!value) return null;
   if (value === 'ADMIN' || cell.includes('管理员') || value === '管理员') return 'ADMIN';
-  return 'TEACHER';
+  if (value === 'TEACHER' || value === '教师' || value === '老师') return 'TEACHER';
+  return null;
 }
 
 /** 班级任课老师的角色列：班主任 / 科任 */

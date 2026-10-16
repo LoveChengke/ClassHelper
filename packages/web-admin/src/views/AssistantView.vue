@@ -27,7 +27,7 @@ import UrgentClassWarning from '@/components/UrgentClassWarning.vue';
  * 三条边界（与服务端 `modules/ai/ai.service.ts` 的设计一一对应）：
  * 1. 助手**只解析、不写业务表**：`POST /ai/interpret` 返回的是结构化参数与中文预览，
  *    真正发布走的仍是既有端点（`POST /homeworks` / `/notifications` / `/calls`）——
- *    于是科目权限断言、上课时段紧急通知保护、ClassIsland 推送全部自动复用，不会另开一条旁路。
+ *    于是科目权限断言、上课时段紧急通知保护全部自动复用，不会另开一条旁路。
  * 2. **参数可改**：模型的输出不可信（服务端自己也会用同一份 zod 再校验一遍），
  *    所以解析结果一律填进表单让老师过目、修改，而不是直接提交。
  * 3. **教师不读配置**：`GET /ai/settings` 要 `ai:manage`，教师读会 403 且响应拦截器会弹一条错误提示。
@@ -102,6 +102,7 @@ const rules = computed<FormRules>(() => {
   }
   if (action === 'call_student') {
     base.studentId = [{ required: true, message: '请选择要叫的同学', trigger: 'change' }];
+    base.message = [{ required: true, whitespace: true, message: '请填写叫人消息', trigger: 'blur' }];
   }
   return base;
 });
@@ -312,7 +313,7 @@ function onUrgentCancelled(): void {
   publishError.value = '已取消：正在上课，紧急通知需要二次确认';
 }
 
-/** 真正落库：复用既有的发布端点（权限断言 / 上课保护 / ClassIsland 推送都在服务端） */
+/** 真正落库：复用既有的发布端点（权限断言 / 上课保护 都在服务端） */
 async function publishOnce(action: AiInterpretResult['action'], confirmDuringClass: boolean): Promise<void> {
   if (action === 'create_homework') {
     await homeworkApi.create({
@@ -430,7 +431,9 @@ function goSettings(): void {
       <div>
         <h2 class="page-title">AI 助手</h2>
         <p class="page-subtitle">
-          用一句话说清要做什么，助手解析成可修改的草稿；<b>确认发布后</b>才会真正发到班级
+          用一句话说清要做什么，助手解析成可修改的草稿；
+          <b>确认发布后</b>
+          才会真正发到班级
         </p>
       </div>
     </div>
@@ -469,9 +472,7 @@ function goSettings(): void {
         <template #header>
           <div class="result-header">
             <span class="result-title">{{ actionLabel }}</span>
-            <el-tag :type="confidenceType" size="small" effect="light">
-              可信度 {{ confidencePercent }}
-            </el-tag>
+            <el-tag :type="confidenceType" size="small" effect="light">可信度 {{ confidencePercent }}</el-tag>
           </div>
         </template>
 
@@ -532,7 +533,12 @@ function goSettings(): void {
             <template v-if="result.action === 'create_homework'">
               <el-form-item label="科目">
                 <el-select v-model="form.courseId" clearable placeholder="不指定科目" class="result-field">
-                  <el-option v-for="item in courseOptions" :key="item.id" :label="item.name" :value="item.id" />
+                  <el-option
+                    v-for="item in courseOptions"
+                    :key="item.id"
+                    :label="item.name"
+                    :value="item.id"
+                  />
                 </el-select>
               </el-form-item>
               <el-form-item label="标题" prop="title">
@@ -596,12 +602,7 @@ function goSettings(): void {
 
           <div class="result-actions">
             <el-button :disabled="publishing" @click="result = null">放弃</el-button>
-            <el-button
-              type="primary"
-              :loading="publishing"
-              data-test="ai-confirm"
-              @click="confirmPublish"
-            >
+            <el-button type="primary" :loading="publishing" data-test="ai-confirm" @click="confirmPublish">
               确认发布
             </el-button>
           </div>
