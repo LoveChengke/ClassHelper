@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
+  getMaxTermWeeks,
   SOCKET_EVENTS,
   SUBJECT_CATALOG,
   WEEKDAYS,
@@ -439,9 +440,9 @@ onUnmounted(() => {
           <el-input v-model="form.location" placeholder="例如 教学楼 A301" />
         </el-form-item>
         <el-form-item label="周次范围">
-          <el-input-number v-model="form.weekStart" :min="1" :max="30" />
+          <el-input-number v-model="form.weekStart" :min="1" :max="weekOptions.at(-1) || getMaxTermWeeks()" />
           <span style="margin: 0 8px">至</span>
-          <el-input-number v-model="form.weekEnd" :min="1" :max="30" />
+          <el-input-number v-model="form.weekEnd" :min="1" :max="weekOptions.at(-1) || getMaxTermWeeks()" />
         </el-form-item>
         <el-form-item label="单双周" prop="weekParity">
           <el-radio-group v-model="form.weekParity">

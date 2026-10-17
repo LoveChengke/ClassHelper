@@ -9,7 +9,7 @@
  *
  * 撤销归档是误操作的退路：把班级与学生还原成在读，同样不删数据。
  */
-import { computed, onMounted, reactive, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   STUDENT_STATUS_LABELS,
@@ -21,6 +21,7 @@ import {
   type ArchivedYearDto,
   type StudentStatus,
 } from '@classhelper/shared';
+import TransferredStudents from '@/components/TransferredStudents.vue';
 import { archiveApi } from '@/api';
 
 const loading = ref(false);
@@ -80,40 +81,6 @@ async function openContent(row: ArchivedClassDto): Promise<void> {
   }
 }
 
-/* ------------------------------------------------------------ 执行归档 */
-
-const createVisible = ref(false);
-const creating = ref(false);
-const createForm = reactive({ enrollmentYear: new Date().getFullYear() - 3, note: '' });
-
-/** 已经归档过的届别（下拉里标出来，避免重复提交） */
-const archivedYears = computed(() => new Set(years.value.map((item) => item.enrollmentYear)));
-
-function openCreate(): void {
-  const suggested = summary.value?.suggestedEnrollmentYears ?? [];
-  createForm.enrollmentYear =
-    suggested.find((year) => !archivedYears.value.has(year)) ?? createForm.enrollmentYear;
-  createForm.note = '';
-  createVisible.value = true;
-}
-
-async function submitCreate(): Promise<void> {
-  creating.value = true;
-  try {
-    const result = await archiveApi.create({
-      enrollmentYear: createForm.enrollmentYear,
-      ...(createForm.note.trim() ? { note: createForm.note.trim() } : {}),
-    });
-    ElMessage.success(
-      `${result.name} 已归档：${result.classCount} 个班级、${result.studentCount} 名毕业生、${result.transferredCount} 名转出`,
-    );
-    createVisible.value = false;
-    await loadYears();
-  } finally {
-    creating.value = false;
-  }
-}
-
 /** 撤销归档：班级与学生回到在读，不删任何数据 */
 async function undo(row: ArchivedYearDto): Promise<void> {
   await ElMessageBox.confirm(
@@ -133,6 +100,7 @@ onMounted(loadYears);
 
 <template>
   <div class="page">
+    <TransferredStudents />
     <div class="page-header">
       <div>
         <h2 class="page-title">毕业归档</h2>
@@ -144,7 +112,6 @@ onMounted(loadYears);
       </div>
       <div class="toolbar">
         <el-button :icon="'Refresh'" :loading="loading" @click="loadYears">刷新</el-button>
-        <el-button type="primary" :icon="'FolderAdd'" @click="openCreate">归档届别</el-button>
       </div>
     </div>
 
@@ -323,35 +290,6 @@ onMounted(loadYears);
     </el-drawer>
 
     <!-- 执行归档 -->
-    <el-dialog v-model="createVisible" title="归档一个届别" width="520px">
-      <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 12px">
-        <template #title>归档不删数据</template>
-        <template #default>
-          该届的班级会从常规列表里隐去、在读学生标记为「已毕业」；
-          作业、通知、成绩全部原样保留，可在归档详情里查看。填错届别可以用「撤销归档」还原。
-        </template>
-      </el-alert>
-      <el-form label-width="100px">
-        <el-form-item label="届别（入学年）">
-          <el-select v-model="createForm.enrollmentYear" filterable allow-create style="width: 100%">
-            <el-option
-              v-for="year in summary?.suggestedEnrollmentYears ?? []"
-              :key="year"
-              :label="`${year} 级${archivedYears.has(year) ? '（已归档）' : ''}`"
-              :value="year"
-              :disabled="archivedYears.has(year)"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="createForm.note" maxlength="200" placeholder="例如：2026 年 6 月毕业（可选）" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="createVisible = false">取消</el-button>
-        <el-button type="primary" :loading="creating" @click="submitCreate">确认归档</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 

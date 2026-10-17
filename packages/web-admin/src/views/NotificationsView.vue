@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
+  dayKeyLocal,
   CALL_QUICK_PHRASES,
   NOTIFICATION_PRIORITIES,
   PRIORITY_LABELS,
@@ -454,20 +455,27 @@ onUnmounted(() => {
           />
         </el-select>
         <!-- 按天归档：只列当前班级/优先级下真实存在的日期与条数 -->
-        <el-select
+        <el-date-picker
           v-model="filter.date"
+          type="date"
+          value-format="YYYY-MM-DD"
           placeholder="按天归档"
           clearable
-          style="width: 170px"
           @change="refreshList"
         >
-          <el-option
-            v-for="item in days"
-            :key="item.date"
-            :label="`${item.date}（${item.count}）`"
-            :value="item.date"
-          />
-        </el-select>
+          <template #default="cell">
+            <span
+              :title="
+                days.some((d) => d.date === dayKeyLocal(cell.date))
+                  ? `${days.find((d) => d.date === dayKeyLocal(cell.date))?.count} 条通知`
+                  : ''
+              "
+            >
+              {{ cell.text }}
+              <b v-if="days.some((d) => d.date === dayKeyLocal(cell.date))">·</b>
+            </span>
+          </template>
+        </el-date-picker>
         <!-- 按发布人归档：跟着班级/优先级/日期收敛 -->
         <el-select
           v-model="filter.createdBy"

@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
   SOCKET_EVENTS,
-  MAX_TERM_WEEK,
+  getMaxTermWeeks,
   SUBJECT_CATALOG,
   currentAcademicYearStart,
   formatClassName,
@@ -18,7 +18,7 @@ import {
   type UpdateClassAccountRequest,
   type UserDto,
 } from '@classhelper/shared';
-import { classApi, courseApi, teacherApi } from '@/api';
+import { classApi, courseApi, teacherApi, termApi } from '@/api';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useResponsive } from '@/composables/useResponsive';
@@ -37,6 +37,10 @@ const detailColumns = computed(() => (isMobile.value ? 1 : 3));
 
 const loading = ref(false);
 const classes = ref<ClassDto[]>([]);
+const maxTermWeeks = ref(getMaxTermWeeks());
+onMounted(async () => {
+  maxTermWeeks.value = getMaxTermWeeks((await termApi.get()).maxTermWeeks);
+});
 const keyword = ref('');
 
 async function loadClasses(): Promise<void> {
@@ -611,9 +615,9 @@ onUnmounted(() => {
           </span>
         </el-form-item>
         <el-form-item label="学期周数">
-          <el-input-number v-model="form.termWeeks" :min="1" :max="MAX_TERM_WEEK" :step="1" />
+          <el-input-number v-model="form.termWeeks" :min="1" :max="maxTermWeeks" :step="1" />
           <span class="text-muted ml-8">
-            本学期一共多少教学周（默认 20，最多 {{ MAX_TERM_WEEK }} 周）；课表周次选择与默认结束周都按它来
+            本学期一共多少教学周（默认 20，最多 {{ maxTermWeeks }} 周）；课表周次选择与默认结束周都按它来
           </span>
         </el-form-item>
       </el-form>

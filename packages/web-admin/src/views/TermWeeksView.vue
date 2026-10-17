@@ -12,10 +12,11 @@
  *
  * `classId` 留空 = 全校默认；某个班有自己的配置时优先用它。
  */
+import PromotionSettings from '@/components/PromotionSettings.vue';
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
-  MAX_TERM_WEEK,
+  getMaxTermWeeks,
   validateTermWeeks,
   isDayKey,
   type ClassDto,
@@ -34,6 +35,7 @@ const scope = ref('');
 /** 本地编辑中的逐周区间（保存前的草稿） */
 const weeks = ref<TermWeekDto[]>([]);
 const termStartDate = ref('');
+const maxTermWeeks = ref(getMaxTermWeeks());
 
 const scopeLabel = computed(() =>
   scope.value ? (classes.value.find((item) => item.id === scope.value)?.name ?? scope.value) : '全校默认',
@@ -43,6 +45,7 @@ const scopeLabel = computed(() =>
 const dirty = computed(() => {
   const current = term.value;
   if (!current) return false;
+  if (maxTermWeeks.value !== getMaxTermWeeks(current.maxTermWeeks)) return true;
   if (termStartDate.value !== current.termStartDate) return true;
   if (weeks.value.length !== current.weeks.length) return true;
   return weeks.value.some((week, index) => {
@@ -64,6 +67,7 @@ async function load(): Promise<void> {
     term.value = result;
     weeks.value = result.weeks.map((item) => ({ ...item }));
     termStartDate.value = result.termStartDate;
+    maxTermWeeks.value = getMaxTermWeeks(result.maxTermWeeks);
   } finally {
     loading.value = false;
   }
@@ -82,9 +86,10 @@ async function autoGenerate(): Promise<void> {
   saving.value = true;
   try {
     const result = await termApi.auto({
+      ...(scope.value ? {} : { maxTermWeeks: maxTermWeeks.value }),
       classId: scope.value || null,
       termStartDate: termStartDate.value,
-      maxWeek: term.value?.maxWeek ?? MAX_TERM_WEEK,
+      maxWeek: term.value?.maxWeek ?? getMaxTermWeeks(),
     });
     term.value = result;
     weeks.value = result.weeks.map((item) => ({ ...item }));
@@ -112,6 +117,7 @@ async function save(): Promise<void> {
   saving.value = true;
   try {
     const result = await termApi.save({
+      ...(scope.value ? {} : { maxTermWeeks: maxTermWeeks.value }),
       classId: scope.value || null,
       termStartDate: termStartDate.value,
       weeks: weeks.value.map((week) => ({
@@ -170,6 +176,10 @@ onMounted(async () => {
 
 <template>
   <div class="page">
+    <PromotionSettings />
+    <el-form-item v-if="!scope" label="全校学期总周数">
+      <el-input-number v-model="maxTermWeeks" :min="1" :max="60" />
+    </el-form-item>
     <div class="page-header">
       <div>
         <h2 class="page-title">学期周次</h2>

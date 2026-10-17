@@ -97,6 +97,21 @@ interface MenuItem {
 }
 
 const menuItems: MenuItem[] = [
+  {
+    path: '/plan-editor',
+    title: '时间表与课表编辑',
+    icon: 'Calendar',
+    roles: ['ADMIN', 'TEACHER'],
+    permission: 'schedule:read',
+  },
+  { path: '/roster', title: '学生名单', icon: 'User', roles: ['TEACHER'], permission: 'roster:read' },
+  {
+    path: '/system-settings',
+    title: '系统设置',
+    icon: 'Setting',
+    roles: ['ADMIN', 'TEACHER'],
+    permission: 'system:manage',
+  },
   { path: '/dashboard', title: '仪表盘', icon: 'Odometer', roles: ['ADMIN', 'TEACHER'] },
   { path: '/classes', title: '班级管理', icon: 'School', roles: ['ADMIN'] },
   { path: '/students', title: '学生管理', icon: 'User', roles: ['ADMIN'] },

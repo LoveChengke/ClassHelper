@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useRoute } from 'vue-router';
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
@@ -17,6 +18,9 @@ import {
 import { callApi, classApi, studentApi } from '@/api';
 import TableImportDialog from '@/components/TableImportDialog.vue';
 
+const readOnly = computed(() => useRouteName.value === 'roster');
+const useRouteName = computed(() => route.name);
+const route = useRoute();
 const loading = ref(false);
 const students = ref<StudentDto[]>([]);
 const classes = ref<ClassDto[]>([]);
@@ -24,6 +28,26 @@ const filter = reactive({ classId: '', keyword: '', status: '' as '' | StudentSt
 /** 表格勾选（批量调班 / 批量转出用） */
 const selection = ref<StudentDto[]>([]);
 
+function exportRoster() {
+  const lines = [
+    ['学号', '姓名', '班级', '状态'],
+    ...students.value.map((s) => [s.studentNo, s.name, s.className || '', STUDENT_STATUS_LABELS[s.status]]),
+  ];
+  const url = URL.createObjectURL(
+    new Blob(
+      [
+        '\ufeff' +
+          lines.map((r) => r.map((v) => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\n'),
+      ],
+      { type: 'text/csv;charset=utf-8' },
+    ),
+  );
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '学生名单.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
 const classOptions = computed(() => classes.value);
 
 async function loadClasses(): Promise<void> {
@@ -304,8 +328,9 @@ async function submitCall(): Promise<void> {
           @clear="loadStudents"
         />
         <el-button :icon="'Search'" @click="loadStudents">查询</el-button>
-        <el-button type="primary" :icon="'Plus'" @click="openCreate">新建学生</el-button>
-        <el-button type="warning" :icon="'Document'" @click="openImport">导入名单</el-button>
+        <el-button @click="exportRoster">导出名单</el-button>
+        <el-button v-if="!readOnly" type="primary" :icon="'Plus'" @click="openCreate">新建学生</el-button>
+        <el-button v-if="!readOnly" type="warning" :icon="'Document'" @click="openImport">导入名单</el-button>
       </div>
     </div>
 
@@ -313,7 +338,7 @@ async function submitCall(): Promise<void> {
       <template #header>
         <div class="card-header">
           <span>共 {{ students.length }} 名学生</span>
-          <div class="toolbar">
+          <div v-if="!readOnly" class="toolbar">
             <el-button
               type="primary"
               plain
@@ -343,7 +368,7 @@ async function submitCall(): Promise<void> {
         empty-text="暂无学生数据"
         @selection-change="(rows: StudentDto[]) => (selection = rows)"
       >
-        <el-table-column type="selection" width="46" />
+        <el-table-column v-if="!readOnly" type="selection" width="46" />
         <el-table-column prop="studentNo" label="学号" width="130" />
         <el-table-column prop="name" label="姓名" width="110" />
         <el-table-column label="性别" width="80">
@@ -370,7 +395,7 @@ async function submitCall(): Promise<void> {
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ formatDate(row.createdAt, true) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="330" fixed="right">
+        <el-table-column v-if="!readOnly" label="操作" width="330" fixed="right">
           <template #default="{ row }">
             <el-button link type="success" @click="openCall(row)">叫人</el-button>
             <el-button link type="primary" @click="openTransfer([row])">调班</el-button>

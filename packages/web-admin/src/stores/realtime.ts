@@ -48,6 +48,9 @@ export const useRealtimeStore = defineStore('realtime', () => {
   }
 
   function bindEvents(instance: Socket): void {
+    instance.on(SOCKET_EVENTS.clientReleaseProgress, (payload) => {
+      dispatch(SOCKET_EVENTS.clientReleaseProgress, payload);
+    });
     instance.on('connect', () => {
       connected.value = true;
       connecting.value = false;

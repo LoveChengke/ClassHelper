@@ -13,10 +13,11 @@
  *   所以"下发成功"不等于"已经执行"——它只是排进了队列；
  * - 更新先下载校验，再按服务端指定的立即 / 放学后 / 空闲五分钟策略安装。
  *
- * 权限：查看 `client:read`、删除 `client:manage`、更新 `client:update-push`、远控 `remote:control`。
+ * 权限：查看 `client:read`、删除 `client:manage`、更新 `client:update`、远控 `remote:control`。
  * 教师默认可以查看；删除、更新和远控默认只给管理员。无权限的按钮是
  * **禁用 + tooltip 说明**而不是直接隐藏：让老师知道"有这件事、需要权限"，而不是以为系统没有。
  */
+import ReleaseProgress from '@/components/ReleaseProgress.vue';
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
@@ -388,7 +389,7 @@ async function submitCommand(): Promise<void> {
       .slice(0, 8)
       .map((device) => `· ${device.name}（${classLabel(device)}）`)
       .join('\n')}${targets.length > 8 ? `\n· …等共 ${targets.length} 台` : ''}\n\n` +
-    `目标机器屏幕上会弹出确认框，本机用户确认后才会执行；命令 ${commandExpireText.value}内有效，过期自动失效。` +
+    `目标机器收到后立即执行，不再等待教室确认；命令 ${commandExpireText.value}内有效，过期自动失效。` +
     (note ? `\n备注：${note}` : '');
 
   try {
@@ -635,6 +636,7 @@ const deviceEmptyText = computed(() =>
 
 <template>
   <div class="page">
+    <ReleaseProgress v-if="can('client:update')" />
     <div class="page-header">
       <div>
         <h2 class="page-title">客户端设备</h2>
@@ -673,15 +675,15 @@ const deviceEmptyText = computed(() =>
 
       <div class="client-actions">
         <el-tooltip
-          :disabled="can('client:update-push')"
-          content="当前账号没有「向客户端统一下发更新」权限（client:update-push）"
+          :disabled="can('client:update')"
+          content="当前账号没有「向客户端统一下发更新」权限（client:update）"
           placement="top"
         >
           <span>
             <el-button
               type="primary"
               :icon="'Upload'"
-              :disabled="!can('client:update-push')"
+              :disabled="!can('client:update')"
               @click="openUpdateDialog"
             >
               一键推送更新
@@ -698,16 +700,12 @@ const deviceEmptyText = computed(() =>
         </el-tooltip>
 
         <el-tooltip
-          :disabled="can('client:update-push')"
-          content="当前账号没有「管理安装包」权限（client:update-push）"
+          :disabled="can('client:update')"
+          content="当前账号没有「管理安装包」权限（client:update）"
           placement="top"
         >
           <span>
-            <el-button
-              :icon="'FolderOpened'"
-              :disabled="!can('client:update-push')"
-              @click="openReleasesDrawer"
-            >
+            <el-button :icon="'FolderOpened'" :disabled="!can('client:update')" @click="openReleasesDrawer">
               安装包管理
             </el-button>
           </span>
@@ -783,7 +781,7 @@ const deviceEmptyText = computed(() =>
               <div v-if="row.pendingCommand.payload" class="client-sub text-muted">
                 {{ row.pendingCommand.payload }}
               </div>
-              <div class="client-sub text-muted">等待确认（本机用户点确认后才执行）</div>
+              <div class="client-sub text-muted">等待设备接收并执行</div>
             </template>
             <span v-else class="text-muted">—</span>
           </template>
@@ -810,7 +808,7 @@ const deviceEmptyText = computed(() =>
                 row.lastCommand.result ||
                 (row.lastCommand.expiresAt && Date.parse(row.lastCommand.expiresAt) < Date.now()
                   ? '已过期（设备未回执）'
-                  : '等待设备接收或本机确认')
+                  : '等待设备接收并回执')
               }}
             </template>
             <span v-else>—</span>
@@ -1010,7 +1008,7 @@ const deviceEmptyText = computed(() =>
         type="warning"
         :closable="false"
         show-icon
-        title="目标机器屏幕上会弹出确认框，本机用户确认后才会执行"
+        title="目标机器收到后立即执行，不再等待教室确认"
       >
         <template #default>
           命令 {{ commandExpireText }}内有效，过期自动失效（机器离线几天后开机也不会突然关机）。
@@ -1024,7 +1022,7 @@ const deviceEmptyText = computed(() =>
           :loading="commandDialog.submitting"
           @click="submitCommand"
         >
-          下发并二次确认
+          确认下发
         </el-button>
       </template>
     </el-dialog>
@@ -1072,7 +1070,7 @@ const deviceEmptyText = computed(() =>
             class="client-release-submit"
             :icon="'Upload'"
             :loading="releasesDrawer.fetching"
-            :disabled="!can('client:update-push')"
+            :disabled="!can('client:update')"
             @click="fetchRelease"
           >
             拉取并登记
@@ -1105,7 +1103,7 @@ const deviceEmptyText = computed(() =>
             class="client-release-submit"
             :icon="'FolderAdd'"
             :loading="releasesDrawer.registering"
-            :disabled="!can('client:update-push')"
+            :disabled="!can('client:update')"
             @click="registerRelease"
           >
             登记
@@ -1144,17 +1142,12 @@ const deviceEmptyText = computed(() =>
               <el-button
                 link
                 type="primary"
-                :disabled="!row.fileReady || !can('client:update-push')"
+                :disabled="!row.fileReady || !can('client:update')"
                 @click="useReleaseAsTarget(row)"
               >
                 设为更新目标
               </el-button>
-              <el-button
-                link
-                type="danger"
-                :disabled="!can('client:update-push')"
-                @click="removeRelease(row)"
-              >
+              <el-button link type="danger" :disabled="!can('client:update')" @click="removeRelease(row)">
                 删除
               </el-button>
             </template>

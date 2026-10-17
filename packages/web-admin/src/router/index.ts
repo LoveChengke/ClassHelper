@@ -15,6 +15,29 @@ const routes: RouteRecordRaw[] = [
     redirect: '/dashboard',
     children: [
       {
+        path: 'plan-editor',
+        name: 'plan-editor',
+        component: () => import('@/views/PlanEditorView.vue'),
+        meta: {
+          title: '时间表与课表编辑',
+          icon: 'Calendar',
+          roles: ['ADMIN', 'TEACHER'],
+          permission: 'schedule:read',
+        },
+      },
+      {
+        path: 'roster',
+        name: 'roster',
+        component: () => import('@/views/StudentsView.vue'),
+        meta: { title: '学生名单', icon: 'User', roles: ['TEACHER'], permission: 'roster:read' },
+      },
+      {
+        path: 'system-settings',
+        name: 'system-settings',
+        component: () => import('@/views/SystemSettingsView.vue'),
+        meta: { title: '系统设置', icon: 'Setting', permission: 'system:manage' },
+      },
+      {
         path: 'dashboard',
         name: 'dashboard',
         component: () => import('@/views/DashboardView.vue'),

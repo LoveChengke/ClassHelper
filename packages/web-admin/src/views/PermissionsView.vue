@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { PermissionScope as ContractPermissionScope } from '@classhelper/shared';
+
 /**
  * 权限组管理（对应需求「允许 admin 设置各用户权限，或创建权限组」）。
  *
@@ -119,6 +121,8 @@ const groupDialog = reactive({
   id: '',
   name: '',
   description: '',
+  scope: 'SELF_CLASS' as ContractPermissionScope,
+  scopeValue: '',
   keys: [] as PermissionKey[],
   saving: false,
 });
@@ -131,6 +135,8 @@ function openCreateGroup(): void {
   groupDialog.id = '';
   groupDialog.name = '';
   groupDialog.description = '';
+  groupDialog.scope = 'SELF_CLASS';
+  groupDialog.scopeValue = '';
   groupDialog.keys = [];
   groupDialog.visible = true;
 }
@@ -139,6 +145,8 @@ function openEditGroup(group: PermissionGroupDto): void {
   groupDialog.id = group.id;
   groupDialog.name = group.name;
   groupDialog.description = group.description;
+  groupDialog.scope = group.scope ?? 'SELF_CLASS';
+  groupDialog.scopeValue = group.scopeValue ?? '';
   // 复制一份：取消/关闭时不能污染表格里的数据
   groupDialog.keys = [...group.keys];
   groupDialog.visible = true;
@@ -200,6 +208,8 @@ async function submitGroup(): Promise<void> {
     const payload = {
       name,
       description: groupDialog.description.trim(),
+      scope: groupDialog.scope,
+      scopeValue: groupDialog.scopeValue,
       // 传了就**整体替换**（服务端契约），所以这里始终带上完整勾选结果
       keys: [...groupDialog.keys],
     };
@@ -433,6 +443,17 @@ async function submitAssign(): Promise<void> {
             show-word-limit
             placeholder="例如：教务协助、机房值班"
           />
+        </el-form-item>
+        <el-form-item label="数据范围">
+          <el-select v-model="groupDialog.scope">
+            <el-option label="关联班级" value="SELF_CLASS" />
+            <el-option label="年级" value="GRADE" />
+            <el-option label="部（多个年级）" value="DIVISION" />
+            <el-option label="全校" value="ALL" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="范围值">
+          <el-input v-model="groupDialog.scopeValue" placeholder="高一 或 高一,高二,高三；空年级范围不授权" />
         </el-form-item>
         <el-form-item label="描述">
           <el-input
