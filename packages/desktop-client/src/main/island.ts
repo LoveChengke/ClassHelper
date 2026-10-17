@@ -208,7 +208,50 @@ class IslandController {
   private residentWasEnabled = false;
   private residentFaded = false;
   private residentTouchUntil = 0;
+  private residentMotionUntil = 0;
   private residentControl: { x: number; y: number; width: number; height: number } | null = null;
+  private residentShapeTimer: ReturnType<typeof setTimeout> | null = null;
+  private residentShaped = false;
+  /** 触摸屏的透明画布不应吞掉桌面：动画时放开绘制区，停稳后只保留岛体及投影区域。 */
+  private syncResidentShape(transition = false): void {
+    if (!this.win || this.win.isDestroyed() || process.platform !== 'win32') return;
+    if (this.residentShapeTimer) clearTimeout(this.residentShapeTimer);
+    this.residentShapeTimer = null;
+    if (!this.residentEnabled || !this.touchMode || this.editingLayout) {
+      if (this.residentShaped) this.win.setShape([]);
+      this.residentShaped = false;
+      return;
+    }
+    this.residentShaped = true;
+    const apply = () => {
+      this.residentShapeTimer = null;
+      const r = this.hitRect;
+      if (
+        !r ||
+        !this.win ||
+        this.win.isDestroyed() ||
+        !this.residentEnabled ||
+        !this.touchMode ||
+        this.editingLayout
+      )
+        return;
+      this.win.setShape([
+        {
+          x: Math.max(0, Math.floor(r.x - 8)),
+          y: Math.max(0, Math.floor(r.y - 8)),
+          width: Math.ceil(r.width + 16),
+          height: Math.ceil(r.height + 16),
+        },
+      ]);
+    };
+    if (transition) {
+      this.win.setShape([]);
+      this.residentShapeTimer = setTimeout(
+        apply,
+        this.appearance.animations ? 750 / this.appearance.speed : 50,
+      );
+    } else apply();
+  }
   getEditingLayout(): boolean {
     return this.editingLayout;
   }
@@ -227,9 +270,10 @@ class IslandController {
       this.emit();
     }
     this.win?.webContents.send('island:layout', getConfig().islandLayout);
+    this.syncResidentShape(true);
     this.syncWindow();
   }
-  /** 常驻岛的离散收起：先隐藏，等两端内容尺寸防抖完成后以常态尺寸重新显示。 */
+  /** 仅用于首次切换布局、启动与退出编辑；日常常驻岛开合保持窗口可见。 */
   private settleCustomLayout(): void {
     if (this.layoutSettleTimer) clearTimeout(this.layoutSettleTimer);
     this.settlingLayout = true;
@@ -246,6 +290,7 @@ class IslandController {
     this.layoutSettleTimer = null;
     this.settlingLayout = false;
     this.editingLayout = enabled;
+    this.syncResidentShape();
     if (enabled) saveConfig({ islandLayout: { ...getConfig().islandLayout, layout: 'custom' } });
     this.win?.webContents.send('island:layout', getConfig().islandLayout);
     this.win?.webContents.send('island:editing', enabled);
@@ -277,13 +322,34 @@ class IslandController {
     }
   }
   reportCustomSize(value: { width: number; height: number }): void {
-    if (!this.customLayout || !Number.isFinite(value?.width) || !Number.isFinite(value?.height)) return;
+    if (
+      !this.customLayout ||
+      !Number.isFinite(value?.width) ||
+      !Number.isFinite(value?.height) ||
+      value.width <= 0 ||
+      value.height <= 0
+    )
+      return;
     this.customDesiredSize = { ...value };
     if (this.editingLayout) return;
+    if (this.residentEnabled) {
+      if (this.customTimer) clearTimeout(this.customTimer);
+      this.customTimer = null;
+      // 常驻岛只报告目标几何；窗口画布固定，禁止逐帧 setBounds 和两端尺寸防抖互相追赶。
+      if (
+        this.customSize.width !== Math.ceil(value.width) ||
+        this.customSize.height !== Math.ceil(value.height)
+      )
+        this.residentMotionUntil =
+          Date.now() + (this.appearance.animations ? 600 / this.appearance.speed : 0);
+      this.customSize = { width: Math.ceil(value.width), height: Math.ceil(value.height) };
+      this.syncResidentShape(true);
+      return;
+    }
     if (this.customTimer) clearTimeout(this.customTimer);
     this.customTimer = setTimeout(() => {
       this.customTimer = null;
-      if (!this.win || !this.customLayout || this.editingLayout) return;
+      if (!this.win || !this.customLayout || this.editingLayout || this.residentEnabled) return;
       const area = screen.getDisplayNearestPoint(this.win.getBounds()).workArea;
       const current = this.win.getBounds();
       const width = Math.max(40, Math.min(Math.ceil(value.width), area.width - 2 * ISLAND_SHADOW_PAD));
@@ -425,6 +491,12 @@ class IslandController {
     // 默认整块窗口不接收鼠标（避免大面积透明窗口吞掉桌面点击），
     // 只有指针进入"岛"的可见区域时，渲染进程才通过 island:set-interactive 打开命中。
     win.setIgnoreMouseEvents(true, { forward: true });
+    const notifyVisibility = (visible: boolean) => {
+      if (this.win === win && this.ready && !this.recovering && !win.webContents.isDestroyed())
+        win.webContents.send('island:visibility', visible);
+    };
+    win.on('show', () => notifyVisibility(true));
+    win.on('hide', () => notifyVisibility(false));
     // 光标命中兜底轮询：即使 forward 的 mousemove 丢失，也能按光标位置自行校正命中
     this.startHitPoll();
     win.on('closed', () => {
@@ -1047,6 +1119,8 @@ class IslandController {
   }
 
   destroy(): void {
+    if (this.residentShapeTimer) clearTimeout(this.residentShapeTimer);
+    this.residentShapeTimer = null;
     this.clearTimers();
     if (this.layoutSettleTimer) clearTimeout(this.layoutSettleTimer);
     this.layoutSettleTimer = null;
@@ -1231,9 +1305,14 @@ class IslandController {
 
   /** 状态变更：先通知渲染进程，再驱动窗口尺寸/透明度动画 */
   private setState(patch: Partial<IslandState>, options: { skipWindow?: boolean } = {}): void {
-    if (this.residentEnabled && this.state.mode === 'expanded' && patch.mode && patch.mode !== 'expanded')
-      this.settleCustomLayout();
+    if (
+      this.residentEnabled &&
+      patch.mode &&
+      (patch.mode === 'expanded') !== (this.state.mode === 'expanded')
+    )
+      this.residentMotionUntil = Date.now() + (this.appearance.animations ? 600 / this.appearance.speed : 0);
     this.state = { ...this.state, ...patch, updatedAt: Date.now() };
+    if (this.residentEnabled) this.syncResidentShape(true);
     // 离开展开态就把"展开更多"复位：下次再点开时默认回到"只显示前三条"
     if (this.state.mode !== 'expanded') this.state.listExpanded = false;
     // 列表形态比普通展开卡高：窗口要**先**长高，卡片才开始形变，否则底部会被窗口裁掉
@@ -1281,7 +1360,8 @@ class IslandController {
         !(process.env.ELECTRON_SMOKE_TEST === '1' && process.env.ELECTRON_SMOKE_MODE !== 'visual')
       )
         this.win.showInactive();
-      this.setInteractive(true, '自定义组件栏');
+      if (this.residentEnabled) this.syncHitFromCursor();
+      else this.setInteractive(true, '自定义组件栏');
       return;
     }
 
@@ -1344,6 +1424,14 @@ class IslandController {
    * - 触摸模式：贴合当前形态（岛体 + 2×阴影留白），否则大包围盒的透明区会吞掉桌面的触摸。
    */
   private windowBox(): { width: number; height: number } {
+    if (this.residentEnabled && this.win) {
+      const area = this.targetDisplay().workArea;
+      // 与 ClassIsland 一样，让背景/内容在固定画布内过渡。预留一帧绘制边界，避免过冲裁切。
+      return {
+        width: Math.min(960, area.width),
+        height: Math.min(640, Math.max(60, area.height - this.appearance.marginY)),
+      };
+    }
     if (this.customLayout)
       return {
         width: this.customSize.width + 2 * ISLAND_SHADOW_PAD,
@@ -1612,7 +1700,7 @@ class IslandController {
     const next =
       passthrough || this.residentFaded
         ? false
-        : this.touchMode || this.editingLayout || this.customLayout
+        : this.touchMode || this.editingLayout || (this.customLayout && !this.residentEnabled)
           ? true
           : interactive;
     if (this.interactive === next) return;
@@ -1676,6 +1764,7 @@ class IslandController {
       settings.pointerFadeEnabled &&
       !this.editingLayout &&
       Date.now() >= this.residentTouchUntil &&
+      Date.now() >= this.residentMotionUntil &&
       this.state.mode !== 'expanded' &&
       this.isInsideHitRect(point) !== settings.pointerFadeReversed &&
       !overControl;
@@ -1699,6 +1788,7 @@ class IslandController {
   setTouchMode(enabled: boolean): void {
     if (this.touchMode === enabled) return;
     this.touchMode = enabled;
+    this.syncResidentShape();
     logger.info(
       `灵动岛：触摸模式=${enabled}（窗口${enabled ? '贴合岛体并始终接收输入' : '回到固定包围盒穿透'}）`,
     );
@@ -2141,6 +2231,10 @@ export function registerIslandIpc(): void {
   });
   ipcMain.handle('island:edit-layout', () => island.editLayout());
   ipcMain.handle('island:get-editing', () => island.getEditingLayout());
+  ipcMain.handle(
+    'island:get-visible',
+    (event) => event.sender === island.getWindow()?.webContents && (island.getWindow()?.isVisible() ?? false),
+  );
   ipcMain.on('island:resident-control', (event, value) => {
     if (event.sender === island.getWindow()?.webContents) island.setResidentControl(value);
   });

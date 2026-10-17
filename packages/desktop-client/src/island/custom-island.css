@@ -6,7 +6,7 @@
 .custom-card {
   box-sizing: border-box;
   padding: 12px;
-  overflow: auto;
+  overflow: hidden;
   background: var(--custom-color);
   border-radius: var(--custom-radius);
   box-shadow:

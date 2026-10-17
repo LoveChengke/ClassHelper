@@ -15,15 +15,33 @@ export async function verifyResidentSmoke(
 ) {
   const win = island.getWindow()!;
   const originalTouchMode = island.getTouchMode();
+  const originalAppearance = island.getAppearance();
+  island.setAppearance({ animations: true, speed: 1 });
   island.setTouchMode(false);
   island.setHitTestCursor({ x: 0, y: 0 });
   const pause = (ms = 600) => new Promise<void>((resolve) => setTimeout(resolve, ms));
   async function shot(name: string) {
-    if (!process.env.ISLAND_SHOTS_DIR) return;
+    if (!process.env.ISLAND_SHOTS_DIR || process.env.ELECTRON_SMOKE_MODE !== 'visual') return;
     fs.mkdirSync(process.env.ISLAND_SHOTS_DIR, { recursive: true });
     fs.writeFileSync(
       path.join(process.env.ISLAND_SHOTS_DIR, `${name}.png`),
-      (await win.webContents.capturePage()).toPNG(),
+      (
+        await win.webContents.capturePage(
+          island.getEditingLayout()
+            ? undefined
+            : (() => {
+                const r = island.getHitRect();
+                return r
+                  ? {
+                      x: Math.max(0, Math.floor(r.x - 8)),
+                      y: Math.max(0, Math.floor(r.y - 8)),
+                      width: Math.ceil(r.width + 16),
+                      height: Math.ceil(r.height + 16),
+                    }
+                  : undefined;
+              })(),
+        )
+      ).toPNG(),
     );
   }
   const fixture = defaultIslandLayouts();
@@ -140,7 +158,7 @@ export async function verifyResidentSmoke(
       island.getState().mode === 'expanded' &&
       !island.getState().active &&
       (await win.webContents.executeJavaScript(
-        `(() => {const card=document.querySelector('.custom-card');return Boolean(card?.querySelector('.resident-panel-heading')&&card.textContent.includes('今日安排')&&!card.textContent.includes('常驻概览'));})()`,
+        `(() => {const page=document.querySelector('.resident-detail-page.page-active');return Boolean(page?.querySelector('.resident-panel-heading')&&page.textContent.includes('今日安排')&&document.querySelector('.resident-compact-page[inert]'));})()`,
       ))
     );
   });
@@ -188,20 +206,20 @@ export async function verifyResidentSmoke(
       ))
     );
   });
-  await check('点击铃铛展开原通知列表，上课时也可主动查看', async () => {
+  await check('点击铃铛展开通知列表，上课时也可主动查看', async () => {
     await win.webContents.executeJavaScript(`document.querySelector('.resident-bell')?.click()`);
     await pause(1800);
     return (
       island.getState().mode === 'expanded' &&
       (await win.webContents.executeJavaScript(
-        `(() => {const host=document.querySelector('#custom-alert-host');return Boolean(host&&host.getBoundingClientRect().height>0&&host.querySelectorAll('.list-row').length===2&&host.textContent.includes('常驻通知一')&&host.textContent.includes('常驻通知二')&&!document.querySelector('.resident-panel-heading'));})()`,
+        `(() => {const host=document.querySelector('#custom-alert-host');return Boolean(host&&host.getBoundingClientRect().height>0&&host.querySelectorAll('.list-row').length===2&&host.textContent.includes('常驻通知一')&&host.textContent.includes('常驻通知二')&&!host.querySelector('.island-root'));})()`,
       ))
     );
   });
   await shot('resident-notifications');
   await check('收起通知保留铃铛，键盘可重新展开', async () => {
     await win.webContents.executeJavaScript(
-      `document.querySelector('#custom-alert-host .icon-btn')?.click()`,
+      `document.querySelector('.resident-panel-heading .icon-btn')?.click()`,
     );
     await pause(800);
     const collapsed = island.getState().mode === 'pill';
@@ -211,7 +229,7 @@ export async function verifyResidentSmoke(
     await pause();
     return collapsed && island.getState().mode === 'expanded';
   });
-  await check('处理完通知清除铃铛，恢复常驻内容与窗口留白', async () => {
+  await check('处理完通知清除铃铛，恢复40px常驻内容且命中不占整窗', async () => {
     await win.webContents.executeJavaScript(
       `document.querySelector('#custom-alert-host .solid-btn')?.click()`,
     );
@@ -225,8 +243,9 @@ export async function verifyResidentSmoke(
       island.getState().queued.length === 0 &&
       dimensions.empty === true &&
       dimensions.content &&
-      Math.abs(box.width - dimensions.width - 2 * ISLAND_SHADOW_PAD) <= 2 &&
-      Math.abs(box.height - dimensions.height - 2 * ISLAND_SHADOW_PAD) <= 2
+      dimensions.width + 2 * ISLAND_SHADOW_PAD <= box.width &&
+      Math.abs(dimensions.height - 40) <= 1 &&
+      Math.abs((island.getHitRect()?.height ?? 0) - dimensions.height) <= 2
     );
   });
   await check('空闲展开时收到消息返回铃铛提示', async () => {
@@ -238,6 +257,150 @@ export async function verifyResidentSmoke(
     island.handleAction({ action: 'dismiss-all' });
     await pause();
     return collapsed;
+  });
+  await check('常驻岛开合复用固定画布，动画中没有滚动容器或旧胶囊形变', async () => {
+    const bounds = new Set<string>();
+    const timer = setInterval(() => bounds.add(JSON.stringify(win.getBounds())), 20);
+    let result;
+    try {
+      result = await win.webContents.executeJavaScript(`new Promise(resolve => {
+        const frames=[], gaps=[]; let last=performance.now(), count=0;
+        const sample=()=>{
+          const card=document.querySelector('.resident-card'), r=card?.getBoundingClientRect();
+          if(!r){frames.push(false);return;}
+          const nodes=[card,...card.querySelectorAll('*')];
+          frames.push(r.left>=0&&r.top>=0&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1&&nodes.every(n=>!['auto','scroll'].includes(getComputedStyle(n).overflowY)&&!['auto','scroll'].includes(getComputedStyle(n).overflowX)));
+        };
+        const animate=time=>{gaps.push(time-last);last=time;count++;sample();if(time-start<1800)requestAnimationFrame(animate);};
+        const start=performance.now();requestAnimationFrame(animate);
+        window.island.sendAction('expand');setTimeout(()=>window.island.sendAction('collapse'),700);
+        setTimeout(()=>{sample(); const card=document.querySelector('.resident-card');resolve({valid:frames.every(Boolean),count,gaps:gaps.filter(g=>g>0).sort((a,b)=>a-b),height:card.getBoundingClientRect().height,legacy:document.querySelector('.island-root')?.getBoundingClientRect().height===0});},1900);
+      })`);
+    } finally {
+      clearInterval(timer);
+    }
+    if (process.env.ISLAND_SHOTS_DIR)
+      fs.writeFileSync(
+        path.join(
+          process.env.ISLAND_SHOTS_DIR,
+          `resident-animation-metrics-${process.env.ELECTRON_SMOKE_MODE}.json`,
+        ),
+        JSON.stringify({ ...result, windowRects: bounds.size }, null, 2),
+      );
+    const visual = process.env.ELECTRON_SMOKE_MODE === 'visual';
+    return Boolean(
+      result?.valid &&
+      result.legacy &&
+      Math.abs(result.height - 40) <= 1 &&
+      bounds.size === 1 &&
+      (!visual || (result.count >= 20 && result.gaps[Math.floor(result.gaps.length * 0.95)] < 100)),
+    );
+  });
+  await check('常驻岛连续快速开合后恢复40px且没有遗留过渡', async () => {
+    const box = win.getBounds();
+    const stable = await win.webContents.executeJavaScript(`new Promise(resolve=>{
+      for(let i=0;i<8;i++)setTimeout(()=>window.island.sendAction(i%2?'collapse':'expand'),i*70);
+      setTimeout(()=>{const r=document.querySelector('.resident-card').getBoundingClientRect();resolve({width:r.width,height:r.height,active:document.querySelector('.resident-compact-page').classList.contains('page-active')});},1300);
+    })`);
+    return Boolean(
+      stable.active &&
+      Math.abs(stable.height - 40) <= 1 &&
+      Math.abs(stable.width - compactWidth) <= 2 &&
+      JSON.stringify(box) === JSON.stringify(win.getBounds()),
+    );
+  });
+  await check('收起时鼠标留在旧展开区域不会错误触发5%淡化闪烁', async () => {
+    island.handleAction({ action: 'expand' });
+    await pause(800);
+    const hit = island.getHitRect()!,
+      box = win.getBounds(),
+      opacity = win.getOpacity();
+    island.setHitTestCursor({ x: box.x + hit.x + hit.width / 2, y: box.y + hit.y + hit.height - 12 });
+    island.handleAction({ action: 'collapse' });
+    const immediate = win.getOpacity();
+    await pause(120);
+    const after = win.getOpacity();
+    island.setHitTestCursor({ x: 0, y: 0 });
+    await pause(700);
+    return Math.abs(immediate - opacity) < 0.01 && Math.abs(after - opacity) < 0.01;
+  });
+  await check('长文本多行与2.5倍字号自动适配，变窄窗口和底部右侧停靠均不溢出', async () => {
+    const appearance = island.getAppearance();
+    const dense = JSON.parse(JSON.stringify(fixture));
+    dense.schemes[0].scale = 2.5;
+    dense.schemes[0].separated = true;
+    dense.schemes[0].rows[0].nodes[2].settings.text = '自适应常驻内容'.repeat(18);
+    dense.schemes[0].rows.push({ ...dense.schemes[0].rows[0], id: 'resident-dense-row' });
+    saveConfig({ islandLayout: dense });
+    island.syncCustomLayout();
+    island.setAppearance({ position: 'bottom-right' });
+    await pause(800);
+    // 模拟更小的工作区画布，检查响应的是 resize，而不是上一次固定像素尺寸。
+    const box = win.getBounds();
+    win.setBounds({ ...box, width: 360, height: 260 });
+    await pause(800);
+    const geometry = await win.webContents.executeJavaScript(`(() => {
+      const card=document.querySelector('.resident-card'), page=card.querySelector('.page-active'), source=page.querySelector('.resident-source');
+      const r=card.getBoundingClientRect(), c=source.getBoundingClientRect();
+      return {r:r.toJSON(), c:c.toJSON(), width:innerWidth,height:innerHeight, fits:r.width<=340&&r.height<=240&&r.right<=innerWidth&&r.bottom<=innerHeight&&c.left>=r.left-1&&c.right<=r.right+1&&c.bottom<=r.bottom+1&&getComputedStyle(card).overflowY!=='auto'&&card.classList.contains('resident-separated')};
+    })()`);
+    const hit = island.getHitRect();
+    const hitMatches = hit && Math.abs(hit.x - geometry.r.x) <= 2 && Math.abs(hit.y - geometry.r.y) <= 2;
+    await shot('resident-adaptive-narrow');
+    saveConfig({ islandLayout: fixture });
+    island.syncCustomLayout();
+    island.setAppearance(appearance);
+    await pause(800);
+    if (!geometry.fits || !hitMatches) throw new Error(JSON.stringify({ ...geometry, hit }));
+    return true;
+  });
+  await check('常驻消息较多及超长正文不产生滚动条，底部操作始终可见', async () => {
+    for (let i = 0; i < 8; i++)
+      island.pushNotification({
+        ...message('resident-overflow-' + i, '较多通知 ' + i, 'NORMAL'),
+        content: '超长正文'.repeat(200),
+      });
+    island.handleAction({ action: 'expand' });
+    await pause(800);
+    island.handleAction({ action: 'expand-list' });
+    await pause(800);
+    const geometry = await win.webContents.executeJavaScript(`(() => {
+      const card=document.querySelector('.resident-card'), footer=card.querySelector('.resident-actions'), r=card.getBoundingClientRect(), f=footer?.getBoundingClientRect();
+      return {r:r.toJSON(),f:f?.toJSON(), fits:Boolean(f&&f.bottom<=r.bottom+1&&f.left>=r.left&&f.right<=r.right+1&&card.querySelector('.resident-more')&&[card,...card.querySelectorAll('*')].every(n=>!['auto','scroll'].includes(getComputedStyle(n).overflowY)))};
+    })()`);
+    await shot('resident-many-notifications');
+    island.handleAction({ action: 'dismiss-all' });
+    await pause(800);
+    if (!geometry.fits) throw new Error(JSON.stringify(geometry));
+    return true;
+  });
+  await check('触摸常驻岛停稳后只保留岛体输入区域，开合不缩放原生窗口', async () => {
+    if (process.platform !== 'win32') return true;
+    const original = win.setShape.bind(win);
+    let shape: Electron.Rectangle[] = [];
+    win.setShape = (rects) => {
+      shape = rects;
+      original(rects);
+    };
+    try {
+      island.setTouchMode(true);
+      const box = win.getBounds();
+      island.handleAction({ action: 'expand' });
+      await pause(1000);
+      island.handleAction({ action: 'collapse' });
+      await pause(1000);
+      const hit = island.getHitRect();
+      return Boolean(
+        hit &&
+        shape.length === 1 &&
+        shape[0]!.width <= hit.width + 18 &&
+        shape[0]!.height <= hit.height + 18 &&
+        JSON.stringify(box) === JSON.stringify(win.getBounds()),
+      );
+    } finally {
+      win.setShape = original;
+      island.setTouchMode(false);
+    }
   });
   await check('常驻和无通知展开内容可独立编辑并持久化', async () => {
     island.editLayout();
@@ -282,4 +445,5 @@ export async function verifyResidentSmoke(
   });
   island.setHitTestCursor(null);
   island.setTouchMode(originalTouchMode);
+  island.setAppearance(originalAppearance);
 }

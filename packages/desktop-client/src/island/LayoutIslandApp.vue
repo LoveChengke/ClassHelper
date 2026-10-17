@@ -2,17 +2,23 @@
 import { nextTick, onMounted, ref, shallowRef } from 'vue';
 import {
   defaultIslandLayouts,
+  DEFAULT_ISLAND_APPEARANCE,
+  type IslandAppearance,
   type IslandLayoutSettings,
   type IslandState,
   type ScheduleDto,
 } from '@classhelper/shared';
 import FixedIsland from './IslandApp.vue';
 import CustomIsland from './CustomIsland.vue';
+import ResidentIsland from './ResidentIsland.vue';
 const settings = ref(defaultIslandLayouts()),
   editing = ref(false),
   ready = ref(false);
 const schedules = ref<ScheduleDto[]>([]);
+const appearance = ref<IslandAppearance>({ ...DEFAULT_ISLAND_APPEARANCE });
+const nativeVisible = ref(false);
 const alertHost = shallowRef<HTMLElement | null>(null);
+const resident = () => settings.value.layout === 'custom' && settings.value.residentEnabled && !editing.value;
 const state = ref<IslandState>({
   mode: 'hidden',
   active: null,
@@ -38,6 +44,10 @@ onMounted(async () => {
     bridge.onEditing((value) => (editing.value = value));
     bridge.onSchedules((value) => (schedules.value = value));
     bridge.onState((value) => (state.value = value));
+    bridge.onAppearance((value) => (appearance.value = value));
+    bridge.onVisibility((value) => (nativeVisible.value = value));
+    nativeVisible.value = await bridge.getVisible();
+    appearance.value = await bridge.getAppearance();
     settings.value = await bridge.getLayout();
     state.value = await bridge.getState();
     editing.value = await bridge.getEditing();
@@ -47,8 +57,16 @@ onMounted(async () => {
 });
 </script>
 <template>
+  <ResidentIsland
+    v-if="resident()"
+    :settings="settings"
+    :state="state"
+    :schedules="schedules"
+    :appearance="appearance"
+    :native-visible="nativeVisible"
+  />
   <CustomIsland
-    v-if="settings.layout === 'custom'"
+    v-else-if="settings.layout === 'custom'"
     :settings="settings"
     :state="state"
     :editing="editing"
@@ -57,10 +75,15 @@ onMounted(async () => {
     @done="done"
     @host="alertHost = $event"
   />
-  <Teleport v-if="ready" :disabled="settings.layout === 'fixed' || !alertHost" :to="alertHost || 'body'">
+  <Teleport
+    v-if="ready"
+    :disabled="resident() || settings.layout === 'fixed' || !alertHost"
+    :to="alertHost || 'body'"
+  >
     <FixedIsland
-      v-show="settings.layout === 'fixed' || !!alertHost"
+      v-show="!resident() && (settings.layout === 'fixed' || !!alertHost)"
       :embedded="settings.layout === 'custom'"
+      :suspended="resident()"
     />
   </Teleport>
 </template>

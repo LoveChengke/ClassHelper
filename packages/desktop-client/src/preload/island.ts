@@ -14,6 +14,8 @@ export interface IslandBridge {
   saveLayout(value: ContractIslandLayoutSettings): Promise<ContractIslandLayoutSettings>;
   onLayout(handler: (value: ContractIslandLayoutSettings) => void): void;
   getEditing(): Promise<boolean>;
+  getVisible(): Promise<boolean>;
+  onVisibility(handler: (visible: boolean) => void): void;
   setEditing(value: boolean): Promise<void>;
   onEditing(handler: (value: boolean) => void): void;
   reportSize(value: { width: number; height: number }): void;
@@ -60,6 +62,10 @@ const bridge: IslandBridge = {
     ipcRenderer.on('island:layout', (_event, value) => handler(value));
   },
   getEditing: () => ipcRenderer.invoke('island:get-editing'),
+  getVisible: () => ipcRenderer.invoke('island:get-visible'),
+  onVisibility: (handler) => {
+    ipcRenderer.on('island:visibility', (_event, value) => handler(value));
+  },
   setEditing: (value) => ipcRenderer.invoke('island:set-editing', value),
   onEditing: (handler) => {
     ipcRenderer.on('island:editing', (_event, value) => handler(value));

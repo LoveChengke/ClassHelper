@@ -1,6 +1,6 @@
 <script setup lang="ts">
-const props = defineProps<{ embedded?: boolean }>();
-import { computed, onMounted, ref } from 'vue';
+const props = defineProps<{ embedded?: boolean; suspended?: boolean }>();
+import { computed, onMounted, ref, watch } from 'vue';
 import {
   DEFAULT_ISLAND_APPEARANCE,
   ISLAND_SHADOW_PAD,
@@ -328,6 +328,14 @@ let morphFallbackTimer: number | null = null;
 const MORPH_FALLBACK_MS = 1200;
 
 function syncTargets(snap = false): void {
+  // 常驻岛有独立的 ClassIsland 过渡；旧胶囊不得在隐藏处继续形变、测量或发送命中。
+  if (props.suspended) {
+    if (rafHandle !== null) cancelAnimationFrame(rafHandle);
+    if (morphFallbackTimer !== null) clearTimeout(morphFallbackTimer);
+    rafHandle = null;
+    morphFallbackTimer = null;
+    return;
+  }
   const size = targetSize();
   const radius = targetRadius(size);
   if (snap || !appearance.value.animations) {
@@ -573,6 +581,7 @@ function updateInteractive(clientX: number, clientY: number): void {
  * 注意：关闭命中（穿透）不由这里下发，见 updateInteractive 的说明。
  */
 function refreshInteractive(): void {
+  if (props.suspended) return;
   const node = document.querySelector('.island-card') as HTMLElement | null;
   const fullyHidden = state.value?.mode === 'hidden' && !appearance.value.idleSliver;
   reportHitRect(node && !fullyHidden ? node.getBoundingClientRect() : null);
@@ -600,6 +609,10 @@ function applyAppearance(next: IslandAppearance | null | undefined): void {
   style.setProperty('--island-dur', `${Math.round(320 / Math.max(0.25, next.speed))}ms`);
 }
 
+watch(
+  () => props.suspended,
+  () => syncTargets(true),
+);
 onMounted(async () => {
   window.addEventListener('mousemove', (event) => updateInteractive(event.clientX, event.clientY));
   /**
