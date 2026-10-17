@@ -8,8 +8,7 @@
  *   5. 课表按周查询可用
  *
  * 用法：
- *   1) 另开终端启动后端：pnpm dev:server
- *   2) 执行：pnpm verify:e2e
+ *   执行 pnpm verify:e2e；根启动器自动创建隔离数据库和带前缀账号
  *
  * 环境变量：
  *   VERIFY_BASE_URL  默认 http://127.0.0.1:4000
@@ -422,6 +421,12 @@ async function main() {
     if (!isParityProbe && !isImported) continue;
     const removed = await api(`/schedules/${item.id}`, { method: 'DELETE', token: teacherToken });
     if (removed.status === 200) removedSchedules += 1;
+  }
+  // 日课表为空仍会生效；清理本次导入的整张日课表，不能靠空表自动回落。
+  const importedPlans = await api(`/class-plans?classId=${classId}`, { token: teacherToken });
+  for (const plan of importedPlans.payload?.data ?? []) {
+    if (['周一-单周', '周一-双周'].includes(plan.name))
+      await api(`/class-plans/${plan.id}`, { method: 'DELETE', token: teacherToken });
   }
   const allCourses = await api(`/courses?classId=${classId}`, { token: teacherToken });
   let removedImportedCourses = 0;
@@ -2132,12 +2137,12 @@ async function main() {
 
   const layoutImport = await api('/imports/time-layout', {
     method: 'POST',
-    token: teacherToken,
+    token: adminToken,
     body: { classId, name: '默认时间表', mode: 'replace', payload: sampleLayout },
   });
   const layoutId = layoutImport.payload?.data?.layout?.id ?? null;
   record(
-    '班主任导入本班时间配置（replace）',
+    '管理员导入班级时间配置（replace）',
     layoutImport.status === 200 && layoutImport.payload?.data?.layout?.items?.length === 3,
     `status=${layoutImport.status} 节数=${layoutImport.payload?.data?.layout?.items?.length}`,
   );
@@ -2151,7 +2156,7 @@ async function main() {
 
   const badImport = await api('/imports/time-layout', {
     method: 'POST',
-    token: teacherToken,
+    token: adminToken,
     body: {
       classId,
       name: '默认时间表',
@@ -2169,7 +2174,7 @@ async function main() {
 
   const mergeImport = await api('/imports/time-layout', {
     method: 'POST',
-    token: teacherToken,
+    token: adminToken,
     body: {
       classId,
       name: '默认时间表',
@@ -2630,7 +2635,7 @@ async function main() {
   if (layoutId) {
     const layoutDeleted = await api(`/imports/time-layout/${layoutId}`, {
       method: 'DELETE',
-      token: teacherToken,
+      token: adminToken,
     });
     record('时间配置可删除（清理验证数据）', layoutDeleted.status === 200, `status=${layoutDeleted.status}`);
   }
@@ -3220,6 +3225,14 @@ async function main() {
     'ClientCommand',
     'ClientRelease',
     'AiAudit',
+    'TimeLayoutItem',
+    'ClassPlanGroup',
+    'ClassPlan',
+    'ClassPlanEntry',
+    'ScheduledClassPlan',
+    'PromotionRun',
+    'TermWeek',
+    'Exam',
   ];
   const dbStatus = await api('/database/status', { token: adminToken });
   const dbStatusData = dbStatus.payload?.data ?? {};

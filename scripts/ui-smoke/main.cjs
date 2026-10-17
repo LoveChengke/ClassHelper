@@ -1188,6 +1188,7 @@ async function main() {
 
   // 7.9 管理员专属：教师录入（本轮新增「教师管理」页，仅管理员可见可用）
   await runAdminTeacherChecks(win);
+  await runPlanEditorChecks(win);
 
   // 8. 手机小屏适配（390×844，1Panel 风格：侧边栏收进抽屉 + 卡片内横向滚动）
   await runMobileChecks(win);
@@ -1433,6 +1434,55 @@ async function runMobileChecks(win) {
   win.setBounds({ ...win.getBounds(), width: 1440, height: 900 });
   await sleep(300);
   win.hide();
+}
+
+/** 新页面用真实点击进入，仅保存临时验收班级的可逆字段。 */
+async function runPlanEditorChecks(win) {
+  await win.loadURL(new URL('/plan-editor', TARGET_URL).href);
+  const ready = await waitFor(
+    win,
+    `document.body.innerText.includes('星期 × 时间点') && Boolean(document.querySelector('.editor-table tbody tr'))`,
+  );
+  record('日课表编辑器周视图与显式时间点行可用', ready);
+  const save = await win.webContents.executeJavaScript(
+    `(() => {const b=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='保存日课表');b?.click();return Boolean(b&&!b.disabled);})()`,
+  );
+  const saved = save && (await waitFor(win, `document.body.innerText.includes('整张日课表已保存')`));
+  record('日课表整表保存可以从页面提交', saved);
+  await win.webContents.executeJavaScript(
+    `(() => {[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent.includes('时间表'))?.click();})()`,
+  );
+  record(
+    '时间表页四种时间点与管理员保存入口可见',
+    await waitFor(
+      win,
+      `document.body.innerText.includes('添加时间点') && document.body.innerText.includes('保存时间表')`,
+    ),
+  );
+  await win.loadURL(new URL('/system-settings', TARGET_URL).href);
+  record(
+    '开发环境自启动明确显示不可用原因',
+    await waitFor(
+      win,
+      `document.body.innerText.includes('开发环境') && Boolean(document.querySelector('.el-switch.is-disabled'))`,
+    ),
+  );
+  await win.loadURL(new URL('/term-weeks', TARGET_URL).href);
+  record(
+    '学年升级设置与待补跑提示可见且不执行升级',
+    await waitFor(
+      win,
+      `document.body.innerText.includes('每年自动学年升级') && document.body.innerText.includes('总周数')`,
+    ),
+  );
+  await win.loadURL(new URL('/archives', TARGET_URL).href);
+  record(
+    '归档页有转出分区且无手动归档入口',
+    await waitFor(
+      win,
+      `document.body.innerText.includes('已转出') && ![...document.querySelectorAll('button')].some(e=>e.textContent.trim()==='新建归档')`,
+    ),
+  );
 }
 
 async function finish(win) {

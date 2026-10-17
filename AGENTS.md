@@ -4,11 +4,17 @@
 
 **2026-10-16 更新**：当前仓库位于 `F:\ClassHelper`，F 盘可用。ClassIsland 联动插件、设备令牌、提醒通道与镜像接口已退役；离线课表 JSON 导入和界面设计参考保留。下文历史联动部署记录不再适用。
 客户端维护只走 `/api/clients/*`，页面为 `ClientsView.vue`；默认权限按数据库中对应角色的默认组生效。
+**2026-10-17 本批功能约定**：课表业务真值为 `ClassPlan / ClassPlanEntry / TimeLayoutItem`，
+旧 `Schedule` 仅保留迁移审计来源，`/api/schedules/*` 是新模型的兼容门面。统一解析器在
+`lib/class-plan.ts`，不得在客户端另写在线启用规则。自定义岛方案在本机 `config.json.islandLayout`，
+默认 `layout=fixed`；新尺寸上报仅在 custom 模式执行。详见 `docs/dev/20261017-implementation.md`。
+
 **2026-10-17 更新**：日常 `verify:desktop` / `verify:packaged` 默认是后台快速检查，不创建可见灵动岛或托盘；
 完整桌面动画、透明度与截图验收必须显式加 `--visual`（`pnpm verify:desktop:visual`）。
 下文关于置顶验证窗口、鼠标穿透与截图时序的历史约定仅适用于视觉模式。不要为了日常修改反复占用用户桌面。
 联网冒烟显式启用，使用临时教师和班级；禁止回退到真实班级、重置其密码或向其发送测试通知。
 
+本次 PowerShell 会话的 PATH 不含 pnpm；受限工具进程读取启动器可能需要工具级提权，不能据此判断未安装。
 本次 PowerShell 会话的 PATH 不含 pnpm：需要先把 `C:\Users\hck16\AppData\Local\deepseek-harness\bin`
 加到 PATH 前面，再按下文设置 `DSH_NODE` 和 `DSH_PNPM_BIN`。Git Bash 外层找不到 pnpm 时可执行：
 
@@ -132,7 +138,7 @@ website/                     产品官网（**纯静态、无构建步骤**，�
                                -x64-server-setup.exe），它们是离线兜底链接的唯一依据。
 packages/shared/src/         types.ts / constants.ts / permissions.ts / motion.ts / utils.ts / index.ts
 packages/server/
-  prisma/schema.prisma       数据模型（24 个 model，无 enum、无 @db.*；连接串在 prisma.config.ts）
+  prisma/schema.prisma       数据模型（29 个 model，无 enum、无 @db.*；连接串在 prisma.config.ts）
   prisma/migrations/         17 个迁移（到 add_schedule_source 为止是旧模型；之后 6 个是
                              2026-10-06 的角色与权限重构：add_student_table / add_student_grade_query /
                              add_grade_level / add_classhelper_heartbeat / add_archives / add_term_weeks；
@@ -287,7 +293,7 @@ ELECTRON_MIRROR=https://cdn.npmmirror.com/binaries/electron/ node install.js
 | `pnpm db:seed` / `pnpm db:reset`              | 写种子 / 重置并重播种子                                                                                  |
 | `pnpm db:studio`                              | Prisma Studio                                                                                            |
 | `pnpm db:switch:mysql` / `db:switch:sqlite`   | 改写 `schema.prisma` 的 provider（配合 `docs/management/mysql.md`）                                      |
-| `pnpm verify:e2e`                             | 后端端到端验收（**需后端已启动**；2026-10-06 实测 205 项全过）                                           |
+| `pnpm verify:e2e`                             | 后端端到端验收（自动创建隔离库与临时账号，禁止外网；243 项）                                             |
 | `pnpm verify:web`                             | Web 管理端真实点击回归（Electron 驱动，需后端已启动且 Web 产物已构建）                                   |
 | `pnpm verify:desktop`                         | 客户端冒烟（Electron，无人工点击）                                                                       |
 | `pnpm verify:packaged`                        | 对**打包后/已安装**的客户端 EXE 跑同一套冒烟（`--exe` 指定路径）                                         |
@@ -568,11 +574,10 @@ CLASS_DEVICE（班级端）/ NONE`，权限判 `canManageSchedule` / `canPublish
    不用 `@db.*`；角色与优先级存字符串并在 API 层用 zod 校验（这样 SQLite / MySQL 行为一致）。
    **只有一份 `schema.prisma`**：切库是改写它的 `provider`（`pnpm db:switch:mysql`），没有 `schema.mysql.prisma`。
    改模型要同步 `prisma/migrations/`（本机用 `pnpm --filter @classhelper/server db:deploy` 应用）。
-8. **周次口径唯一。** 当前教学周 = `shared.resolveCurrentWeek(TERM_START_DATE, now, MAX_TERM_WEEK)`，
-   `MAX_TERM_WEEK = 30`，班级还有自己的 `Class.termWeeks`（默认 20，**上限也是 30**）。别在别处重新实现周次换算。
-   周次上限三处必须一致：`MAX_TERM_WEEK`、`lib/schemas.ts` 的 `weekNumberSchema`、`classes.schemas.ts` 的 `termWeeks`
-   （曾经班级能设到 40 而课表只到 30，等于对外承诺了系统兑现不了的学期长度）。
-   `Class.termWeeks` 只有**管理员**能改（`assertCanManageClasses`），班主任不行。
+8. **周次口径唯一。** 上限来自 `AppSetting.term.maxWeeks`（管理员设置，默认 30、范围 1–60）。
+   服务端统一 `await getMaxTermWeeks()`；shared 的同名函数负责数值归一化与离线默认值。
+   当前周仍走 `loadTermContext / resolveCurrentWeek`，优先逐周区间；班级 `termWeeks` 不得超出全校上限，
+   仅管理员能改。取消固定 30 的原因：学校需要不同长度的学期，不能只放开某一个输入框。
 9. **Electron 安全边界。** `src/preload/` 只通过 contextBridge 暴露白名单方法，**不要暴露 `ipcRenderer` 本体**；
    主进程 ↔ 渲染进程的类型统一写在 `src/types/desktop.d.ts`。
 
@@ -1286,24 +1291,13 @@ CLASS_DEVICE（班级端）/ NONE`，权限判 `canManageSchedule` / `canPublish
     在线判定窗口 `CLIENT_ONLINE_WINDOW_MS`=90 秒。三条边界：**没有 token 就不上报**（未登录静默跳过）、
     **401/403 退避 5 分钟**、**冒烟默认不上报**（要验这条链路才设 `ELECTRON_SMOKE_CLIENT_AGENT=1`）。
 
-69. **远控命令要两端各确认一次，而且客户端**必须**回执。** 服务端 `POST /api/clients/commands` 只对
-    `remote:control`（默认仅 ADMIN）开放，动作限 `shutdown`/`restart`/`logoff`/`lock`，有效期
-    `CLIENT_COMMAND_EXPIRE_MS`=10 分钟；客户端收到后弹**默认选中「取消」**的对话框（60 秒未确认按取消处理），
-    执行只支持 Windows（`shutdown.exe /s|/r /t 0`、`/l`、`rundll32 user32.dll,LockWorkStation`），
-    然后 `POST /api/clients/commands/:id/ack`（body 带 `deviceKey`，服务端据此校验归属，重复回执幂等）。
-    同一台机器上**同一条命令只弹一次**（内存去重），回执失败只暂存重试、不重复弹窗。
-
-    **`executeCommand()` 必须显式监听子进程的 `error` 事件**（2026-10-11 修）：
-    `spawn` 找不到可执行文件 / 没权限时**不抛异常**，而是在 next tick 发一个异步 `error` 事件 ——
-    只包 `try/catch` 会一路走到 `return { ok: true }`，回执写着"已下达系统命令"，机器却纹丝不动。
-    现在等待进程退出并检查退出码，失败如实回执；关机/重启延迟 5 秒留出回执时间。
-
-    **「点了没反应」必须看得出来**：命令被取消 / 过期后就从 `pendingCommand` 里消失，Web 端原本一片空白，
-    而最常见的两种失败恰恰是"本机没人确认（60 秒自动取消）"与"下达时机器离线"。
-    所以 `GET /clients/devices` 一并返回 `lastCommand`（最近一条，不论状态），
-    「客户端」页把它翻成一句人话（`ClientHubView` 的 `commandStateText`）。
-    排查这类反馈时先看这一列，再看那台机器的**客户端版本**是否 ≥ 1.3.0 ——
-    远控命令的处理（`client-agent.ts`）是 1.3.0 才有的，旧客户端连心跳都不发。
+69. **远控收到即执行，而且客户端必须回执。** 2026-10-17 按产品要求取消本机二次确认，
+    使管理员操作不再因教室无人确认而停住。服务端仍须 `remote:control`，动作仅限
+    `shutdown/restart/logoff/lock`，有效期仍为 `CLIENT_COMMAND_EXPIRE_MS`（10 分钟）。
+    客户端持久去重，失败只重试回执；回执带 `deviceKey` 验证归属、重复幂等。
+    `executeCommand` 仍监听子进程 error、等待 exit 并检查退出码，关机/重启延迟 5 秒留出回执时间。
+    冒烟始终使用假执行器，不得执行真实关机/重启/注销/锁屏。`lastCommand` 与「上次指令」保留，
+    用于显示执行结果。
 
 70. **客户端安装包由服务端下载并缓存，教室机不直连 GitHub。** 原因有两条：Web 端 CSP
     （`connect-src 'self' ws wss …`）不允许浏览器直连 GitHub，而教室机常常根本没有外网。
@@ -1377,11 +1371,28 @@ CLASS_DEVICE（班级端）/ NONE`，权限判 `canManageSchedule` / `canPublish
     原先班级端自己也能改（`updateStudentGradeQuery` 里的 `isClassDevice` 分支），
     等于把"学校说不给看"变成一台机器说了算；现在班级端只读（客户端那个开关也撤掉了，
     只显示状态）。成绩查询开关仅教师/管理员可改。
+    2026-10-17 改为关闭后页面仍正常打开，`/grades/overview` 只返回服务端集体聚合；个人明细、
+    全班原始成绩与排名仍拒绝读取。不得把原始成绩发给班级端后再聚合。少于 5 名学生的聚合、
+    稀疏分段及其补集均抑制；不提供最高/最低分，避免小样本反推个人。原因是关闭个人查询不应关闭教学反馈。
 
 82. **全校学期开始日期是 `AppSetting` 的 `term.startDate`，管理员在「学期周次」页直接改。**
     原先这一级只能来自 `.env` 的 `TERM_START_DATE`，填错了得动文件 + 重启。
     现在 `loadTermContext()` 的三级回落是「`Class.termStartDate` → 全校设置 → `.env`」，
     逐周区间仍是「班级 → 全校默认 → 纯线性」。改完 `resolveCurrentWeek` 立刻按新日期算。
+
+83. **自动学年升级替代手动归档入口。** 每年时间存 `term.promotionAt`，事务幂等键为 `PromotionRun.year`；
+    升级前复用 snapshot 导出到 `data/promotion-snapshots`，失败回滚并留审计。运行中到点自动执行；
+    启动发现漏跑先提示管理员预览并补跑，不能在开发机启动时擅自升级演示数据。
+    高三归档，高一/高二升一级；新高一仅建班级骨架，`Class.teacherId` 可以为空，不复制任课关系。
+    取消手动归档的原因是统一年度时序并保证快照与幂等，归档结果和转出记录仍可查看。
+
+84. **转出过滤唯一入口是 `lib/students.ts`。** 名单、成绩、作业提交、通知已读、叫人及导入匹配
+    共用 activeStudentWhere/isActiveStudent，不能只在前端藏一行。学号永不复用；归档页可撤回转出并保留历史。
+
+85. **岗位组不新增 User.role。** 班主任/教师/级长/部长均为 TEACHER，内置组的 defaultRole 为空。
+    PermissionGroup.scope/scopeValue 表示 SELF_CLASS/GRADE/DIVISION/ALL，部以逗号分隔年级，空范围拒绝。
+    查询范围在服务端统一收口；设备写操作按对应权限键的分组范围判定，不能借别的只读组扩权。
+    client:update 与 timetable:manage 默认只给 ADMIN，科目写权限继续以 Course.teacherId 为准。
 
 ## 6. 代码风格
 

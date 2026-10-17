@@ -675,7 +675,7 @@ POST /api/notifications  { …, priority: "NORMAL" }（上课时段）          
 - **课表来源字段**：统一由管理端维护；历史同步课表在升级时保留并归为 `manual`。
 
 > **学期周数（管理员可调）**：`Class.termWeeks`（默认 20，上限 30）由管理员在「班级管理 → 编辑班级」设置，
-> 上限与 `MAX_TERM_WEEK`、`weekNumberSchema` 三处一致；`GET /api/dashboard/term?classId=` 返回该班的 `maxWeek`。
+> 上限统一经 `getMaxTermWeeks()` 读取全校配置（默认 30、允许 1–60），服务端动态校验；`GET /api/dashboard/term?classId=` 返回该班的 `maxWeek`。
 >
 > 手工覆盖 dist 部署（而非跑安装程序）时，已有数据库需要补列：
 > `node packages/server/scripts/apply-column-migrations.cjs "<安装目录>/server/dist/lib/db.js"`；
@@ -1555,7 +1555,34 @@ makensis 临时目录、ClassIsland 路径与日志编码等）。这里只列�
 
 离线设备上线后补领更新；取消下发后，已下载的安装包不再自动安装。
 客户端关闭自动更新时，任何下发策略都不会强制安装。
-远控关机、重启、注销和锁屏仍需管理端确认及本机确认，取消或系统执行失败都会回执。
+远控仍由管理端确认下发；客户端收到后立即执行白名单动作，并按系统退出码回执。
 
 联动插件及相关接口已下线；升级迁移会删除旧联动设备和推送记录，保留业务课表、通知及离线 JSON 导入。
 服务端兼容旧客户端领取修复包；第一次升级仍按旧版空闲条件安装，新策略需修复版客户端。
+
+## 2026-10-17 课表与组件机制对照
+
+上游现场参照：[ClassPlan 模型](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland.Shared/Models/Profile/ClassPlan.cs)、
+[LessonsService 的启用解析](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/Services/LessonsService.cs)、
+[组件文档](https://docs.classisland.tech/app/component/)。复刻能力与语义，不引入 .NET 或已退役插件。
+
+| 需求                                         | 实现入口                                      | 验收入口                                |
+| -------------------------------------------- | --------------------------------------------- | --------------------------------------- |
+| 日课表、1–9 周轮换、四种时间点、显式位置外键 | 时间表与课表编辑页、class-plans 模块          | `packages/server/scripts/verify-v14.ts` |
+| 换课/临时层/预定/群组，原表不变              | schedules 与 class-plan-groups                | 同上                                    |
+| 本机多行、多方案、组件独立设置与触摸拖动     | 设置→灵动岛→编辑布局；托盘同名入口            | `verify:desktop` 的组件布局用例         |
+| 容器、规则隐藏、四档字体与外观覆盖           | 编辑器右侧设置                                | 同上 + 显式视觉回归                     |
+| 通知/作业/叫人组件                           | 主要且允许通知的行，复用 IslandApp 卡片与操作 | 原有固定模式回归 + 组件布局回归         |
+| 换服务端重置退避与令牌                       | config-events / client-agent                  | 本地假服务端心跳用例                    |
+| 即时远控与回执                               | clients / client-agent                        | 冒烟假执行器；不调用系统命令            |
+| 下载与安装阶段进度                           | 客户端管理页/桌面关于页                       | 进度 GET、ADMIN 房间事件、IPC           |
+| 集体成绩与转出过滤                           | grades / lib/students                         | 临时数据库隐私与范围负断言              |
+| 自动学年升级与可配周数                       | 学期周次页                                    | dry-run、快照与事务幂等                 |
+| 自启动按钮与日期归档                         | 系统设置页/通知日期选择器                     | 注入系统适配器、Web 回归                |
+| 四种内置岗位组与只读名单                     | 权限组页/学生名单页                           | 跨年级、跨部 403                        |
+
+天气组件本轮不做：没有可离线使用的数据源，验收不依赖外网。
+迁移保留旧 Schedule 作为审计来源；新门面只写新模型。重复占用同一时间点的旧行无法同时成为一节课，
+迁移选择同一时段 ID 最小的行，全部原行仍保留；旧数据未记录的群组、临时层和时间点名称无法恢复。
+
+实施选择、问题根因与实测结果见 [实施记录](dev/20261017-implementation.md)。

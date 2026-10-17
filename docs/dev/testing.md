@@ -36,8 +36,8 @@ description: 验收验收脚本怎么跑、覆盖什么、哪些用例是脆弱�
 pnpm lint                # ESLint，0 error 是底线
 pnpm typecheck           # 全仓库类型检查（含 vue-tsc）
 
-pnpm dev:server          # 另开一个终端
-pnpm verify:e2e
+pnpm verify:e2e          # 自建全新隔离库与临时账号，不依赖真实服务
+pnpm verify:v14          # 新课表/权限/年度升级专项隔离验收
 
 pnpm build:desktop && pnpm verify:desktop
 pnpm build && pnpm verify:web
@@ -125,3 +125,7 @@ ELECTRON_SMOKE_ISLAND_ACCENT='#0a84ff' ELECTRON_SMOKE_ISLAND_STYLE=black \
 > 采集脚本会把窗口真的弹在屏幕上。客户端留档会**临时停掉 CSS 动画**再截图 ——
 > 窗口被遮挡时 Chromium 冻结动画，而页面入场动画的起始帧是 `opacity: 0`，
 > 不停掉的话截出来是**整片空白**（DOM 里文本齐全，只有图是空的）。
+
+## V1.4 专项验收
+
+`verify:e2e` 由根启动器创建独立数据库、带前缀的临时账号与服务；服务禁止外网，请勿改回真实班级。`verify:v14` 在专用临时库验证新模型与自动升级幂等。详细结果、迁移保留情况和十项自检见 [实施记录](20261017-implementation.md)。
