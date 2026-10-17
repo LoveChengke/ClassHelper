@@ -31,6 +31,23 @@ import * as gradeService from './grades.service.js';
 const router = Router();
 router.use(authenticate());
 
+router.get('/overview', async (req, res) => {
+  const user = getAuthUser(req);
+  const classId = user.classId ?? user.sub;
+  const cls = await (await import('../../lib/db.js')).prisma.class.findUnique({ where: { id: classId } });
+  sendOk(
+    res,
+    cls?.studentGradeQueryEnabled
+      ? { mode: 'personal', items: await gradeService.listMyGrades(user) }
+      : await gradeService.collectiveAnalysis(user, classId),
+  );
+});
+router.get('/collective', validate({ query: examListQuerySchema }), async (req, res) => {
+  const user = getAuthUser(req);
+  const { classId } = validatedQuery<{ classId: string }>(req);
+  sendOk(res, await gradeService.collectiveAnalysis(user, classId));
+});
+
 /** GET /api/grades/my - ClassHelper 班级端查看本班成绩（教师/管理员返回空数组） */
 router.get('/my', async (req, res) => {
   const user = getAuthUser(req);

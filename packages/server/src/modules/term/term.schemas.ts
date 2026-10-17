@@ -17,6 +17,7 @@ export const termQuerySchema = z.object({
 });
 
 export const updateTermWeeksSchema = z.object({
+  maxTermWeeks: z.coerce.number().int().min(1).max(60).optional(),
   classId: z.string().min(1).nullish(),
   termStartDate: termStartDateSchema.optional(),
   /** 整表覆盖：传空数组 = 清空逐周配置，回到按开学日期线性推算 */

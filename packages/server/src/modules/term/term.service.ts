@@ -10,7 +10,7 @@ import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
-import { MAX_TERM_WEEK, loadTermContext, resolveCurrentWeek } from '../../lib/term.js';
+import { getMaxTermWeeks, loadTermContext, resolveCurrentWeek } from '../../lib/term.js';
 import { SETTING_KEYS, setSetting } from '../../lib/settings.js';
 import { emitToClass } from '../../realtime/bus.js';
 import { SOCKET_EVENTS } from '@classhelper/shared';
@@ -40,7 +40,7 @@ export async function getTermWeeks(user: TokenPayload, classId?: string | null):
   const scope = scopeOf(classId);
   if (scope) await assertClassAccess(user, scope);
 
-  const [weeks, cls] = await Promise.all([
+  const [weeks] = await Promise.all([
     prisma.termWeek.findMany({ where: { classId: scope }, orderBy: { weekNumber: 'asc' } }),
     scope
       ? prisma.class.findUnique({ where: { id: scope }, select: { termStartDate: true, termWeeks: true } })
@@ -52,7 +52,8 @@ export async function getTermWeeks(user: TokenPayload, classId?: string | null):
     classId: scope,
     termStartDate: context.termStartDate || env.termStartDate,
     currentWeek: resolveCurrentWeek(new Date(), context),
-    maxWeek: cls?.termWeeks && cls.termWeeks > 0 ? cls.termWeeks : MAX_TERM_WEEK,
+    maxWeek: context.maxWeek,
+    maxTermWeeks: await getMaxTermWeeks(),
     configured: weeks.length > 0,
     weeks: weeks.map((item) => ({
       weekNumber: item.weekNumber,
@@ -76,6 +77,13 @@ export async function updateTermWeeks(
   assertCanManageClasses(user);
   const scope = scopeOf(input.classId);
 
+  const maximum = input.maxTermWeeks ?? (await getMaxTermWeeks());
+  if (input.maxTermWeeks !== undefined && scope) throw ApiError.badRequest('总周数只能在全校默认范围修改');
+  if (input.weeks.some((w) => w.weekNumber > maximum)) throw ApiError.badRequest('教学周次超过全校总周数');
+  if (input.maxTermWeeks !== undefined) {
+    const tooLong = await prisma.class.count({ where: { archivedYearId: null, termWeeks: { gt: maximum } } });
+    if (tooLong) throw ApiError.badRequest('请先缩短超过新上限的班级教学周数');
+  }
   const errors = validateTermWeeks(input.weeks);
   if (errors.length > 0) throw ApiError.badRequest(errors[0]!, { errors });
 
@@ -121,6 +129,7 @@ export async function updateTermWeeks(
   }
 
   logger.info(`学期周次已更新：范围=${scope || '全校默认'} 周数=${input.weeks.length} 由 ${user.name} 执行`);
+  if (input.maxTermWeeks !== undefined) await setSetting(SETTING_KEYS.termMaxWeeks, String(maximum));
   await publishTermChange(scope);
   return getTermWeeks(user, scope || null);
 }

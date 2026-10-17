@@ -28,6 +28,8 @@ export const SETTING_KEYS = {
    * 班级自己的 `Class.termStartDate` 仍然优先（见 `lib/term.ts` 的三级回落）。
    */
   termStartDate: 'term.startDate',
+  termMaxWeeks: 'term.maxWeeks',
+  promotionAt: 'term.promotionAt',
 } as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS];

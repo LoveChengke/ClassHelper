@@ -1,3 +1,10 @@
+import { z } from 'zod';
+import {
+  promotionStatus,
+  promotionConfigSchema,
+  configurePromotion,
+  runPromotion,
+} from './promotion.service.js';
 import { Router } from 'express';
 import { sendOk } from '../../lib/http.js';
 import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
@@ -15,6 +22,23 @@ import * as termService from './term.service.js';
 
 const router = Router();
 router.use(authenticate());
+router.get('/promotion', requirePermission('system:manage'), async (_req, res) =>
+  sendOk(res, await promotionStatus()),
+);
+router.put(
+  '/promotion',
+  requirePermission('system:manage'),
+  validate({ body: promotionConfigSchema }),
+  async (req, res) => sendOk(res, await configurePromotion(req.body)),
+);
+router.post(
+  '/promotion/run',
+  requirePermission('system:manage'),
+  validate({
+    body: z.object({ year: z.number().int().min(2000).max(2100), dryRun: z.boolean().default(true) }),
+  }),
+  async (req, res) => sendOk(res, await runPromotion(req.body.year, req.body.dryRun)),
+);
 
 /**
  * 学期周次。

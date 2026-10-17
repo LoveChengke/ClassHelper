@@ -19,6 +19,7 @@ import {
   resolveClassScope,
 } from '../../lib/access.js';
 import { normalizeBulkClassIds, summarizeBulk, toBulkFailure } from '../../lib/bulk.js';
+import { activeStudentWhere, isActiveStudent } from '../../lib/students.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -67,16 +68,14 @@ export async function listHomeworks(
       ...(options.keyword
         ? { OR: [{ title: { contains: options.keyword } }, { content: { contains: options.keyword } }] }
         : {}),
-      ...(device && options.pendingOnly
-        ? { statuses: { none: { ...personalWhere, completed: true } } }
-        : {}),
+      ...(device && options.pendingOnly ? { statuses: { none: { ...personalWhere, completed: true } } } : {}),
       // 按天查看：作业「属于哪一天」看 assignDate（本地日期），不是 createdAt
       ...(options.date ? { assignDate: options.date } : {}),
     },
     include: {
       course: courseSelect,
       creator: creatorSelect,
-      statuses: device ? { where: personalWhere } : true,
+      statuses: device ? { where: personalWhere } : { where: { student: activeStudentWhere() } },
     },
     orderBy: [{ assignDate: 'desc' }, { createdAt: 'desc' }],
     take: 200,
@@ -127,7 +126,9 @@ export async function getHomework(user: TokenPayload, homeworkId: string): Promi
     include: {
       course: courseSelect,
       creator: creatorSelect,
-      statuses: device ? { where: personalIdWhere(personalIds) } : true,
+      statuses: device
+        ? { where: personalIdWhere(personalIds) }
+        : { where: { student: activeStudentWhere() } },
     },
   });
   if (!homework) throw ApiError.notFound('作业不存在');
@@ -165,6 +166,7 @@ export async function createHomework(user: TokenPayload, input: CreateHomeworkIn
       select: { teacherId: true },
     });
     if (!owner) throw ApiError.notFound('班级不存在');
+    if (!owner.teacherId) throw ApiError.badRequest('本班尚未指定班主任，暂不能由班级端录入作业');
     createdBy = owner.teacherId;
   }
 
@@ -179,7 +181,11 @@ export async function createHomework(user: TokenPayload, input: CreateHomeworkIn
       assignDate: input.assignDate ?? dayKeyLocal(new Date()),
       createdBy,
     },
-    include: { course: courseSelect, creator: creatorSelect, statuses: true },
+    include: {
+      course: courseSelect,
+      creator: creatorSelect,
+      statuses: { where: { student: activeStudentWhere() } },
+    },
   });
 
   const dto = toHomeworkDto(created, { withStatus: true });
@@ -268,7 +274,11 @@ export async function updateHomework(
       ...(input.attachmentUrl !== undefined ? { attachmentUrl: input.attachmentUrl ?? null } : {}),
       ...(input.assignDate !== undefined ? { assignDate: input.assignDate } : {}),
     },
-    include: { course: courseSelect, creator: creatorSelect, statuses: true },
+    include: {
+      course: courseSelect,
+      creator: creatorSelect,
+      statuses: { where: { student: activeStudentWhere() } },
+    },
   });
 
   const dto = toHomeworkDto(updated, { withStatus: true });
@@ -340,9 +350,9 @@ export async function updateHomeworkStatus(
   }
   const target = await prisma.student.findUnique({
     where: { id: input.studentId },
-    select: { classId: true },
+    select: { classId: true, status: true },
   });
-  if (!target || target.classId !== homework.classId) {
+  if (!target || !isActiveStudent(target) || target.classId !== homework.classId) {
     throw ApiError.badRequest('请指定该作业所在班级的学生（studentId）');
   }
 
@@ -363,7 +373,7 @@ export async function updateHomeworkStatus(
 async function buildSubmissions(classId: string, homeworkId: string): Promise<HomeworkSubmissionsDto> {
   const [students, statuses] = await Promise.all([
     prisma.student.findMany({
-      where: { classId, archivedYearId: null },
+      where: { classId, archivedYearId: null, ...activeStudentWhere() },
       select: { id: true, name: true, studentNo: true },
       orderBy: { studentNo: 'asc' },
     }),
@@ -426,7 +436,7 @@ export async function updateHomeworkSubmissions(
   assertCanManageSubmissions(user);
 
   const students = await prisma.student.findMany({
-    where: { classId: homework.classId, archivedYearId: null },
+    where: { classId: homework.classId, archivedYearId: null, ...activeStudentWhere() },
     select: { id: true },
   });
   if (students.length === 0) throw ApiError.badRequest('当前班级还没有学生，请先在名单里添加学生');

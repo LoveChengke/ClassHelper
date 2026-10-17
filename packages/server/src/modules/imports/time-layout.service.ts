@@ -1,3 +1,4 @@
+import { saveLayout } from '../class-plans/class-plans.service.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -232,7 +233,7 @@ export function parseClassIslandTimeLayout(input: unknown): TimeLayoutParseResul
 
 export interface TimeLayoutDto {
   id: string;
-  classId: string;
+  classId: string | null;
   name: string;
   source: string;
   items: ParsedTimeLayoutItem[];
@@ -242,10 +243,18 @@ export interface TimeLayoutDto {
 
 function toDto(record: {
   id: string;
-  classId: string;
+  classId: string | null;
   name: string;
   source: string;
   items: string;
+  points?: Array<{
+    position: number;
+    name: string;
+    startTime: string;
+    endTime: string;
+    timeType: string;
+    isHideDefault: boolean;
+  }>;
   createdAt: Date;
   updatedAt: Date;
 }): TimeLayoutDto {
@@ -255,6 +264,21 @@ function toDto(record: {
   } catch {
     items = [];
   }
+  if (record.points?.length)
+    items = record.points.map((p) => ({
+      index: p.position,
+      name: p.name,
+      startTime: p.startTime,
+      endTime: p.endTime,
+      type: (p.timeType === 'LESSON'
+        ? 'class'
+        : p.timeType === 'BREAK'
+          ? 'break'
+          : p.timeType === 'DIVIDER'
+            ? 'divider'
+            : 'action') as ParsedTimeLayoutItem['type'],
+      skipped: p.isHideDefault,
+    }));
   return {
     id: record.id,
     classId: record.classId,
@@ -284,13 +308,17 @@ function safeJson(text: string): unknown {
 
 export async function listTimeLayouts(user: TokenPayload, classId: string): Promise<TimeLayoutDto[]> {
   await assertCanManageSchedule(user, classId);
-  const records = await prisma.timeLayout.findMany({ where: { classId }, orderBy: { updatedAt: 'desc' } });
+  const records = await prisma.timeLayout.findMany({
+    where: { classId },
+    include: { points: { orderBy: { position: 'asc' } } },
+    orderBy: { updatedAt: 'desc' },
+  });
   return records.map(toDto);
 }
 
 /**
  * 导入（写入）：解析 → 有错误直接 400（不写库）→ 按 replace/merge 落库。
- * 权限与"课表管理"一致：管理员或本班班主任。
+ * 写入路由要求 timetable:manage，班级范围仍由本服务校验。
  */
 export async function importTimeLayout(
   user: TokenPayload,
@@ -312,76 +340,29 @@ export async function importTimeLayout(
   }
 
   const name = input.name?.trim() || '默认时间表';
-  const existing = await prisma.timeLayout.findMany({
-    where: { classId: input.classId },
-    orderBy: { updatedAt: 'desc' },
+  const current = await prisma.timeLayout.findFirst({where:{classId:input.classId,name},include:{points:{orderBy:{position:'asc'}}}});
+  const previous = current ? toDto(current).items : [];
+  const starts=new Set(parsed.items.map(p=>p.startTime));
+  const merged=input.mode==='merge'?parsed.items.filter(p=>previous.some(old=>old.startTime===p.startTime)).length:0;
+  const combined=input.mode==='merge'?[...previous.filter(p=>!starts.has(p.startTime)),...parsed.items].sort((a,b)=>a.startTime.localeCompare(b.startTime)):parsed.items;
+  const claimed=new Set<string>();
+  const points=combined.map((p,position)=>{
+    const timeType=({class:'LESSON',break:'BREAK',divider:'DIVIDER',action:'ACTION'} as const)[p.type];
+    const candidates=current?.points.filter(old=>!claimed.has(old.id)&&old.startTime===p.startTime&&old.timeType===timeType)||[];
+    const previousPoint=candidates.find(old=>old.endTime===p.endTime)||candidates[0];
+    if(previousPoint)claimed.add(previousPoint.id);
+    return {id:previousPoint?.id,position,name:p.name,startTime:p.startTime,endTime:p.endTime,timeType,isHideDefault:p.skipped,defaultClassId:null,breakName:p.type==='break'?p.name:'',actionSet:'{}'};
   });
-  const current = existing.find((item) => item.name === name) ?? existing[0] ?? null;
-
-  if (input.mode === 'merge' && current) {
-    let previousItems: ParsedTimeLayoutItem[] = [];
-    try {
-      previousItems = JSON.parse(current.items) as ParsedTimeLayoutItem[];
-    } catch {
-      previousItems = [];
-    }
-
-    // 以"开始时间"为槽位标识：
-    // - 导入项与旧配置的开始时间相同 → 视为同一节次被覆盖（计入 merged）
-    // - 开始时间不同 → 视为新增（计入 replaced），旧节次全部保留
-    // 注意：旧配置里可能存在开始时间相同的多条（例如分割线/跳过的节次），
-    // 只有被此次导入显式覆盖的那些才移除，避免合并时静默丢数据。
-    const incomingStarts = new Set(parsed.items.map((item) => item.startTime));
-    const previousStarts = new Set(previousItems.map((item) => item.startTime));
-    const merged = parsed.items.filter((item) => previousStarts.has(item.startTime)).length;
-    const replaced = parsed.items.length - merged;
-    const preserved = previousItems.filter((item) => !incomingStarts.has(item.startTime));
-    const combined = [...preserved, ...parsed.items].sort((a, b) => a.startTime.localeCompare(b.startTime));
-
-    const updated = await prisma.timeLayout.update({
-      where: { id: current.id },
-      data: {
-        items: JSON.stringify(combined.map((item, index) => ({ ...item, index: index + 1 }))),
-        source: 'classisland',
-      },
-    });
-    logger.info(
-      `课表时间配置合并导入：班级=${input.classId} 覆盖=${merged} 新增=${replaced} 共 ${combined.length} 节`,
-    );
-    return { layout: toDto(updated), mode: 'merge', warnings: parsed.warnings, replaced, merged };
-  }
-
-  // replace：同一班级同名配置整体替换；没有则新建
-  if (current) {
-    const updated = await prisma.timeLayout.update({
-      where: { id: current.id },
-      data: { items: JSON.stringify(parsed.items), name, source: 'classisland' },
-    });
-    logger.info(`课表时间配置覆盖导入：班级=${input.classId} 共 ${parsed.items.length} 节`);
-    return {
-      layout: toDto(updated),
-      mode: 'replace',
-      warnings: parsed.warnings,
-      replaced: parsed.items.length,
-      merged: 0,
-    };
-  }
-  const created = await prisma.timeLayout.create({
-    data: { classId: input.classId, name, source: 'classisland', items: JSON.stringify(parsed.items) },
-  });
-  logger.info(`课表时间配置新建：班级=${input.classId} 共 ${parsed.items.length} 节`);
-  return {
-    layout: toDto(created),
-    mode: 'replace',
-    warnings: parsed.warnings,
-    replaced: parsed.items.length,
-    merged: 0,
-  };
+  const layout=await saveLayout({classId:input.classId,name,points},current?.id);
+  logger.info(`课表时间配置导入：班级=${input.classId} 模式=${input.mode} 共 ${combined.length} 个时间点`);
+  return {layout:toDto(layout),mode:input.mode,warnings:parsed.warnings,replaced:parsed.items.length-merged,merged};
 }
 
 export async function deleteTimeLayout(user: TokenPayload, layoutId: string): Promise<void> {
   const record = await prisma.timeLayout.findUnique({ where: { id: layoutId } });
   if (!record) throw ApiError.notFound('时间配置不存在');
+  if (!record.classId) throw ApiError.forbidden('全校时间表请在时间表编辑器管理');
   await assertCanManageSchedule(user, record.classId);
+  if(await prisma.classPlan.count({where:{timeLayoutId:layoutId}}))throw ApiError.conflict('仍有课表使用该时间表');
   await prisma.timeLayout.delete({ where: { id: layoutId } });
 }

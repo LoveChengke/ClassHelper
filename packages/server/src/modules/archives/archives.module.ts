@@ -1,13 +1,13 @@
+import { listTransferred, restoreTransferred } from './transferred.service.js';
 import { Router } from 'express';
-import { sendCreated, sendOk } from '../../lib/http.js';
+import { sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
 import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
-import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
+import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
   archiveClassParamSchema,
   archivedContentQuerySchema,
-  createArchiveSchema,
   listArchivesQuerySchema,
   suggestedEnrollmentYears,
 } from './archives.schemas.js';
@@ -15,6 +15,15 @@ import * as archiveService from './archives.service.js';
 
 const router = Router();
 router.use(authenticate());
+router.get('/transferred', requirePermission('archive:manage'), async (req, res) =>
+  sendOk(res, await listTransferred(getAuthUser(req))),
+);
+router.post(
+  '/transferred/:id/restore',
+  requirePermission('archive:manage'),
+  validate({ params: idParamSchema }),
+  async (req, res) => sendOk(res, await restoreTransferred(getAuthUser(req), String(req.params.id))),
+);
 
 /**
  * 毕业归档（**全部接口仅管理员**）。
@@ -73,18 +82,6 @@ router.get(
       await archiveService.getArchivedClassContent(user, id, classId, limit ?? 200),
       '获取归档班级内容成功',
     );
-  },
-);
-
-/** POST /api/archives - 执行毕业归档（按届别整届归档） */
-router.post(
-  '/',
-  requirePermission('archive:manage'),
-  validate({ body: createArchiveSchema }),
-  async (req, res) => {
-    const user = getAuthUser(req);
-    const result = await archiveService.createArchive(user, validatedBody(req));
-    sendCreated(res, result, `${result.name} 已归档，共 ${result.classCount} 个班级`);
   },
 );
 

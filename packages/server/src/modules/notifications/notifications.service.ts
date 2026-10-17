@@ -16,6 +16,7 @@ import {
   classScopeWhere,
   resolveClassScope,
 } from '../../lib/access.js';
+import { activeStudentWhere } from '../../lib/students.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -87,7 +88,7 @@ export async function listNotifications(
     },
     include: {
       creator: creatorSelect,
-      reads: isStaff ? true : { where: personalWhere },
+      reads: isStaff ? { where: { student: activeStudentWhere() } } : { where: personalWhere },
     },
     orderBy: [{ createdAt: 'desc' }],
     take: 200,

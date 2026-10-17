@@ -1,3 +1,8 @@
+import {
+  classPlansModule,
+  timeLayoutsModule,
+  classPlanGroupsModule,
+} from './class-plans/class-plans.module.js';
 import { aiModule } from './ai/ai.module.js';
 import { archivesModule } from './archives/archives.module.js';
 import { authModule } from './auth/auth.module.js';
@@ -34,6 +39,9 @@ export const apiModules: ApiModule[] = [
   clientsModule,
   coursesModule,
   schedulesModule,
+  classPlansModule,
+  timeLayoutsModule,
+  classPlanGroupsModule,
   homeworksModule,
   notificationsModule,
   permissionsModule,

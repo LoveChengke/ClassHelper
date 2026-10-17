@@ -1,3 +1,4 @@
+import { activeStudentWhere } from '../../lib/students.js';
 import {
   dayKeyLocal,
   type AiActionKind,
@@ -267,7 +268,7 @@ async function buildPreview(
     const student =
       studentName && classId
         ? await prisma.student.findFirst({
-            where: { classId, name: studentName },
+            where: { classId, name: studentName, ...activeStudentWhere() },
             select: { id: true, name: true },
           })
         : null;

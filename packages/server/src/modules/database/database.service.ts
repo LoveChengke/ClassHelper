@@ -13,10 +13,7 @@ import {
   type DatabaseSnapshot,
 } from '../../lib/snapshot.js';
 import { ApiError } from '../../lib/http.js';
-import type {
-  BackupScheduleInput,
-  TargetConnectionInput,
-} from './database.schemas.js';
+import type { BackupScheduleInput, TargetConnectionInput } from './database.schemas.js';
 
 /**
  * 数据库管理服务：状态检测 / 连接测试 / 备份恢复 / 导入导出 / 定时备份 / 一键切换。
@@ -71,8 +68,13 @@ function readSchedule(): BackupSchedule {
     return {
       enabled: raw.enabled === true,
       intervalHours:
-        typeof raw.intervalHours === 'number' && raw.intervalHours >= 1 ? Math.floor(raw.intervalHours) : DEFAULT_SCHEDULE.intervalHours,
-      keepCount: typeof raw.keepCount === 'number' && raw.keepCount >= 1 ? Math.floor(raw.keepCount) : DEFAULT_SCHEDULE.keepCount,
+        typeof raw.intervalHours === 'number' && raw.intervalHours >= 1
+          ? Math.floor(raw.intervalHours)
+          : DEFAULT_SCHEDULE.intervalHours,
+      keepCount:
+        typeof raw.keepCount === 'number' && raw.keepCount >= 1
+          ? Math.floor(raw.keepCount)
+          : DEFAULT_SCHEDULE.keepCount,
       lastAutoBackupAt: typeof raw.lastAutoBackupAt === 'string' ? raw.lastAutoBackupAt : null,
     };
   } catch {
@@ -379,11 +381,27 @@ export async function testConnection(target: TargetConnectionInput): Promise<Con
     if (!fs.existsSync(absolute)) {
       const parent = path.dirname(absolute);
       if (!fs.existsSync(parent)) {
-        return { ok: false, provider: target.provider, latencyMs: null, version: null, error: `目录不存在：${parent}` };
+        return {
+          ok: false,
+          provider: target.provider,
+          latencyMs: null,
+          version: null,
+          error: `目录不存在：${parent}`,
+        };
       }
       note = '目标文件不存在，属新库（切换时会自动建表）';
     }
     url = `file:${absolute.replace(/\\/g, '/')}`;
+  }
+  // 同一个 SQLite 文件复用活跃连接，避免在 Windows/libsql 下开关第二个原生句柄。
+  if (target.provider === 'sqlite' && env.databaseProvider === 'sqlite' && url === env.databaseUrl) {
+    return {
+      ok: true,
+      provider: target.provider,
+      latencyMs: Date.now() - startedAt,
+      version: await databaseVersion('sqlite', prisma),
+      note,
+    };
   }
   let client: Awaited<ReturnType<typeof createPrismaClient>> | null = null;
   try {
@@ -483,12 +501,12 @@ async function assertTargetEmpty(target: TargetConnectionInput): Promise<string>
   try {
     const rows =
       target.provider === 'sqlite'
-        ? (await client.$queryRawUnsafe(
+        ? ((await client.$queryRawUnsafe(
             "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-          )) as { count?: bigint | number }[]
-        : (await client.$queryRawUnsafe(
+          )) as { count?: bigint | number }[])
+        : ((await client.$queryRawUnsafe(
             'SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema = DATABASE()',
-          )) as { count?: bigint | number }[];
+          )) as { count?: bigint | number }[]);
     const tableCount = Number(rows[0]?.count ?? 0);
     if (tableCount > 0) {
       throw ApiError.badRequest(
@@ -552,7 +570,11 @@ async function compileGeneratedClient(job: SwitchJob): Promise<void> {
 }
 
 /** 跨库迁移的数据写入走独立子进程：运行中的服务进程缓存的是旧方言的 Prisma Client */
-function runApplySnapshotTool(job: SwitchJob, target: TargetConnectionInput, snapshotFile: string): Promise<Record<string, number>> {
+function runApplySnapshotTool(
+  job: SwitchJob,
+  target: TargetConnectionInput,
+  snapshotFile: string,
+): Promise<Record<string, number>> {
   const distTool = path.join(env.serverRoot, 'dist', 'tools', 'apply-snapshot.js');
   const srcTool = path.join(env.serverRoot, 'src', 'tools', 'apply-snapshot.ts');
   const tsxCli = path.join(env.serverRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
@@ -698,7 +720,11 @@ async function runSwitch(job: SwitchJob, target: TargetConnectionInput): Promise
     if (!test.ok) {
       throw new Error(test.error ?? '目标库连接失败');
     }
-    finishStep(job, '测试目标库连接', test.note ?? `连接正常（${test.latencyMs ?? '-'}ms，${test.version ?? '-'}）`);
+    finishStep(
+      job,
+      '测试目标库连接',
+      test.note ?? `连接正常（${test.latencyMs ?? '-'}ms，${test.version ?? '-'}）`,
+    );
 
     // 4. 目标库必须为空
     stepOf(job, '检查目标库为空');

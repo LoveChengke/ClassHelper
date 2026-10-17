@@ -1,3 +1,4 @@
+import { getReleaseProgress, setReleaseProgress } from './release-progress.js';
 import { Router } from 'express';
 import { sendCreated, sendOk, ApiError } from '../../lib/http.js';
 import {
@@ -22,6 +23,9 @@ import {
 
 const router = Router();
 router.use(authenticate());
+router.get('/client/progress', requirePermission('client:update'), async (_req, res) =>
+  sendOk(res, getReleaseProgress()),
+);
 
 /**
  * GET /api/update/check?force=1 - 检查 GitHub 上有没有比本机新的版本
@@ -64,12 +68,24 @@ router.get(
  */
 router.post(
   '/client/fetch',
-  requirePermission('client:update-push'),
+  requirePermission('client:update'),
   validate({ body: fetchClientReleaseSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
     const input = validatedBody<FetchClientReleaseInput>(req);
-    sendCreated(res, await clientReleases.fetchReleaseFromGithub(user.sub, input), '安装包已下载并登记');
+    try {
+      sendCreated(res, await clientReleases.fetchReleaseFromGithub(user.sub, input), '安装包已下载并登记');
+    } catch (error) {
+      if (
+        !(error instanceof ApiError && error.status === 409) &&
+        getReleaseProgress().version === input.version
+      )
+        setReleaseProgress({
+          stage: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      throw error;
+    }
   },
 );
 
@@ -81,7 +97,7 @@ router.post(
  */
 router.post(
   '/client/releases',
-  requirePermission('client:update-push'),
+  requirePermission('client:update'),
   validate({ body: registerClientReleaseSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -93,7 +109,7 @@ router.post(
 /** DELETE /api/update/client/releases/:version - 删除缓存（元数据 + 磁盘文件） */
 router.delete(
   '/client/releases/:version',
-  requirePermission('client:update-push'),
+  requirePermission('client:update'),
   validate({ params: clientReleaseVersionParamSchema }),
   async (req, res) => {
     const { version } = validatedParams<{ version: string }>(req);

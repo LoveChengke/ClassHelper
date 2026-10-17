@@ -22,6 +22,8 @@ const keysSchema = z.array(permissionKeySchema).max(200, '一次最多提交 200
 export const createPermissionGroupSchema = z.object({
   name: z.string().trim().min(1, '请输入权限组名称').max(40, '权限组名称最多 40 个字'),
   description: z.string().trim().max(200, '描述最多 200 个字').optional(),
+  scope: z.enum(['SELF_CLASS', 'GRADE', 'DIVISION', 'ALL']).optional(),
+  scopeValue: z.string().trim().max(200).optional(),
   keys: keysSchema.optional(),
 });
 
@@ -34,6 +36,8 @@ export const createPermissionGroupSchema = z.object({
 export const updatePermissionGroupSchema = z.object({
   name: z.string().trim().min(1, '请输入权限组名称').max(40, '权限组名称最多 40 个字').optional(),
   description: z.string().trim().max(200, '描述最多 200 个字').optional(),
+  scope: z.enum(['SELF_CLASS', 'GRADE', 'DIVISION', 'ALL']).optional(),
+  scopeValue: z.string().trim().max(200).optional(),
   keys: keysSchema.optional(),
 });
 

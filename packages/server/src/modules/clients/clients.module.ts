@@ -84,7 +84,7 @@ router.get(
 /** POST /api/clients/updates - 统一下发客户端更新 */
 router.post(
   '/updates',
-  requirePermission('client:update-push'),
+  requirePermission('client:update'),
   validate({ body: pushClientUpdateSchema }),
   async (req, res) => {
     const user = getAuthUser(req);

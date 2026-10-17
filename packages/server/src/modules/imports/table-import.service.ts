@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { formatClassName, normalizeStudentNo, type TableImportKind } from '@classhelper/shared';
+import { activeStudentWhere, isActiveStudent } from '../../lib/students.js';
 import { prisma } from '../../lib/db.js';
 import { env } from '../../config/env.js';
 import { ApiError } from '../../lib/http.js';
@@ -329,7 +330,7 @@ export async function commitGrades(user: TokenPayload, input: TableCommitInput):
   const parsed = parseTable(buffer, input.fileName);
 
   const students = await prisma.student.findMany({
-    where: { classId },
+    where: { classId, ...activeStudentWhere() },
     select: { id: true, studentNo: true, name: true },
   });
   // 学号在库里已归一化为大写，比对前统一一次
@@ -565,9 +566,11 @@ export async function commitStudents(user: TokenPayload, input: TableCommitInput
 
     const existing = await prisma.student.findUnique({
       where: { studentNo },
-      select: { id: true, classId: true },
+      select: { id: true, classId: true, status: true },
     });
 
+    if (existing && !isActiveStudent(existing))
+      throw ApiError.conflict('该学号已被历史学生占用，不能通过导入复用');
     if (existing) {
       if (input.mode === 'append') {
         skipped += 1;
@@ -737,7 +740,7 @@ export async function commitClassTeachers(
     where: { archivedYearId: null },
     select: { id: true, name: true, teacherId: true },
   });
-  const classByName = new Map<string, { id: string; name: string; teacherId: string }>();
+  const classByName = new Map<string, { id: string; name: string; teacherId: string | null }>();
   for (const item of classes) {
     const key = item.name.toLowerCase();
     if (classByName.has(key)) classByName.delete(key);

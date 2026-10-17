@@ -2,7 +2,6 @@ import {
   CLIENT_COMMAND_EXPIRE_MS,
   CLIENT_COMMAND_LABELS,
   CLIENT_ONLINE_WINDOW_MS,
-  weekParityOf,
   type ClientUpdateMode,
   type ClientCommandAckRequest,
   type ClientCommandDto,
@@ -12,7 +11,7 @@ import {
   type ClientPushResult,
   type ClientTargetResult,
 } from '@classhelper/shared';
-import { loadTermContext, resolveCurrentWeek } from '../../lib/term.js';
+import { resolveActiveClassPlan } from '../../lib/class-plan.js';
 import { resolveClassScope, classScopeWhere } from '../../lib/access.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
@@ -276,11 +275,12 @@ export async function listDevices(
 /** 命令去重后的目标设备（保持请求顺序，便于结果一一对应） */
 async function findTargetDevices(user: TokenPayload, deviceIds: string[]): Promise<Map<string, DeviceRow>> {
   const wanted = [...new Set(deviceIds)];
-  const scope = classScopeWhere(await resolveClassScope(user));
+  const scope = classScopeWhere(await resolveClassScope(user, undefined, 'remote:control'));
   const rows = (await prisma.clientDevice.findMany({
     where: { AND: [scope, { id: { in: wanted } }] },
     select: { id: true, name: true, deviceKey: true },
   })) as unknown as DeviceRow[];
+  if (rows.length !== wanted.length) throw ApiError.forbidden('部分设备超出管理范围');
   return new Map(rows.map((row) => [row.id, row]));
 }
 
@@ -288,7 +288,7 @@ async function findTargetDevices(user: TokenPayload, deviceIds: string[]): Promi
  * POST /api/clients/commands - 下发远控命令（关机/重启/注销/锁屏）
  *
  * 同一台机器上还没执行的旧命令会被**自动撤销**：否则"先关机、后重启"会排队执行，
- * 机器刚关就被下一条叫起来，看起来像失控。客户端侧还有一次弹窗二次确认。
+ * 机器刚关就被下一条叫起来，看起来像失控。客户端收到即执行，并以设备标识回执真实结果。
  */
 export async function createCommands(
   user: TokenPayload,
@@ -331,7 +331,7 @@ export async function createCommands(
 
 /** 更新推送的目标集合：优先设备，其次班级，最后"全部" */
 async function resolveUpdateTargets(user: TokenPayload, input: PushClientUpdateInput): Promise<DeviceRow[]> {
-  const scope = classScopeWhere(await resolveClassScope(user));
+  const scope = classScopeWhere(await resolveClassScope(user, undefined, 'client:update'));
   const deviceIds = [...new Set(input.deviceIds ?? [])];
   if (deviceIds.length > 0) {
     const rows = (await prisma.clientDevice.findMany({
@@ -414,18 +414,8 @@ async function afterSchoolAt(classId: string | null, fallback = '17:00'): Promis
   const now = new Date();
   let end = fallback;
   if (classId) {
-    const week = resolveCurrentWeek(now, await loadTermContext(classId));
-    const last = await prisma.schedule.findFirst({
-      where: {
-        classId,
-        dayOfWeek: now.getDay() || 7,
-        weekStart: { lte: week },
-        weekEnd: { gte: week },
-        weekParity: { in: ['ALL', weekParityOf(week)] },
-      },
-      orderBy: { endTime: 'desc' },
-      select: { endTime: true },
-    });
+    const active = await resolveActiveClassPlan(classId, now);
+    const last = [...active.schedules].sort((a, b) => b.endTime.localeCompare(a.endTime))[0];
     if (last && last.endTime > end) end = last.endTime;
   }
   const [hours, minutes] = end.split(':').map(Number);
@@ -436,7 +426,7 @@ async function afterSchoolAt(classId: string | null, fallback = '17:00'): Promis
 
 /** DELETE /api/clients/devices/:id - 移除一台设备记录（换机 / 旧机器清理） */
 export async function deleteDevice(user: TokenPayload, deviceId: string): Promise<{ id: string }> {
-  const scope = classScopeWhere(await resolveClassScope(user));
+  const scope = classScopeWhere(await resolveClassScope(user, undefined, 'client:manage'));
   const device = await prisma.clientDevice.findFirst({
     where: { AND: [scope, { id: deviceId }] },
     select: { id: true, name: true, deviceKey: true },

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { ApiError, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requireAnyPermission } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermission, requireAnyPermission } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -151,7 +151,7 @@ router.get('/time-layout', validate({ query: timeLayoutQuerySchema }), async (re
  * POST /api/imports/time-layout - 导入 ClassIsland 时间配置
  * mode=replace 覆盖 / merge 按开始时间合并；解析失败返回 400 且不修改原配置。
  */
-router.post('/time-layout', validate({ body: timeLayoutImportSchema }), async (req, res) => {
+router.post('/time-layout', requirePermission('timetable:manage'), validate({ body: timeLayoutImportSchema }), async (req, res) => {
   const result = await importTimeLayout(getAuthUser(req), validatedBody<TimeLayoutImportInput>(req));
   sendOk(
     res,
@@ -163,7 +163,7 @@ router.post('/time-layout', validate({ body: timeLayoutImportSchema }), async (r
 });
 
 /** DELETE /api/imports/time-layout/:id - 删除某份时间配置 */
-router.delete('/time-layout/:id', validate({ params: idParamSchema }), async (req, res) => {
+router.delete('/time-layout/:id', requirePermission('timetable:manage'), validate({ params: idParamSchema }), async (req, res) => {
   const { id } = validatedParams<{ id: string }>(req);
   await deleteTimeLayout(getAuthUser(req), id);
   sendOk(res, { id }, '时间配置已删除');

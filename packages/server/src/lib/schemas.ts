@@ -52,7 +52,7 @@ export const attachmentUrlSchema = z
   .nullish();
 
 /** 周次：1..30 */
-export const weekNumberSchema = z.coerce.number().int().min(1).max(30);
+export const weekNumberSchema = z.coerce.number().int().min(1).max(60);
 
 /**
  * 学号：学生的唯一标识与查询键。

@@ -7,6 +7,7 @@ import {
   isAdmin,
   resolveClassScope,
 } from '../../lib/access.js';
+import { activeStudentWhere, isActiveStudent } from '../../lib/students.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -40,7 +41,8 @@ export async function listStudents(user: TokenPayload, options: ListStudentsQuer
   const students = await prisma.student.findMany({
     where: {
       ...classScopeWhere(scope),
-      ...(options.status ? { status: options.status } : {}),
+      ...activeStudentWhere(),
+      ...(options.status ? { AND: [{ status: options.status }, activeStudentWhere()] } : {}),
       // 默认不显示已归档（毕业 / 转出）的学生：他们属于归档页，不该混在在读名单里
       ...(options.includeArchived ? {} : { archivedYearId: null }),
       ...(options.keyword
@@ -58,7 +60,11 @@ export async function listStudents(user: TokenPayload, options: ListStudentsQuer
 /** 按学号取学生（学生没账号，因此没有"按 id 取自己"的入口） */
 export async function findStudentByNo(studentNo: string, classId?: string): Promise<StudentDto | null> {
   const record = await prisma.student.findFirst({
-    where: { studentNo: normalizeStudentNo(studentNo), ...(classId ? { classId } : {}) },
+    where: {
+      ...activeStudentWhere(),
+      studentNo: normalizeStudentNo(studentNo),
+      ...(classId ? { classId } : {}),
+    },
     include: withClass,
   });
   return record ? toStudentDto(record) : null;
@@ -98,7 +104,7 @@ export async function updateStudent(
   input: UpdateStudentInput,
 ): Promise<StudentDto> {
   const student = await prisma.student.findUnique({ where: { id: studentId } });
-  if (!student) throw ApiError.notFound('学生不存在');
+  if (!student || !isActiveStudent(student)) throw ApiError.notFound('学生不存在');
 
   await assertCanManageRoster(user, student.classId ?? undefined);
   if (input.studentNo && input.studentNo !== student.studentNo) {
@@ -155,7 +161,9 @@ export async function transferStudents(
 ): Promise<{ moved: number; transfers: StudentTransferDto[] }> {
   if (!isAdmin(user)) throw ApiError.forbidden('只有管理员可以调班');
 
-  const students = await prisma.student.findMany({ where: { id: { in: input.studentIds } } });
+  const students = await prisma.student.findMany({
+    where: { id: { in: input.studentIds }, ...activeStudentWhere() },
+  });
   if (students.length !== input.studentIds.length) {
     throw ApiError.badRequest('部分学生不存在，请刷新后重试');
   }
@@ -264,6 +272,7 @@ export async function listTransfers(
   }
 
   const where = {
+    student: activeStudentWhere(),
     ...(options.studentId ? { studentId: options.studentId } : {}),
     ...(options.classId ? { OR: [{ fromClassId: options.classId }, { toClassId: options.classId }] } : {}),
   };

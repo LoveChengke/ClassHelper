@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MAX_TERM_WEEK, SUBJECT_CATALOG, isDayKey } from '@classhelper/shared';
+import { SUBJECT_CATALOG, isDayKey } from '@classhelper/shared';
 import {
   classIndexSchema,
   enrollmentYearSchema,
@@ -27,11 +27,11 @@ export const createClassSchema = z.object({
     .regex(/^[A-Za-z0-9]{4,16}$/, '班级码需为 4~16 位字母或数字')
     .optional(),
   /**
-   * 本学期教学周数。上限与课表周次口径统一取 MAX_TERM_WEEK（30）：
+   * 本学期教学周数。动态上限由服务层统一取 getMaxTermWeeks()（默认30、最多60）：
    * 周次选择器与 weekNumberSchema 都只到 30，允许更大的值只会让用户设出一个
    * 系统兑现不了的学期长度（第 31 周之后永远为空）。
    */
-  termWeeks: z.coerce.number().int().min(1).max(MAX_TERM_WEEK).optional(),
+  termWeeks: z.coerce.number().int().min(1).max(60).optional(),
 });
 
 /**
@@ -48,7 +48,7 @@ export const updateClassSchema = z.object({
     .nullish(),
   enrollmentYear: enrollmentYearSchema.optional(),
   classIndex: classIndexSchema.optional(),
-  termWeeks: z.coerce.number().int().min(1).max(MAX_TERM_WEEK).optional(),
+  termWeeks: z.coerce.number().int().min(1).max(60).optional(),
 });
 
 /** 学年升级（批量改年级，不归档） */

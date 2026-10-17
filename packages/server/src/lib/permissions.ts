@@ -1,4 +1,5 @@
 import {
+  BUILTIN_TEACHER_GROUPS,
   PERMISSION_KEYS,
   PERMISSION_LABELS,
   ROLE_DEFAULT_PERMISSIONS,
@@ -68,6 +69,20 @@ export function ensureDefaultGroups(): Promise<void> {
   return defaultGroupsReady;
 }
 async function createDefaultGroups(): Promise<void> {
+  for (const group of BUILTIN_TEACHER_GROUPS) {
+    await prisma.permissionGroup.upsert({
+      where: { id: group.id },
+      update: {},
+      create: {
+        id: group.id,
+        name: group.name,
+        builtin: true,
+        scope: group.scope,
+        scopeValue: group.scopeValue,
+        items: { create: group.keys.map((key) => ({ key })) },
+      },
+    });
+  }
   for (const role of ['ADMIN', 'TEACHER'] as const) {
     if (await prisma.permissionGroup.findUnique({ where: { defaultRole: role }, select: { id: true } }))
       continue;
@@ -86,6 +101,7 @@ async function createDefaultGroups(): Promise<void> {
         defaultRole: role,
         name,
         builtin: true,
+        scope: role === 'ADMIN' ? 'ALL' : 'SELF_CLASS',
         description: '未分配其他权限组时自动生效；可调整权限。管理员始终保留权限与系统管理入口。',
         items: { create: ROLE_DEFAULT_PERMISSIONS[role].map((key) => ({ key })) },
       },

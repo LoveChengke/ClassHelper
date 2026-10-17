@@ -1,4 +1,10 @@
-﻿import { Router } from 'express';
+import { z } from 'zod';
+import { assertClassAccess, assertCanManageSchedule } from '../../lib/access.js';
+import * as plans from '../class-plans/class-plans.service.js';
+import { datedPlanSchema, swapSchema } from '../class-plans/class-plans.schemas.js';
+import { prisma } from '../../lib/db.js';
+import { ApiError } from '../../lib/http.js';
+import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
 import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
@@ -17,6 +23,74 @@ import * as scheduleService from './schedules.service.js';
 
 const router = Router();
 router.use(authenticate());
+router.get('/active-week', validate({ query: gridQuerySchema }), async (req, res) =>
+  sendOk(res, await scheduleService.getActiveScheduleWeek(getAuthUser(req), validatedQuery(req))),
+);
+router.get('/scheduled', validate({ query: z.object({ classId: z.string().min(1) }) }), async (req, res) => {
+  const { classId } = validatedQuery<{ classId: string }>(req);
+  await assertClassAccess(getAuthUser(req), classId);
+  sendOk(
+    res,
+    await prisma.scheduledClassPlan.findMany({
+      where: { classId },
+      include: { plan: { select: { name: true, isOverlay: true } } },
+      orderBy: { date: 'asc' },
+    }),
+  );
+});
+router.delete(
+  '/scheduled/:id',
+  requirePermission('schedule:write'),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const row = await prisma.scheduledClassPlan.findUnique({
+      where: { id: String(req.params.id) },
+      include: { plan: true },
+    });
+    if (!row) throw ApiError.notFound('预定不存在');
+    await assertCanManageSchedule(getAuthUser(req), row.classId);
+    await prisma.$transaction(async (tx) => {
+      await tx.scheduledClassPlan.delete({ where: { id: row.id } });
+      if (row.plan.isOverlay)
+        await tx.classPlan.update({ where: { id: row.classPlanId }, data: { isEnabled: false } });
+    });
+    await plans.notifyScheduleChanged(row.classId);
+    sendOk(res, { id: row.id });
+  },
+);
+
+router.post(
+  '/scheduled',
+  requirePermission('schedule:write'),
+  validate({ body: datedPlanSchema }),
+  async (req, res) => sendCreated(res, await plans.schedulePlan(getAuthUser(req), req.body)),
+);
+router.post(
+  '/overlay',
+  requirePermission('schedule:write'),
+  validate({ body: datedPlanSchema }),
+  async (req, res) => {
+    const source = await plans.requirePlan(getAuthUser(req), req.body.classPlanId);
+    if (source.classId !== req.body.classId) throw ApiError.badRequest('课表不属于本班');
+    sendCreated(res, await plans.createOverlay(getAuthUser(req), source.id, req.body.date));
+  },
+);
+router.post(
+  '/swap',
+  requirePermission('schedule:write'),
+  validate({ body: swapSchema }),
+  async (req, res) => {
+    const source = await plans.requirePlan(getAuthUser(req), req.body.classPlanId);
+    if (source.classId !== req.body.classId) throw ApiError.badRequest('课表不属于本班');
+    sendCreated(
+      res,
+      await plans.createOverlay(getAuthUser(req), source.id, req.body.date, {
+        first: req.body.first,
+        second: req.body.second,
+      }),
+    );
+  },
+);
 
 /** GET /api/schedules?classId=&week=&dayOfWeek= - 课表列表 */
 router.get('/', validate({ query: listSchedulesQuerySchema }), async (req, res) => {

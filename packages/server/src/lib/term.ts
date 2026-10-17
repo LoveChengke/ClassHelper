@@ -1,5 +1,5 @@
 import {
-  MAX_TERM_WEEK,
+  getMaxTermWeeks as normalizeMaxWeeks,
   resolveCurrentWeek as resolveWeek,
   resolveWeekFromRanges,
 } from '@classhelper/shared';
@@ -7,7 +7,9 @@ import { env } from '../config/env.js';
 import { prisma } from './db.js';
 import { SETTING_KEYS, getSetting } from './settings.js';
 
-export { MAX_TERM_WEEK };
+export async function getMaxTermWeeks(): Promise<number> {
+  return normalizeMaxWeeks(await getSetting(SETTING_KEYS.termMaxWeeks));
+}
 
 /** 某个班的周次口径（管理员可以为每个班单独配开学日期与逐周区间） */
 export interface TermWeekContext {
@@ -27,7 +29,7 @@ export interface TermWeekContext {
  */
 export function resolveCurrentWeek(now: Date = new Date(), context?: TermWeekContext | null): number {
   const termStartDate = context?.termStartDate || env.termStartDate;
-  const maxWeek = context?.maxWeek ?? MAX_TERM_WEEK;
+  const maxWeek = context?.maxWeek ?? normalizeMaxWeeks();
 
   // 配了逐周区间就按区间判定 —— 调休/补课让某一周变长变短时，线性推算会整体错位
   if (context && context.weeks.length > 0) {
@@ -48,13 +50,14 @@ export function resolveCurrentWeek(now: Date = new Date(), context?: TermWeekCon
  * @param classId 不传/空串表示**只看全校默认**（管理员在「学期周次」页编辑默认口径时就是这种调用）
  */
 export async function loadTermContext(classId?: string | null): Promise<TermWeekContext> {
-  const [globalWeeks, settingStart] = await Promise.all([
+  const [globalWeeks, settingStart, maxTermWeeks] = await Promise.all([
     prisma.termWeek.findMany({
       where: { classId: '' },
       orderBy: { weekNumber: 'asc' },
       select: { weekNumber: true, startDate: true, endDate: true },
     }),
     getSetting(SETTING_KEYS.termStartDate),
+    getMaxTermWeeks(),
   ]);
   if (!classId) {
     // 全校默认没有"班级记录"可以存开学日期，因此按「显式设置 → 第 1 周的起始日 → .env」回落
@@ -63,7 +66,7 @@ export async function loadTermContext(classId?: string | null): Promise<TermWeek
     return {
       termStartDate: settingStart || firstGlobal || env.termStartDate,
       weeks: globalWeeks,
-      maxWeek: MAX_TERM_WEEK,
+      maxWeek: maxTermWeeks,
     };
   }
 
@@ -85,6 +88,6 @@ export async function loadTermContext(classId?: string | null): Promise<TermWeek
   return {
     termStartDate: cls?.termStartDate || firstWeekStart || settingStart || env.termStartDate,
     weeks,
-    maxWeek: cls?.termWeeks && cls.termWeeks > 0 ? cls.termWeeks : MAX_TERM_WEEK,
+    maxWeek: Math.min(cls?.termWeeks || maxTermWeeks, maxTermWeeks),
   };
 }

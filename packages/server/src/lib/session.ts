@@ -1,4 +1,5 @@
 import { classDeviceClassId, isClassDevice } from './access.js';
+import { activeStudentWhere } from './students.js';
 import { prisma } from './db.js';
 import type { TokenPayload } from './jwt.js';
 
@@ -26,7 +27,7 @@ export function classSessionClassId(user: TokenPayload): string | null {
 /** 该班级的全部学生 id（班级端的"全班"范围） */
 export async function listClassStudentIds(classId: string): Promise<string[]> {
   const students = await prisma.student.findMany({
-    where: { classId, status: { not: 'inactive' } },
+    where: { classId, ...activeStudentWhere() },
     select: { id: true },
   });
   return students.map((item) => item.id);

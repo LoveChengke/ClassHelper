@@ -1,3 +1,5 @@
+import { getReleaseProgress, setReleaseProgress } from './release-progress.js';
+import { Transform } from 'node:stream';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -81,9 +83,7 @@ async function sha256Of(file: string): Promise<string> {
 /** GET /api/update/client/releases - 已缓存的安装包（按版本从新到旧） */
 export async function listReleases(): Promise<ClientReleaseDto[]> {
   const rows = (await prisma.clientRelease.findMany()) as unknown as ReleaseRow[];
-  return rows
-    .sort((a, b) => compareVersions(b.version, a.version))
-    .map((row) => toReleaseDto(row));
+  return rows.sort((a, b) => compareVersions(b.version, a.version)).map((row) => toReleaseDto(row));
 }
 
 /** 服务端缓存的**最新**版本（推送更新时省略 version 就用它） */
@@ -116,7 +116,9 @@ export async function resolveUpdateInfo(version: string): Promise<ClientUpdateIn
 }
 
 /** 绝对路径（下载路由用）；文件不存在返回 null */
-export async function resolveReleaseFile(version: string): Promise<{ file: string; fileName: string } | null> {
+export async function resolveReleaseFile(
+  version: string,
+): Promise<{ file: string; fileName: string } | null> {
   const row = (await prisma.clientRelease.findUnique({ where: { version } })) as ReleaseRow | null;
   if (!row) return null;
   const file = releaseFilePath(row.version, row.fileName);
@@ -161,7 +163,9 @@ export async function registerRelease(
     },
   })) as ReleaseRow;
 
-  logger.info(`登记客户端安装包 v${version}（${fileName}，${stat.size} 字节，sha256=${sha256.slice(0, 12)}…）`);
+  logger.info(
+    `登记客户端安装包 v${version}（${fileName}，${stat.size} 字节，sha256=${sha256.slice(0, 12)}…）`,
+  );
   return toReleaseDto(row);
 }
 
@@ -170,7 +174,10 @@ export async function fetchReleaseFromGithub(
   userId: string,
   input: FetchClientReleaseInput,
 ): Promise<ClientReleaseDto> {
+  if (['downloading', 'verifying'].includes(getReleaseProgress().stage))
+    throw ApiError.conflict('已有安装包正在下载');
   const version = input.version;
+  setReleaseProgress({ version, stage: 'downloading', downloadedBytes: 0, totalBytes: 0, error: '' });
   const fileName = clientReleaseFileName(version);
   const url = clientReleaseDownloadUrl(version);
   const target = releaseFilePath(version, fileName);
@@ -199,14 +206,24 @@ export async function fetchReleaseFromGithub(
   }
 
   try {
-    await pipeline(Readable.fromWeb(response.body as never), fs.createWriteStream(target));
+    setReleaseProgress({ totalBytes: Number(response.headers.get('content-length')) || 0 });
+    const counter = new Transform({
+      transform(chunk, _encoding, done) {
+        setReleaseProgress({ downloadedBytes: getReleaseProgress().downloadedBytes + chunk.length });
+        done(null, chunk);
+      },
+    });
+    await pipeline(Readable.fromWeb(response.body as never), counter, fs.createWriteStream(target));
   } catch (error) {
     fs.rmSync(target, { force: true });
     throw ApiError.badRequest(`写入安装包失败：${error instanceof Error ? error.message : String(error)}`);
   }
 
   // 落盘后统一走登记：sha256 / 大小 / 落库都在同一处算
-  return registerRelease(userId, { version, fileName });
+  setReleaseProgress({ stage: 'verifying' });
+  const release = await registerRelease(userId, { version, fileName });
+  setReleaseProgress({ stage: 'ready', downloadedBytes: release.size, totalBytes: release.size });
+  return release;
 }
 
 /** 删除一份缓存的安装包（元数据 + 磁盘文件） */

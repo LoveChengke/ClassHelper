@@ -1,5 +1,6 @@
 import { SOCKET_EVENTS, buildCallTitle, dayKeyLocal, type NotificationDto } from '@classhelper/shared';
 import { assertCanPublishNotification } from '../../lib/access.js';
+import { isActiveStudent } from '../../lib/students.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -30,9 +31,9 @@ export async function createCall(user: TokenPayload, input: CreateCallInput): Pr
 
   const student = await prisma.student.findUnique({
     where: { id: input.studentId },
-    select: { id: true, name: true, studentNo: true, classId: true },
+    select: { id: true, name: true, studentNo: true, classId: true, status: true },
   });
-  if (!student) throw ApiError.notFound('学生不存在');
+  if (!student || !isActiveStudent(student)) throw ApiError.notFound('学生不存在');
   if (student.classId !== input.classId) {
     throw new ApiError(400, 'BAD_REQUEST', '该学生不在所选班级');
   }

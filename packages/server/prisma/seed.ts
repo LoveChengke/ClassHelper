@@ -24,7 +24,10 @@ import {
 import { disconnectPrisma, prisma } from '../src/lib/db.js';
 import { logger } from '../src/lib/logger.js';
 import { hashPassword } from '../src/lib/password.js';
-import { MAX_TERM_WEEK } from '../src/lib/term.js';
+import { syncLegacyClassPlans } from '../src/lib/legacy-class-plans.js';
+import { ensureDefaultGroups } from '../src/lib/permissions.js';
+import { getMaxTermWeeks } from '../src/lib/term.js';
+const MAX_TERM_WEEK = await getMaxTermWeeks();
 
 const STUDENT_NAMES = [
   '王小明',
@@ -213,7 +216,7 @@ async function main(): Promise<void> {
         data: {
           name: courseName,
           classId: targetClass.id,
-          teacherId: courseName === OTHER_TEACHER_SUBJECT ? otherTeacher : targetClass.teacherId,
+          teacherId: courseName === OTHER_TEACHER_SUBJECT ? otherTeacher : targetClass.teacherId!,
         },
       });
       created.push({ id: course.id, name: course.name });
@@ -316,7 +319,7 @@ async function main(): Promise<void> {
           assignDate: dayKeyLocal(new Date()),
           attachmentUrl:
             seed.courseIndex % 2 === 0 ? 'https://example.com/classhelper/homework-sample.pdf' : null,
-          createdBy: targetClass.teacherId,
+          createdBy: targetClass.teacherId!,
         },
       });
       homeworks.push(homework);
@@ -379,7 +382,7 @@ async function main(): Promise<void> {
           title: seed.title,
           content: seed.content,
           priority: seed.priority,
-          createdBy: targetClass.teacherId,
+          createdBy: targetClass.teacherId!,
           createdAt: new Date(now - seed.daysAgo * day),
         },
       });
@@ -405,11 +408,7 @@ async function main(): Promise<void> {
   const examNames = ['第一次月考', '期中考试'];
   const customLevels = ['优', '良', '合格'] as const;
   const letterLevels = ['A', 'B', 'C', 'D'] as const;
-  const levelPlan = [
-    { type: 'percent' as const },
-    { type: 'custom' as const },
-    { type: 'letter' as const },
-  ];
+  const levelPlan = [{ type: 'percent' as const }, { type: 'custom' as const }, { type: 'letter' as const }];
 
   for (const targetClass of classes) {
     const classCourses = coursesByClass.get(targetClass.id) ?? [];
@@ -426,7 +425,8 @@ async function main(): Promise<void> {
               ? gradeLevel(percent)
               : plan.type === 'letter'
                 ? (letterLevels[Math.min(letterLevels.length - 1, Math.floor((100 - percent) / 12))] ?? 'D')
-                : (customLevels[Math.min(customLevels.length - 1, Math.floor((100 - percent) / 15))] ?? '合格');
+                : (customLevels[Math.min(customLevels.length - 1, Math.floor((100 - percent) / 15))] ??
+                  '合格');
           await prisma.grade.create({
             data: {
               classId: targetClass.id,
@@ -579,12 +579,20 @@ async function main(): Promise<void> {
 
   console.log('\n================ 演示账号 ================');
   console.log(`管理员    admin       / admin123      (${admin.name} · 可执行毕业归档与调班)`);
-  console.log(`教师      teacher1    / teacher123    (${teacher1.name} · ${classes[0]!.name} 班主任，教数学)`);
-  console.log(`教师      teacher2    / teacher123    (${teacher2.name} · ${classes[1]!.name} 班主任，教 ${classes[0]!.name} 语文)`);
+  console.log(
+    `教师      teacher1    / teacher123    (${teacher1.name} · ${classes[0]!.name} 班主任，教数学)`,
+  );
+  console.log(
+    `教师      teacher2    / teacher123    (${teacher2.name} · ${classes[1]!.name} 班主任，教 ${classes[0]!.name} 语文)`,
+  );
+  await ensureDefaultGroups();
+  for (const cls of classes) await syncLegacyClassPlans(cls.id);
   console.log('ClassHelper 班级端（班级码）：G101 / G102 / G203，密码 123456');
   console.log('（学生只有名单、没有账号：成绩/未交/叫人按学号记录）');
   console.log(`已在读班级：${classes.map((item) => item.name).join(' / ')}`);
-  console.log(`已归档届别：${formatYearLabel(2023)}（${graduatedClass.name}，${graduateNames.length} 名毕业生）`);
+  console.log(
+    `已归档届别：${formatYearLabel(2023)}（${graduatedClass.name}，${graduateNames.length} 名毕业生）`,
+  );
   console.log('==========================================\n');
 }
 

@@ -187,7 +187,7 @@ export interface ClassLike {
   enrollmentYear?: number | null;
   /** 班号；老数据可能为空 */
   classIndex?: number | null;
-  teacherId: string;
+  teacherId: string | null;
   /** 本学期教学周数（班主任可调，默认 20） */
   termWeeks?: number;
   /** 班级端按学号查成绩的开关 */
@@ -213,7 +213,7 @@ export function toClassDto(item: ClassLike): ClassDto {
     grade: item.grade,
     enrollmentYear: item.enrollmentYear ?? null,
     classIndex: item.classIndex ?? null,
-    teacherId: item.teacherId,
+    teacherId: item.teacherId ?? '',
     termWeeks: item.termWeeks ?? 20,
     // 默认开启：老库补列时的默认值也是 true，两边保持一致
     studentGradeQueryEnabled: item.studentGradeQueryEnabled ?? true,
@@ -241,6 +241,8 @@ export interface CourseLike {
 
 export function toCourseDto(item: CourseLike): CourseDto {
   return {
+    initial: 'initial' in item && item.initial ? String(item.initial) : Array.from(item.name)[0] || '',
+    isOutDoor: 'isOutDoor' in item ? item.isOutDoor === true : false,
     id: item.id,
     name: item.name,
     teacherId: item.teacherId,

@@ -11,6 +11,7 @@ import { backfillNotificationDates } from './lib/backfill-notification-dates.js'
 import { refreshDeveloperMode } from './lib/settings.js';
 import { resolveWebDistDir } from './lib/web-static.js';
 import { initRealtime } from './realtime/socket.js';
+import { startPromotionScheduler } from './modules/term/promotion.service.js';
 import { startBackupScheduler } from './modules/database/database.service.js';
 
 /** 数据库自检与可选的首次初始化 */
@@ -95,6 +96,7 @@ httpServer.listen(env.port, env.host, () => {
   logger.info(`WebSocket：ws://${displayHost}:${env.port}/socket.io`);
   // 数据库管理模块的定时备份调度（配置与"到点时间"持久化在 data/database-settings.json）
   startBackupScheduler();
+  void startPromotionScheduler().catch((e) => logger.error(`学年升级调度启动失败：${String(e)}`));
 });
 
 let shuttingDown = false;

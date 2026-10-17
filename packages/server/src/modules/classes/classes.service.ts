@@ -26,10 +26,12 @@ import type {
   UpdateClassInput,
   UpdateStudentGradeQueryInput,
 } from './classes.schemas.js';
+import { activeStudentWhere, isActiveStudent } from '../../lib/students.js';
+import { getMaxTermWeeks } from '../../lib/term.js';
 import { logger } from '../../lib/logger.js';
 
 const countSelect = {
-  students: true,
+  students: { where: activeStudentWhere() },
   courses: true,
   homeworks: true,
   notifications: true,
@@ -48,7 +50,7 @@ const teacherBriefSelect = { select: { id: true, name: true, username: true } } 
  * 管理员（管理全部班级）或该班级的班主任（要发给学生用，只读展示）。
  * 科任老师与 ClassHelper 班级端都看不到别人班的班级码。
  */
-function canSeeClassAccount(user: TokenPayload, item: { teacherId: string }): boolean {
+function canSeeClassAccount(user: TokenPayload, item: { teacherId: string | null }): boolean {
   if (user.role === 'ADMIN') return true;
   return user.role === 'TEACHER' && item.teacherId === user.sub;
 }
@@ -103,7 +105,7 @@ export async function getClassDetail(user: TokenPayload, classId: string): Promi
     include: {
       teacher: teacherBriefSelect,
       _count: { select: countSelect },
-      students: { orderBy: { studentNo: 'asc' } },
+      students: { where: activeStudentWhere(), orderBy: { studentNo: 'asc' } },
       courses: {
         orderBy: { name: 'asc' },
         include: { teacher: teacherBriefSelect },
@@ -158,6 +160,13 @@ export async function listSubjectTeachers(
 /** 创建班级 */
 export async function createClass(user: TokenPayload, input: CreateClassInput): Promise<ClassDto> {
   assertCanManageClasses(user);
+  if (
+    'termWeeks' in input &&
+    typeof input.termWeeks === 'number' &&
+    input.termWeeks > (await getMaxTermWeeks())
+  )
+    throw ApiError.badRequest('班级周数不能超过全校上限');
+
   let teacherId = user.sub;
   if (input.teacherId && user.role === 'ADMIN') {
     teacherId = await requireTeacher(input.teacherId, '指定的班主任不存在或角色不是教师');
@@ -244,6 +253,7 @@ export async function assignSubjectTeachers(
         (await prisma.class.findUniqueOrThrow({ where: { id: classId }, select: { teacherId: true } }))
           .teacherId;
 
+    if (!teacherId) throw ApiError.badRequest('请先指定班主任或为该科指定任课老师');
     const existing = assignment.courseId
       ? await prisma.course.findUnique({
           where: { id: assignment.courseId },
@@ -285,6 +295,13 @@ export async function updateClassAccount(
   input: { code?: string; password?: string },
 ): Promise<ClassDto> {
   assertCanManageClasses(user);
+  if (
+    'termWeeks' in input &&
+    typeof input.termWeeks === 'number' &&
+    input.termWeeks > (await getMaxTermWeeks())
+  )
+    throw ApiError.badRequest('班级周数不能超过全校上限');
+
   await updateClassAccountRecord(classId, input);
 
   const updated = await prisma.class.findUnique({
@@ -371,7 +388,7 @@ export async function deleteClass(user: TokenPayload, classId: string): Promise<
 export async function listClassStudents(user: TokenPayload, classId: string): Promise<StudentDto[]> {
   await assertClassAccess(user, classId);
   const students = await prisma.student.findMany({
-    where: { classId, archivedYearId: null },
+    where: { classId, archivedYearId: null, ...activeStudentWhere() },
     include: { class: { select: { name: true, grade: true } } },
     orderBy: { studentNo: 'asc' },
   });
@@ -395,6 +412,8 @@ export async function addStudent(
   const existing = await prisma.student.findUnique({ where: { studentNo: input.studentNo } });
   let studentId: string;
 
+  if (existing && !isActiveStudent(existing))
+    throw ApiError.conflict('学号已被历史学生占用；请使用新学号或在归档页撤回转出');
   if (existing) {
     studentId = existing.id;
     if (existing.classId !== classId) {

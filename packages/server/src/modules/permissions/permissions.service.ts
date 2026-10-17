@@ -36,6 +36,8 @@ const GROUP_SELECT = {
   description: true,
   builtin: true,
   defaultRole: true,
+  scope: true,
+  scopeValue: true,
   createdAt: true,
   updatedAt: true,
   items: { select: { key: true } },
@@ -48,6 +50,8 @@ type GroupRow = {
   description: string;
   builtin: boolean;
   defaultRole: string | null;
+  scope: string;
+  scopeValue: string;
   createdAt: Date;
   updatedAt: Date;
   items: { key: string }[];
@@ -91,6 +95,8 @@ function normalizeKeys(keys: readonly string[] | undefined): PermissionKey[] {
 function toGroupDto(row: GroupRow): PermissionGroupDto {
   return {
     id: row.id,
+    scope: row.scope as PermissionGroupDto['scope'],
+    scopeValue: row.scopeValue,
     name: row.name,
     description: row.description,
     builtin: row.builtin,
@@ -156,6 +162,8 @@ export async function createGroup(input: CreatePermissionGroupRequest): Promise<
   const created = await prisma.permissionGroup.create({
     data: {
       name,
+      scope: input.scope ?? 'SELF_CLASS',
+      scopeValue: input.scopeValue ?? '',
       description: input.description?.trim() ?? '',
       items: { create: keys.map((key) => ({ key })) },
     },
@@ -188,6 +196,8 @@ export async function updateGroup(
       where: { id: groupId },
       data: {
         ...(name ? { name } : {}),
+        ...(input.scope ? { scope: input.scope } : {}),
+        ...(input.scopeValue !== undefined ? { scopeValue: input.scopeValue } : {}),
         ...(input.description !== undefined ? { description: input.description.trim() } : {}),
       },
     });

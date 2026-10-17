@@ -44,7 +44,13 @@ export async function createCourse(user: TokenPayload, input: CreateCourseInput)
   }
 
   const created = await prisma.course.create({
-    data: { name: input.name, classId: input.classId, teacherId: user.sub },
+    data: {
+      name: input.name,
+      initial: input.initial || Array.from(input.name)[0] || '',
+      isOutDoor: input.isOutDoor ?? false,
+      classId: input.classId,
+      teacherId: user.sub,
+    },
     include: { teacher: teacherSelect },
   });
   return toCourseDto(created);
@@ -61,7 +67,11 @@ export async function updateCourse(
 
   const updated = await prisma.course.update({
     where: { id: courseId },
-    data: { ...(input.name ? { name: input.name } : {}) },
+    data: {
+      ...(input.name ? { name: input.name } : {}),
+      ...(input.initial !== undefined ? { initial: input.initial } : {}),
+      ...(input.isOutDoor !== undefined ? { isOutDoor: input.isOutDoor } : {}),
+    },
     include: { teacher: teacherSelect },
   });
   return toCourseDto(updated);

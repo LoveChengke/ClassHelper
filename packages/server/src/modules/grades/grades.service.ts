@@ -1,3 +1,4 @@
+import type { CollectiveGradeAnalysisDto as ContractCollectiveGradeAnalysisDto } from '@classhelper/shared';
 import {
   SOCKET_EVENTS,
   canQueryStudentGrades,
@@ -21,6 +22,7 @@ import {
   resolveClassScope,
   resolveUserClassRole,
 } from '../../lib/access.js';
+import { activeStudentWhere, isActiveStudent } from '../../lib/students.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -41,6 +43,74 @@ const studentSelect = { select: { id: true, studentNo: true, name: true } } as c
 const classSelect = { select: { name: true } } as const;
 const include = { course: courseSelect, student: studentSelect, class: classSelect } as const;
 
+async function assertDetailQuery(user: TokenPayload, classId: string): Promise<void> {
+  await assertClassAccess(user, classId);
+  const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+  if (
+    !canQueryStudentGrades({
+      classRole: await resolveUserClassRole(user, classId),
+      gradeQueryEnabled: cls.studentGradeQueryEnabled,
+    })
+  ) {
+    throw ApiError.forbidden('本班只开放集体分析，未开放个人成绩');
+  }
+}
+
+/** 服务端聚合；不返回极值、个人标识或可由补集反推的稀疏分段。 */
+export async function collectiveAnalysis(
+  user: TokenPayload,
+  classId: string,
+): Promise<ContractCollectiveGradeAnalysisDto> {
+  await assertClassAccess(user, classId);
+  const rows = await prisma.grade.findMany({
+    where: { classId, student: activeStudentWhere() },
+    select: {
+      studentId: true,
+      course: { select: { name: true } },
+      examName: true,
+      score: true,
+      totalScore: true,
+    },
+  });
+  const enough = (items: typeof rows) => new Set(items.map((r) => r.studentId)).size >= 5;
+  const mean = (items: typeof rows) =>
+    enough(items)
+      ? Math.round(items.reduce((s, r) => s + gradePercent(r.score, r.totalScore), 0) / items.length)
+      : null;
+  const suppressed = !enough(rows);
+  const subjects = [...new Set(rows.map((r) => r.course?.name || '综合'))].map((name) => ({
+    name,
+    averagePercent: mean(rows.filter((r) => (r.course?.name || '综合') === name)),
+  }));
+  const trend = [...new Set(rows.map((r) => r.examName))].map((examName) => ({
+    examName,
+    averagePercent: mean(rows.filter((r) => r.examName === examName)),
+  }));
+  const bins = [0, 60, 80, 90].map((min, index, all) => ({
+    label: `${min}–${all[index + 1] ?? 100}`,
+    count: rows.filter((r) => {
+      const p = gradePercent(r.score, r.totalScore);
+      return p >= min && (index === all.length - 1 || p < all[index + 1]!);
+    }).length,
+  }));
+  const sparse = suppressed || bins.some((b) => b.count > 0 && b.count < 3);
+  const rate = (min: number) => {
+    const n = rows.filter((r) => gradePercent(r.score, r.totalScore) >= min).length;
+    return suppressed || n < 3 || rows.length - n < 3 ? null : Math.round((n / rows.length) * 100);
+  };
+  return {
+    mode: 'collective',
+    classId,
+    suppressed,
+    averagePercent: mean(rows),
+    passRate: rate(60),
+    excellentRate: rate(90),
+    subjects: suppressed ? [] : subjects,
+    trend: suppressed ? [] : trend,
+    distribution: bins.map((b) => ({ ...b, count: sparse ? null : b.count })),
+  };
+}
+
 export interface ListGradeOptions {
   classId?: string;
   courseId?: string;
@@ -56,11 +126,12 @@ export interface ListGradeOptions {
  * 教师/管理员调用时返回空数组（他们没有"自己的成绩"），请用 `listGrades`。
  */
 export async function listMyGrades(user: TokenPayload): Promise<GradeDto[]> {
+  if (isClassDevice(user)) await assertDetailQuery(user, user.classId ?? user.sub);
   const studentIds = await resolvePersonalIds(user);
   if (studentIds.length === 0) return [];
 
   const grades = await prisma.grade.findMany({
-    where: { studentId: { in: studentIds } },
+    where: { studentId: { in: studentIds }, student: activeStudentWhere() },
     include,
     orderBy: [{ publishedAt: 'desc' }, { examName: 'asc' }],
     take: 1000,
@@ -71,9 +142,11 @@ export async function listMyGrades(user: TokenPayload): Promise<GradeDto[]> {
 /** 教师 / 管理员查看成绩（按可访问班级过滤） */
 export async function listGrades(user: TokenPayload, options: ListGradeOptions): Promise<GradeDto[]> {
   const scope = await resolveClassScope(user, options.classId);
+  if (isClassDevice(user)) await assertDetailQuery(user, user.classId ?? user.sub);
   const grades = await prisma.grade.findMany({
     where: {
       ...classScopeWhere(scope),
+      student: activeStudentWhere(),
       ...(options.courseId ? { courseId: options.courseId } : {}),
       ...(options.studentId ? { studentId: options.studentId } : {}),
       ...(options.examName ? { examName: options.examName } : {}),
@@ -202,7 +275,7 @@ export async function updateGrade(
   gradeId: string,
   input: UpdateGradeInput,
 ): Promise<GradeDto> {
-  const current = await prisma.grade.findUnique({ where: { id: gradeId } });
+  const current = await prisma.grade.findFirst({ where: { id: gradeId, student: activeStudentWhere() } });
   if (!current) throw ApiError.notFound('成绩记录不存在');
 
   // 改的是哪条成绩，就按那条成绩所属的班级 + 科目判权限
@@ -243,7 +316,7 @@ export async function updateGrade(
 }
 
 export async function deleteGrade(user: TokenPayload, gradeId: string): Promise<void> {
-  const current = await prisma.grade.findUnique({ where: { id: gradeId } });
+  const current = await prisma.grade.findFirst({ where: { id: gradeId, student: activeStudentWhere() } });
   if (!current) throw ApiError.notFound('成绩记录不存在');
   await assertCanManageSubjectContent(user, current.classId, current.courseId, '删除成绩');
 
@@ -272,7 +345,7 @@ export async function updateGradeLevels(
 ): Promise<{ updated: number }> {
   if (input.items && input.items.length > 0) {
     const records = await prisma.grade.findMany({
-      where: { id: { in: input.items.map((item) => item.id) } },
+      where: { id: { in: input.items.map((item) => item.id) }, student: activeStudentWhere() },
       select: { id: true, classId: true, courseId: true },
     });
     if (records.length !== input.items.length) {
@@ -309,6 +382,7 @@ export async function updateGradeLevels(
     where: {
       classId,
       examName: input.examName!,
+      student: activeStudentWhere(),
       ...(input.courseId !== undefined ? { courseId: input.courseId ?? null } : {}),
     },
     select: { id: true, score: true, totalScore: true, level: true },
@@ -346,21 +420,24 @@ export async function getStudentGradeDetail(
   studentNo: string,
   requestedClassId?: string,
 ): Promise<StudentGradeDetailDto> {
+  if (isClassDevice(user)) await assertDetailQuery(user, user.classId ?? user.sub);
   const scope = await resolveClassScope(user, requestedClassId);
 
   const student = await prisma.student.findFirst({
-    where: { studentNo: normalizeStudentNo(studentNo), ...classScopeWhere(scope) },
+    where: { ...activeStudentWhere(), studentNo: normalizeStudentNo(studentNo), ...classScopeWhere(scope) },
     include: { class: { select: { id: true, name: true, studentGradeQueryEnabled: true } } },
   });
   if (!student) throw ApiError.notFound('没找到这个学号的学生，请核对学号是否输入正确');
 
   if (student.class) {
     const classRole = await resolveUserClassRole(user, student.class.id);
-    const allowed = canQueryStudentGrades({
-      classRole,
-      // 老库补列时的默认值是 true（开箱可用），所以 null/undefined 都按开启处理
-      gradeQueryEnabled: student.class.studentGradeQueryEnabled ?? true,
-    });
+    const allowed =
+      isStaff(user) ||
+      canQueryStudentGrades({
+        classRole,
+        // 老库补列时的默认值是 true（开箱可用），所以 null/undefined 都按开启处理
+        gradeQueryEnabled: student.class.studentGradeQueryEnabled ?? true,
+      });
     if (!allowed) {
       throw ApiError.forbidden('本班未开放学生自助查询成绩，请联系老师开启');
     }
@@ -395,9 +472,10 @@ export async function getStudentGradeDetailById(
 ): Promise<StudentGradeDetailDto> {
   const student = await prisma.student.findUnique({
     where: { id: studentId },
-    select: { studentNo: true, classId: true },
+    select: { studentNo: true, classId: true, status: true },
   });
-  if (!student) throw ApiError.notFound('学生不存在');
+  if (!student || ('status' in student && !isActiveStudent(student as { status: string })))
+    throw ApiError.notFound('学生不存在');
   await assertClassAccess(user, student.classId ?? '');
   return getStudentGradeDetail(user, student.studentNo);
 }
@@ -468,9 +546,9 @@ async function upsertGrade(data: {
 async function assertStudentInClass(studentId: string, classId: string): Promise<void> {
   const student = await prisma.student.findUnique({
     where: { id: studentId },
-    select: { classId: true },
+    select: { classId: true, status: true },
   });
-  if (!student) throw ApiError.badRequest('学生不存在');
+  if (!student || !isActiveStudent(student)) throw ApiError.badRequest('学生不存在');
   if (student.classId !== classId) throw ApiError.badRequest('该学生不属于所选班级');
 }
 
@@ -491,7 +569,11 @@ async function assertCourseInClass(courseId: string, classId: string): Promise<v
 export async function listExams(user: TokenPayload, classId: string): Promise<ExamDto[]> {
   await assertClassAccess(user, classId);
   const [groups, exams] = await Promise.all([
-    prisma.grade.groupBy({ by: ['examName'], where: { classId }, _count: { _all: true } }),
+    prisma.grade.groupBy({
+      by: ['examName'],
+      where: { classId, student: activeStudentWhere() },
+      _count: { _all: true },
+    }),
     prisma.exam.findMany({
       where: { classId },
       select: { id: true, name: true, countInTotal: true },
@@ -580,16 +662,18 @@ export async function getExamRanking(
   if (!classRecord) throw ApiError.notFound('班级不存在');
 
   const classRole = await resolveUserClassRole(user, classId);
-  const allowed = canQueryStudentGrades({
-    classRole,
-    // 老库补列时的默认值是 true（开箱可用），所以 null/undefined 都按开启处理
-    gradeQueryEnabled: classRecord.studentGradeQueryEnabled ?? true,
-  });
+  const allowed =
+    isStaff(user) ||
+    canQueryStudentGrades({
+      classRole,
+      // 老库补列时的默认值是 true（开箱可用），所以 null/undefined 都按开启处理
+      gradeQueryEnabled: classRecord.studentGradeQueryEnabled ?? true,
+    });
   if (!allowed) throw ApiError.forbidden('本班未开放成绩查询，请联系老师开启');
 
   const [grades, exam] = await Promise.all([
     prisma.grade.findMany({
-      where: { classId, examName },
+      where: { classId, examName, student: activeStudentWhere() },
       include,
       orderBy: [{ publishedAt: 'desc' }],
     }),
