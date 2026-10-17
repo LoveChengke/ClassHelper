@@ -1,3 +1,4 @@
+import type { PermissionScope as ContractPermissionScope, ReleaseProgressDto as ContractReleaseProgressDto } from './class-plan.js';
 /**
  * 三端共享的领域类型定义。
  * 这里的类型是后端 REST API / WebSocket 契约的唯一来源，
@@ -334,6 +335,7 @@ export interface TermWeekDto {
 }
 
 export interface TermWeeksDto {
+  maxTermWeeks?: number;
   /**
    * 这套区间属于谁：空串 = **全校默认**；非空 = 某个班的覆盖。
    * 班级没有自己的配置时回落到全校默认。
@@ -503,6 +505,8 @@ export interface UpdateClassAccountRequest {
 /* ------------------------------------------------------------------ 课程 */
 
 export interface CourseDto {
+  initial?: string;
+  isOutDoor?: boolean;
   id: string;
   name: string;
   teacherId: string;
@@ -1181,6 +1185,7 @@ export interface DashboardSummary {
 
 /** 服务端 -> 客户端事件名 */
 export interface ServerToClientEvents {
+  'client:release-progress': (payload: ContractReleaseProgressDto) => void;
   'notification:deleted': (payload: { id: string; classId: string }) => void;
   'notification:new': (payload: NotificationDto) => void;
   /** 叫人：定向广播给被叫学生 */
@@ -1422,6 +1427,8 @@ export interface UpdateInfo {
  * **没有任何分组**时回落角色默认模板（逐条镜像权限组上线前各路由的 requireRole）。
  */
 export interface PermissionGroupDto {
+  scope?: ContractPermissionScope;
+  scopeValue?: string;
   id: string;
   name: string;
   description: string;
@@ -1462,12 +1469,16 @@ export interface PermissionCatalogDto {
 }
 
 export interface CreatePermissionGroupRequest {
+  scope?: ContractPermissionScope;
+  scopeValue?: string;
   name: string;
   description?: string;
   keys?: PermissionKey[];
 }
 
 export interface UpdatePermissionGroupRequest {
+  scope?: ContractPermissionScope;
+  scopeValue?: string;
   name?: string;
   description?: string;
   keys?: PermissionKey[];

@@ -172,6 +172,7 @@ export const PERMISSION_KEYS = [
   'teacher:manage',
   'schedule:read',
   'schedule:write',
+  'timetable:manage',
   // 内容发布
   'homework:read',
   'homework:write',
@@ -191,6 +192,7 @@ export const PERMISSION_KEYS = [
   // 设备与联动
   'client:read',
   'client:manage',
+  'client:update',
   'client:update-push',
   'remote:control',
   // 学期与归档
@@ -210,6 +212,41 @@ export const PERMISSION_KEYS = [
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
 
+/** 默认角色组之外的教师岗位组；空年级范围必须由管理员配置，不能自动授权全校。 */
+const TEACHING_KEYS: PermissionKey[] = [
+  'homework:write',
+  'grade:write',
+  'notification:publish',
+  'call:create',
+  'schedule:read',
+  'roster:read',
+  'grade:read',
+  'homework:read',
+  'notification:read',
+];
+const LEAD_KEYS: PermissionKey[] = [
+  'client:read',
+  'client:manage',
+  'remote:control',
+  'roster:read',
+  'class:read',
+  'schedule:read',
+  'grade:read',
+  'dashboard:read',
+];
+export const BUILTIN_TEACHER_GROUPS = [
+  {
+    id: 'builtin-head',
+    name: '班主任',
+    scope: 'SELF_CLASS',
+    scopeValue: 'HEAD',
+    keys: [...TEACHING_KEYS, 'client:read', 'client:manage'],
+  },
+  { id: 'builtin-teacher', name: '教师', scope: 'SELF_CLASS', scopeValue: '', keys: TEACHING_KEYS },
+  { id: 'builtin-grade', name: '级长', scope: 'GRADE', scopeValue: '', keys: LEAD_KEYS },
+  { id: 'builtin-division', name: '部长', scope: 'DIVISION', scopeValue: '', keys: LEAD_KEYS },
+] as const;
+
 /** 权限键的中文名（权限组管理页与文档展示，别再各写一份） */
 export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   'class:read': '查看班级与班级列表',
@@ -220,6 +257,8 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   'teacher:manage': '教师账号管理（新建 / 导入 / 重置密码 / 删除）',
   'schedule:read': '查看课表',
   'schedule:write': '课表与课程编辑',
+  'timetable:manage': '管理全校时间表',
+  'client:update': '管理客户端安装包与更新策略',
   'homework:read': '查看作业',
   'homework:write': '发布 / 修改 / 删除作业（仍按任教科目录入）',
   'notification:read': '查看通知',
@@ -264,6 +303,7 @@ export const PERMISSION_CATEGORIES: readonly { title: string; keys: readonly Per
       'teacher:manage',
       'schedule:read',
       'schedule:write',
+      'timetable:manage',
     ],
   },
   {
@@ -292,7 +332,7 @@ export const PERMISSION_CATEGORIES: readonly { title: string; keys: readonly Per
   },
   {
     title: '客户端设备',
-    keys: ['client:read', 'client:manage', 'client:update-push', 'remote:control'],
+    keys: ['client:read', 'client:manage', 'client:update', 'client:update-push', 'remote:control'],
   },
   { title: '学期与统计', keys: ['term:read', 'term:write', 'archive:manage', 'dashboard:read'] },
   {
@@ -327,6 +367,8 @@ export const PERMISSION_DEFAULT_ROLES: Record<PermissionKey, readonly UserRole[]
   'teacher:manage': ['ADMIN'],
   'schedule:read': ['ADMIN', 'TEACHER'],
   'schedule:write': ['ADMIN', 'TEACHER'],
+  'timetable:manage': ['ADMIN'],
+  'client:update': ['ADMIN'],
   'homework:read': ['ADMIN', 'TEACHER'],
   'homework:write': ['ADMIN', 'TEACHER'],
   'notification:read': ['ADMIN', 'TEACHER'],

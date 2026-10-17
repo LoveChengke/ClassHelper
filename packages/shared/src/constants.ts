@@ -487,6 +487,7 @@ export const SOCKET_EVENTS = {
   homeworkStatus: 'homework:status',
   gradeUpdated: 'grade:updated',
   scheduleUpdated: 'schedule:updated',
+  clientReleaseProgress: 'client:release-progress',
   classUpdated: 'class:updated',
   /** "叫人"：老师点名让某位同学去找他（定向到 user:{studentId} 房间） */
   callNew: 'call:new',

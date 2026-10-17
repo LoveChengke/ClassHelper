@@ -6,4 +6,6 @@ export * from './constants.js';
 export * from './motion.js';
 export * from './permissions.js';
 export * from './utils.js';
+export * from './class-plan.js';
+export * from './island-layout.js';
 export type * from './types.js';

@@ -1,3 +1,4 @@
+import { getMaxTermWeeks } from './class-plan.js';
 import { WEEKDAY_LABELS, WEEKDAYS, WEEK_PARITY_LABELS } from './constants.js';
 import type { ClassPeriod, GradeLevel, ScheduleDto, ScheduleWeekView, WeekParity } from './types.js';
 
@@ -291,6 +292,7 @@ export function timeToMinutes(value: string): number {
 }
 
 const MS_PER_DAY = 86_400_000;
+/** @deprecated 仅保留旧调用方 ABI；新代码统一调用 getMaxTermWeeks。 */
 export const MAX_TERM_WEEK = 30;
 
 /**
@@ -300,7 +302,7 @@ export const MAX_TERM_WEEK = 30;
 export function resolveCurrentWeek(
   termStartDate: string,
   now: Date = new Date(),
-  maxWeek: number = MAX_TERM_WEEK,
+  maxWeek: number = getMaxTermWeeks(),
 ): number {
   if (!termStartDate) return 1;
   const start = toDate(termStartDate);
@@ -346,7 +348,7 @@ export function resolveWeekFromRanges(
  */
 export function buildAutoTermWeeks(
   termStartDate: string,
-  maxWeek: number = MAX_TERM_WEEK,
+  maxWeek: number = getMaxTermWeeks(),
 ): Array<{ weekNumber: number; startDate: string; endDate: string; note: string }> {
   if (!termStartDate) return [];
   const start = toDate(termStartDate);
@@ -355,7 +357,7 @@ export function buildAutoTermWeeks(
   const monday = new Date(start.getTime() - (weekday - 1) * MS_PER_DAY);
   monday.setHours(0, 0, 0, 0);
 
-  const total = Math.max(1, Math.min(maxWeek, MAX_TERM_WEEK));
+  const total = getMaxTermWeeks(maxWeek);
   const weeks: Array<{ weekNumber: number; startDate: string; endDate: string; note: string }> = [];
   for (let index = 0; index < total; index += 1) {
     const from = new Date(monday.getTime() + index * 7 * MS_PER_DAY);

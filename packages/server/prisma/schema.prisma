@@ -211,7 +211,7 @@ model Class {
   /// 班号（同一届内的序号）
   classIndex     Int?
   /// 班主任（每班 1 人）；科任老师按科目配在 Course 上
-  teacherId String
+  teacherId String?
   /// 班级码：ClassHelper 班级端登录用（唯一，字母数字，4~16 位，存大写）
   code      String   @unique
   /// 班级密码（bcrypt 哈希）；null = 尚未设置，此时禁止班级端登录
@@ -230,7 +230,7 @@ model Class {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  teacher       User             @relation("ClassOwner", fields: [teacherId], references: [id], onDelete: Cascade)
+  teacher       User?            @relation("ClassOwner", fields: [teacherId], references: [id], onDelete: SetNull)
   archivedYear  ArchivedYear?    @relation(fields: [archivedYearId], references: [id], onDelete: SetNull)
   students      Student[]
   courses       Course[]
@@ -240,6 +240,9 @@ model Class {
   grades        Grade[]
   exams         Exam[]
   timeLayouts   TimeLayout[]
+  classPlans    ClassPlan[]
+  planGroups    ClassPlanGroup[]
+  scheduledPlans ScheduledClassPlan[]
   clientDevices      ClientDevice[]
 
   @@index([teacherId])
@@ -255,6 +258,8 @@ model Class {
 model Course {
   id        String   @id @default(cuid())
   name      String
+  initial   String @default("")
+  isOutDoor Boolean @default(false)
   /// 该班该科的任课老师
   teacherId String
   classId   String
@@ -265,6 +270,7 @@ model Course {
   schedules Schedule[]
   homeworks Homework[]
   grades    Grade[]
+  planEntries ClassPlanEntry[]
 
   @@unique([classId, name])
   @@index([classId])
@@ -384,16 +390,20 @@ model NotificationRead {
 /// 课表时间配置（ClassIsland 同款 JSON 导入后的节次时间表）
 model TimeLayout {
   id        String   @id @default(cuid())
-  classId   String
+  classId   String?
   name      String
   /// 来源：classisland | manual
   source    String   @default("classisland")
   /// 节次数组（JSON 字符串）：[{ index, name, startTime, endTime, type, skipped }]
-  items     String
+  items     String @default("[]")
+  isOverlay Boolean @default(false)
+  overlaySourceId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  class Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+  class Class? @relation(fields: [classId], references: [id], onDelete: Cascade)
+  points TimeLayoutItem[]
+  plans ClassPlan[]
 
   @@index([classId])
 }
@@ -429,6 +439,8 @@ model Grade {
 }
 
 model PermissionGroup {
+  scope       String @default("SELF_CLASS")
+  scopeValue  String @default("")
   /// 角色默认组；自定义组为空，改名不影响对应角色。
   defaultRole String? @unique
   id          String   @id @default(cuid())
@@ -526,7 +538,7 @@ model ClientDevice {
 
 /// 下发给客户端设备的指令（远控：关机 / 重启 / 注销 / 锁屏）。
 ///
-/// 客户端心跳时拉取未确认且未过期的指令，**执行前必须在界面上二次确认**，
+/// 客户端心跳时拉取未回执且未过期的指令，收到即执行（2026-10-17 产品要求），
 /// 执行后回执（`ackedAt` + `result`）。
 model ClientCommand {
   id        String    @id @default(cuid())
@@ -539,7 +551,7 @@ model ClientCommand {
   createdAt DateTime  @default(now())
   /// 过期时间：超过后不再下发（避免机器离线后几天突然关机）
   expiresAt DateTime?
-  /// 客户端确认执行的时间
+  /// 客户端回执执行结果的时间
   ackedAt   DateTime?
   /// 执行结果说明（成功 / 失败原因）
   result    String    @default("")
@@ -614,4 +626,94 @@ model Exam {
 
   @@unique([classId, name])
   @@index([classId])
+}
+
+/// 服务端不用单机 Profile：全校共享时间表 + 班级日课表替代档案。
+model TimeLayoutItem {
+  id String @id @default(cuid())
+  timeLayoutId String
+  position Int
+  name String @default("")
+  startTime String
+  endTime String
+  timeType String @default("LESSON")
+  isHideDefault Boolean @default(false)
+  defaultClassId String?
+  breakName String @default("")
+  actionSet String @default("{}")
+  layout TimeLayout @relation(fields: [timeLayoutId], references: [id], onDelete: Cascade)
+  entries ClassPlanEntry[]
+  @@index([timeLayoutId, position])
+}
+
+model ClassPlanGroup {
+  id String @id @default(cuid())
+  classId String
+  name String
+  isGlobal Boolean @default(false)
+  isDefault Boolean @default(false)
+  plans ClassPlan[]
+  class Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+  @@index([classId])
+}
+
+model ClassPlan {
+  id String @id @default(cuid())
+  classId String
+  name String
+  timeLayoutId String
+  associatedGroup String?
+  weekday Int @default(0)
+  weekCountDiv Int @default(0)
+  weekCountDivTotal Int @default(2)
+  weekStart Int @default(1)
+  weekEnd Int @default(60)
+  isEnabled Boolean @default(true)
+  isOverlay Boolean @default(false)
+  overlaySourceId String?
+  overlayDate String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  class Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+  layout TimeLayout @relation(fields: [timeLayoutId], references: [id], onDelete: Cascade)
+  group ClassPlanGroup? @relation(fields: [associatedGroup], references: [id], onDelete: SetNull)
+  entries ClassPlanEntry[]
+  scheduled ScheduledClassPlan[]
+  @@index([classId, weekday])
+}
+
+model ClassPlanEntry {
+  id String @id @default(cuid())
+  classPlanId String
+  timeLayoutItemId String
+  courseId String?
+  isChangedClass Boolean @default(false)
+  isEnabled Boolean @default(true)
+  location String?
+  legacyScheduleId String?
+  plan ClassPlan @relation(fields: [classPlanId], references: [id], onDelete: Cascade)
+  timePoint TimeLayoutItem @relation(fields: [timeLayoutItemId], references: [id], onDelete: Cascade)
+  course Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  @@unique([classPlanId, timeLayoutItemId])
+}
+
+model ScheduledClassPlan {
+  id String @id @default(cuid())
+  classId String
+  date String
+  classPlanId String
+  plan ClassPlan @relation(fields: [classPlanId], references: [id], onDelete: Cascade)
+  class Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+  @@unique([classId, date])
+}
+
+model PromotionRun {
+  year Int @id
+  status String
+  snapshotPath String @default("")
+  message String @default("")
+  classCount Int @default(0)
+  studentCount Int @default(0)
+  createdAt DateTime @default(now())
+  finishedAt DateTime?
 }
