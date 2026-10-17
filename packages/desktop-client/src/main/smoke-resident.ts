@@ -5,9 +5,11 @@ import {
   islandNode,
   normalizeIslandLayouts,
   ISLAND_SHADOW_PAD,
+  type ScheduleDto,
 } from '@classhelper/shared';
 import { getConfig, saveConfig } from './config.js';
 import { island } from './island.js';
+import { LessonReminderTracker } from './lesson-reminder.js';
 
 /** 常驻岛始终用隔离的冒烟配置和本地消息；不读取或标记真实班级通知。 */
 export async function verifyResidentSmoke(
@@ -52,6 +54,71 @@ export async function verifyResidentSmoke(
   const expandedText = islandNode('text', 'resident-expanded-text');
   expandedText.settings.text = '今日安排';
   const scheme = fixture.schemes[0]!;
+  const dateAt = (h: number, m: number, s = 0) => {
+    const date = new Date();
+    date.setHours(h, m, s, 0);
+    return date;
+  };
+  const lessonFixtures: ScheduleDto[] = [
+    {
+      id: 'lesson-math',
+      classId: 'local',
+      courseId: 'math',
+      course: { id: 'math', name: '数学' },
+      dayOfWeek: new Date().getDay() || 7,
+      startTime: '09:00',
+      endTime: '09:45',
+      location: null,
+      weekStart: 1,
+      weekEnd: 40,
+      weekParity: 'ALL',
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'lesson-chinese',
+      classId: 'local',
+      courseId: 'chinese',
+      course: { id: 'chinese', name: '语文' },
+      dayOfWeek: new Date().getDay() || 7,
+      startTime: '09:55',
+      endTime: '10:40',
+      location: null,
+      weekStart: 1,
+      weekEnd: 40,
+      weekParity: 'ALL',
+      createdAt: new Date().toISOString(),
+    },
+  ];
+  await check('课前60秒、上课与下课时间边界正确，刷新和改课不重复重置提醒', () => {
+    const tracker = new LessonReminderTracker();
+    if (tracker.update(lessonFixtures, dateAt(8, 58, 59))) return false;
+    const prepare = tracker.update(lessonFixtures, dateAt(8, 59));
+    const repeat = tracker.update(lessonFixtures, dateAt(8, 59, 5));
+    const renamed = lessonFixtures.map((s) => ({ ...s, course: { ...s.course!, name: '临时换课' } }));
+    const changed = tracker.update(renamed, dateAt(8, 59, 6));
+    const onClass = tracker.update(lessonFixtures, dateAt(9, 0));
+    const noLate = tracker.update(lessonFixtures, dateAt(9, 0, 6));
+    const breaking = tracker.update(lessonFixtures, dateAt(9, 45));
+    const after = tracker.update(lessonFixtures, dateAt(9, 45, 13));
+    const lastBreak = tracker.update(lessonFixtures, dateAt(10, 40));
+    const end = tracker.update(lessonFixtures, dateAt(10, 40, 6));
+    const removed = tracker.update([], dateAt(8, 59));
+    return (
+      prepare?.kind === 'prepare' &&
+      prepare.maskUntil - prepare.startedAt === 3000 &&
+      repeat?.startedAt === prepare.startedAt &&
+      changed?.courseName === '临时换课' &&
+      changed.maskUntil === prepare.maskUntil &&
+      onClass?.kind === 'on-class' &&
+      !noLate &&
+      breaking?.kind === 'break' &&
+      breaking.nextCourseName === '语文' &&
+      !after &&
+      lastBreak?.kind === 'break' &&
+      !end &&
+      !removed
+    );
+  });
   scheme.rows[0]!.nodes = [
     islandNode('clock', 'resident-clock'),
     islandNode('separator', 'resident-separator'),
@@ -299,6 +366,10 @@ export async function verifyResidentSmoke(
       return false;
     };
     const immediate = (await waitForCourse()) && Date.now() - started < 600;
+    const aligned = await win.webContents.executeJavaScript(`(() => {
+      const name=document.querySelector('.resident-compact .schedule strong')?.getBoundingClientRect(), time=document.querySelector('.resident-compact .lesson-time')?.getBoundingClientRect();
+      return Boolean(name&&time&&time.left>=name.right&&Math.abs(time.top+time.height/2-name.top-name.height/2)<=2);
+    })()`);
     await win.webContents.reload();
     await pause(800);
     const restored = await waitForCourse();
@@ -307,28 +378,43 @@ export async function verifyResidentSmoke(
     island.syncCustomLayout();
     await pause(800);
     island.setClassState({ inClass: true, currentPeriodEnd: null, week: 1, schedules: [] });
-    return immediate && restored && snapshot[0]?.course?.name === '实时课程';
+    return immediate && aligned && restored && snapshot[0]?.course?.name === '实时课程';
   });
   await check('常驻岛开合复用固定画布，动画中没有滚动容器或旧胶囊形变', async () => {
     const bounds = new Set<string>();
     const timer = setInterval(() => bounds.add(JSON.stringify(win.getBounds())), 20);
+    const recorded: Array<{ at: number; image: Electron.NativeImage }> = [];
+    const capture = process.env.ISLAND_MOTION_CAPTURE === '1' && process.env.ELECTRON_SMOKE_MODE === 'visual';
+    const started = Date.now();
+    if (capture)
+      win.webContents.beginFrameSubscription(true, (image) => {
+        if (Date.now() - (recorded.at(-1)?.at ?? 0) >= 40) recorded.push({ at: Date.now(), image });
+      });
     let result;
     try {
       result = await win.webContents.executeJavaScript(`new Promise(resolve => {
-        const frames=[], gaps=[]; let last=performance.now(), count=0;
+        const frames=[], gaps=[], motion=[]; let last=performance.now(), count=0;
         const sample=()=>{
           const card=document.querySelector('.resident-card'), r=card?.getBoundingClientRect();
           if(!r){frames.push(false);return;}
           const nodes=[card,...card.querySelectorAll('*')];
           frames.push(r.left>=0&&r.top>=0&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1&&nodes.every(n=>!['auto','scroll'].includes(getComputedStyle(n).overflowY)&&!['auto','scroll'].includes(getComputedStyle(n).overflowX)));
+          motion.push({at:performance.now()-start,height:r.height,compact:Number(getComputedStyle(card.querySelector('.resident-compact-page')).opacity),details:Number(getComputedStyle(card.querySelector('.resident-detail-page')).opacity)});
         };
         const animate=time=>{gaps.push(time-last);last=time;count++;sample();if(time-start<1800)requestAnimationFrame(animate);};
         const start=performance.now();requestAnimationFrame(animate);
         window.island.sendAction('expand');setTimeout(()=>window.island.sendAction('collapse'),700);
-        setTimeout(()=>{sample(); const card=document.querySelector('.resident-card');resolve({valid:frames.every(Boolean),count,gaps:gaps.filter(g=>g>0).sort((a,b)=>a-b),height:card.getBoundingClientRect().height,legacy:document.querySelector('.island-root')?.getBoundingClientRect().height===0});},1900);
+        setTimeout(()=>{sample(); const card=document.querySelector('.resident-card');resolve({valid:frames.every(Boolean),count,motion,gaps:gaps.filter(g=>g>0).sort((a,b)=>a-b),height:card.getBoundingClientRect().height,legacy:document.querySelector('.island-root')?.getBoundingClientRect().height===0});},1900);
       })`);
     } finally {
       clearInterval(timer);
+      if (capture) win.webContents.endFrameSubscription();
+    }
+    if (capture && process.env.ISLAND_SHOTS_DIR) {
+      const dir = path.join(process.env.ISLAND_SHOTS_DIR, 'motion-frames');
+      fs.mkdirSync(dir, { recursive: true });
+      recorded.forEach((frame, i) => fs.writeFileSync(path.join(dir, `${i}.png`), frame.image.toPNG()));
+      fs.writeFileSync(path.join(dir, 'times.json'), JSON.stringify(recorded.map((f) => f.at - started)));
     }
     if (process.env.ISLAND_SHOTS_DIR)
       fs.writeFileSync(
@@ -344,8 +430,40 @@ export async function verifyResidentSmoke(
       result.legacy &&
       Math.abs(result.height - 40) <= 1 &&
       bounds.size === 1 &&
-      (!visual || (result.count >= 20 && result.gaps[Math.floor(result.gaps.length * 0.95)] < 100)),
+      (!visual ||
+        (result.count >= 20 &&
+          result.gaps[Math.floor(result.gaps.length * 0.95)] < 100 &&
+          [
+            result.motion.filter((f: { at: number }) => f.at < 700),
+            result.motion.filter((f: { at: number }) => f.at >= 700),
+          ].every(
+            (phase: Array<{ height: number; compact: number; details: number }>) =>
+              new Set(phase.map((f) => Math.round(f.height))).size >= 3 &&
+              phase.filter((f) => f.details > 0.01 && f.details < 0.95 && f.compact < 0.95).length >= 3,
+          ))),
     );
+  });
+  await check('关闭动画后外壳和内容同时落位，恢复动画无需重启', async () => {
+    island.setAppearance({ animations: false });
+    try {
+      island.handleAction({ action: 'expand' });
+      await pause(100);
+      const opened = await win.webContents.executeJavaScript(`(() => {
+        const card=document.querySelector('.resident-card');
+        return card.getBoundingClientRect().height>40&&getComputedStyle(card.querySelector('.resident-detail-page')).opacity==='1'&&getComputedStyle(card.querySelector('.resident-compact-page')).opacity==='0';
+      })()`);
+      island.handleAction({ action: 'collapse' });
+      await pause(100);
+      return (
+        opened &&
+        (await win.webContents.executeJavaScript(`(() => {
+        const card=document.querySelector('.resident-card');
+        return Math.abs(card.getBoundingClientRect().height-40)<=1&&getComputedStyle(card.querySelector('.resident-compact-page')).opacity==='1'&&getComputedStyle(card.querySelector('.resident-detail-page')).opacity==='0';
+      })()`))
+      );
+    } finally {
+      island.setAppearance({ animations: true });
+    }
   });
   await check('常驻岛连续快速开合后恢复40px且没有遗留过渡', async () => {
     const box = win.getBounds();
@@ -374,6 +492,106 @@ export async function verifyResidentSmoke(
     island.setHitTestCursor({ x: 0, y: 0 });
     await pause(700);
     return Math.abs(immediate - opacity) < 0.01 && Math.abs(after - opacity) < 0.01;
+  });
+  await check('两种布局均弹出ClassIsland课前/上下课提醒，倒计时与右侧时间正确且不写入通知队列', async () => {
+    const capture = process.env.ISLAND_MOTION_CAPTURE === '1' && process.env.ELECTRON_SMOKE_MODE === 'visual';
+    const recorded: Array<{ at: number; image: Electron.NativeImage }> = [];
+    const start = Date.now();
+    let recording = false;
+    const cueAppearance = island.getAppearance();
+    const setTime = async (h: number, m: number, s = 0) => {
+      const at = dateAt(h, m, s).getTime();
+      await win.webContents.executeJavaScript(`window.__lessonSmokeTime=${at}`);
+      island.setLessonReminderTestTime(at);
+    };
+    try {
+      await win.webContents.executeJavaScript(
+        `window.__lessonRealNow=Date.now;Date.now=()=>window.__lessonSmokeTime??window.__lessonRealNow();true`,
+      );
+      for (const layout of ['custom', 'fixed'] as const) {
+        saveConfig({ islandLayout: { ...fixture, layout } });
+        island.syncCustomLayout();
+        await setTime(8, 58, 59);
+        island.setClassState({ inClass: false, schedules: lessonFixtures });
+        await pause(1100);
+        if (layout === 'fixed') {
+          island.setAppearance({ idleSliver: true });
+          island.setTouchMode(true);
+          island.pushNotification(message('lesson-touch-canvas', '触摸画布验证', 'NORMAL'));
+          await pause(600);
+          island.handleAction({ action: 'dismiss-all' });
+          await pause(600);
+        }
+        if (capture && layout === 'custom') {
+          recording = true;
+          win.webContents.beginFrameSubscription(true, (image) => {
+            if (Date.now() - (recorded.at(-1)?.at ?? 0) >= 40) recorded.push({ at: Date.now(), image });
+          });
+        }
+        await setTime(8, 59);
+        await pause(800);
+        if (island.getState().lessonReminder?.kind !== 'prepare') return false;
+        const mask = await win.webContents.executeJavaScript(
+          `(() => {const cue=document.querySelector('${layout === 'custom' ? '.resident-lesson-page' : '.ci-fixed-lesson'} .ci-mask')||document.querySelector('.ci-fixed-lesson .ci-mask');return Boolean(cue&&cue.querySelectorAll('polygon').length===5);})()`,
+        );
+        if (!mask) return false;
+        await shot('lesson-prepare-mask-' + layout);
+        await setTime(8, 59, 5);
+        await pause(1100);
+        const info = await win.webContents.executeJavaScript(`(() => {
+          const cue=document.querySelector('${layout === 'custom' ? '.resident-lesson-page .ci-lesson' : '.ci-fixed-lesson'}');
+          const name=cue?.querySelector('.ci-lesson-course strong')?.getBoundingClientRect(),time=cue?.querySelector('.ci-lesson-course small')?.getBoundingClientRect();
+          const r=cue?.getBoundingClientRect();
+          return Boolean(cue&&!cue.classList.contains('ci-mask-active')&&cue.textContent.includes('55')&&cue.textContent.includes('数学')&&cue.textContent.includes('09:00–09:45')&&name&&time&&time.left>=name.right&&r&&Math.abs(r.height-40)<=1&&r.left>=0&&r.right<=innerWidth&&r.bottom<=innerHeight);
+        })()`);
+        if (!info || island.getState().queued.length || island.getState().active) return false;
+        await shot('lesson-prepare-info-' + layout);
+        await setTime(9, 0);
+        island.setClassState({ inClass: true });
+        await pause(700);
+        if (island.getState().lessonReminder?.kind !== 'on-class') return false;
+        await shot('lesson-start-' + layout);
+        if (recording) {
+          win.webContents.endFrameSubscription();
+          recording = false;
+        }
+        await setTime(9, 0, 6);
+        await pause(700);
+        if (island.getState().lessonReminder) return false;
+        await setTime(9, 45);
+        island.setClassState({ inClass: false });
+        await pause(700);
+        if (island.getState().lessonReminder?.kind !== 'break') return false;
+        await setTime(9, 45, 3);
+        await pause(1100);
+        const next = await win.webContents.executeJavaScript(
+          `document.querySelector('${layout === 'custom' ? '.resident-lesson-page' : '.ci-fixed-lesson'}')?.textContent.includes('语文')`,
+        );
+        if (!next) return false;
+        await shot('lesson-break-' + layout);
+        await setTime(9, 45, 13);
+        if (island.getState().lessonReminder) return false;
+      }
+      return true;
+    } finally {
+      if (recording) win.webContents.endFrameSubscription();
+      if (capture && process.env.ISLAND_SHOTS_DIR) {
+        const dir = path.join(process.env.ISLAND_SHOTS_DIR, 'lesson-motion-frames');
+        fs.mkdirSync(dir, { recursive: true });
+        recorded.forEach((f, i) => fs.writeFileSync(path.join(dir, `${i}.png`), f.image.toPNG()));
+        fs.writeFileSync(path.join(dir, 'times.json'), JSON.stringify(recorded.map((f) => f.at - start)));
+      }
+      await win.webContents.executeJavaScript(
+        `Date.now=window.__lessonRealNow;delete window.__lessonRealNow;delete window.__lessonSmokeTime`,
+      );
+      island.setLessonReminderTestTime(null);
+      island.setClassState({ inClass: false, schedules: [] });
+      island.setTouchMode(originalTouchMode);
+      island.setAppearance(cueAppearance);
+      saveConfig({ islandLayout: fixture });
+      island.syncCustomLayout();
+      await pause(800);
+    }
   });
   await check('长文本多行与2.5倍字号自动适配，变窄窗口和底部右侧停靠均不溢出', async () => {
     const appearance = island.getAppearance();

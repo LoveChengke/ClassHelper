@@ -44,18 +44,10 @@
   left: 50%;
   transform: translateX(-50%);
   width: max-content;
-  opacity: 0;
   pointer-events: none;
-  visibility: hidden;
-  transition:
-    opacity var(--resident-fade-duration) cubic-bezier(0.47, 0, 0.745, 0.715),
-    visibility 0s var(--resident-fade-duration);
 }
 .resident-card .resident-page.page-active {
-  opacity: 1;
   pointer-events: auto;
-  visibility: visible;
-  transition-delay: 0s;
 }
 .resident-card .resident-source {
   width: max-content;
@@ -83,6 +75,7 @@
   gap: 6px;
   padding: 0 12px;
   min-height: max(40px, calc(var(--island-font) * 2.5));
+  font-size: var(--ci-body-font, 16px);
 }
 .resident-window .resident-card.resident-separated {
   background: transparent;
@@ -152,7 +145,7 @@
   color: #ffffff80;
 }
 .resident-card .resident-bell span {
-  animation: resident-indicator-in 250ms cubic-bezier(0.25, 1, 0.5, 1);
+  animation: resident-indicator-in var(--resident-fade-duration) cubic-bezier(0.25, 1, 0.5, 1);
 }
 .resident-card .resident-details {
   min-width: 160px;
@@ -183,6 +176,7 @@
   display: block;
 }
 .resident-card .resident-expanded-rows {
+  font-size: var(--ci-body-font, 16px);
   border-top: 1px solid #ffffff1a;
   padding-top: 8px;
 }
@@ -200,15 +194,6 @@
 @media (hover: hover) and (pointer: fine) {
   .resident-card button:hover {
     filter: brightness(1.18);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .resident-window .resident-card,
-  .resident-card .resident-page {
-    transition-duration: 0ms;
-  }
-  .resident-card .resident-bell span {
-    animation: none;
   }
 }
 @keyframes resident-indicator-in {
@@ -252,4 +237,16 @@
 .resident-card.resident-separated > .shape,
 .resident-card.resident-separated > .tint {
   visibility: hidden;
+}
+/* ClassIsland Fluent MainWindowLine：半透明底、1px 边框，强调遮罩只在提醒时播放。 */
+.resident-window .resident-card {
+  --wn-bg: #20202080;
+  --wn-border: #ffffff26;
+}
+.resident-window .resident-card > .tint {
+  display: none;
+}
+.resident-card.resident-lesson .shape path {
+  fill: transparent;
+  stroke: none;
 }

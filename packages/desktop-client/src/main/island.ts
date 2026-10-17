@@ -18,9 +18,11 @@ import {
   type IslandMode,
   type IslandNotification,
   type IslandState,
+  type IslandLessonReminder,
 } from '@classhelper/shared';
 import { logger } from './logger.js';
 import { getConfig, saveConfig } from './config.js';
+import { LessonReminderTracker } from './lesson-reminder.js';
 
 /** 生产环境的灵动岛页面地址（导航白名单的精确比对用） */
 const prodIslandUrl = pathToFileURL(path.join(__dirname, '../renderer/island.html')).href;
@@ -158,6 +160,37 @@ interface IslandActionPayload {
 }
 
 class IslandController {
+  private lessonTracker = new LessonReminderTracker();
+  private lessonCue: IslandLessonReminder | null = null;
+  private lessonTimer: ReturnType<typeof setInterval> | null = null;
+  private lessonTestTime: number | null = null;
+  private get lessonShowing(): boolean {
+    return Boolean(
+      this.lessonCue &&
+      !this.editingLayout &&
+      !this.previewId &&
+      !(
+        this.state.active &&
+        (this.state.mode === 'expanded' ||
+          (this.state.active.priority === 'URGENT' && this.state.mode !== 'hidden'))
+      ),
+    );
+  }
+  /** 冒烟只在隔离配置中推进时钟，不修改操作系统时间。 */
+  setLessonReminderTestTime(at: number | null): void {
+    if (process.env.ELECTRON_SMOKE_TEST !== '1') return;
+    this.lessonTestTime = at;
+    this.refreshLessonReminder();
+  }
+  private refreshLessonReminder(): void {
+    const next = this.lessonTracker.update(this.schedules, new Date(this.lessonTestTime ?? Date.now()));
+    if (JSON.stringify(next) === JSON.stringify(this.lessonCue)) return;
+    this.lessonCue = next;
+    // 触摸窗口先放得下新横条，再下发内容；混合宽高变化也只能增大画布。
+    if (this.lessonShowing) this.syncTouchLayout();
+    this.emit();
+    this.syncWindow();
+  }
   private win: BrowserWindow | null = null;
   private rendererUrl: string | null = null;
   private ready = false;
@@ -582,6 +615,7 @@ class IslandController {
       await win.loadFile(path.join(__dirname, '../renderer/island.html'));
     }
     this.ready = true;
+    if (!this.lessonTimer) this.lessonTimer = setInterval(() => this.refreshLessonReminder(), 1000);
     if (this.pendingState) {
       this.emit(this.pendingState);
       this.pendingState = null;
@@ -607,7 +641,11 @@ class IslandController {
   }
 
   getState(): IslandState {
-    return { ...this.state, queued: [...this.state.queued] };
+    return {
+      ...this.state,
+      lessonReminder: this.lessonShowing ? this.lessonCue : null,
+      queued: [...this.state.queued],
+    };
   }
 
   isReady(): boolean {
@@ -805,6 +843,7 @@ class IslandController {
   setClassState(payload: IslandClassStatePayload): void {
     if (Array.isArray(payload.schedules)) {
       this.schedules = payload.schedules.slice(0, 100);
+      this.refreshLessonReminder();
       if (this.ready && this.win && !this.win.isDestroyed())
         this.win.webContents.send('island:schedules', this.schedules);
     }
@@ -1116,6 +1155,10 @@ class IslandController {
   }
 
   destroy(): void {
+    if (this.lessonTimer) clearInterval(this.lessonTimer);
+    this.lessonTimer = null;
+    this.lessonCue = null;
+    this.lessonTracker = new LessonReminderTracker();
     if (this.residentShapeTimer) clearTimeout(this.residentShapeTimer);
     this.residentShapeTimer = null;
     this.clearTimers();
@@ -1362,6 +1405,16 @@ class IslandController {
       return;
     }
 
+    if (this.lessonShowing) {
+      this.cancelFade();
+      if (!this.win.isVisible()) this.applyWindowLayout();
+      this.win.setOpacity(this.appearance.opacity);
+      if (!(process.env.ELECTRON_SMOKE_TEST === '1' && process.env.ELECTRON_SMOKE_MODE !== 'visual'))
+        this.win.showInactive();
+      this.syncHitFromCursor();
+      return;
+    }
+
     // 上课时间段：一律不显示灵动岛（只有"正在展示的紧急通知 / 叫人"允许出现在屏幕上）
     // 上课时段：只有"紧急通知 / 叫人"允许出现在屏幕上——展开态与胶囊态都算
     // （胶囊态也允许，学生收起后还能再点开；普通通知则一律隐藏）
@@ -1435,6 +1488,13 @@ class IslandController {
         height: this.customSize.height + 2 * ISLAND_SHADOW_PAD,
       };
     const size = this.formSize();
+    if (this.touchMode && this.lessonShowing) {
+      const current = this.win?.isVisible() ? this.win.getBounds() : null;
+      return {
+        width: Math.round(Math.max(size.width + 2 * ISLAND_SHADOW_PAD, current?.width ?? 0)),
+        height: Math.round(Math.max(size.height + 2 * ISLAND_SHADOW_PAD, current?.height ?? 0)),
+      };
+    }
     if (!this.touchMode) {
       return {
         width: Math.round(Math.max(BBOX_SIZE.width, size.width + ISLAND_SHADOW_PAD * 2)),
@@ -1760,6 +1820,7 @@ class IslandController {
       this.residentEnabled &&
       settings.pointerFadeEnabled &&
       !this.editingLayout &&
+      !this.lessonShowing &&
       Date.now() >= this.residentTouchUntil &&
       Date.now() >= this.residentMotionUntil &&
       this.state.mode !== 'expanded' &&
@@ -1848,6 +1909,7 @@ class IslandController {
   /** 当前形态下**岛本身**的尺寸（不是窗口尺寸；响应进程的 `.island-card` 宽高） */
   private formSize(): { width: number; height: number } {
     if (this.customLayout) return this.customSize;
+    if (this.lessonShowing) return { width: SIZES.expanded.width, height: 40 };
     // 多条通知的列表形态：高度由统一布局算法算出（渲染进程算的是同一个数）
     const layout = this.listLayout();
     if (layout) return { width: SIZES.expanded.width, height: layout.height };
@@ -1919,6 +1981,10 @@ class IslandController {
     this.updateResidentPointer(cursor);
     if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) {
       this.setInteractive(false, '窗口不可见');
+      return;
+    }
+    if (this.lessonShowing) {
+      this.setInteractive(false, '课表提醒不遮挡桌面操作');
       return;
     }
     // 完全隐藏（含淡出过程中）：一律不再接收鼠标，避免窗口在消失的几百毫秒里吞掉桌面点击。

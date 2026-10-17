@@ -1070,6 +1070,22 @@ export type IslandMode = 'hidden' | 'pill' | 'expanded';
  */
 export type IslandNotificationKind = 'notification' | 'homework' | 'call';
 
+/** 本机课表产生的临时提醒，不进入教师通知队列或已读记录。 */
+export interface IslandLessonReminder {
+  id: string;
+  kind: 'prepare' | 'on-class' | 'break';
+  courseName: string;
+  startTime: string;
+  endTime: string;
+  startedAt: number;
+  maskUntil: number;
+  endsAt: number;
+  lessonStartsAt: number;
+  nextCourseName?: string;
+  nextStartTime?: string;
+  nextEndTime?: string;
+}
+
 /** 投递到灵动岛的通知载荷（服务端 NotificationDto 的精简版） */
 export interface IslandNotification {
   id: string;
@@ -1140,6 +1156,7 @@ export type IslandStyle = 'black' | 'glass' | 'tinted';
 /** 灵动岛当前状态（主进程持有，渲染进程与冒烟测试读取） */
 export interface IslandState {
   mode: IslandMode;
+  lessonReminder?: IslandLessonReminder | null;
   /** 正在展示的通知（展开态或胶囊态） */
   active: IslandNotification | null;
   /** 上课期间被暂存、待下课后弹出的通知 */

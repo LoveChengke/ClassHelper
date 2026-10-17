@@ -150,14 +150,9 @@ const shellStyle = computed<CSSProperties>(() => ({
   maxWidth: `calc(100vw - ${2 * ISLAND_SHADOW_PAD}px)`,
   maxHeight: `calc(100vh - ${2 * ISLAND_SHADOW_PAD}px)`,
   color: '#ffffffeb',
-  fontSize: `${props.appearance.fontSize}px`,
-  '--custom-color':
-    props.appearance.style === 'glass'
-      ? '#202024cd'
-      : props.appearance.style === 'tinted'
-        ? '#0b0b0f'
-        : '#000000',
-  '--custom-radius': `${props.appearance.radius}px`,
+  fontSize: `${(props.appearance.fontSize / 13) * CI.bodyFontSize}px`,
+  '--custom-color': '#20202080',
+  '--custom-radius': `${scheme.value.radius}px`,
   '--custom-row-gap': `${scheme.value.spacing}px`,
   ...(draft.value.residentEnabled
     ? {

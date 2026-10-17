@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const props = defineProps<{ embedded?: boolean; suspended?: boolean }>();
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   DEFAULT_ISLAND_APPEARANCE,
   ISLAND_SHADOW_PAD,
@@ -17,6 +17,10 @@ import {
 import { SpringValue } from './spring.js';
 import { squirclePath } from './squircle.js';
 import ClassicNotifications from './ClassicNotifications.vue';
+import LessonReminderContent from './LessonReminderContent.vue';
+const now = ref(Date.now());
+let clock: ReturnType<typeof setInterval>;
+onUnmounted(() => clearInterval(clock));
 
 /**
  * 灵动岛渲染进程 —— 视觉与排版参考 WinIsland（Rust/Direct2D 的 Windows 动态岛）。
@@ -184,6 +188,7 @@ const EXTRA = ISLAND_SIZE_DELTA;
 function targetSize(): { width: number; height: number } {
   const width = appearance.value.width;
   const height = appearance.value.height;
+  if (state.value.lessonReminder) return { width: width + EXTRA.expanded.width, height: 40 };
   if (mode.value === 'hidden') {
     // 有"空闲细缝"时才收成细缝；否则保持胶囊尺寸——
     // 窗口此时是隐藏的，没必要缩到细缝（否则下次弹出会从细缝"长大"，多出入场动画）。
@@ -200,6 +205,7 @@ function targetSize(): { width: number; height: number } {
 
 /** 圆角：胶囊取 h/2（满圆角），展开卡取 min(48*系数, w/2, h/2)（WinIsland expanded_island_radius） */
 function targetRadius(size: { width: number; height: number }): number {
+  if (state.value.lessonReminder) return 8;
   if (mode.value !== 'expanded') return Math.min(appearance.value.radius, size.height / 2);
   const scaled = (48 * appearance.value.radius) / 20;
   return Math.max(0, Math.min(scaled, size.width / 2, size.height / 2));
@@ -338,9 +344,11 @@ const effectiveRadius = computed(() =>
 const cardPath = computed(() => squirclePath(morph.value.width, morph.value.height, effectiveRadius.value));
 
 /** 胶囊内容透明度：进度到 2/3 时完全退净（WinIsland MINI_FADE_RATE = 1.5） */
-const pillAlpha = computed(() => Math.max(0, Math.min(1, 1 - progress.value * 1.5)));
+const pillAlpha = computed(() =>
+  state.value.lessonReminder ? 0 : Math.max(0, Math.min(1, 1 - progress.value * 1.5)),
+);
 /** 展开内容透明度：进度平方（WinIsland expanded_alpha = progress²） */
-const expandedAlpha = computed(() => progress.value * progress.value);
+const expandedAlpha = computed(() => (state.value.lessonReminder ? 0 : progress.value * progress.value));
 
 /**
  * 岛在**固定窗口**内的定位（照搬 WinIsland：窗口不动，岛在画布内居中/贴边形变）。
@@ -378,7 +386,9 @@ const islandStyle = computed(() => {
 const islandClass = computed(() => ({
   pill: mode.value === 'pill' || (mode.value === 'hidden' && !appearance.value.idleSliver),
   expanded: mode.value === 'expanded',
-  'hidden-placeholder': mode.value === 'hidden' && !appearance.value.idleSliver,
+  'hidden-placeholder':
+    mode.value === 'hidden' && !appearance.value.idleSliver && !state.value.lessonReminder,
+  'ci-lesson-card': !!state.value.lessonReminder,
   sliver: mode.value === 'hidden' && appearance.value.idleSliver,
   urgent: isUrgent.value,
   call: isCall.value,
@@ -429,7 +439,8 @@ function reportHitRect(rect: DOMRect | null): void {
     hitRectTrailingTimer = null;
     lastHitRectAt = performance.now();
     const node = document.querySelector('.island-card') as HTMLElement | null;
-    const fullyHidden = state.value?.mode === 'hidden' && !appearance.value.idleSliver;
+    const fullyHidden =
+      state.value?.mode === 'hidden' && !appearance.value.idleSliver && !state.value.lessonReminder;
     const latest = node && !fullyHidden ? node.getBoundingClientRect() : null;
     const latestPayload = latest
       ? { x: latest.left, y: latest.top, width: latest.width, height: latest.height }
@@ -489,7 +500,8 @@ function updateInteractive(clientX: number, clientY: number): void {
 function refreshInteractive(): void {
   if (props.suspended) return;
   const node = document.querySelector('.island-card') as HTMLElement | null;
-  const fullyHidden = state.value?.mode === 'hidden' && !appearance.value.idleSliver;
+  const fullyHidden =
+    state.value?.mode === 'hidden' && !appearance.value.idleSliver && !state.value.lessonReminder;
   reportHitRect(node && !fullyHidden ? node.getBoundingClientRect() : null);
   if (fullyHidden) {
     // 完全隐藏：本地复位即可（不下发关闭，窗口隐藏后由主进程轮询兜底关掉命中）
@@ -520,6 +532,7 @@ watch(
   () => syncTargets(true),
 );
 onMounted(async () => {
+  clock = setInterval(() => (now.value = Date.now()), 1000);
   window.addEventListener('mousemove', (event) => updateInteractive(event.clientX, event.clientY));
   /**
    * 触摸屏上报：主进程据此把窗口改为**贴合岛体**并始终接收输入。
@@ -652,6 +665,14 @@ onMounted(async () => {
           :max-height="state.maxCardHeight"
           :style="{ opacity: expandedAlpha }"
           class="layer"
+        />
+        <LessonReminderContent
+          v-if="state.lessonReminder"
+          :reminder="state.lessonReminder"
+          :now="now"
+          :appearance="appearance"
+          :motion="appearance.animations && !props.suspended"
+          class="ci-fixed-lesson"
         />
       </span>
     </div>

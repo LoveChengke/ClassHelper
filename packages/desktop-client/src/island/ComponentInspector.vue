@@ -92,7 +92,7 @@ const fonts = {
             <input type="number" min="1" max="30" v-model.number="node.settings.count" />
           </label>
           <label class="toggle-field">
-            <span>显示节次</span>
+            <span>显示课程时间</span>
             <input type="checkbox" v-model="node.settings.showPeriod" />
           </label>
         </template>

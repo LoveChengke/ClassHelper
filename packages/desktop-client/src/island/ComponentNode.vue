@@ -163,9 +163,9 @@ const style = computed<CSSProperties>(() => {
     </template>
     <template v-else-if="node.kind === 'separator'"><span aria-hidden="true">│</span></template>
     <template v-else-if="node.kind === 'schedule'">
-      <div v-for="(s, i) in lessons" :key="s.id">
-        <small v-if="node.settings.showPeriod">第 {{ i + 1 }} 节 · {{ s.startTime }}</small>
+      <div v-for="s in lessons" :key="s.id" class="lesson-line">
         <strong>{{ s.course?.name }}</strong>
+        <small v-if="node.settings.showPeriod" class="lesson-time">{{ s.startTime }}–{{ s.endTime }}</small>
       </div>
       <span v-if="!lessons.length">暂无课程</span>
     </template>
@@ -199,8 +199,21 @@ const style = computed<CSSProperties>(() => {
 }
 .schedule > div {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.lesson-line strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lesson-time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .schedule > div + div {
   margin-top: 8px;

@@ -7,12 +7,14 @@ import {
   type IslandLayoutSettings,
   type IslandState,
   type ScheduleDto,
+  type IslandLessonReminder,
 } from '@classhelper/shared';
 import ComponentNode from './ComponentNode.vue';
 import ComponentIcon from './ComponentIcon.vue';
 import ClassicNotifications from './ClassicNotifications.vue';
 import { squirclePath } from './squircle.js';
 import { SpringValue } from './spring.js';
+import LessonReminderContent from './LessonReminderContent.vue';
 
 const props = defineProps<{
   settings: IslandLayoutSettings;
@@ -23,6 +25,15 @@ const props = defineProps<{
 }>();
 const scheme = computed(() => props.settings.schemes.find((s) => s.id === props.settings.activeSchemeId)!);
 const expanded = computed(() => props.state.mode === 'expanded');
+const lesson = computed(() => props.state.lessonReminder ?? null);
+const lastLesson = ref<IslandLessonReminder | null>(null);
+watch(
+  lesson,
+  (value) => {
+    if (value) lastLesson.value = value;
+  },
+  { immediate: true },
+);
 const messages = computed(() => {
   const unique = new Map(
     [props.state.active, ...props.state.queued].filter((n) => n !== null).map((n) => [n.id, n]),
@@ -36,11 +47,16 @@ const messages = computed(() => {
 const shell = ref<HTMLElement>();
 const compact = ref<HTMLElement>();
 const details = ref<HTMLElement>();
+const lessonSource = ref<HTMLElement>();
 const now = ref(Date.now());
 const visible = ref(!document.hidden);
 const motion = computed(() => props.appearance.animations && visible.value && props.nativeVisible);
 const available = ref({ width: 940, height: 620 });
-const natural = ref({ compact: { width: 40, height: 40 }, details: { width: 280, height: 80 } });
+const natural = ref({
+  compact: { width: 40, height: 40 },
+  details: { width: 280, height: 80 },
+  lesson: { width: 480, height: 40 },
+});
 const anchor = computed(() =>
   props.appearance.position.endsWith('left')
     ? 'left'
@@ -59,9 +75,24 @@ function fitted(size: { width: number; height: number }) {
 }
 const compactFit = computed(() => fitted(natural.value.compact));
 const detailsFit = computed(() => fitted(natural.value.details));
-const fit = computed(() => (expanded.value ? detailsFit.value : compactFit.value));
+const lessonFit = computed(() => fitted(natural.value.lesson));
+const fit = computed(() =>
+  lesson.value ? lessonFit.value : expanded.value ? detailsFit.value : compactFit.value,
+);
 const morph = ref({ width: 40, height: 40, radius: 20 });
-const springs = { width: new SpringValue(40), height: new SpringValue(40), radius: new SpringValue(20) };
+const springs = {
+  width: new SpringValue(40),
+  height: new SpringValue(40),
+  radius: new SpringValue(20),
+  content: new SpringValue(0, { snapThreshold: 0.001 }),
+  lesson: new SpringValue(0, { snapThreshold: 0.001 }),
+};
+// 与经典岛一致：常态内容先退净，展开内容按进度平方进入；反向收起沿同一条曲线返回。
+// 独立进度也保证两页尺寸相同时仍播放过渡，不能靠高度差推导。
+const progress = ref(0);
+const lessonProgress = ref(0);
+const compactAlpha = computed(() => Math.max(0, 1 - progress.value * 1.5) * (1 - lessonProgress.value));
+const detailsAlpha = computed(() => progress.value * progress.value * (1 - lessonProgress.value));
 const path = computed(() => squirclePath(morph.value.width, morph.value.height, morph.value.radius));
 const style = computed<CSSProperties>(() => ({
   width: `${morph.value.width}px`,
@@ -80,9 +111,10 @@ const style = computed<CSSProperties>(() => ({
   '--resident-scale': fit.value.scale,
   '--custom-row-gap': `${scheme.value.spacing}px`,
   '--resident-row-width': `${Math.max(60, available.value.width / scheme.value.scale - 58)}px`,
-  '--secondary': `${props.appearance.fontSize * 0.78}px`,
-  '--emphasized': `${props.appearance.fontSize * 1.1}px`,
-  '--large': `${props.appearance.fontSize * 1.3}px`,
+  '--secondary': `${(props.appearance.fontSize / 13) * 14}px`,
+  '--emphasized': `${(props.appearance.fontSize / 13) * 18}px`,
+  '--large': `${(props.appearance.fontSize / 13) * 20}px`,
+  '--ci-body-font': `${(props.appearance.fontSize / 13) * 16}px`,
   '--resident-fade-duration': motion.value ? `${200 / props.appearance.speed}ms` : '0ms',
 }));
 let morphFrame = 0;
@@ -90,7 +122,7 @@ let morphFallback: ReturnType<typeof setTimeout> | undefined;
 function animate() {
   const size = fit.value;
   const radius = Math.min(
-    expanded.value ? props.appearance.radius * 2.4 : props.appearance.radius,
+    lesson.value ? 8 : expanded.value ? props.appearance.radius : scheme.value.radius,
     size.width / 2,
     size.height / 2,
   );
@@ -100,14 +132,21 @@ function animate() {
     morphFrame = 0;
     clearTimeout(morphFallback);
     for (const key of ['width', 'height', 'radius'] as const) springs[key].snap(target[key]);
+    springs.content.snap(expanded.value ? 1 : 0);
+    springs.lesson.snap(lesson.value ? 1 : 0);
+    progress.value = springs.content.value;
+    lessonProgress.value = springs.lesson.value;
     morph.value = target;
     void nextTick(reportHit);
   };
-  if (!motion.value || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  // 应用内动画开关与经典岛保持一致；系统减少动态效果不能再次覆盖用户已开启的动画。
+  if (!motion.value) {
     snap();
     return;
   }
   for (const key of ['width', 'height', 'radius'] as const) springs[key].setTarget(target[key]);
+  springs.content.setTarget(expanded.value ? 1 : 0);
+  springs.lesson.setTarget(lesson.value ? 1 : 0);
   clearTimeout(morphFallback);
   morphFallback = setTimeout(snap, 1200 / props.appearance.speed);
   if (morphFrame) return;
@@ -120,6 +159,8 @@ function animate() {
       .map((s) => s.step(dt))
       .some(Boolean);
     morph.value = { width: springs.width.value, height: springs.height.value, radius: springs.radius.value };
+    progress.value = springs.content.value;
+    lessonProgress.value = springs.lesson.value;
     if (moving) morphFrame = requestAnimationFrame(frame);
     else {
       morphFrame = 0;
@@ -200,7 +241,11 @@ function measure() {
       width: Math.max(40, element.offsetWidth),
       height: Math.max(40, element.offsetHeight),
     });
-    natural.value = { compact: read(compact.value), details: read(details.value) };
+    natural.value = {
+      compact: read(compact.value),
+      details: read(details.value),
+      lesson: lessonSource.value ? read(lessonSource.value) : natural.value.lesson,
+    };
     void nextTick(() => {
       window.island?.reportSize({ width: fit.value.width, height: fit.value.height });
       trackHit();
@@ -221,9 +266,12 @@ function visibility() {
   void nextTick(reportHit);
 }
 // 不深度监听整份状态；只在目标内容/几何变化时测量，时钟每秒只改文本。
-watch([expanded, scheme, () => props.state.listExpanded, messages], measure, { deep: true, flush: 'post' });
+watch([expanded, scheme, lesson, () => props.state.listExpanded, messages], measure, {
+  deep: true,
+  flush: 'post',
+});
 watch(
-  [fit, motion, () => props.appearance.radius, () => props.appearance.speed],
+  [fit, motion, expanded, lesson, () => props.appearance.radius, () => props.appearance.speed],
   () => {
     animate();
     trackHit();
@@ -240,6 +288,7 @@ onMounted(() => {
   observer = new ResizeObserver(measure);
   if (compact.value) observer.observe(compact.value);
   if (details.value) observer.observe(details.value);
+  if (lessonSource.value) observer.observe(lessonSource.value);
   clock = setInterval(() => (now.value = Date.now()), 1000);
   window.addEventListener('resize', resize);
   document.addEventListener('visibilitychange', visibility);
@@ -276,7 +325,8 @@ onUnmounted(() => {
         pill: !expanded,
         urgent: state.active?.priority === 'URGENT',
         call: state.active?.kind === 'call',
-        'resident-separated': scheme.separated && !expanded,
+        'resident-separated': scheme.separated && !expanded && !lesson,
+        'resident-lesson': !!lesson,
       }"
       :style="style"
       :role="expanded ? 'region' : 'button'"
@@ -306,7 +356,11 @@ onUnmounted(() => {
       <span class="tint" aria-hidden="true" />
       <div
         class="resident-page resident-compact-page"
-        :style="{ '--resident-scale': compactFit.scale }"
+        :style="{
+          '--resident-scale': compactFit.scale,
+          opacity: compactAlpha,
+          visibility: compactAlpha > 0 ? 'visible' : 'hidden',
+        }"
         :class="{ 'page-active': !expanded }"
         :inert="expanded"
         :aria-hidden="expanded"
@@ -360,7 +414,11 @@ onUnmounted(() => {
       </div>
       <div
         class="resident-page resident-detail-page"
-        :style="{ '--resident-scale': detailsFit.scale }"
+        :style="{
+          '--resident-scale': detailsFit.scale,
+          opacity: detailsAlpha,
+          visibility: detailsAlpha > 0 ? 'visible' : 'hidden',
+        }"
         :class="{ 'page-active': expanded }"
         :inert="!expanded"
         :aria-hidden="!expanded"
@@ -412,6 +470,26 @@ onUnmounted(() => {
               </div>
             </section>
           </div>
+        </div>
+      </div>
+      <div
+        class="resident-page resident-lesson-page"
+        :style="{
+          '--resident-scale': lessonFit.scale,
+          opacity: lessonProgress,
+          visibility: lessonProgress > 0 ? 'visible' : 'hidden',
+        }"
+        :aria-hidden="!lesson"
+        :inert="!lesson"
+      >
+        <div ref="lessonSource" class="resident-source">
+          <LessonReminderContent
+            v-if="lastLesson"
+            :reminder="lastLesson"
+            :now="now"
+            :appearance="appearance"
+            :motion="motion"
+          />
         </div>
       </div>
     </section>

@@ -147,7 +147,7 @@ onMounted(async () => {
     <div class="page-header">
       <div>
         <h2 class="page-title">灵动岛</h2>
-        <p class="page-subtitle">经典岛与自定义岛共用外观、停靠位置、动画与提醒规则</p>
+        <p class="page-subtitle">自定义组件与 ClassIsland 提醒，共用停靠位置、动画开关与通知规则</p>
       </div>
     </div>
 
@@ -170,13 +170,13 @@ onMounted(async () => {
           @click="chooseLayout('custom')"
         >
           <strong>自定义灵动岛</strong>
-          <span>常驻显示时钟、课程等组件，通知沿用经典岛</span>
+          <span>ClassIsland 风格，常驻显示时钟、课程等组件</span>
         </button>
       </div>
       <div v-if="layoutMode === 'custom'" class="layout-edit-entry">
         <div>
           <strong>按你的习惯布置岛内内容</strong>
-          <p>编辑常态内容与无通知展开内容；通知样式、弹出规则和外观设置与经典岛共用。</p>
+          <p>编辑常态内容与无通知展开内容；课前自动提示，通知操作与经典岛共用。</p>
         </div>
         <el-button type="primary" @click="editLayout">编辑岛内组件</el-button>
       </div>
@@ -207,6 +207,9 @@ onMounted(async () => {
         <span>外观、位置与弹出</span>
       </template>
       <p class="text-muted">紧急消息立即展开；课中普通通知暂存，下课后展开。自定义岛可点击铃铛主动查看。</p>
+      <p class="text-muted">
+        上课前 60 秒显示准备提醒和倒计时，上下课时提示课程状态；课程时间显示在名称右侧。
+      </p>
       <el-form label-width="110px" label-position="left">
         <el-form-item :label="`${layoutMode === 'custom' ? '通知高度' : '高度'} ${island.height}px`">
           <el-slider
@@ -270,7 +273,9 @@ onMounted(async () => {
           <span class="text-muted ml-8">用于高亮、按钮与进度条</span>
         </el-form-item>
         <el-form-item label="视觉风格">
+          <span v-if="layoutMode === 'custom'">ClassIsland · 半透明横条</span>
           <el-select
+            v-else
             :model-value="island.style"
             style="width: 180px"
             @change="(value: IslandStyle) => applyIslandAppearance({ style: value })"
@@ -282,7 +287,9 @@ onMounted(async () => {
               :value="item.value"
             />
           </el-select>
-          <span class="text-muted ml-8">纯黑 / 毛玻璃（半透明）/ 主题色渐变</span>
+          <span v-if="layoutMode === 'fixed'" class="text-muted ml-8">
+            纯黑 / 毛玻璃（半透明）/ 主题色渐变
+          </span>
         </el-form-item>
         <el-form-item label="显示位置">
           <el-select

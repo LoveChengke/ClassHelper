@@ -84,6 +84,16 @@ body {
 .island-card.hidden-placeholder {
   visibility: hidden;
 }
+.island-card.ci-lesson-card .shape path {
+  fill: transparent;
+  stroke: none;
+}
+.island-card .ci-fixed-lesson {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  min-width: 0;
+}
 
 /* 连续圆角形状：填充 + 1px 描边（描边画在裁切之外，与 WinIsland 一致） */
 .island-card .shape {

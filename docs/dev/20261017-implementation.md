@@ -148,6 +148,13 @@ Windows 触摸模式使用 Electron setShape：动画开始放开绘制区域，
 外壳使用经典岛同源的 SpringValue 与 squirclePath；宽高和圆角每帧同时推进，保留零过冲钳制、动画速度与后台吸附兜底。
 原生画布固定，隐藏渲染器不运行旧形变；统一心跳不随布局切换重复注册。
 
+内容过渡与外壳采用同参数弹簧同步推进：常态透明度为 max(0, 1-1.5p)，展开透明度为 p²，收起时反向播放。
+不再使用独立的 200ms 内容淡入，避免内容已经切完、外壳还在展开的割裂；等尺寸页面也有完整过渡。
+动画开关和速度同时作用于外壳、内容与铃铛提示，快速反向时保留当前进度；后台窗口仍直接落位。
+视觉验收逐帧断言展开与收起都有多帧尺寸变化和中间透明度，可用 ISLAND_MOTION_CAPTURE=1 留档真实合成帧。
+本机 Electron 实测 prefers-reduced-motion=true；合并版自定义岛额外检查此系统偏好，造成应用内开着动画仍直接吸附。
+现统一以应用内动画开关为准，与经典岛一致；不再由第二套系统判据覆盖已开启的动画。
+
 课表更新链路做了以下修正：
 
 - 课表变更事件立即取 active-week，学期接口在旁路校正，避免慢学期请求串行挡住新课表。
@@ -158,3 +165,23 @@ Windows 触摸模式使用 Electron setShape：动画开始放开绘制区域，
 
 验证使用隔离配置、本地消息和替换的本地 API，覆盖慢学期接口、变更事件、重连刷新、迟到请求隔离、课表 IPC 即时更新及窗口重新加载恢复。
 桌面视觉回归覆盖经典岛原有状态，以及自定义岛单通知、多通知、常态、空闲展开、窄屏、长文本、触摸和固定原生窗口动画。
+
+## ClassIsland 课前与上下课提醒（后续最新要求）
+
+现场重新读取了上游 master 的以下实现：
+
+- [ClassNotificationProvider](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/Services/NotificationProviders/ClassNotificationProvider.cs)：准备上课、上课、下课的独立提醒链。
+- [ClassNotificationSettings](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/Models/NotificationProviderSettings/ClassNotificationSettings.cs)：室内课程默认提前 60 秒。
+- [ClassNotificationProviderControl](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/Controls/NotificationProviders/ClassNotificationProviderControl.axaml)：倒计时、下节科目及右侧起止时间。
+- [FluentTheme](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/XamlThemes/FluentTheme/Styles.axaml) 与 [SlantedMaskControl](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/Controls/SlantedMaskControl.cs)：40px 横条、五段斜切遮罩、360ms 区域动画与 120ms 错峰、标题延迟 260ms 淡入和缩放。
+
+自定义岛的常态外观按上述 ClassIsland 横条恢复半透明深色底、1px 描边、8px 默认圆角和 14/16/18/20 四档字体，内容居中。
+通知继续共用经典操作组件，使用同一半透明岛壳。课程组件按「课程名 起始时间–结束时间」横向排列，时间位于名称右侧，开关文案改为「显示课程时间」。
+
+LessonReminderTracker 只读取服务端已解析的当天 ScheduleDto 投影，不参与 ClassPlan 在线启用与轮换选择。
+课前 60 秒开始：3 秒强调遮罩后显示实时秒数和课程时间，持续到上课；上课遮罩 5 秒后退出。
+下课先提示 2 秒，再预告下节课程 10 秒；当天最后一课下课只提示 5 秒。不补弹已经过去的上下课事件。
+刷新同一课表不会重置遮罩，临时换课立即更新名称，移除课程或退出账号会取消提醒。
+提醒是独立本机状态，不写入教师通知、未读计数或通知队列；已经打开的通知详情和紧急提示优先展示。
+经典与自定义两种布局使用同一个 LessonReminderContent；原生窗口仍为固定画布，自定义岛用自然尺寸缩放适配。
+本次只移植课表可见提醒和动画，不自动启用语音与音效。
