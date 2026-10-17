@@ -47,7 +47,7 @@ export async function verifyLayoutSmoke(
     });
     await check('组件可以包裹进容器且设置独立保存', async () => {
       await win.webContents.executeJavaScript(
-        `(() => { const select=document.querySelector('.settings select');if(!select)throw Error('未选中组件');select.value='group';select.dispatchEvent(new Event('change',{bubbles:true})); })()`,
+        `(() => { const select=document.querySelector('[data-action=wrap]');if(!select)throw Error('未选中组件');select.value='group';select.dispatchEvent(new Event('change',{bubbles:true})); })()`,
       );
       await pause();
       return (
@@ -55,6 +55,27 @@ export async function verifyLayoutSmoke(
           r.nodes.some((n) => n.kind === 'group' && n.children.some((c) => c.kind === 'clock')),
         ) === true
       );
+    });
+    await check('组件设置按内容外观高级切换，整体外观单独显示', async () => {
+      const initial = await win.webContents.executeJavaScript(`(() => {
+        const panel=document.querySelector('.settings');
+        return panel?.textContent.includes('显示内容') && !panel.textContent.includes('字体大小') && !panel.textContent.includes('背景颜色');
+      })()`);
+      await win.webContents.executeJavaScript(`document.querySelectorAll('.panel-tabs button')[1].click()`);
+      await pause();
+      const appearance = await win.webContents.executeJavaScript(`(() => {
+        const panel=document.querySelector('.settings');
+        return panel?.textContent.includes('字体大小') && !panel.textContent.includes('组件操作');
+      })()`);
+      await win.webContents.executeJavaScript(`document.querySelectorAll('.panel-tabs button')[2].click()`);
+      await pause();
+      const advanced = await win.webContents.executeJavaScript(`(() => {
+        const panel=document.querySelector('.settings');
+        return panel?.textContent.includes('隐藏条件') && !panel.textContent.includes('字体大小');
+      })()`);
+      await win.webContents.executeJavaScript(`document.querySelectorAll('.panel-tabs button')[0].click()`);
+      await pause();
+      return initial && appearance && advanced;
     });
     if (process.env.ISLAND_SHOTS_DIR) {
       fs.mkdirSync(process.env.ISLAND_SHOTS_DIR, { recursive: true });
@@ -71,12 +92,14 @@ export async function verifyLayoutSmoke(
     await check('自定义窗口等于卡片加阴影留白且夹紧工作区', async () => {
       await pause();
       const rect = await win.webContents.executeJavaScript(
-        `(() => {const r=document.querySelector('.custom-card').getBoundingClientRect();return {width:r.width,height:r.height};})()`,
+        `(() => {const r=document.querySelector('.custom-card').getBoundingClientRect(), inner=document.querySelector('.custom-inner').getBoundingClientRect();return {width:r.width,height:r.height,contentWidth:inner.width+24,contentHeight:inner.height+24};})()`,
       );
       const box = win.getBounds();
       return (
         Math.abs(box.width - rect.width - 2 * ISLAND_SHADOW_PAD) <= 2 &&
-        Math.abs(box.height - rect.height - 2 * ISLAND_SHADOW_PAD) <= 2
+        Math.abs(box.height - rect.height - 2 * ISLAND_SHADOW_PAD) <= 2 &&
+        Math.abs(rect.width - rect.contentWidth) <= 2 &&
+        Math.abs(rect.height - rect.contentHeight) <= 2
       );
     });
     await check('自定义提醒复用原渲染器且进入主要行', async () => {
@@ -96,6 +119,35 @@ export async function verifyLayoutSmoke(
         `(() => {const host=document.querySelector('#custom-alert-host'),node=host?.querySelector('.island-root.embedded');return Boolean(node&&node.textContent.includes('组件化提醒验收')&&host.closest('[data-row]')===document.querySelector('[data-row]'));})()`,
       );
     });
+    await check('提醒展开内容可见，岛宽取组件与提醒的较宽者', async () => {
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline) {
+        const fits = await win.webContents.executeJavaScript(`(() => {
+          const card=document.querySelector('.custom-card'), host=card?.querySelector('#custom-alert-host');
+          const layer=host?.querySelector('.expanded-layer');
+          if(!card||!host||!layer||Number(getComputedStyle(layer).opacity)<0.95)return false;
+          const rows=[...card.querySelectorAll('.row-components')].map(row=>row.getBoundingClientRect().width);
+          const expected=Math.max(...rows,host.getBoundingClientRect().width)+24;
+          const outer=card.getBoundingClientRect(), inner=host.getBoundingClientRect();
+          return Math.abs(outer.width-expected)<=2 && inner.bottom<=outer.bottom+1;
+        })()`);
+        if (fits) return true;
+        await pause();
+      }
+      return false;
+    });
+    // 隐藏窗口的 rAF 可能限流；先等原渲染器的形变兜底与尺寸防抖落地，再验最终几何。
+    await check('组件与提醒同处岛体内部，提醒没有第二层岛壳', async () => {
+      return win.webContents.executeJavaScript(`(() => {
+        const card=document.querySelector('.custom-card'), host=card?.querySelector('#custom-alert-host');
+        const shape=host?.querySelector('.shape'), content=host?.querySelector('.content');
+        if(!card||!host||!shape||!content)return false;
+        const outer=card.getBoundingClientRect(), inner=host.getBoundingClientRect();
+        return document.querySelectorAll('.custom-card').length===1 && getComputedStyle(shape).display==='none'
+          && getComputedStyle(content).clipPath==='none' && inner.left>=outer.left && inner.right<=outer.right+1
+          && inner.top>=outer.top && inner.bottom<=outer.bottom+1 && Boolean(card.querySelector('.clock'));
+      })()`);
+    });
     await check('主要行禁用提醒后按允许提醒的行回落', async () => {
       const changed = getConfig().islandLayout;
       const rows = changed.schemes[0]!.rows;
@@ -113,7 +165,9 @@ export async function verifyLayoutSmoke(
         path.join(process.env.ISLAND_SHOTS_DIR, 'custom-alert.png'),
         (await win.webContents.capturePage()).toPNG(),
       );
-    island.handleAction({ action: 'dismiss-all' });
+    await win.webContents.executeJavaScript(
+      `document.querySelector('#custom-alert-host .solid-btn')?.click()`,
+    );
     await pause();
     await pause();
     await pause();
@@ -123,6 +177,11 @@ export async function verifyLayoutSmoke(
       );
       const visible = process.env.ELECTRON_SMOKE_MODE === 'visual' ? win.isVisible() : !win.isVisible();
       return content && visible && island.getState().mode === 'hidden';
+    });
+    await check('没有提醒时消息组件不占位', async () => {
+      return win.webContents.executeJavaScript(
+        `document.querySelectorAll('.custom-card .component-node.notification, .custom-card .component-node.homework, .custom-card .component-node.call').length === 0`,
+      );
     });
   } finally {
     saveConfig({ islandLayout: original });

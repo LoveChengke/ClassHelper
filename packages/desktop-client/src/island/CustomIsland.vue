@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type CSSProperties } from 'vue';
 import {
-  ISLAND_COMPONENTS,
   ISLAND_COMPONENT_LABELS,
   ISLAND_SHADOW_PAD,
   islandNode,
@@ -13,6 +12,8 @@ import {
   type ScheduleDto,
 } from '@classhelper/shared';
 import ComponentNode from './ComponentNode.vue';
+import ComponentInspector from './ComponentInspector.vue';
+import ComponentIcon from './ComponentIcon.vue';
 const props = defineProps<{
   settings: IslandLayoutSettings;
   state: IslandState;
@@ -38,6 +39,32 @@ watch(
 const scheme = computed(() => draft.value.schemes.find((s) => s.id === draft.value.activeSchemeId)!);
 const selectedId = ref(''),
   selectedKind = ref<IslandComponentKind>('clock');
+const panel = ref<'component' | 'row' | 'appearance'>('appearance');
+const selectedRowId = ref('');
+const activeRow = computed(
+  () => scheme.value.rows.find((r) => r.id === selectedRowId.value) || scheme.value.rows[0]!,
+);
+const componentGroups = [
+  { name: '日常信息', kinds: ['clock', 'date', 'schedule', 'countdown', 'text', 'separator'] },
+  { name: '消息提醒', kinds: ['notification', 'homework', 'call'] },
+  { name: '组合容器', kinds: ['group', 'stack', 'slide', 'rolling'] },
+] as const;
+const savedAt = ref('');
+function selectNode(nodeId: string) {
+  selectedId.value = nodeId;
+  panel.value = 'component';
+}
+function selectRow(rowId: string) {
+  selectedRowId.value = rowId;
+  selectedId.value = '';
+  panel.value = 'row';
+}
+function switchScheme() {
+  selectedId.value = '';
+  selectedRowId.value = '';
+  panel.value = 'appearance';
+  save();
+}
 const now = ref(Date.now()),
   canvasScale = ref(1),
   pan = ref({ x: 0, y: 0 });
@@ -66,7 +93,7 @@ const alertNodeId = computed(() => {
 const hasMessage = computed(() => props.state.mode !== 'hidden' && Boolean(props.state.active));
 const shellStyle = computed<CSSProperties>(() => ({
   width: viewport.value.width ? `${viewport.value.width}px` : 'max-content',
-  minHeight: viewport.value.height ? `${viewport.value.height}px` : undefined,
+  minHeight: !props.editing && viewport.value.height ? `${viewport.value.height}px` : undefined,
   maxWidth: `calc(100vw - ${2 * ISLAND_SHADOW_PAD}px)`,
   maxHeight: `calc(100vh - ${2 * ISLAND_SHADOW_PAD}px)`,
   color: scheme.value.foreground,
@@ -77,6 +104,7 @@ const shellStyle = computed<CSSProperties>(() => ({
       .toString(16)
       .padStart(2, '0'),
   '--custom-radius': `${scheme.value.radius}px`,
+  '--custom-row-gap': `${scheme.value.spacing}px`,
   gap: `${scheme.value.spacing}px`,
 }));
 function id() {
@@ -86,6 +114,7 @@ function save() {
   const value = normalizeIslandLayouts(JSON.parse(JSON.stringify(draft.value)));
   draft.value = value;
   emit('save', value);
+  savedAt.value = '已自动保存';
 }
 function addRow(after: number) {
   scheme.value.rows.splice(after + 1, 0, {
@@ -96,13 +125,14 @@ function addRow(after: number) {
     gap: 8,
     nodes: [],
   });
+  selectRow(scheme.value.rows[after + 1]!.id);
   save();
 }
-function add(kind = selectedKind.value, row = scheme.value.rows[0]) {
+function add(kind = selectedKind.value, row = activeRow.value) {
   if (!row) return;
   const n = islandNode(kind, id());
   row.nodes.push(n);
-  selectedId.value = n.id;
+  selectNode(n.id);
   save();
 }
 function findList(nodeId: string, nodes?: IslandComponentNode[]): IslandComponentNode[] | null {
@@ -123,6 +153,7 @@ function remove() {
       1,
     );
   selectedId.value = '';
+  panel.value = 'row';
   save();
 }
 function duplicate() {
@@ -132,7 +163,7 @@ function duplicate() {
   const copy = JSON.parse(JSON.stringify(n)) as IslandComponentNode;
   for (const child of allNodes([copy])) child.id = id();
   list.splice(list.indexOf(n) + 1, 0, copy);
-  selectedId.value = copy.id;
+  selectNode(copy.id);
   save();
 }
 function wrap(kind: IslandComponentKind) {
@@ -143,7 +174,7 @@ function wrap(kind: IslandComponentKind) {
   const container = islandNode(kind, id());
   container.children = [n];
   list.splice(list.indexOf(n), 1, container);
-  selectedId.value = container.id;
+  selectNode(container.id);
   save();
 }
 function newScheme() {
@@ -157,7 +188,7 @@ function newScheme() {
   }
   draft.value.schemes.push(copy);
   draft.value.activeSchemeId = copy.id;
-  save();
+  switchScheme();
 }
 function exportScheme() {
   const url = URL.createObjectURL(
@@ -187,7 +218,8 @@ async function importScheme(event: Event) {
     s.id = id();
     draft.value.schemes.push(s);
     draft.value.activeSchemeId = s.id;
-    save();
+    switchScheme();
+    error.value = '';
   } catch (e) {
     error.value = String(e);
   }
@@ -247,7 +279,7 @@ function drop() {
     const targetList = findList(target.id)!;
     targetList.splice(targetList.indexOf(target), 0, node);
   } else row.nodes.push(node);
-  selectedId.value = node.id;
+  selectNode(node.id);
   save();
 }
 let panning: { x: number; y: number; originX: number; originY: number } | null = null;
@@ -268,11 +300,21 @@ function measure() {
   clearTimeout(measureTimer);
   measureTimer = setTimeout(() => {
     if (inner.value) {
+      // 内部组件的自然尺寸决定整个岛体；提醒不再拥有另一层岛壳。
       const rect = inner.value.getBoundingClientRect(),
+        padding = shell.value ? getComputedStyle(shell.value) : null,
         scale = props.editing ? canvasScale.value : 1;
       window.island?.reportSize({
-        width: Math.ceil(rect.width / scale + 24),
-        height: Math.ceil(rect.height / scale + 24),
+        width: Math.ceil(
+          rect.width / scale +
+            parseFloat(padding?.paddingLeft || '0') +
+            parseFloat(padding?.paddingRight || '0'),
+        ),
+        height: Math.ceil(
+          rect.height / scale +
+            parseFloat(padding?.paddingTop || '0') +
+            parseFloat(padding?.paddingBottom || '0'),
+        ),
       });
     }
   }, 120);
@@ -304,36 +346,34 @@ onUnmounted(() => {
       panning = null;
     "
   >
-    <header v-if="editing">
-      <strong>编辑灵动岛</strong>
-      <select
-        v-model="draft.activeSchemeId"
-        @change="
-          selectedId = '';
-          save();
-        "
-      >
-        <option v-for="s in draft.schemes" :key="s.id" :value="s.id">{{ s.name }}</option>
-      </select>
-      <button @click="newScheme">新方案</button>
-      <button @click="exportScheme">导出</button>
-      <label>
-        导入
-        <input type="file" accept="application/json" @change="importScheme" />
-      </label>
+    <header v-if="editing" class="editor-header">
+      <div class="editor-title">
+        <span class="editor-mark" aria-hidden="true">◒</span>
+        <div>
+          <h1>自定义灵动岛</h1>
+          <p>把需要的信息，放进岛里</p>
+        </div>
+      </div>
+      <div class="scheme-picker">
+        <span>当前方案</span>
+        <select aria-label="当前方案" v-model="draft.activeSchemeId" @change="switchScheme">
+          <option v-for="s in draft.schemes" :key="s.id" :value="s.id">{{ s.name }}</option>
+        </select>
+        <details class="scheme-menu">
+          <summary aria-label="方案操作">•••</summary>
+          <div class="scheme-menu-body">
+            <button @click="newScheme">复制为新方案</button>
+            <button @click="exportScheme">导出方案</button>
+            <label class="import-button">
+              导入方案
+              <input type="file" accept="application/json" @change="importScheme" />
+            </label>
+          </div>
+        </details>
+      </div>
+      <span class="save-state" role="status">{{ savedAt || '更改会自动保存' }}</span>
       <button
-        @click="
-          pan = { x: 0, y: 0 };
-          canvasScale = 1;
-        "
-      >
-        重置视图
-      </button>
-      <label>
-        画布缩放
-        <input type="range" v-model.number="canvasScale" min="0.3" max="2" step="0.1" />
-      </label>
-      <button
+        class="primary-button done-button"
         @click="
           save();
           emit('done');
@@ -343,413 +383,289 @@ onUnmounted(() => {
       </button>
     </header>
     <aside v-if="editing" class="library">
-      <h3>组件库</h3>
-      <button
-        v-for="kind in ISLAND_COMPONENTS"
-        :key="kind"
-        @pointerdown="startDrag($event, 'library', '', kind)"
-        @click="selectedKind = kind"
-      >
-        {{ ISLAND_COMPONENT_LABELS[kind as IslandComponentKind] }}
-      </button>
-      <select v-model="selectedKind">
-        <option v-for="kind in ISLAND_COMPONENTS" :key="kind" :value="kind">
-          {{ ISLAND_COMPONENT_LABELS[kind as IslandComponentKind] }}
-        </option>
-      </select>
-      <button @click="add()">点选并添加</button>
-      <p>拖到组件栏；拖到容器可嵌套。支持触摸。</p>
-      <h3>外观</h3>
-      <label>
-        方案名称
-        <input v-model="scheme.name" @change="save" />
-      </label>
-      <label>
-        缩放
-        <input type="number" v-model.number="scheme.scale" min="0.5" max="3" step="0.1" @change="save" />
-      </label>
-      <label>
-        背景
-        <input type="color" v-model="scheme.color" @change="save" />
-      </label>
-      <label>
-        前景
-        <input type="color" v-model="scheme.foreground" @change="save" />
-      </label>
-      <label>
-        透明度
-        <input type="number" v-model.number="scheme.opacity" min="0.1" max="1" step="0.05" @change="save" />
-      </label>
-      <label>
-        圆角
-        <input type="number" v-model.number="scheme.radius" min="0" max="100" @change="save" />
-      </label>
-      <label>
-        <input type="checkbox" v-model="scheme.separated" @change="save" />
-        分离成多块
-      </label>
-      <label>
-        行间距
-        <input type="number" v-model.number="scheme.spacing" @change="save" />
-      </label>
+      <div class="panel-heading">
+        <h2>添加组件</h2>
+        <p>拖入岛内，或选中后添加</p>
+      </div>
+      <section v-for="group in componentGroups" :key="group.name" class="library-group">
+        <h3>{{ group.name }}</h3>
+        <div class="component-grid">
+          <button
+            v-for="kind in group.kinds"
+            :key="kind"
+            class="library-item"
+            :class="{ active: selectedKind === kind }"
+            :aria-pressed="selectedKind === kind"
+            @pointerdown="startDrag($event, 'library', '', kind)"
+            @click="selectedKind = kind"
+            @dblclick="add(kind)"
+          >
+            <span class="component-symbol"><ComponentIcon :kind="kind" /></span>
+            <span>{{ ISLAND_COMPONENT_LABELS[kind] }}</span>
+          </button>
+        </div>
+      </section>
+      <div class="library-add">
+        <label class="field">
+          添加到
+          <select :value="activeRow.id" @change="selectedRowId = ($event.target as HTMLSelectElement).value">
+            <option v-for="row in scheme.rows" :key="row.id" :value="row.id">{{ row.name }}</option>
+          </select>
+        </label>
+        <button class="primary-button wide-button" @click="add()">
+          添加{{ ISLAND_COMPONENT_LABELS[selectedKind] }}
+        </button>
+      </div>
     </aside>
     <main :class="{ canvas: editing }" @pointerdown="panStart">
-      <div
-        ref="shell"
-        class="custom-card"
-        :class="{ separated: scheme.separated }"
-        :style="[
-          shellStyle,
-          editing
-            ? {
-                transform: `translate(${pan.x}px,${pan.y}px) scale(${canvasScale})`,
-                width: 'max-content',
-                maxWidth: 'none',
-                maxHeight: 'none',
-              }
-            : {},
-        ]"
-      >
-        <div ref="inner" class="custom-inner" :style="{ zoom: scheme.scale }">
-          <section
-            v-for="(row, i) in scheme.rows"
-            :key="row.id"
-            :data-row="row.id"
-            class="layout-row"
-            :style="{ gap: `${row.gap}px` }"
+      <div v-if="editing" class="canvas-toolbar">
+        <span>岛内预览</span>
+        <div>
+          <button
+            :class="{ active: panel === 'appearance' }"
+            @click="
+              panel = 'appearance';
+              selectedId = '';
+            "
           >
-            <div v-if="editing" class="row-tools">
-              <button @pointerdown="startDrag($event, 'row', row.id)">⠿ 拖动行</button>
-              <input v-model="row.name" @change="save" />
-              <label>
-                间距
-                <input type="number" v-model.number="row.gap" @change="save" />
-              </label>
-              <button
-                @click="
-                  scheme.rows.forEach((r) => (r.main = r === row));
-                  save();
-                "
-              >
-                {{ row.main ? '主要行' : '设为主要行' }}
-              </button>
-              <label>
-                <input type="checkbox" v-model="row.allowNotifications" @change="save" />
-                允许通知
-              </label>
-              <button
-                :disabled="scheme.rows.length < 2"
-                @click="
-                  scheme.rows.splice(i, 1);
-                  save();
-                "
-              >
-                删除行
-              </button>
-            </div>
-            <div class="row-content">
-              <ComponentNode
-                v-for="n in row.nodes"
-                :key="n.id"
-                :node="n"
-                :state="state"
-                :now="now"
-                :schedules="schedules"
-                :editing="editing"
-                :selected-id="selectedId"
-                :alert-node-id="alertNodeId"
-                @select="selectedId = $event"
-                @drag="(e, id) => startDrag(e, 'node', id)"
-              >
-                <template #alerts><div id="custom-alert-host" :ref="hostRef" v-show="hasMessage" /></template>
-              </ComponentNode>
-              <div
-                v-if="row.id === alertRow?.id && !alertNodeId"
-                id="custom-alert-host"
-                :ref="hostRef"
-                v-show="hasMessage"
-              />
-            </div>
-            <button v-if="editing" @click="addRow(i)">在下方新建主界面行</button>
-          </section>
+            整体外观
+          </button>
+          <button
+            @click="
+              pan = { x: 0, y: 0 };
+              canvasScale = 1;
+            "
+          >
+            重置视图
+          </button>
         </div>
+      </div>
+      <div
+        class="preview-stage"
+        :style="editing ? { transform: `translate(${pan.x}px,${pan.y}px) scale(${canvasScale})` } : {}"
+      >
+        <div
+          ref="shell"
+          class="custom-card"
+          :class="{ separated: scheme.separated, 'has-alert': hasMessage }"
+          :data-priority="hasMessage ? state.active?.priority : undefined"
+          :style="[shellStyle, editing ? { width: 'max-content', maxWidth: 'none', maxHeight: 'none' } : {}]"
+        >
+          <div ref="inner" class="custom-inner" :style="{ zoom: scheme.scale }">
+            <section
+              v-for="row in scheme.rows"
+              :key="row.id"
+              :data-row="row.id"
+              class="layout-row"
+              :class="{ 'row-selected': editing && selectedRowId === row.id, 'row-editing': editing }"
+              :style="{ '--row-gap': `${row.gap}px` }"
+            >
+              <div v-if="editing" class="row-tools">
+                <button class="row-drag" aria-label="拖动行" @pointerdown="startDrag($event, 'row', row.id)">
+                  ⠿
+                </button>
+                <button class="row-name" @click="selectRow(row.id)">
+                  {{ row.name }}
+                  <span v-if="row.main">主要行</span>
+                </button>
+                <button class="row-settings" :aria-label="`${row.name}设置`" @click="selectRow(row.id)">
+                  行设置
+                </button>
+              </div>
+              <div class="row-content" @click.self="editing && selectRow(row.id)">
+                <div class="row-components">
+                  <ComponentNode
+                    v-for="n in row.nodes.filter(
+                      (n) => !['notification', 'homework', 'call'].includes(n.kind),
+                    )"
+                    :key="n.id"
+                    :node="n"
+                    :state="state"
+                    :now="now"
+                    :schedules="schedules"
+                    :editing="editing"
+                    :selected-id="selectedId"
+                    :alert-node-id="alertNodeId"
+                    @select="selectNode"
+                    @drag="(e, id) => startDrag(e, 'node', id)"
+                  >
+                    <template #alerts>
+                      <div id="custom-alert-host" :ref="hostRef" v-show="hasMessage" />
+                    </template>
+                  </ComponentNode>
+                </div>
+                <ComponentNode
+                  v-for="n in row.nodes.filter((n) => ['notification', 'homework', 'call'].includes(n.kind))"
+                  :key="n.id"
+                  :node="n"
+                  :state="state"
+                  :now="now"
+                  :schedules="schedules"
+                  :editing="editing"
+                  :selected-id="selectedId"
+                  :alert-node-id="alertNodeId"
+                  @select="selectNode"
+                  @drag="(e, id) => startDrag(e, 'node', id)"
+                >
+                  <template #alerts>
+                    <div id="custom-alert-host" :ref="hostRef" v-show="hasMessage" />
+                  </template>
+                </ComponentNode>
+                <div
+                  v-if="row.id === alertRow?.id && !alertNodeId"
+                  id="custom-alert-host"
+                  :ref="hostRef"
+                  v-show="hasMessage"
+                />
+                <span v-if="editing && !row.nodes.length" class="empty-row">拖入组件，或从左侧添加</span>
+              </div>
+            </section>
+          </div>
+        </div>
+        <button
+          v-if="editing"
+          class="add-row-button"
+          @click="addRow(scheme.rows.findIndex((r) => r.id === activeRow.id))"
+        >
+          ＋ 在下方新建主界面行
+        </button>
+      </div>
+      <div v-if="editing" class="canvas-footer">
+        <span>点选组件以设置 · 拖动句柄以排序 · 空白处可平移</span>
+        <label>
+          缩放
+          <input
+            aria-label="画布缩放"
+            type="range"
+            v-model.number="canvasScale"
+            min="0.3"
+            max="2"
+            step="0.1"
+          />
+          <output>{{ Math.round(canvasScale * 100) }}%</output>
+        </label>
       </div>
     </main>
     <div v-if="!alertRow" id="custom-alert-host" :ref="hostRef" style="display: none" />
     <aside v-if="editing" class="settings">
-      <template v-if="selected">
-        <h3>{{ ISLAND_COMPONENT_LABELS[selected.kind] }} 组件设置</h3>
-        <button @click="remove">删除组件</button>
-        <button @click="duplicate">创建副本</button>
-        <label>
-          包裹到新容器
-          <select @change="wrap(($event.target as HTMLSelectElement).value as IslandComponentKind)">
-            <option value="">选择容器</option>
-            <option v-for="kind in ['slide', 'rolling', 'group', 'stack']" :key="kind" :value="kind">
-              {{ ISLAND_COMPONENT_LABELS[kind as IslandComponentKind] }}
-            </option>
-          </select>
-        </label>
-        <template v-if="selected.kind === 'clock'">
-          <label>
-            <input type="checkbox" v-model="selected.settings.hour12" @change="save" />
-            12 小时制
-          </label>
-          <label>
-            <input type="checkbox" v-model="selected.settings.seconds" @change="save" />
-            显示秒
-          </label>
-        </template>
-        <label v-if="selected.kind === 'countdown'">
-          倒计时目标
-          <select v-model="selected.settings.target" @change="save">
-            <option value="next">下一节课</option>
-            <option value="school">放学</option>
-          </select>
-        </label>
-        <template v-if="selected.kind === 'text'">
-          <textarea v-model="selected.settings.text" @change="save" />
-          <label>
-            <input type="checkbox" v-model="selected.settings.template" @change="save" />
-            模板文本（{date} {time} {course}）
-          </label>
-        </template>
-        <template v-if="selected.kind === 'schedule'">
-          <select v-model="selected.settings.display" @change="save">
-            <option value="current">当前课程</option>
-            <option value="next">下一节</option>
-            <option value="today">今日课表</option>
-          </select>
-          <label>
-            显示节数
-            <input type="number" v-model.number="selected.settings.count" @change="save" />
-          </label>
-          <label>
-            <input type="checkbox" v-model="selected.settings.showPeriod" @change="save" />
-            显示节次
-          </label>
-        </template>
-        <template v-if="['group', 'stack', 'slide', 'rolling'].includes(selected.kind)">
-          <select v-model="selected.settings.direction" @change="save">
-            <option value="horizontal">横向</option>
-            <option value="vertical">纵向</option>
-          </select>
-          <label>
-            间距
-            <input type="number" v-model.number="selected.settings.gap" @change="save" />
-          </label>
-          <label>
-            轮播间隔（秒）
-            <input type="number" v-model.number="selected.settings.interval" @change="save" />
-          </label>
-          <label>
-            滚动速度
-            <input type="number" v-model.number="selected.settings.speed" @change="save" />
-          </label>
-        </template>
-        <h4>通用外观</h4>
-        <label>
-          <input type="checkbox" v-model="selected.appearance.resourceOverridingEnabled" @change="save" />
-          启用资源覆盖
-        </label>
-        <label
-          v-for="font in [
-            'secondaryFontSize',
-            'bodyFontSize',
-            'emphasizedFontSize',
-            'largeFontSize',
-          ] as const"
-          :key="font"
-        >
-          {{
-            {
-              secondaryFontSize: '次级字号',
-              bodyFontSize: '正文字号',
-              emphasizedFontSize: '强调字号',
-              largeFontSize: '大号字号',
-            }[font]
-          }}
-          <input type="number" v-model.number="selected.appearance[font]" @change="save" />
-        </label>
-        <label>
-          <input type="checkbox" v-model="selected.appearance.customForegroundEnabled" @change="save" />
-          自定义前景色
-          <input type="color" v-model="selected.appearance.foreground" @change="save" />
-        </label>
-        <label>
-          <input type="checkbox" v-model="selected.appearance.customBackgroundEnabled" @change="save" />
-          自定义背景色
-          <input type="color" v-model="selected.appearance.background" @change="save" />
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            v-model="selected.appearance.customBackgroundOpacityEnabled"
-            @change="save"
-          />
-          背景透明度
-          <input
-            type="number"
-            v-model.number="selected.appearance.backgroundOpacity"
-            min="0"
-            max="1"
-            step="0.05"
-            @change="save"
-          />
-        </label>
-        <label>
-          <input type="checkbox" v-model="selected.appearance.customCornerRadiusEnabled" @change="save" />
-          自定义圆角
-          <input type="number" v-model.number="selected.appearance.cornerRadius" @change="save" />
-        </label>
-        <label>
-          元素透明度
-          <input
-            type="number"
-            v-model.number="selected.appearance.opacity"
-            min="0"
-            max="1"
-            step="0.05"
-            @change="save"
-          />
-        </label>
-        <h4>高级设置</h4>
-        <label v-for="rule in ['in-class', 'no-message', 'no-class'] as const" :key="rule">
-          <input type="checkbox" v-model="selected.advanced.hideRules" :value="rule" @change="save" />
-          {{
-            { 'in-class': '上课时隐藏', 'no-message': '无消息时隐藏', 'no-class': '无当前课程时隐藏' }[rule]
-          }}
-        </label>
-        <label>
-          对齐（有宽度时生效）
-          <select v-model="selected.advanced.align" @change="save">
-            <option value="stretch">拉伸</option>
-            <option value="start">起始</option>
-            <option value="center">居中</option>
-            <option value="end">末端</option>
-          </select>
-        </label>
-        <label>
-          固定宽度（0 自适应）
-          <input type="number" v-model.number="selected.advanced.width" @change="save" />
-        </label>
-        <label>
-          宽度上限（超出右侧截断）
-          <input type="number" v-model.number="selected.advanced.maxWidth" @change="save" />
-        </label>
+      <ComponentInspector
+        v-if="panel === 'component' && selected"
+        :node="selected"
+        @change="save"
+        @remove="remove"
+        @duplicate="duplicate"
+        @wrap="wrap"
+      />
+      <template v-else-if="panel === 'row'">
+        <div class="inspector-heading">
+          <span class="eyebrow">布局设置</span>
+          <h2>组件行</h2>
+          <p>管理这一行的排列与提醒</p>
+        </div>
+        <div class="inspector-body" @change="save">
+          <section class="setting-section">
+            <h3>基本设置</h3>
+            <label class="field">
+              行名称
+              <input v-model="activeRow.name" />
+            </label>
+            <label class="field inline-field">
+              组件间距
+              <input type="number" min="0" max="80" v-model.number="activeRow.gap" />
+            </label>
+          </section>
+          <section class="setting-section">
+            <h3>消息提醒</h3>
+            <label class="toggle-field">
+              <span>允许显示提醒</span>
+              <input type="checkbox" v-model="activeRow.allowNotifications" />
+            </label>
+            <button
+              class="wide-button"
+              :disabled="activeRow.main"
+              @click="
+                scheme.rows.forEach((r) => (r.main = r.id === activeRow.id));
+                save();
+              "
+            >
+              {{ activeRow.main ? '已设为主要行' : '设为主要行' }}
+            </button>
+            <p class="field-hint">提醒优先显示在主要行内；若该行禁用提醒，则显示在下一条允许提醒的行内。</p>
+          </section>
+          <section class="setting-section">
+            <button class="wide-button" @click="addRow(scheme.rows.indexOf(activeRow))">
+              在此行下方新增行
+            </button>
+            <button
+              class="wide-button danger-button"
+              :disabled="scheme.rows.length < 2"
+              @click="
+                scheme.rows.splice(scheme.rows.indexOf(activeRow), 1);
+                selectedRowId = '';
+                save();
+              "
+            >
+              删除这一行
+            </button>
+          </section>
+        </div>
       </template>
-      <p v-else>点选组件后显示它独立的设置。</p>
-      <p role="alert">{{ error }}</p>
+      <template v-else>
+        <div class="inspector-heading">
+          <span class="eyebrow">方案设置</span>
+          <h2>整体外观</h2>
+          <p>所有组件共用一个灵动岛</p>
+        </div>
+        <div class="inspector-body" @change="save">
+          <section class="setting-section">
+            <h3>当前方案</h3>
+            <label class="field">
+              方案名称
+              <input v-model="scheme.name" />
+            </label>
+            <label class="field inline-field">
+              内容缩放
+              <input type="number" v-model.number="scheme.scale" min="0.5" max="3" step="0.1" />
+            </label>
+          </section>
+          <section class="setting-section">
+            <h3>岛体</h3>
+            <label class="field inline-field">
+              背景颜色
+              <input type="color" v-model="scheme.color" />
+            </label>
+            <label class="field inline-field">
+              文字颜色
+              <input type="color" v-model="scheme.foreground" />
+            </label>
+            <label class="field">
+              背景透明度
+              <div class="range-field">
+                <input type="range" v-model.number="scheme.opacity" min="0.1" max="1" step="0.05" />
+                <output>{{ Math.round(scheme.opacity * 100) }}%</output>
+              </div>
+            </label>
+            <label class="field inline-field">
+              圆角
+              <input type="number" v-model.number="scheme.radius" min="0" max="100" />
+            </label>
+          </section>
+          <section class="setting-section">
+            <h3>多行布局</h3>
+            <label class="field inline-field">
+              行间距
+              <input type="number" v-model.number="scheme.spacing" min="0" max="80" />
+            </label>
+            <label class="toggle-field">
+              <span>各行分离显示</span>
+              <input type="checkbox" v-model="scheme.separated" />
+            </label>
+            <p class="field-hint">默认将所有行放在同一个岛体内；开启后各行拥有独立背景。</p>
+          </section>
+        </div>
+      </template>
+      <p v-if="error" class="editor-error" role="alert">{{ error }}</p>
     </aside>
   </div>
 </template>
-<style scoped>
-.custom-window {
-  padding: 10px;
-  width: 100vw;
-  height: 100vh;
-  box-sizing: border-box;
-}
-.custom-card {
-  box-sizing: border-box;
-  padding: 12px;
-  overflow: auto;
-  background: var(--custom-color);
-  border-radius: var(--custom-radius);
-  filter: drop-shadow(0 2px 3px #0003);
-}
-.custom-inner {
-  width: max-content;
-  min-width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: inherit;
-}
-.layout-row {
-  display: flex;
-  flex-direction: column;
-}
-.row-content {
-  display: flex;
-  align-items: center;
-  min-height: 24px;
-}
-.separated {
-  background: transparent;
-}
-.separated .layout-row {
-  background: var(--custom-color);
-  border-radius: var(--custom-radius);
-  padding: 8px;
-}
-.layout-editor {
-  position: fixed;
-  inset: 10px;
-  display: grid;
-  grid-template-columns: 200px minmax(0, 1fr) 280px;
-  grid-template-rows: auto 1fr;
-  color: var(--ch-text, #17202c);
-  background: var(--ch-surface, #f4f5f8);
-  border-radius: var(--ch-radius-lg, 16px);
-  overflow: hidden;
-  font:
-    14px 'Microsoft YaHei',
-    sans-serif;
-}
-.layout-editor header {
-  grid-column: 1/-1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px;
-}
-.library,
-.settings {
-  overflow: auto;
-  padding: 12px;
-}
-.settings label,
-.library label {
-  display: block;
-  margin-block: 8px;
-}
-.canvas {
-  overflow: hidden;
-  touch-action: none;
-  padding: 80px 30px;
-  background: var(--ch-bg, #e3e5eb);
-}
-.canvas .custom-card {
-  transform-origin: top left;
-}
-.row-tools {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding-bottom: 8px;
-}
-.layout-editor button,
-.layout-editor select,
-.layout-editor input:not([type='checkbox']),
-.layout-editor textarea {
-  max-width: 100%;
-  min-height: 36px;
-  font: inherit;
-  border: 1px solid var(--ch-border, #9ca6b4);
-  border-radius: var(--ch-radius-sm, 6px);
-  padding: 4px;
-}
-.layout-editor button {
-  touch-action: none;
-  cursor: pointer;
-}
-.library button {
-  margin: 3px;
-}
-.layout-editor input[type='number'] {
-  width: 70px;
-}
-.layout-editor input[type='file'] {
-  width: 110px;
-}
-</style>
+<style src="./custom-island.css"></style>

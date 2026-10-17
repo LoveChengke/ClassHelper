@@ -31,12 +31,14 @@ const next = computed(() => {
 const hidden = computed(
   () =>
     !props.editing &&
-    props.node.advanced.hideRules.some(
-      (r) =>
-        (r === 'in-class' && props.state.inClass) ||
-        (r === 'no-message' && !props.state.active) ||
-        (r === 'no-class' && !current.value),
-    ),
+    ((['notification', 'homework', 'call'].includes(props.node.kind) &&
+      (!props.state.active || props.state.mode === 'hidden' || props.node.id !== props.alertNodeId)) ||
+      props.node.advanced.hideRules.some(
+        (r) =>
+          (r === 'in-class' && props.state.inClass) ||
+          (r === 'no-message' && !props.state.active) ||
+          (r === 'no-class' && !current.value),
+      )),
 );
 const visibleChildren = computed(() =>
   props.node.kind === 'slide'
@@ -122,7 +124,7 @@ const style = computed<CSSProperties>(() => {
   <div
     v-if="!hidden"
     class="component-node"
-    :class="[{ selected: editing && selectedId === node.id, container }, node.kind]"
+    :class="[{ selected: editing && selectedId === node.id, container, 'node-editing': editing }, node.kind]"
     :style="style"
     :data-node="node.id"
     @click.stop="editing && emit('select', node.id)"
@@ -192,14 +194,46 @@ const style = computed<CSSProperties>(() => {
   animation: rolling var(--rolling-duration) linear infinite;
 }
 .selected {
-  outline: 2px solid var(--ch-accent, #5b9cff);
+  outline: 2px solid #85aaff;
+  border-radius: 8px;
+  background: #759cff14;
 }
 .node-handle {
   touch-action: none;
   cursor: grab;
   display: block;
-  font: inherit;
+  font:
+    10px 'Microsoft YaHei',
+    sans-serif;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  min-height: 24px;
+  margin-bottom: 4px;
+  color: #ffffff80;
+  background: #ffffff0d;
+}
+.node-handle:hover {
+  background: #ffffff20;
+  color: #fff;
+}
+.notification,
+.homework,
+.call {
+  padding: 0;
+}
+.notification.node-editing,
+.homework.node-editing,
+.call.node-editing {
   padding: 6px;
+  flex-basis: auto;
+}
+.node-editing {
+  cursor: pointer;
+}
+.node-editing:hover {
+  box-shadow: inset 0 0 0 1px #ffffff28;
+  border-radius: 8px;
 }
 small {
   font-size: var(--secondary, 12px);

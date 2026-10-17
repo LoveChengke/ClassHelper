@@ -193,6 +193,8 @@ class IslandController {
    */
   private touchMode = false;
   private editingLayout = false;
+  private settlingLayout = false;
+  private layoutSettleTimer: ReturnType<typeof setTimeout> | null = null;
   private customSize = { width: 424, height: 80 };
   private customDesiredSize = { width: 424, height: 80 };
   private customTimer: ReturnType<typeof setTimeout> | null = null;
@@ -207,6 +209,9 @@ class IslandController {
     this.syncWindow();
   }
   editLayout(enabled = true): void {
+    if (this.layoutSettleTimer) clearTimeout(this.layoutSettleTimer);
+    this.layoutSettleTimer = null;
+    this.settlingLayout = false;
     this.editingLayout = enabled;
     if (enabled) saveConfig({ islandLayout: { ...getConfig().islandLayout, layout: 'custom' } });
     this.win?.webContents.send('island:layout', getConfig().islandLayout);
@@ -230,7 +235,16 @@ class IslandController {
         };
         this.win.webContents.send('island:viewport', this.customSize);
         this.applyWindowLayout();
-        this.syncWindow();
+        if (this.customLayout) {
+          // 退出编辑先保持隐藏，等行工具栏移除、渲染器防抖测量和主进程防抖完成。
+          // 避免把编辑器的占位高度带回常态岛；收缩仍全部发生在不可见期间。
+          this.settlingLayout = true;
+          this.layoutSettleTimer = setTimeout(() => {
+            this.layoutSettleTimer = null;
+            this.settlingLayout = false;
+            this.syncWindow();
+          }, 320);
+        } else this.syncWindow();
       }
     }
   }
@@ -1176,6 +1190,7 @@ class IslandController {
       return;
     }
     if (this.customLayout) {
+      if (this.settlingLayout) return;
       this.cancelFade();
       this.applyWindowLayout();
       this.win.setOpacity(this.appearance.opacity);
