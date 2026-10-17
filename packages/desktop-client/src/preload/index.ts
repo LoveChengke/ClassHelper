@@ -1,3 +1,4 @@
+import type { ReleaseProgressDto as ContractReleaseProgressDto } from '@classhelper/shared';
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS, UPDATE_AVAILABLE_CHANNEL } from '../main/channels.js';
 import type { ClientAgentStatus } from '../main/client-agent.js';
@@ -19,6 +20,7 @@ import type { IslandNotification, UpdateInfo } from '@classhelper/shared';
  * 之前就抛 `An object could not be cloned.`。调用方必须传纯数据，见 desktop.d.ts。
  */
 const bridge: DesktopBridge = {
+  islandEditLayout: () => ipcRenderer.invoke('island:edit-layout'),
   smokeTest: process.env.ELECTRON_SMOKE_TEST === '1',
   // 冒烟凭据：只在冒烟模式下透传，供渲染进程的冒烟钩子构造测试数据用。
   // **不走代码字面量**——本文件与渲染产物都会进 app.asar，写死账号等于随安装包把教师口令发出去。
@@ -31,6 +33,12 @@ const bridge: DesktopBridge = {
           classPassword: process.env.ELECTRON_SMOKE_CLASS_PASSWORD ?? '',
         }
       : undefined,
+  getUpdateProgress: () => ipcRenderer.invoke('client:get-update-progress'),
+  onUpdateProgress: (handler: (progress: ContractReleaseProgressDto) => void) => {
+    const listener = (_event: unknown, value: ContractReleaseProgressDto) => handler(value);
+    ipcRenderer.on('client:update-progress', listener);
+    return () => ipcRenderer.removeListener('client:update-progress', listener);
+  },
   getConfig: (): Promise<DesktopStoredConfig> => ipcRenderer.invoke(IPC_CHANNELS.getConfig),
   saveConfig: (patch: Partial<DesktopStoredConfig>): Promise<DesktopStoredConfig> =>
     ipcRenderer.invoke(IPC_CHANNELS.saveConfig, patch),

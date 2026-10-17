@@ -1,3 +1,4 @@
+import { verifyLayoutSmoke } from './smoke-layout.js';
 import fs from 'node:fs';
 import { runQuickSmoke } from './smoke-quick.js';
 import path from 'node:path';
@@ -4603,6 +4604,14 @@ export async function runSmokeTest(win: BrowserWindow): Promise<void> {
     }
   };
 
+  await verifyLayoutSmoke(async (name, action) => {
+    try {
+      const value = await action();
+      record(name, value !== false, typeof value === 'string' ? value : '');
+    } catch (error) {
+      record(name, false, String(error));
+    }
+  });
   writeResult();
 
   // 托盘与退出清理放在最后：会隐藏主窗口并销毁托盘/灵动岛

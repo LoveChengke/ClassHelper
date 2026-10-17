@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UpdateProgress from '../../components/UpdateProgress.vue';
 import { onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import type { UpdateInfo } from '@classhelper/shared';
@@ -70,6 +71,7 @@ onMounted(async () => {
 
 <template>
   <div class="page">
+    <UpdateProgress />
     <div class="page-header">
       <div>
         <h2 class="page-title">关于</h2>

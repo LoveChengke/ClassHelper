@@ -1,9 +1,12 @@
+import type { IslandLayoutSettings as ContractIslandLayoutSettings } from '@classhelper/shared';
+import { connectionChanged } from './config-events.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, safeStorage } from 'electron';
 import {
   DEFAULT_ISLAND_APPEARANCE,
+  normalizeIslandLayouts,
   DEFAULT_SERVER_URL,
   HOMEWORK_PHRASE_DEFAULTS,
   HOMEWORK_PHRASE_MAX_COUNT,
@@ -21,6 +24,7 @@ const DEFAULT_HOMEWORK_BOARD: HomeworkBoardSettings = {
 };
 
 interface PersistedConfig {
+  islandLayout?: ContractIslandLayoutSettings;
   serverUrl: string;
   username: string;
   /** 加密后的 token（base64）或明文（当系统不支持加密时） */
@@ -194,6 +198,7 @@ function readPersistedFromDisk(): PersistedConfig {
     const content = fs.readFileSync(configFilePath(), 'utf8');
     const parsed = JSON.parse(content) as Partial<PersistedConfig>;
     return {
+      islandLayout: normalizeIslandLayouts(parsed.islandLayout),
       serverUrl:
         typeof parsed.serverUrl === 'string' && parsed.serverUrl
           ? (normalizeServerUrl(parsed.serverUrl) ?? DEFAULT_CONFIG.serverUrl)
@@ -360,6 +365,7 @@ function normalizeServerUrl(input: string): string | null {
 function toDesktopConfig(state: ConfigCache): DesktopStoredConfig {
   const persisted = state.config;
   return {
+    islandLayout: normalizeIslandLayouts(persisted.islandLayout),
     serverUrl: persisted.serverUrl,
     username: persisted.username,
     token: state.token,
@@ -425,6 +431,9 @@ export function getConfig(): DesktopStoredConfig {
 export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredConfig {
   const state = loadCache();
   const persisted = state.config;
+  if (patch.islandLayout !== undefined) persisted.islandLayout = normalizeIslandLayouts(patch.islandLayout);
+  const oldServer = persisted.serverUrl;
+  const oldToken = state.token;
 
   if (typeof patch.serverUrl === 'string' && patch.serverUrl.trim()) {
     const normalized = normalizeServerUrl(patch.serverUrl);
@@ -485,6 +494,8 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
   if (typeof patch.deviceKey === 'string' && patch.deviceKey && patch.deviceKey !== persisted.deviceKey) {
     logger.warn('忽略对设备标识（deviceKey）的改写：它是这台机器在服务端的身份，不允许变更');
   }
+  if (persisted.serverUrl !== oldServer && (!patch.token || patch.token === oldToken))
+    patch = { ...patch, token: null };
   if (patch.token !== undefined) {
     const encrypted = encryptToken(patch.token);
     persisted.token = encrypted.token;
@@ -494,6 +505,11 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
   }
 
   scheduleWrite(persisted);
+  if (persisted.serverUrl !== oldServer) connectionChanged('server-changed');
+  if (state.token !== oldToken) {
+    connectionChanged('token-changed');
+    connectionChanged(state.token ? 'login' : 'logout');
+  }
   return toDesktopConfig(state);
 }
 
@@ -508,6 +524,7 @@ export function clearConfig(): DesktopStoredConfig {
   const current = cache?.config ?? DEFAULT_CONFIG;
   const kept: PersistedConfig = {
     ...DEFAULT_CONFIG,
+    islandLayout: normalizeIslandLayouts(current.islandLayout),
     deviceKey: current.deviceKey ?? '',
     autoLaunch: current.autoLaunch === true,
     autoUpdate: current.autoUpdate !== false,
@@ -519,6 +536,7 @@ export function clearConfig(): DesktopStoredConfig {
   ensureDeviceKey(kept);
   const state: ConfigCache = { config: kept, token: null };
   cache = state;
+  connectionChanged('logout');
   scheduleWrite(state.config, true);
   return toDesktopConfig(state);
 }

@@ -1,3 +1,4 @@
+import type { ActiveClassPlanWeekDto as ContractActiveClassPlanWeekDto } from '@classhelper/shared';
 import { watch, type WatchStopHandle } from 'vue';
 import {
   SOCKET_EVENTS,
@@ -7,7 +8,8 @@ import {
   type NotificationDto,
   type ScheduleDto,
 } from '@classhelper/shared';
-import { notificationApi, scheduleApi } from '../api/index.js';
+import { api } from '../api/http.js';
+import { notificationApi } from '../api/index.js';
 import { fetchWithCache } from '../cache/index.js';
 import { getCacheScope } from '../cache/scope.js';
 import { clearOfflineSince, readOfflineSince, useAppStore } from '../stores/app.js';
@@ -59,7 +61,10 @@ export async function refreshIslandSchedules(): Promise<void> {
   const result = await fetchWithCache<ScheduleDto[]>(
     'schedules',
     `week:${week}`,
-    () => scheduleApi.list({ classId, week }),
+    async () =>
+      (
+        await api.get<ContractActiveClassPlanWeekDto>('/schedules/active-week', { classId, week })
+      ).days.flatMap((day) => day.schedules),
     [],
   );
   if (scope !== getCacheScope() || request !== scheduleRequest) return;
@@ -73,15 +78,19 @@ function recomputeClassState(force = false): void {
   const appStore = useAppStore();
   const status = resolveClassStatus(schedules, new Date(), scheduleWeek);
   const nextInClass = status.inClass;
+  const samePeriod =
+    currentPeriod?.scheduleId === status.current?.scheduleId &&
+    currentPeriod?.endTime === status.current?.endTime;
   currentPeriod = status.current;
 
-  if (!force && nextInClass === inClass) return;
+  if (!force && nextInClass === inClass && samePeriod) return;
   inClass = nextInClass;
 
   window.desktop?.islandSetClassState({
     inClass,
     currentPeriodEnd: currentPeriod?.endTime ?? null,
     week: appStore.currentWeek,
+    schedules: schedules.filter((s) => s.dayOfWeek === (new Date().getDay() || 7)),
   });
 }
 

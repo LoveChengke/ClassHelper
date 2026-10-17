@@ -1,3 +1,7 @@
+import type {
+  IslandLayoutSettings as ContractIslandLayoutSettings,
+  ScheduleDto as ContractScheduleDto,
+} from '@classhelper/shared';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { IslandAppearance, IslandState } from '@classhelper/shared';
 
@@ -6,6 +10,16 @@ import type { IslandAppearance, IslandState } from '@classhelper/shared';
  * 只暴露「订阅状态/外观」与「发送用户操作」两件事，渲染进程不接触任何 Node 能力。
  */
 export interface IslandBridge {
+  getLayout(): Promise<ContractIslandLayoutSettings>;
+  saveLayout(value: ContractIslandLayoutSettings): Promise<ContractIslandLayoutSettings>;
+  onLayout(handler: (value: ContractIslandLayoutSettings) => void): void;
+  getEditing(): Promise<boolean>;
+  setEditing(value: boolean): Promise<void>;
+  onEditing(handler: (value: boolean) => void): void;
+  reportSize(value: { width: number; height: number }): void;
+  onViewport(handler: (value: { width: number; height: number }) => void): void;
+  onSchedules(handler: (value: ContractScheduleDto[]) => void): void;
+
   onState(handler: (state: IslandState) => void): void;
   sendAction(
     action:
@@ -38,6 +52,24 @@ export interface IslandBridge {
 }
 
 const bridge: IslandBridge = {
+  getLayout: () => ipcRenderer.invoke('island:get-layout'),
+  saveLayout: (value) => ipcRenderer.invoke('island:save-layout', value),
+  onLayout: (handler) => {
+    ipcRenderer.on('island:layout', (_event, value) => handler(value));
+  },
+  getEditing: () => ipcRenderer.invoke('island:get-editing'),
+  setEditing: (value) => ipcRenderer.invoke('island:set-editing', value),
+  onEditing: (handler) => {
+    ipcRenderer.on('island:editing', (_event, value) => handler(value));
+  },
+  reportSize: (value) => ipcRenderer.send('island:content-size', value),
+  onViewport: (handler) => {
+    ipcRenderer.on('island:viewport', (_event, value) => handler(value));
+  },
+  onSchedules: (handler) => {
+    ipcRenderer.on('island:schedules', (_event, value) => handler(value));
+  },
+
   onState: (handler) => {
     ipcRenderer.on('island:state', (_event, state: IslandState) => handler(state));
   },

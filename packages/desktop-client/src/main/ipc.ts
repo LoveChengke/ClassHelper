@@ -1,3 +1,5 @@
+import { island } from './island.js';
+import { getUpdateProgress } from './auto-update.js';
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import type { UpdateInfo } from '@classhelper/shared';
 import { IPC_CHANNELS } from './channels.js';
@@ -12,6 +14,7 @@ import type { DesktopAppInfo, DesktopStoredConfig } from '../types/desktop.js';
 export { IPC_CHANNELS };
 
 export function registerIpcHandlers(): void {
+  ipcMain.handle('client:get-update-progress', () => getUpdateProgress());
   ipcMain.handle(IPC_CHANNELS.getConfig, (): DesktopStoredConfig => getConfig());
 
   ipcMain.handle(
@@ -21,7 +24,9 @@ export function registerIpcHandlers(): void {
       const allowed = { ...patch };
       delete allowed.pendingUpdateFile;
       delete allowed.pendingUpdateVersion;
-      return saveConfig(allowed);
+      const saved = saveConfig(allowed);
+      if (allowed.islandLayout) island.syncCustomLayout();
+      return saved;
     },
   );
 

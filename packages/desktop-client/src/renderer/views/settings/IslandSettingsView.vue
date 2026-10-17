@@ -23,6 +23,18 @@ import {
  */
 const island = ref<IslandAppearance>({ ...DEFAULT_ISLAND_APPEARANCE });
 const savingIsland = ref(false);
+function editLayout() {
+  void window.desktop?.islandEditLayout();
+}
+const layoutMode = ref<'fixed' | 'custom'>('fixed');
+async function changeLayout() {
+  const config = await window.desktop?.getConfig();
+  if (config)
+    await window.desktop?.saveConfig({ islandLayout: { ...config.islandLayout, layout: layoutMode.value } });
+}
+onMounted(async () => {
+  layoutMode.value = (await window.desktop?.getConfig())?.islandLayout.layout ?? 'fixed';
+});
 
 /**
  * 左右边距是否有效：只在停靠左 / 右时生效。
@@ -94,6 +106,14 @@ onMounted(async () => {
 
 <template>
   <div class="page">
+    <el-card>
+      <h3>组件布局</h3>
+      <el-select v-model="layoutMode" @change="changeLayout">
+        <el-option label="固定灵动岛（默认）" value="fixed" />
+        <el-option label="自定义组件栏" value="custom" />
+      </el-select>
+      <el-button @click="editLayout">编辑灵动岛布局</el-button>
+    </el-card>
     <div class="page-header">
       <div>
         <h2 class="page-title">灵动岛</h2>

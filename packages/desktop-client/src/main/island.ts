@@ -1,8 +1,10 @@
+import type { ScheduleDto as ContractScheduleDto } from '@classhelper/shared';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BrowserWindow, ipcMain, screen } from 'electron';
 import {
   DEFAULT_ISLAND_APPEARANCE,
+  normalizeIslandLayouts,
   ISLAND_POSITIONS,
   ISLAND_SHADOW_PAD,
   ISLAND_SIZE_DELTA,
@@ -17,7 +19,7 @@ import {
   type IslandState,
 } from '@classhelper/shared';
 import { logger } from './logger.js';
-import { getConfig } from './config.js';
+import { getConfig, saveConfig } from './config.js';
 
 /** 生产环境的灵动岛页面地址（导航白名单的精确比对用） */
 const prodIslandUrl = pathToFileURL(path.join(__dirname, '../renderer/island.html')).href;
@@ -130,6 +132,7 @@ export interface IslandPushContext {
 }
 
 export interface IslandClassStatePayload {
+  schedules?: ContractScheduleDto[];
   inClass: boolean;
   currentPeriodEnd?: string | null;
   week?: number;
@@ -189,6 +192,70 @@ class IslandController {
    * 只有投影所需的 10px 留白，不再吞掉桌面点击。
    */
   private touchMode = false;
+  private editingLayout = false;
+  private customSize = { width: 424, height: 80 };
+  private customDesiredSize = { width: 424, height: 80 };
+  private customTimer: ReturnType<typeof setTimeout> | null = null;
+  private get customLayout(): boolean {
+    return getConfig().islandLayout.layout === 'custom';
+  }
+  getEditingLayout(): boolean {
+    return this.editingLayout;
+  }
+  syncCustomLayout(): void {
+    this.win?.webContents.send('island:layout', getConfig().islandLayout);
+    this.syncWindow();
+  }
+  editLayout(enabled = true): void {
+    this.editingLayout = enabled;
+    if (enabled) saveConfig({ islandLayout: { ...getConfig().islandLayout, layout: 'custom' } });
+    this.win?.webContents.send('island:layout', getConfig().islandLayout);
+    this.win?.webContents.send('island:editing', enabled);
+    if (this.win && !this.win.isDestroyed()) {
+      this.win.hide();
+      if (enabled) {
+        const area = screen.getDisplayNearestPoint(this.win.getBounds()).workArea;
+        this.win.setBounds(area);
+        this.win.setOpacity(1);
+        if (!(process.env.ELECTRON_SMOKE_TEST === '1' && process.env.ELECTRON_SMOKE_MODE !== 'visual')) {
+          this.win.show();
+          this.win.focus();
+        }
+        this.setInteractive(true, '布局编辑');
+      } else {
+        const area = screen.getDisplayNearestPoint(this.win.getBounds()).workArea;
+        this.customSize = {
+          width: Math.max(40, Math.min(this.customDesiredSize.width, area.width - 2 * ISLAND_SHADOW_PAD)),
+          height: Math.max(24, Math.min(this.customDesiredSize.height, area.height - 2 * ISLAND_SHADOW_PAD)),
+        };
+        this.win.webContents.send('island:viewport', this.customSize);
+        this.applyWindowLayout();
+        this.syncWindow();
+      }
+    }
+  }
+  reportCustomSize(value: { width: number; height: number }): void {
+    if (!this.customLayout || !Number.isFinite(value?.width) || !Number.isFinite(value?.height)) return;
+    this.customDesiredSize = { ...value };
+    if (this.editingLayout) return;
+    if (this.customTimer) clearTimeout(this.customTimer);
+    this.customTimer = setTimeout(() => {
+      this.customTimer = null;
+      if (!this.win || !this.customLayout || this.editingLayout) return;
+      const area = screen.getDisplayNearestPoint(this.win.getBounds()).workArea;
+      const current = this.win.getBounds();
+      const width = Math.max(40, Math.min(Math.ceil(value.width), area.width - 2 * ISLAND_SHADOW_PAD));
+      const height = Math.max(24, Math.min(Math.ceil(value.height), area.height - 2 * ISLAND_SHADOW_PAD));
+      // 可见/编辑期间不主动缩窗；只有隐藏后收缩。渲染器按获准尺寸铺底，窗口=卡片+2×留白。
+      this.customSize = {
+        width: this.win.isVisible() ? Math.max(width, current.width - 2 * ISLAND_SHADOW_PAD) : width,
+        height: this.win.isVisible() ? Math.max(height, current.height - 2 * ISLAND_SHADOW_PAD) : height,
+      };
+      this.applyWindowLayout();
+      this.win.webContents.send('island:viewport', this.customSize);
+      this.setHitRect({ x: ISLAND_SHADOW_PAD, y: ISLAND_SHADOW_PAD, ...this.customSize });
+    }, 120);
+  }
   /** 渲染进程上报的岛体矩形（窗口内 CSS px）：主进程据此做光标命中兜底轮询 */
   private hitRect: { x: number; y: number; width: number; height: number } | null = null;
   /** 光标命中兜底轮询定时器（见 syncHitFromCursor 注释） */
@@ -334,6 +401,7 @@ class IslandController {
      * 因此这里再用**指针位置**兜一层：指针还在岛上就绝不收起（详见 isCursorOnIsland）。
      */
     win.on('blur', () => {
+      if (this.editingLayout) return;
       // 冒烟里可以临时关掉"失焦收起"，避免测试过程被无关的焦点变化打断（默认开启）
       if (!this.blurCollapseEnabled) return;
       if (this.state.mode !== 'expanded' || this.state.inClass) return;
@@ -346,7 +414,7 @@ class IslandController {
       }
       // 触摸屏上没有"指针"可依据（isCursorOnIsland 恒为 false），只能用更宽的宽限期覆盖
       // 上面实测到的 70~520ms 抖动区间，否则手指点开后约 0.5s 会莫名缩回胶囊。
-      const grace = this.touchMode ? BLUR_GRACE_TOUCH_MS : BLUR_GRACE_MS;
+      const grace = this.touchMode || this.editingLayout ? BLUR_GRACE_TOUCH_MS : BLUR_GRACE_MS;
       if (sinceActivated < grace) {
         logger.info(`灵动岛：忽略激活后 ${sinceActivated}ms 内的失焦（宽限期内不收起）`);
         return;
@@ -605,6 +673,8 @@ class IslandController {
 
   /** 上课状态变化：进入上课隐藏；下课则自动弹出队列 */
   setClassState(payload: IslandClassStatePayload): void {
+    if (Array.isArray(payload.schedules))
+      this.win?.webContents.send('island:schedules', payload.schedules.slice(0, 100));
     const wasInClass = this.state.inClass;
     this.state.inClass = payload.inClass;
     this.state.currentPeriodEnd = payload.currentPeriodEnd ?? null;
@@ -845,6 +915,26 @@ class IslandController {
     if (this.state.active || this.state.queued.length > 0) return;
     this.fadeOut();
     this.setState({ mode: 'hidden', reason: null }, { skipWindow: true });
+    if (this.customLayout)
+      setTimeout(() => {
+        // 提醒沿原路径收回后，隐藏窗口再缩回组件栏；时钟等普通组件继续显示。
+        if (
+          !this.win ||
+          this.win.isDestroyed() ||
+          !this.customLayout ||
+          this.editingLayout ||
+          this.state.mode !== 'hidden'
+        )
+          return;
+        this.win.hide();
+        const area = screen.getDisplayNearestPoint(this.win.getBounds()).workArea;
+        this.customSize = {
+          width: Math.max(40, Math.min(this.customDesiredSize.width, area.width - 2 * ISLAND_SHADOW_PAD)),
+          height: Math.max(24, Math.min(this.customDesiredSize.height, area.height - 2 * ISLAND_SHADOW_PAD)),
+        };
+        this.win.webContents.send('island:viewport', this.customSize);
+        this.syncWindow();
+      }, 200);
   }
 
   /**
@@ -1081,6 +1171,22 @@ class IslandController {
    */
   private syncWindow(): void {
     if (!this.win || this.win.isDestroyed()) return;
+    if (this.editingLayout) {
+      this.setInteractive(true, '布局编辑');
+      return;
+    }
+    if (this.customLayout) {
+      this.cancelFade();
+      this.applyWindowLayout();
+      this.win.setOpacity(this.appearance.opacity);
+      if (
+        !this.win.isVisible() &&
+        !(process.env.ELECTRON_SMOKE_TEST === '1' && process.env.ELECTRON_SMOKE_MODE !== 'visual')
+      )
+        this.win.showInactive();
+      this.setInteractive(true, '自定义组件栏');
+      return;
+    }
 
     // 上课时间段：一律不显示灵动岛（只有"正在展示的紧急通知 / 叫人"允许出现在屏幕上）
     // 上课时段：只有"紧急通知 / 叫人"允许出现在屏幕上——展开态与胶囊态都算
@@ -1141,6 +1247,11 @@ class IslandController {
    * - 触摸模式：贴合当前形态（岛体 + 2×阴影留白），否则大包围盒的透明区会吞掉桌面的触摸。
    */
   private windowBox(): { width: number; height: number } {
+    if (this.customLayout)
+      return {
+        width: this.customSize.width + 2 * ISLAND_SHADOW_PAD,
+        height: this.customSize.height + 2 * ISLAND_SHADOW_PAD,
+      };
     const size = this.formSize();
     if (!this.touchMode) {
       return {
@@ -1200,6 +1311,7 @@ class IslandController {
   private applyWindowLayout(): void {
     if (!this.win || this.win.isDestroyed()) return;
     const next = this.windowBounds();
+    if (this.editingLayout) return;
     const current = this.win.getBounds();
     if (
       current.x === next.x &&
@@ -1236,6 +1348,15 @@ class IslandController {
     }
     const y = anchor.vMode === 'bottom' ? anchor.vValue + pad - height : anchor.vValue - pad;
 
+    if (this.customLayout) {
+      const area = screen.getDisplayNearestPoint({ x, y }).workArea;
+      return {
+        x: Math.max(area.x, Math.min(x, area.x + area.width - width)),
+        y: Math.max(area.y, Math.min(y, area.y + area.height - height)),
+        width: Math.min(width, area.width),
+        height: Math.min(height, area.height),
+      };
+    }
     return { x, y, width, height };
   }
 
@@ -1254,6 +1375,7 @@ class IslandController {
    */
   private applyFocusable(): void {
     if (!this.win || this.win.isDestroyed()) return;
+    if (this.editingLayout) return;
     if (!this.win.isFocusable()) this.win.setFocusable(true);
     if (this.state.mode === 'expanded') {
       this.win.focus();
@@ -1390,7 +1512,11 @@ class IslandController {
     // 但**注入光标**（冒烟用 setHitTestCursor 模拟指针在岛上/岛外）照常生效，
     // 否则「光标轮询校正命中」「岛外穿透」这类断言全会被自己的开关弄红。
     const passthrough = this.testInputPassthrough && this.cursorOverride === null;
-    const next = passthrough ? false : this.touchMode ? true : interactive;
+    const next = passthrough
+      ? false
+      : this.touchMode || this.editingLayout || this.customLayout
+        ? true
+        : interactive;
     if (this.interactive === next) return;
     this.interactive = next;
     logger.info(
@@ -1497,6 +1623,7 @@ class IslandController {
 
   /** 当前形态下**岛本身**的尺寸（不是窗口尺寸；响应进程的 `.island-card` 宽高） */
   private formSize(): { width: number; height: number } {
+    if (this.customLayout) return this.customSize;
     // 多条通知的列表形态：高度由统一布局算法算出（渲染进程算的是同一个数）
     const layout = this.listLayout();
     if (layout) return { width: SIZES.expanded.width, height: layout.height };
@@ -1868,6 +1995,19 @@ export const island = new IslandController();
 
 /** 注册灵动岛相关 IPC（主窗口渲染进程 -> 主进程；灵动岛渲染进程 -> 主进程） */
 export function registerIslandIpc(): void {
+  ipcMain.handle('island:get-layout', () => getConfig().islandLayout);
+  ipcMain.handle('island:save-layout', (_event, value: unknown) => {
+    const result = saveConfig({ islandLayout: normalizeIslandLayouts(value) }).islandLayout;
+    island.syncCustomLayout();
+    return result;
+  });
+  ipcMain.handle('island:edit-layout', () => island.editLayout());
+  ipcMain.handle('island:get-editing', () => island.getEditingLayout());
+  ipcMain.handle('island:set-editing', (_event, value: unknown) => island.editLayout(value === true));
+  ipcMain.on('island:content-size', (event, value) => {
+    if (event.sender === island.getWindow()?.webContents) island.reportCustomSize(value);
+  });
+
   ipcMain.on('island:remove-notification', (_event, id: string) => {
     if (typeof id === 'string') island.removeNotification(id);
   });

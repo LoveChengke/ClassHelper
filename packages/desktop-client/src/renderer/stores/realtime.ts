@@ -5,7 +5,7 @@ import { io, type Socket } from 'socket.io-client';
 import {
   PRIORITY_LABELS,
   SOCKET_EVENTS,
-  type GradeDto,
+  type GradeUpdateEvent,
   type HomeworkDto,
   type NotificationDto,
   type ServerToClientEvents,
@@ -48,6 +48,9 @@ export const useRealtimeStore = defineStore('realtime', () => {
   }
 
   function bind(instance: Socket): void {
+    instance.on(SOCKET_EVENTS.clientReleaseProgress, (payload) => {
+      dispatch(SOCKET_EVENTS.clientReleaseProgress, payload);
+    });
     instance.on('connect', () => {
       connected.value = true;
       connecting.value = false;
@@ -106,9 +109,13 @@ export const useRealtimeStore = defineStore('realtime', () => {
       dispatch(SOCKET_EVENTS.homeworkUpdated, payload);
     });
 
-    instance.on(SOCKET_EVENTS.gradeUpdated, (payload: GradeDto) => {
+    instance.on(SOCKET_EVENTS.gradeUpdated, (payload: GradeUpdateEvent) => {
       mark(SOCKET_EVENTS.gradeUpdated);
-      ElMessage.success(`成绩更新：${payload.examName} ${payload.score}/${payload.totalScore}`);
+      ElMessage.success(
+        'score' in payload
+          ? `成绩更新：${payload.examName} ${payload.score}/${payload.totalScore}`
+          : '班级成绩分析已更新',
+      );
       dispatch(SOCKET_EVENTS.gradeUpdated, payload);
     });
 

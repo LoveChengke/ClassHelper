@@ -1,3 +1,4 @@
+import { island } from './island.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Menu, Tray, app, nativeImage } from 'electron';
@@ -38,6 +39,7 @@ export function createTray(handlers: TrayHandlers): Tray | null {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: '显示主窗口', click: () => handlers.onShow() },
+      { label: '编辑灵动岛布局', click: () => island.editLayout() },
       { label: '隐藏到托盘', click: () => handlers.onHide() },
       { type: 'separator' },
       { label: '退出 ClassHelper', click: () => handlers.onQuit() },

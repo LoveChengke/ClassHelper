@@ -1,3 +1,4 @@
+import type { ReleaseProgressDto as ContractReleaseProgressDto } from '@classhelper/shared';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -85,6 +86,29 @@ export function pendingUpdateDir(): string {
 let mainWindowHiddenAt: number | null = null;
 /** 本进程是否已经发起过安装（防止心跳与 hide 事件重复触发） */
 let installing = false;
+let updateProgress: ContractReleaseProgressDto = {
+  version: '',
+  stage: 'idle',
+  downloadedBytes: 0,
+  totalBytes: 0,
+  percent: null,
+  error: '',
+};
+export function getUpdateProgress() {
+  return { ...updateProgress };
+}
+let progressPublishedAt = 0;
+function publishProgress(patch: Partial<typeof updateProgress>) {
+  const previousStage = updateProgress.stage;
+  updateProgress = { ...updateProgress, ...patch };
+  updateProgress.percent = updateProgress.totalBytes
+    ? Math.min(100, Math.round((updateProgress.downloadedBytes / updateProgress.totalBytes) * 100))
+    : null;
+  if (previousStage === updateProgress.stage && Date.now() - progressPublishedAt < 250) return;
+  progressPublishedAt = Date.now();
+  for (const win of BrowserWindow.getAllWindows())
+    if (!win.isDestroyed()) win.webContents.send('client:update-progress', getUpdateProgress());
+}
 /**
  * 退出本进程的回调（由 index.ts 注册成既有的 `quitApp()`）。
  *
@@ -187,6 +211,7 @@ export async function considerUpdate(info: ClientUpdateInfoDto, targetVersion: s
   }
 
   downloading.add(version);
+  publishProgress({ version, stage: 'downloading', downloadedBytes: 0, totalBytes: info.size, error: '' });
   const startedAt = Date.now();
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -211,20 +236,24 @@ export async function considerUpdate(info: ClientUpdateInfoDto, targetVersion: s
     try {
       for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
         await handle.write(chunk);
+        publishProgress({ downloadedBytes: updateProgress.downloadedBytes + chunk.byteLength });
       }
     } finally {
       await handle.close();
     }
 
+    publishProgress({ stage: 'verifying' });
     const digest = await sha256File(temp);
     const expected = info.sha256.trim().toLowerCase();
     if (!expected) {
       // 服务端没给哈希就没法校验：宁可不装，也不留一个来源不明的安装包在磁盘上
       await fsp.rm(temp, { force: true });
+      publishProgress({ stage: 'failed', error: '服务端未提供 sha256，拒绝更新' });
       logger.error(`更新 ${version} 的安装包没有提供 sha256，已删除（不做信任放行）`);
       return;
     }
     if (digest !== expected) {
+      publishProgress({ stage: 'failed', error: '安装包 sha256 校验失败' });
       await fsp.rm(temp, { force: true });
       logger.error(
         `更新 ${version} 的安装包校验失败（sha256 不符），已删除：期望 ${expected}，实际 ${digest}`,
@@ -234,6 +263,7 @@ export async function considerUpdate(info: ClientUpdateInfoDto, targetVersion: s
 
     await fsp.rm(target, { force: true });
     await fsp.rename(temp, target);
+    publishProgress({ stage: 'waiting' });
     if (loadPolicy()?.updateTargetVersion !== version) {
       removeManagedInstaller(target);
       return;
@@ -247,6 +277,7 @@ export async function considerUpdate(info: ClientUpdateInfoDto, targetVersion: s
     await maybeInstallPendingUpdate();
   } catch (error) {
     await fsp.rm(temp, { force: true }).catch(() => undefined);
+    publishProgress({ stage: 'failed', error: String(error) });
     logger.error(`下载更新 ${version} 失败：${error instanceof Error ? error.message : String(error)}`);
   } finally {
     downloading.delete(version);
@@ -342,6 +373,7 @@ export async function maybeInstallPendingUpdate(): Promise<void> {
   }
 
   installing = true;
+  publishProgress({ stage: 'installing' });
   logger.info(`开始静默安装更新 ${version}：${installer}`);
   try {
     const exe = app.getPath('exe');

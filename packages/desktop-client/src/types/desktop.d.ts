@@ -1,9 +1,15 @@
+import type {
+  IslandLayoutSettings as ContractIslandLayoutSettings,
+  ReleaseProgressDto as ContractReleaseProgressDto,
+  ScheduleDto as ContractScheduleDto,
+} from '@classhelper/shared';
 /**
  * 主进程与渲染进程之间的桥接契约（preload 通过 contextBridge 暴露）。
  * 渲染进程只依赖这些最小 API，不接触 Node.js。
  */
 import type { IslandAppearance, IslandNotification, IslandState, UpdateInfo } from '@classhelper/shared';
 import type { ClientAgentStatus } from '../main/client-agent.js';
+import type { IslandBridge } from '../preload/island.js';
 
 /** 服务端联动状态：渲染进程要显示它，因此在这里转出（`desktop.d.ts` 是两端契约的单一入口） */
 export type { ClientAgentStatus };
@@ -24,6 +30,7 @@ export interface HomeworkBoardSettings {
 }
 
 export interface DesktopStoredConfig {
+  islandLayout: ContractIslandLayoutSettings;
   /** 后端服务地址，例如 http://127.0.0.1:4000 */
   serverUrl: string;
   /** 上次登录的用户名（便于自动填充） */
@@ -103,12 +110,16 @@ export interface IslandPushContext {
 }
 
 export interface IslandClassStatePayload {
+  schedules?: ContractScheduleDto[];
   inClass: boolean;
   currentPeriodEnd?: string | null;
   week?: number;
 }
 
 export interface DesktopBridge {
+  islandEditLayout(): Promise<void>;
+  getUpdateProgress(): Promise<ContractReleaseProgressDto>;
+  onUpdateProgress(handler: (progress: ContractReleaseProgressDto) => void): () => void;
   /** 是否处于冒烟验证模式（由 ELECTRON_SMOKE_TEST=1 触发），同步可读 */
   smokeTest: boolean;
   /**
@@ -199,7 +210,7 @@ export interface DesktopBridge {
 }
 
 /** 灵动岛窗口自身的桥接（只暴露订阅状态与发送操作） */
-export interface IslandRendererBridge {
+export interface IslandRendererBridge extends IslandBridge {
   onState(handler: (state: IslandState) => void): void;
   /** 订阅外观设置（CSS 变量实时生效） */
   onAppearance(handler: (appearance: IslandAppearance) => void): void;

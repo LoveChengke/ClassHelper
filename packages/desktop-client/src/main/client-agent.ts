@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { BrowserWindow, app, dialog } from 'electron';
+import { BrowserWindow, app } from 'electron';
 import {
   CLIENT_COMMAND_LABELS,
   CLIENT_HEARTBEAT_INTERVAL_MS,
@@ -15,6 +15,7 @@ import {
   type ClientUpdateInfoDto,
 } from '@classhelper/shared';
 import { maybeInstallPendingUpdate, considerUpdate, syncUpdatePolicy } from './auto-update.js';
+import { connectionEvents, type ConnectionEvent } from './config-events.js';
 import { getConfig } from './config.js';
 import { island } from './island.js';
 import { logger } from './logger.js';
@@ -44,14 +45,6 @@ const UNAUTHORIZED_BACKOFF_MS = 5 * 60_000;
 
 /** 单次上报的超时：教室机网络慢，但也不能挂着不放 */
 const HEARTBEAT_TIMEOUT_MS = 10_000;
-
-/**
- * 远控命令的「本机二次确认」等待时长：60 秒内没人点确认就按取消处理。
- *
- * 为什么必须有这个超时：管理员在办公室下发关机，而教室里可能已经没人了 ——
- * 一个永远挂着等确认的对话框会让这条命令一直"待执行"，既没执行也看不出失败。
- */
-const COMMAND_CONFIRM_TIMEOUT_MS = 60_000;
 
 /**
  * 「在线」判定窗口：与 shared 的 `CLIENT_ONLINE_WINDOW_MS`（90 秒）同口径 ——
@@ -171,6 +164,7 @@ async function beat(): Promise<void> {
     return;
   }
 
+  const epoch = connectionEpoch;
   state.beating = true;
   let backoff = false;
   try {
@@ -194,6 +188,7 @@ async function beat(): Promise<void> {
       signal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS),
     });
 
+    if (epoch !== connectionEpoch) return;
     if (response.status === 401 || response.status === 403) {
       // 令牌失效：退避到 5 分钟一次，直到用户重新登录
       backoff = true;
@@ -209,6 +204,7 @@ async function beat(): Promise<void> {
 
     const envelope = (await response.json()) as ApiResponse<ClientHeartbeatResponse>;
     if (!envelope.success || !envelope.data?.deviceId) throw new Error('心跳响应格式不正确');
+    if (epoch !== connectionEpoch) return;
     const payload = envelope.data;
     state.lastHeartbeatAt = new Date().toISOString();
     state.lastError = '';
@@ -226,13 +222,16 @@ async function beat(): Promise<void> {
     );
   } catch (error) {
     // 网络错误 / 超时 / JSON 解析失败：按原节奏重试
+    if (epoch !== connectionEpoch) return;
     state.lastError = error instanceof Error ? error.message : String(error);
     logger.warn(`客户端上报失败（将于 ${HEARTBEAT_INTERVAL_TEXT} 后重试）：${state.lastError}`);
   } finally {
     state.beating = false;
     // 每次心跳后检查已下载的更新是否满足安装策略。
     void maybeInstallPendingUpdate();
-    scheduleNext(backoff ? UNAUTHORIZED_BACKOFF_MS : CLIENT_HEARTBEAT_INTERVAL_MS);
+    scheduleNext(
+      epoch !== connectionEpoch ? 0 : backoff ? UNAUTHORIZED_BACKOFF_MS : CLIENT_HEARTBEAT_INTERVAL_MS,
+    );
   }
 }
 
@@ -241,14 +240,9 @@ const HEARTBEAT_INTERVAL_TEXT = `${Math.round(CLIENT_HEARTBEAT_INTERVAL_MS / 100
 /**
  * 服务端下发的远控命令（关机 / 重启 / 注销 / 锁屏）。
  *
- * 两道护栏缺一不可（用户要求「必须二次确认」）：
- * 1. **本机二次确认**：弹一个默认选中「取消」的对话框，60 秒不确认按取消处理 ——
- *    服务端那边虽然也确认过，但真正会被关掉的机器上必须有人当场知道；
- * 2. **同一条命令只执行一次**：等待确认时内存去重，处理结果落盘，重启后也只重试回执。
- *
- * 执行后**必须回执**（`POST /api/clients/commands/:id/ack`，body 带 deviceKey）：
- * 否则服务端那条命令会一直挂在"待执行"里，Web 端看不到结果。回执失败时把结果暂存，
- * 下一次心跳只重试回执、不重复弹窗。
+ * 按产品要求收到即执行，保留十分钟有效期、持久去重与设备归属校验。
+ * 执行结果必须回执；网络失败只重试回执，不重复执行。
+ * 冒烟在执行器处强制返回假结果，永不调用系统命令。
  */
 const inFlightCommands = new Set<string>();
 type CommandOutcome = { ok: boolean; result: string };
@@ -286,6 +280,7 @@ function rememberCommand(commandId: string, outcome: CommandOutcome): void {
 
 async function handleCommand(command: ClientCommandDto | null): Promise<void> {
   if (!command) return;
+  const commandConfig = getConfig();
   const label = CLIENT_COMMAND_LABELS[command.kind] ?? command.kind;
 
   const expired =
@@ -297,65 +292,38 @@ async function handleCommand(command: ClientCommandDto | null): Promise<void> {
     return;
   }
 
-  // 正在确认或执行时不能用预存的中间结果抢先回执。
+  // 正在执行时不能用预存的中间结果抢先回执。
   if (inFlightCommands.has(command.id)) return;
   // 处理过但回执没送达：只重试回执
   readCommandResults();
   const pending = commandResults.get(command.id);
   if (pending) {
-    await ackCommand(command.id, pending.ok, pending.result);
+    await ackCommand(command.id, pending.ok, pending.result, commandConfig);
     return;
   }
   inFlightCommands.add(command.id);
   try {
-    const confirmed = await confirmCommand(label, command.payload);
-    if (!confirmed) {
-      const result = '本机用户取消（或 60 秒未确认）';
-      logger.warn(`远控命令「${label}」未执行：${result}`);
-      await ackCommand(command.id, false, result);
-      return;
-    }
     // 注销可能立刻结束本进程，先落盘，重启后不能再次执行同一条指令。
     rememberCommand(command.id, {
       ok: false,
-      result: '本机已确认并提交系统执行，最终结果未回传，请核对设备状态',
+      result: '已提交系统执行，最终结果未回传，请核对设备状态',
     });
+    if (getConfig().serverUrl !== commandConfig.serverUrl || getConfig().token !== commandConfig.token)
+      return;
     const outcome = await executeCommand(command.kind);
     logger.warn(`远控命令「${label}」执行${outcome.ok ? '成功' : '失败'}：${outcome.result}`);
-    await ackCommand(command.id, outcome.ok, outcome.result);
+    await ackCommand(command.id, outcome.ok, outcome.result, commandConfig);
   } finally {
     inFlightCommands.delete(command.id);
   }
 }
 
-/** 本机二次确认对话框：默认「取消」，60 秒未操作按取消处理 */
-async function confirmCommand(label: string, note: string): Promise<boolean> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), COMMAND_CONFIRM_TIMEOUT_MS);
-  const answered = dialog
-    .showMessageBox({
-      signal: controller.signal,
-      type: 'warning',
-      title: '来自管理员的远程指令',
-      message: `管理员要求本机「${label}」`,
-      detail: `${note ? `备注：${note}\n` : ''}确认后本机将立即${label}；60 秒内未确认视为取消。`,
-      buttons: ['取消', '确认执行'],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-    })
-    .then((result) => !controller.signal.aborted && result.response === 1)
-    .catch(() => false);
-
-  try {
-    return await answered;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /** 执行系统命令：只支持 Windows（本项目客户端只发 Windows 版） */
 async function executeCommand(kind: ClientCommandKind): Promise<{ ok: boolean; result: string }> {
+  if (process.env.ELECTRON_SMOKE_TEST === '1')
+    return { ok: true, result: '冒烟假执行器：已接收，未调用系统命令' };
+  if (!['shutdown', 'restart', 'logoff', 'lock'].includes(kind))
+    return { ok: false, result: '未知的远控动作' };
   if (process.platform !== 'win32') return { ok: false, result: '仅支持 Windows' };
 
   const commands: Record<ClientCommandKind, { file: string; args: string[] }> = {
@@ -390,9 +358,14 @@ async function executeCommand(kind: ClientCommandKind): Promise<{ ok: boolean; r
 }
 
 /** 回执：服务端用 body 里的 deviceKey 校验"这条命令是发给这台机器的" */
-async function ackCommand(commandId: string, ok: boolean, result: string): Promise<void> {
+async function ackCommand(
+  commandId: string,
+  ok: boolean,
+  result: string,
+  config: ReturnType<typeof getConfig>,
+): Promise<void> {
   rememberCommand(commandId, { ok, result });
-  const config = getConfig();
+  // 回执始终发给接收命令时的服务器，切换实例不能把旧命令带到新实例。
   if (!config.token) return;
   try {
     const response = await fetch(`${config.serverUrl}/api/clients/commands/${commandId}/ack`, {
@@ -425,6 +398,19 @@ async function handleUpdate(info: ClientUpdateInfoDto | null, targetVersion: str
   if (!isNewerVersion(app.getVersion(), target)) return;
   await considerUpdate(info, target);
 }
+
+let connectionEpoch = 0;
+/** 显式身份事件清除旧服务端退避；旧请求返回也不得覆盖新服务器状态。 */
+export function resetClientAgent(reason: ConnectionEvent): void {
+  connectionEpoch++;
+  clearTimer();
+  state.lastHeartbeatAt = null;
+  state.lastError = '';
+  state.updateTargetVersion = '';
+  logger.info(`客户端连接状态已重置：${reason}`);
+  if (state.running && !state.beating) scheduleNext(0);
+}
+connectionEvents.on('changed', resetClientAgent);
 
 /** 启动心跳（重复调用无副作用） */
 export function startClientAgent(): void {

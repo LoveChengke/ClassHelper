@@ -1,4 +1,5 @@
 <script setup lang="ts">
+const props = defineProps<{ embedded?: boolean }>();
 import { computed, onMounted, ref } from 'vue';
 import {
   DEFAULT_ISLAND_APPEARANCE,
@@ -493,6 +494,7 @@ let hitRectTrailingTimer: number | null = null;
 
 /** 把岛体矩形上报给主进程：主进程按光标位置兜底校正命中（不依赖 mousemove 转发） */
 function reportHitRect(rect: DOMRect | null): void {
+  if (props.embedded) return;
   const payload = rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null;
   const key = payload
     ? `${Math.round(payload.x)},${Math.round(payload.y)},${Math.round(payload.width)},${Math.round(payload.height)}`
@@ -534,6 +536,7 @@ function reportHitRect(rect: DOMRect | null): void {
  * 用户点下去时窗口恰好处于穿透态，表现就是**点了没反应**（实测日志里 true/false 每几毫秒翻转一次）。
  */
 function updateInteractive(clientX: number, clientY: number): void {
+  if (props.embedded) return;
   lastPointer = { x: clientX, y: clientY };
   const node = document.querySelector('.island-card') as HTMLElement | null;
   let inside = false;
@@ -639,7 +642,11 @@ onMounted(async () => {
     固定包围盒窗口内的**单个**灵动岛（照搬 WinIsland）：
     岛的宽高/圆角由弹簧逐帧逼近，窗口本身不动；胶囊层与展开层在里面交叉淡入。
   -->
-  <div class="island-root">
+  <div
+    class="island-root"
+    :class="{ embedded: props.embedded }"
+    :style="props.embedded ? { width: `${morph.width}px`, height: `${morph.height}px` } : undefined"
+  >
     <div
       class="island-card"
       :class="islandClass"
@@ -895,6 +902,14 @@ body {
 }
 
 /* ---------------------------------------------------------------- 卡片与形状 */
+
+.island-root.embedded .island-card {
+  left: 0 !important;
+  top: 0 !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: none !important;
+}
 
 .island-card {
   position: absolute;

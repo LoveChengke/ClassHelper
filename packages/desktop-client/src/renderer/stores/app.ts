@@ -1,3 +1,4 @@
+import { getMaxTermWeeks } from '@classhelper/shared';
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { STORAGE_KEYS, formatDate } from '@classhelper/shared';
@@ -65,12 +66,12 @@ export const useAppStore = defineStore('app', () => {
   const lastSyncAt = ref<number | null>(null);
   const cacheStoreStats = ref<CacheStoreStat[]>([]);
   const currentWeek = ref(1);
-  const maxWeek = ref(20);
+  const maxWeek = ref(getMaxTermWeeks());
   const initialized = ref(false);
   let termRequest = 0;
   onCacheScopeChanged(() => {
     currentWeek.value = 1;
-    maxWeek.value = 20;
+    maxWeek.value = getMaxTermWeeks();
     termRequest += 1;
     clearOfflineSince();
   });
@@ -81,7 +82,7 @@ export const useAppStore = defineStore('app', () => {
     const scope = getCacheScope();
     const result = await fetchWithCache('classes', 'term', () => dashboardApi.term(classId), {
       currentWeek: 1,
-      maxWeek: 20,
+      maxWeek: getMaxTermWeeks(),
     });
     if (request !== termRequest || scope !== getCacheScope() || (result.error && !result.updatedAt)) return;
     currentWeek.value = result.data.currentWeek;
