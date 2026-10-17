@@ -1,4 +1,7 @@
-import type { PermissionScope as ContractPermissionScope, ReleaseProgressDto as ContractReleaseProgressDto } from './class-plan.js';
+import type {
+  PermissionScope as ContractPermissionScope,
+  ReleaseProgressDto as ContractReleaseProgressDto,
+} from './class-plan.js';
 /**
  * 三端共享的领域类型定义。
  * 这里的类型是后端 REST API / WebSocket 契约的唯一来源，
@@ -885,6 +888,8 @@ export interface BulkCreateHomeworkRequest {
 
 /* ------------------------------------------------------------------ 成绩 */
 
+export type GradeUpdateEvent = GradeDto | { classId: string; collective: true };
+
 export interface GradeDto {
   id: string;
   classId: string;
@@ -1194,7 +1199,7 @@ export interface ServerToClientEvents {
   /** deleted=true 表示该作业已被删除，客户端应从本地缓存中移除 */
   'homework:updated': (payload: HomeworkDto & { deleted?: boolean }) => void;
   'homework:status': (payload: HomeworkStatusDto & { classId: string }) => void;
-  'grade:updated': (payload: GradeDto) => void;
+  'grade:updated': (payload: GradeUpdateEvent) => void;
   'schedule:updated': (payload: {
     classId: string;
     /** imported = 导入或整体刷新课表 */

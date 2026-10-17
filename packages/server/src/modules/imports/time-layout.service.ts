@@ -340,22 +340,55 @@ export async function importTimeLayout(
   }
 
   const name = input.name?.trim() || '默认时间表';
-  const current = await prisma.timeLayout.findFirst({where:{classId:input.classId,name},include:{points:{orderBy:{position:'asc'}}}});
-  const previous = current ? toDto(current).items : [];
-  const starts=new Set(parsed.items.map(p=>p.startTime));
-  const merged=input.mode==='merge'?parsed.items.filter(p=>previous.some(old=>old.startTime===p.startTime)).length:0;
-  const combined=input.mode==='merge'?[...previous.filter(p=>!starts.has(p.startTime)),...parsed.items].sort((a,b)=>a.startTime.localeCompare(b.startTime)):parsed.items;
-  const claimed=new Set<string>();
-  const points=combined.map((p,position)=>{
-    const timeType=({class:'LESSON',break:'BREAK',divider:'DIVIDER',action:'ACTION'} as const)[p.type];
-    const candidates=current?.points.filter(old=>!claimed.has(old.id)&&old.startTime===p.startTime&&old.timeType===timeType)||[];
-    const previousPoint=candidates.find(old=>old.endTime===p.endTime)||candidates[0];
-    if(previousPoint)claimed.add(previousPoint.id);
-    return {id:previousPoint?.id,position,name:p.name,startTime:p.startTime,endTime:p.endTime,timeType,isHideDefault:p.skipped,defaultClassId:null,breakName:p.type==='break'?p.name:'',actionSet:'{}'};
+  const current = await prisma.timeLayout.findFirst({
+    where: { classId: input.classId, name },
+    include: { points: { orderBy: { position: 'asc' } } },
   });
-  const layout=await saveLayout({classId:input.classId,name,points},current?.id);
+  const previous = current ? toDto(current).items : [];
+  const starts = new Set(parsed.items.map((p) => p.startTime));
+  const merged =
+    input.mode === 'merge'
+      ? parsed.items.filter((p) => previous.some((old) => old.startTime === p.startTime)).length
+      : 0;
+  const combined =
+    input.mode === 'merge'
+      ? [...previous.filter((p) => !starts.has(p.startTime)), ...parsed.items].sort((a, b) =>
+          a.startTime.localeCompare(b.startTime),
+        )
+      : parsed.items;
+  const claimed = new Set<string>();
+  const points = combined.map((p, position) => {
+    const timeType = ({ class: 'LESSON', break: 'BREAK', divider: 'DIVIDER', action: 'ACTION' } as const)[
+      p.type
+    ];
+    const candidates =
+      current?.points.filter(
+        (old) => !claimed.has(old.id) && old.startTime === p.startTime && old.timeType === timeType,
+      ) || [];
+    const previousPoint = candidates.find((old) => old.endTime === p.endTime) || candidates[0];
+    if (previousPoint) claimed.add(previousPoint.id);
+    return {
+      id: previousPoint?.id,
+      position,
+      name: p.name,
+      startTime: p.startTime,
+      endTime: p.endTime,
+      timeType,
+      isHideDefault: p.skipped,
+      defaultClassId: null,
+      breakName: p.type === 'break' ? p.name : '',
+      actionSet: '{}',
+    };
+  });
+  const layout = await saveLayout({ classId: input.classId, name, points }, current?.id);
   logger.info(`课表时间配置导入：班级=${input.classId} 模式=${input.mode} 共 ${combined.length} 个时间点`);
-  return {layout:toDto(layout),mode:input.mode,warnings:parsed.warnings,replaced:parsed.items.length-merged,merged};
+  return {
+    layout: toDto(layout),
+    mode: input.mode,
+    warnings: parsed.warnings,
+    replaced: parsed.items.length - merged,
+    merged,
+  };
 }
 
 export async function deleteTimeLayout(user: TokenPayload, layoutId: string): Promise<void> {
@@ -363,6 +396,7 @@ export async function deleteTimeLayout(user: TokenPayload, layoutId: string): Pr
   if (!record) throw ApiError.notFound('时间配置不存在');
   if (!record.classId) throw ApiError.forbidden('全校时间表请在时间表编辑器管理');
   await assertCanManageSchedule(user, record.classId);
-  if(await prisma.classPlan.count({where:{timeLayoutId:layoutId}}))throw ApiError.conflict('仍有课表使用该时间表');
+  if (await prisma.classPlan.count({ where: { timeLayoutId: layoutId } }))
+    throw ApiError.conflict('仍有课表使用该时间表');
   await prisma.timeLayout.delete({ where: { id: layoutId } });
 }

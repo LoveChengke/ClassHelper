@@ -23,7 +23,7 @@ export async function loadPlans(classId: string) {
 export function projectPlan(plan: PlanRow): ScheduleDto[] {
   return plan.entries
     .filter((e) => e.isEnabled && e.course && e.timePoint.timeType === 'LESSON')
-    .map((e) => ({
+    .map<ScheduleDto>((e) => ({
       id: e.legacyScheduleId || e.id,
       classId: plan.classId,
       courseId: e.courseId!,
@@ -43,7 +43,8 @@ export function projectPlan(plan: PlanRow): ScheduleDto[] {
       source: 'manual',
       createdAt: plan.createdAt.toISOString(),
       updatedAt: plan.updatedAt.toISOString(),
-    }));
+    }))
+    .sort((a, b) => a.startTime.localeCompare(b.startTime));
 }
 
 /**

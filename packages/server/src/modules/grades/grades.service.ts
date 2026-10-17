@@ -38,6 +38,19 @@ import type {
   UpdateGradeLevelsInput,
 } from './grades.schemas.js';
 
+/** 个人查询关闭时，实时通道同样只发送刷新通知，不能绕过 HTTP 明细闸门。 */
+async function emitGradeUpdated(classId: string, payload: unknown) {
+  const cls = await prisma.class.findUnique({
+    where: { id: classId },
+    select: { studentGradeQueryEnabled: true },
+  });
+  emitToClass(
+    classId,
+    SOCKET_EVENTS.gradeUpdated,
+    cls?.studentGradeQueryEnabled ? payload : { classId, collective: true },
+  );
+}
+
 const courseSelect = { select: { id: true, name: true } } as const;
 const studentSelect = { select: { id: true, studentNo: true, name: true } } as const;
 const classSelect = { select: { name: true } } as const;
@@ -230,7 +243,7 @@ export async function createGrade(user: TokenPayload, input: CreateGradeInput): 
     publishedAt: parseOptionalDate(input.publishedAt) ?? new Date(),
   });
 
-  emitToClass(dto.classId, SOCKET_EVENTS.gradeUpdated, dto);
+  await emitGradeUpdated(dto.classId, dto);
   return dto;
 }
 
@@ -261,7 +274,7 @@ export async function bulkCreateGrades(user: TokenPayload, input: BulkCreateGrad
   }
 
   if (results[0]) {
-    emitToClass(input.classId, SOCKET_EVENTS.gradeUpdated, {
+    await emitGradeUpdated(input.classId, {
       ...results[0],
       bulk: true,
       count: results.length,
@@ -311,7 +324,7 @@ export async function updateGrade(
   });
 
   const dto = toGradeDto(updated);
-  emitToClass(dto.classId, SOCKET_EVENTS.gradeUpdated, dto);
+  await emitGradeUpdated(dto.classId, dto);
   return dto;
 }
 
@@ -321,7 +334,7 @@ export async function deleteGrade(user: TokenPayload, gradeId: string): Promise<
   await assertCanManageSubjectContent(user, current.classId, current.courseId, '删除成绩');
 
   await prisma.grade.delete({ where: { id: gradeId } });
-  emitToClass(current.classId, SOCKET_EVENTS.gradeUpdated, {
+  await emitGradeUpdated(current.classId, {
     ...toGradeDto({ ...current, course: null, student: null, class: null }),
     deleted: true,
   });
@@ -368,8 +381,7 @@ export async function updateGradeLevels(
       const classId = byId.get(item.id)!.classId;
       counts.set(classId, (counts.get(classId) ?? 0) + 1);
     }
-    for (const [classId, count] of counts)
-      emitToClass(classId, SOCKET_EVENTS.gradeUpdated, { bulk: true, count });
+    for (const [classId, count] of counts) await emitGradeUpdated(classId, { bulk: true, count });
     return { updated: input.items.length };
   }
 
@@ -400,7 +412,7 @@ export async function updateGradeLevels(
     ),
   );
 
-  emitToClass(classId, SOCKET_EVENTS.gradeUpdated, { bulk: true, count: records.length });
+  await emitGradeUpdated(classId, { bulk: true, count: records.length });
   return { updated: records.length };
 }
 

@@ -1,3 +1,4 @@
+import { activeStudentWhere } from '../../lib/students.js';
 import type { DashboardSummary, HomeworkDto, NotificationDto } from '@classhelper/shared';
 import {
   assertClassAccess,
@@ -64,12 +65,12 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
   ] = await Promise.all([
     // 学生数只算在读的：已毕业/转出的学生不属于"本班现在有多少人"
     prisma.class.count({ where: classWhere }),
-    prisma.student.count({ where: { ...where, status: 'active', archivedYearId: null } }),
+    prisma.student.count({ where: { ...where, ...activeStudentWhere(), archivedYearId: null } }),
     prisma.course.count({ where }),
     prisma.classPlan.count({ where }),
     prisma.homework.count({ where }),
     prisma.notification.count({ where }),
-    prisma.grade.count({ where }),
+    prisma.grade.count({ where: { ...where, student: activeStudentWhere() } }),
     prisma.notification.count({ where: { ...where, reads: { none: personalWhere } } }),
     device
       ? prisma.homework.count({
@@ -87,7 +88,7 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
       include: {
         course: courseSelect,
         creator: creatorSelect,
-        statuses: device ? { where: personalWhere } : true,
+        statuses: { where: device ? personalWhere : { student: activeStudentWhere() } },
       },
       orderBy: { createdAt: 'desc' },
       take: 5,

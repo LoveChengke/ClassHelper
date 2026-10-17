@@ -151,23 +151,33 @@ router.get('/time-layout', validate({ query: timeLayoutQuerySchema }), async (re
  * POST /api/imports/time-layout - 导入 ClassIsland 时间配置
  * mode=replace 覆盖 / merge 按开始时间合并；解析失败返回 400 且不修改原配置。
  */
-router.post('/time-layout', requirePermission('timetable:manage'), validate({ body: timeLayoutImportSchema }), async (req, res) => {
-  const result = await importTimeLayout(getAuthUser(req), validatedBody<TimeLayoutImportInput>(req));
-  sendOk(
-    res,
-    result,
-    result.mode === 'merge'
-      ? `合并导入成功：合并 ${result.merged} 节 / 新增 ${result.replaced} 节`
-      : `覆盖导入成功：共 ${result.replaced} 节`,
-  );
-});
+router.post(
+  '/time-layout',
+  requirePermission('timetable:manage'),
+  validate({ body: timeLayoutImportSchema }),
+  async (req, res) => {
+    const result = await importTimeLayout(getAuthUser(req), validatedBody<TimeLayoutImportInput>(req));
+    sendOk(
+      res,
+      result,
+      result.mode === 'merge'
+        ? `合并导入成功：合并 ${result.merged} 节 / 新增 ${result.replaced} 节`
+        : `覆盖导入成功：共 ${result.replaced} 节`,
+    );
+  },
+);
 
 /** DELETE /api/imports/time-layout/:id - 删除某份时间配置 */
-router.delete('/time-layout/:id', requirePermission('timetable:manage'), validate({ params: idParamSchema }), async (req, res) => {
-  const { id } = validatedParams<{ id: string }>(req);
-  await deleteTimeLayout(getAuthUser(req), id);
-  sendOk(res, { id }, '时间配置已删除');
-});
+router.delete(
+  '/time-layout/:id',
+  requirePermission('timetable:manage'),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const { id } = validatedParams<{ id: string }>(req);
+    await deleteTimeLayout(getAuthUser(req), id);
+    sendOk(res, { id }, '时间配置已删除');
+  },
+);
 
 /**
  * POST /api/imports/class-plan/preview - 预览 ClassIsland 课程表 JSON（只解析不写库）

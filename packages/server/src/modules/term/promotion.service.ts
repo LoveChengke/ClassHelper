@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
@@ -61,11 +62,16 @@ export async function runPromotion(year: number, dryRun = false) {
     env.sqliteFilePath ? path.dirname(env.sqliteFilePath) : path.resolve(env.serverRoot, '..', 'data'),
     'promotion-snapshots',
   );
-  await fs.mkdir(dir, { recursive: true });
-  const snapshotPath = path.join(dir, `${year}-${Date.now()}.json`);
-  await fs.writeFile(snapshotPath, JSON.stringify(await exportSnapshot(prisma, env.databaseProvider)), {
-    flag: 'wx',
-  });
+  const snapshotPath = path.join(dir, `${year}-${Date.now()}-${randomUUID()}.json`);
+  try {
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(snapshotPath, JSON.stringify(await exportSnapshot(prisma, env.databaseProvider)), {
+      flag: 'wx',
+    });
+  } catch (error) {
+    await recordPromotionFailure(year, snapshotPath, error, classes.length, studentCount);
+    throw ApiError.internal(`执行前快照失败，未升级任何班级：${String(error)}`);
+  }
   const { config } = await promotionStatus();
   const passwordHash = await hashPassword(env.defaultClassPassword);
   const maxWeeks = await getMaxTermWeeks();
@@ -149,15 +155,35 @@ export async function runPromotion(year: number, dryRun = false) {
   } catch (error) {
     if ((await prisma.promotionRun.findUnique({ where: { year } }))?.status === 'done')
       return prisma.promotionRun.findUniqueOrThrow({ where: { year } });
-    await prisma.promotionRun.upsert({
-      where: { year },
-      create: { year, status: 'failed', snapshotPath, message: String(error) },
-      update: { status: 'failed', message: String(error), snapshotPath },
-    });
+    await recordPromotionFailure(year, snapshotPath, error, classes.length, studentCount);
     throw ApiError.internal(`学年升级失败，事务已回滚：${String(error)}`);
   }
   await notifyScheduleChanged();
   return prisma.promotionRun.findUniqueOrThrow({ where: { year } });
+}
+
+/** 失败也留可见审计；事务内检查，不能把并发已成功的年份覆盖成失败。 */
+async function recordPromotionFailure(
+  year: number,
+  snapshotPath: string,
+  error: unknown,
+  classCount: number,
+  studentCount: number,
+) {
+  await prisma.$transaction(async (tx) => {
+    const current = await tx.promotionRun.findUnique({ where: { year } });
+    if (current?.status === 'done') return;
+    const data = {
+      status: 'failed',
+      snapshotPath,
+      message: String(error),
+      classCount,
+      studentCount,
+      finishedAt: new Date(),
+    };
+    if (current) await tx.promotionRun.update({ where: { year }, data });
+    else await tx.promotionRun.create({ data: { year, ...data } });
+  });
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;

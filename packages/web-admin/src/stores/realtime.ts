@@ -5,7 +5,7 @@ import { io, type Socket } from 'socket.io-client';
 import {
   PRIORITY_LABELS,
   SOCKET_EVENTS,
-  type GradeDto,
+  type GradeUpdateEvent,
   type HomeworkDto,
   type NotificationDto,
   type ScheduleDto,
@@ -96,9 +96,15 @@ export const useRealtimeStore = defineStore('realtime', () => {
       dispatch(SOCKET_EVENTS.homeworkStatus, payload);
     });
 
-    instance.on(SOCKET_EVENTS.gradeUpdated, (payload: GradeDto) => {
+    instance.on(SOCKET_EVENTS.gradeUpdated, (payload: GradeUpdateEvent) => {
       markEvent(SOCKET_EVENTS.gradeUpdated);
-      notify('success', '成绩已更新', `${payload.examName}：${payload.score}/${payload.totalScore}`);
+      notify(
+        'success',
+        '成绩已更新',
+        'score' in payload
+          ? `${payload.examName}：${payload.score}/${payload.totalScore}`
+          : '班级成绩分析已更新',
+      );
       dispatch(SOCKET_EVENTS.gradeUpdated, payload);
     });
 
