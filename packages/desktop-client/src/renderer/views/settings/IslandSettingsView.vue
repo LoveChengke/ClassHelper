@@ -2,6 +2,7 @@
 import { confirmAction } from '../../composables/confirm.js';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
+import { useRouter } from 'vue-router';
 import {
   DEFAULT_ISLAND_APPEARANCE,
   ISLAND_APPEARANCE_RANGES as RANGES,
@@ -23,9 +24,10 @@ import {
  */
 const island = ref<IslandAppearance>({ ...DEFAULT_ISLAND_APPEARANCE });
 const savingIsland = ref(false);
+const router = useRouter();
 function editLayout() {
   layoutMode.value = 'custom';
-  void window.desktop?.islandEditLayout();
+  void router.push('/settings/island/editor');
 }
 const layoutMode = ref<'fixed' | 'custom'>('fixed');
 const residentEnabled = ref(false);
@@ -161,7 +163,7 @@ onMounted(async () => {
           @click="chooseLayout('fixed')"
         >
           <strong>经典灵动岛</strong>
-          <span>有消息时展开，保持熟悉的提醒样式</span>
+          <span>显示课程进度、上下课提醒与班级消息</span>
         </button>
         <button
           class="layout-choice"
@@ -208,7 +210,7 @@ onMounted(async () => {
       </template>
       <p class="text-muted">紧急消息立即展开；课中普通通知暂存，下课后展开。自定义岛可点击铃铛主动查看。</p>
       <p class="text-muted">
-        上课前 60 秒显示准备提醒和倒计时，上下课时提示课程状态；课程时间显示在名称右侧。
+        课前提示与倒计时、课中进度、即将下课倒数及上下课提醒，可在「提醒」页分别设置。课程时间显示在名称右侧。
       </p>
       <el-form label-width="110px" label-position="left">
         <el-form-item :label="`${layoutMode === 'custom' ? '通知高度' : '高度'} ${island.height}px`">

@@ -66,6 +66,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '灵动岛' },
       },
       {
+        path: 'settings/island/editor',
+        name: 'settings-island-editor',
+        component: () => import('../views/settings/IslandEditorView.vue'),
+        meta: { title: '自定义灵动岛' },
+      },
+      {
         path: 'settings/reminder',
         name: 'settings-reminder',
         component: () => import('../views/settings/ReminderSettingsView.vue'),

@@ -80,6 +80,10 @@ body {
   --wn-bg: #0b0b0f;
   --wn-border: rgba(255, 255, 255, 0.14);
 }
+/* 阅读老师消息时使用实色底，玻璃风格也不透出桌面。 */
+.island-card.message-surface {
+  --wn-bg: #202020;
+}
 
 .island-card.hidden-placeholder {
   visibility: hidden;

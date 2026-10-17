@@ -227,6 +227,13 @@ if (!gotLock) {
           mainWindow.show();
           mainWindow.focus();
         });
+        island.setEditLayoutHandler(() => {
+          if (!mainWindow || mainWindow.isDestroyed()) return;
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.show();
+          mainWindow.focus();
+          mainWindow.webContents.send('island:open-editor');
+        });
         // 灵动岛点"标为已读"：转交主窗口渲染进程调用接口并刷新通知中心
         island.setMarkReadHandler((id) => {
           if (!mainWindow || mainWindow.isDestroyed()) return;

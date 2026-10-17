@@ -1,6 +1,8 @@
 import {
   dayKeyLocal,
   resolveClassStatus,
+  DEFAULT_LESSON_REMINDERS,
+  type LessonReminderSettings,
   type IslandLessonReminder,
   type ScheduleDto,
 } from '@classhelper/shared';
@@ -13,7 +15,11 @@ import {
 export class LessonReminderTracker {
   private current: IslandLessonReminder | null = null;
 
-  update(schedules: ScheduleDto[], now: Date): IslandLessonReminder | null {
+  update(
+    schedules: ScheduleDto[],
+    now: Date,
+    settings: LessonReminderSettings = DEFAULT_LESSON_REMINDERS,
+  ): IslandLessonReminder | null {
     const at = now.getTime();
     const keyOf = (s: ScheduleDto, kind: IslandLessonReminder['kind']) =>
       `${dayKeyLocal(now)}:${s.id}:${s.startTime}:${s.endTime}:${kind}`;
@@ -32,10 +38,11 @@ export class LessonReminderTracker {
       .sort((a, b) => b.endTime.localeCompare(a.endTime))[0];
     let kind: IslandLessonReminder['kind'] | null = null;
     let lesson: ScheduleDto | undefined;
-    if (current && at - timeAt(current.startTime) < 5_000) {
+    if (current && at - timeAt(current.startTime) < 5_000 && settings.onClassEnabled) {
       kind = 'on-class';
       lesson = current;
     } else if (
+      settings.breakEnabled &&
       !current &&
       ended &&
       at - timeAt(ended.endTime) < (next ? 12_000 : 5_000) &&
@@ -43,9 +50,24 @@ export class LessonReminderTracker {
     ) {
       kind = 'break';
       lesson = ended;
-    } else if (!current && next && timeAt(next.startTime) - at <= 60_000) {
+    } else if (
+      current &&
+      settings.endingEnabled &&
+      timeAt(current.endTime) - at <= settings.endingSeconds * 1000
+    ) {
+      kind = 'ending';
+      lesson = current;
+    } else if (
+      !current &&
+      next &&
+      settings.prepareEnabled &&
+      timeAt(next.startTime) - at <= settings.prepareSeconds * 1000
+    ) {
       kind = 'prepare';
       lesson = next;
+    } else if (current && settings.classProgressEnabled) {
+      kind = 'in-class';
+      lesson = current;
     }
     if (!lesson || !kind) return (this.current = null);
     const id = keyOf(lesson, kind);
@@ -60,13 +82,23 @@ export class LessonReminderTracker {
       endTime: lesson.endTime,
       startedAt: entered,
       maskUntil:
-        kind === 'prepare'
-          ? Math.min(start, entered + 3000)
-          : kind === 'break' && next
-            ? entered + 2000
-            : entered + 5000,
-      endsAt: kind === 'prepare' ? start : kind === 'on-class' ? start + 5000 : end + (next ? 12_000 : 5000),
+        kind === 'ending' || kind === 'in-class'
+          ? entered
+          : kind === 'prepare'
+            ? Math.min(start, entered + 3000)
+            : kind === 'break' && next
+              ? entered + 2000
+              : entered + 5000,
+      endsAt:
+        kind === 'ending' || kind === 'in-class'
+          ? end
+          : kind === 'prepare'
+            ? start
+            : kind === 'on-class'
+              ? start + 5000
+              : end + (next ? 12_000 : 5000),
       lessonStartsAt: start,
+      lessonEndsAt: end,
       nextCourseName: kind === 'break' ? next?.course?.name : undefined,
       nextStartTime: kind === 'break' ? next?.startTime : undefined,
       nextEndTime: kind === 'break' ? next?.endTime : undefined,

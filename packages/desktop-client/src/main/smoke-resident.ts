@@ -110,13 +110,39 @@ export async function verifyResidentSmoke(
       changed?.courseName === '临时换课' &&
       changed.maskUntil === prepare.maskUntil &&
       onClass?.kind === 'on-class' &&
-      !noLate &&
+      noLate?.kind === 'in-class' &&
       breaking?.kind === 'break' &&
       breaking.nextCourseName === '语文' &&
       !after &&
       lastBreak?.kind === 'break' &&
       !end &&
       !removed
+    );
+  });
+  await check('即将下课倒数边界与四个提醒通道独立生效，旧配置自动补默认值', () => {
+    const settings = { ...defaultIslandLayouts().lessonReminders, classProgressEnabled: false };
+    const tracker = new LessonReminderTracker();
+    const before = tracker.update(lessonFixtures, dateAt(9, 43, 59), settings);
+    const ending = tracker.update(lessonFixtures, dateAt(9, 44), settings);
+    const disabled = tracker.update(lessonFixtures, dateAt(9, 44, 1), { ...settings, endingEnabled: false });
+    const prepareDisabled = tracker.update(lessonFixtures, dateAt(8, 59), {
+      ...settings,
+      prepareEnabled: false,
+    });
+    const startDisabled = tracker.update(lessonFixtures, dateAt(9, 0), {
+      ...settings,
+      onClassEnabled: false,
+    });
+    const breakDisabled = tracker.update(lessonFixtures, dateAt(9, 45), { ...settings, breakEnabled: false });
+    return (
+      !before &&
+      ending?.kind === 'ending' &&
+      ending.endsAt === dateAt(9, 45).getTime() &&
+      !disabled &&
+      !prepareDisabled &&
+      !startDisabled &&
+      !breakDisabled &&
+      normalizeIslandLayouts({ layout: 'custom' }).lessonReminders.endingEnabled
     );
   });
   scheme.rows[0]!.nodes = [
@@ -557,7 +583,59 @@ export async function verifyResidentSmoke(
         }
         await setTime(9, 0, 6);
         await pause(700);
-        if (island.getState().lessonReminder) return false;
+        if (
+          layout === 'custom'
+            ? island.getState().lessonReminder
+            : island.getState().lessonReminder?.kind !== 'in-class'
+        )
+          return false;
+        await setTime(9, 22, 30);
+        if (layout === 'custom') {
+          const progressLayout = JSON.parse(JSON.stringify(fixture));
+          progressLayout.schemes[0].rows[0].nodes = [islandNode('schedule', 'lesson-progress-course')];
+          saveConfig({ islandLayout: progressLayout });
+          island.syncCustomLayout();
+        }
+        await pause(1100);
+        const half = await win.webContents.executeJavaScript(`(() => {
+          const root=document.querySelector('${layout === 'custom' ? '.resident-compact' : '.ci-fixed-lesson'}');
+          return Boolean(root&&root.textContent.includes('数学')&&root.textContent.includes('距下课')&&Number(root.querySelector('[role=progressbar]')?.getAttribute('aria-valuenow'))===50);
+        })()`);
+        if (!half)
+          throw new Error(
+            layout +
+              '课中进度错误：' +
+              (await win.webContents.executeJavaScript(
+                'document.querySelector(".resident-compact, .ci-fixed-lesson")?.textContent',
+              )),
+          );
+        await shot('lesson-progress-' + layout);
+        if (layout === 'custom') {
+          const countdownLayout = JSON.parse(JSON.stringify(fixture));
+          countdownLayout.schemes[0].rows[0].nodes = [islandNode('countdown', 'lesson-progress-countdown')];
+          saveConfig({ islandLayout: countdownLayout });
+          island.syncCustomLayout();
+          await pause(1100);
+          if (
+            !(await win.webContents.executeJavaScript(
+              `document.querySelector('.resident-compact .countdown')?.textContent.includes('距下课 22:30')`,
+            ))
+          )
+            throw new Error('自动倒计时未切到本节下课');
+        }
+        if (layout === 'custom') {
+          saveConfig({ islandLayout: { ...fixture, layout } });
+          island.syncCustomLayout();
+        }
+        await setTime(9, 44);
+        await pause(700);
+        if (island.getState().lessonReminder?.kind !== 'ending')
+          throw new Error(layout + '下课倒数状态错误：' + JSON.stringify(island.getState().lessonReminder));
+        const ending = await win.webContents.executeJavaScript(
+          `document.querySelector('${layout === 'custom' ? '.resident-lesson-page' : '.ci-fixed-lesson'}')?.textContent.includes('距下课还剩')`,
+        );
+        if (!ending) throw new Error(layout + '下课倒数未渲染');
+        await shot('lesson-ending-' + layout);
         await setTime(9, 45);
         island.setClassState({ inClass: false });
         await pause(700);
@@ -671,35 +749,59 @@ export async function verifyResidentSmoke(
       island.setTouchMode(false);
     }
   });
-  await check('常驻和无通知展开内容可独立编辑并持久化', async () => {
+  await check('编辑入口交给主窗口，浮岛不会变成额外的全屏编辑窗口', async () => {
+    const before = win.getBounds();
+    let opened = false;
+    island.setEditLayoutHandler(() => {
+      opened = true;
+    });
     island.editLayout();
-    await pause();
-    await win.webContents.executeJavaScript(
-      `(() => {const button=[...document.querySelectorAll('.surface-tabs button')].find(b=>b.textContent.includes('无通知'));button?.click();})()`,
-    );
-    await pause(200);
-    await win.webContents.executeJavaScript(
-      `document.querySelector('[data-node="resident-expanded-text"]')?.click()`,
-    );
-    await pause(200);
-    await win.webContents.executeJavaScript(
-      `(() => {const input=document.querySelector('.settings textarea');if(!input)throw Error('未找到展开文本设置');input.value='放学前检查';input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));})()`,
-    );
-    await pause();
-    const saved = getConfig().islandLayout.schemes[0]!;
-    const independent =
-      saved.rows[0]!.nodes.find((n) => n.id === 'resident-compact-text')?.settings.text === '常驻概览' &&
-      saved.expandedRows[0]!.nodes.find((n) => n.id === 'resident-expanded-text')?.settings.text ===
-        '放学前检查';
-    await shot('resident-editor');
-    island.editLayout(false);
-    await pause();
-    const roundtrip = normalizeIslandLayouts(JSON.parse(JSON.stringify(getConfig().islandLayout)));
+    await pause(100);
     return (
-      independent &&
-      roundtrip.residentEnabled &&
-      roundtrip.schemes[0]!.expandedRows[0]!.nodes.some((n) => n.settings.text === '放学前检查')
+      opened &&
+      !island.getEditingLayout() &&
+      JSON.stringify(before) === JSON.stringify(win.getBounds()) &&
+      !(await win.webContents.executeJavaScript('Boolean(document.querySelector(".layout-editor"))'))
     );
+  });
+  await check('通知、作业、叫人均使用不透明背景和原生窗口，收起后恢复常驻透明度', async () => {
+    const appearance = island.getAppearance();
+    try {
+      island.setAppearance({ style: 'glass', opacity: 0.45, animations: false });
+      island.setClassState({ inClass: false, schedules: [] });
+      for (const layout of ['custom', 'fixed'] as const) {
+        saveConfig({ islandLayout: { ...fixture, layout } });
+        island.syncCustomLayout();
+        await pause(400);
+        for (const kind of ['notification', 'homework', 'call'] as const) {
+          island.handleAction({ action: 'dismiss-all' });
+          island.pushNotification({
+            ...message('opaque-' + layout + '-' + kind, '老师发来的消息', 'NORMAL'),
+            kind,
+          });
+          island.handleAction({ action: 'expand' });
+          await pause(300);
+          const solid = await win.webContents.executeJavaScript(`(() => {
+            const card=document.querySelector('${layout === 'custom' ? '.resident-card' : '.island-card'}');
+            if (!card?.classList.contains('message-surface')) return false;
+            const probe=document.createElement('span');probe.style.background='var(--wn-bg)';card.append(probe);
+            const color=getComputedStyle(probe).backgroundColor;probe.remove();
+            return color==='rgb(32, 32, 32)'&&!!card.querySelector('.classic-notifications');
+          })()`);
+          if (!solid || Math.abs(win.getOpacity() - 1) > 0.01 || island.getAppearance().opacity !== 0.45)
+            return false;
+          if (kind === 'notification') await shot('message-opaque-' + layout);
+        }
+        island.handleAction({ action: 'dismiss-all' });
+        await pause(300);
+        if (layout === 'custom' && Math.abs(win.getOpacity() - 0.45) > 0.02) return false;
+      }
+      return true;
+    } finally {
+      island.setAppearance(appearance);
+      saveConfig({ islandLayout: fixture });
+      island.syncCustomLayout();
+    }
   });
   await check('关闭常驻并选择经典岛后恢复原有隐藏方式', async () => {
     island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1 });

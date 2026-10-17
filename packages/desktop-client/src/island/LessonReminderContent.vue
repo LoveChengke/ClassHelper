@@ -12,17 +12,39 @@ const root = ref<HTMLElement>();
 const width = ref(480);
 const mask = computed(() => props.now < props.reminder.maskUntil);
 const title = computed(
-  () => ({ prepare: '即将上课', 'on-class': '上课', break: '课间休息' })[props.reminder.kind],
+  () =>
+    ({
+      prepare: '即将上课',
+      'on-class': '上课',
+      break: '课间休息',
+      ending: '即将下课',
+      'in-class': '正在上课',
+    })[props.reminder.kind],
 );
 const leftSeconds = computed(() =>
-  Math.max(0, Math.ceil((props.reminder.lessonStartsAt - props.now) / 1000)),
+  Math.max(
+    0,
+    Math.ceil(
+      ((props.reminder.kind === 'ending' || props.reminder.kind === 'in-class'
+        ? props.reminder.lessonEndsAt
+        : props.reminder.lessonStartsAt)! -
+        props.now) /
+        1000,
+    ),
+  ),
 );
 const progress = computed(() =>
   Math.max(
     0,
     Math.min(
       1,
-      (props.reminder.endsAt - props.now) / Math.max(1, props.reminder.endsAt - props.reminder.startedAt),
+      props.reminder.kind === 'in-class' || props.reminder.kind === 'ending'
+        ? (props.now - props.reminder.lessonStartsAt) /
+            Math.max(
+              1,
+              (props.reminder.lessonEndsAt ?? props.reminder.endsAt) - props.reminder.lessonStartsAt,
+            )
+        : (props.reminder.endsAt - props.now) / Math.max(1, props.reminder.endsAt - props.reminder.startedAt),
     ),
   ),
 );
@@ -107,19 +129,36 @@ onUnmounted(() => {
     aria-live="polite"
   >
     <div class="ci-lesson-info">
-      <span v-if="reminder.kind === 'prepare'" class="ci-countdown">
-        距上课还剩
+      <span
+        v-if="reminder.kind === 'prepare' || reminder.kind === 'ending' || reminder.kind === 'in-class'"
+        class="ci-countdown"
+      >
+        {{ reminder.kind === 'prepare' ? '距上课还剩' : '距下课还剩' }}
         <strong>{{ leftSeconds }}</strong>
         秒
       </span>
       <span v-else class="ci-countdown">课间休息</span>
       <span class="ci-lesson-course">
-        <span>下节课是：</span>
+        <span>
+          {{
+            reminder.kind === 'ending' || reminder.kind === 'on-class' || reminder.kind === 'in-class'
+              ? '本节课：'
+              : '下节课是：'
+          }}
+        </span>
         <strong>{{ course }}</strong>
         <small>{{ time }}</small>
       </span>
     </div>
-    <div class="ci-lesson-progress" :style="{ transform: `scaleX(${progress})` }" />
+    <div
+      class="ci-lesson-progress"
+      role="progressbar"
+      :aria-valuenow="Math.round(progress * 100)"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      aria-label="课程与提醒进度"
+      :style="{ transform: `scaleX(${progress})` }"
+    />
     <svg class="ci-mask" :viewBox="`0 0 ${width} 40`" preserveAspectRatio="none" aria-hidden="true">
       <polygon v-for="(points, i) in polygons" :key="i" :points="points" />
     </svg>

@@ -2161,7 +2161,7 @@ async function runIslandChecks(
     }
     return count;
   };
-  const collapseResidue = { shots: 0, max: 0 };
+  const collapseResidue = { shots: 0, stableShots: 0, max: 0 };
   await islandWindow?.webContents.executeJavaScript(
     `(() => {
        const button = document.querySelector('.island-card.expanded .icon-btn');
@@ -2170,23 +2170,46 @@ async function runIslandChecks(
      })()`,
   );
   for (let attempt = 0; attempt < 22; attempt += 1) {
+    const before = await readIslandGeometryFrom(islandWindow!);
     const image = await grabScreen();
     const geometry = await readIslandGeometryFrom(islandWindow!);
-    if (image && geometry) {
+    if (image && geometry && before) {
       collapseResidue.shots += 1;
+      // desktopCapturer 返回采样期间的帧；后读 DOM 已可能收拢，不能把合法的上一动画帧算作残影。
+      // 动画期间排除前后矩形的并集；仍要求至少四张稳态帧，稳态只排除当前岛体。
+      const left = Math.min(before.island.x, geometry.island.x);
+      const top = Math.min(before.island.y, geometry.island.y);
+      const right = Math.max(
+        before.island.x + before.island.width,
+        geometry.island.x + geometry.island.width,
+      );
+      const bottom = Math.max(
+        before.island.y + before.island.height,
+        geometry.island.y + geometry.island.height,
+      );
+      if (
+        Math.abs(before.island.width - geometry.island.width) < 1 &&
+        Math.abs(before.island.height - geometry.island.height) < 1
+      )
+        collapseResidue.stableShots += 1;
       const bitmap = image.toBitmap();
       const shotScale = image.getSize().width / Math.max(1, displayForCollapse.size.width);
       collapseResidue.max = Math.max(
         collapseResidue.max,
-        ringResidue(bitmap, shotScale, geometry.island, geometry.window),
+        ringResidue(
+          bitmap,
+          shotScale,
+          { x: left, y: top, width: right - left, height: bottom - top },
+          geometry.window,
+        ),
       );
     }
     await sleep(30);
   }
   record(
     '触摸模式收起：窗口带内不出现残影（垫底板逐帧检查，窗口让出的区域不留上一帧）',
-    collapseResidue.shots >= 4 && collapseResidue.max <= 400,
-    `${collapseResidue.shots} 帧采样，窗口带内岛像素峰值=${collapseResidue.max}（该带本该全是底板色）`,
+    collapseResidue.stableShots >= 4 && collapseResidue.max <= 400,
+    `${collapseResidue.shots} 帧采样（稳态 ${collapseResidue.stableShots} 帧），窗口带内岛像素峰值=${collapseResidue.max}（该带本该全是底板色）`,
   );
   island.setTouchMode(false);
   await sleep(200);
@@ -3269,8 +3292,8 @@ async function runIslandChecks(
   await sleep(400);
   const opacityActual = islandWindow?.getOpacity() ?? -1;
   record(
-    '个性设置：透明度生效（窗口 setOpacity）',
-    Math.abs(opacityActual - 0.62) < 0.03,
+    '消息展示时保持不透明，同时保留用户透明度设置',
+    Math.abs(opacityActual - 1) < 0.03 && island.getAppearance().opacity === 0.62,
     `设置=0.62 实际=${opacityActual.toFixed(2)}`,
   );
 

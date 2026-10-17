@@ -63,7 +63,9 @@ const fonts = {
         <label v-else-if="node.kind === 'countdown'" class="field">
           倒计时目标
           <select v-model="node.settings.target">
+            <option value="auto">自动：课中距下课，课间距上课</option>
             <option value="next">下一节课</option>
+            <option value="end">本节下课</option>
             <option value="school">放学</option>
           </select>
         </label>
@@ -94,6 +96,10 @@ const fonts = {
           <label class="toggle-field">
             <span>显示课程时间</span>
             <input type="checkbox" v-model="node.settings.showPeriod" />
+          </label>
+          <label class="toggle-field">
+            <span>显示上课进度条</span>
+            <input type="checkbox" v-model="node.settings.showProgress" />
           </label>
         </template>
         <template v-else-if="['group', 'stack', 'slide', 'rolling'].includes(node.kind)">

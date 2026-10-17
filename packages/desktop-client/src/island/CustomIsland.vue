@@ -22,6 +22,7 @@ const props = defineProps<{
   editing: boolean;
   appearance: IslandAppearance;
   schedules: ScheduleDto[];
+  embedded?: boolean;
 }>();
 const emit = defineEmits<{
   save: [settings: IslandLayoutSettings];
@@ -115,6 +116,10 @@ function switchScheme() {
 const now = ref(Date.now()),
   canvasScale = ref(1),
   pan = ref({ x: 0, y: 0 });
+const canvas = ref<HTMLElement>();
+const previewStage = ref<HTMLElement>();
+const autoScale = ref(1);
+const previewScale = computed(() => canvasScale.value * autoScale.value);
 const shell = ref<HTMLElement>(),
   inner = ref<HTMLElement>();
 const viewport = ref({ width: 0, height: 0 });
@@ -358,6 +363,21 @@ let observer: ResizeObserver | undefined,
 function measure() {
   clearTimeout(measureTimer);
   measureTimer = setTimeout(() => {
+    if (props.embedded && shell.value && canvas.value) {
+      const padding = getComputedStyle(canvas.value);
+      const availableWidth =
+        canvas.value.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight);
+      const availableHeight =
+        canvas.value.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom);
+      autoScale.value = Math.min(
+        1,
+        Math.max(80, availableWidth) /
+          Math.max(1, previewStage.value?.offsetWidth ?? shell.value.offsetWidth),
+        Math.max(100, availableHeight) /
+          Math.max(1, previewStage.value?.offsetHeight ?? shell.value.offsetHeight),
+      );
+      return;
+    }
     if (inner.value) {
       // 内部组件的自然尺寸决定整个岛体；提醒不再拥有另一层岛壳。
       const rect = inner.value.getBoundingClientRect(),
@@ -387,6 +407,8 @@ onMounted(() => {
   clock = setInterval(() => (now.value = Date.now()), 1000);
   observer = new ResizeObserver(measure);
   if (inner.value) observer.observe(inner.value);
+  if (canvas.value) observer.observe(canvas.value);
+  if (previewStage.value) observer.observe(previewStage.value);
   stopViewport = window.island?.onViewport((v) => (viewport.value = v));
   measure();
 });
@@ -400,6 +422,7 @@ onUnmounted(() => {
 <template>
   <div
     :class="editing ? 'layout-editor' : 'custom-window'"
+    :data-embedded="embedded || undefined"
     @pointerdown.capture="onPointerDown"
     @pointermove="panMove"
     @pointerup="
@@ -482,7 +505,7 @@ onUnmounted(() => {
         </button>
       </div>
     </aside>
-    <main :class="{ canvas: editing }" @pointerdown="panStart">
+    <main ref="canvas" :class="{ canvas: editing }" @pointerdown="panStart">
       <div v-if="editing" class="canvas-toolbar">
         <nav class="surface-tabs" aria-label="编辑自定义灵动岛内容">
           <button :class="{ active: editingSurface === 'compact' }" @click="setSurface('compact')">
@@ -513,8 +536,9 @@ onUnmounted(() => {
         </div>
       </div>
       <div
+        ref="previewStage"
         class="preview-stage"
-        :style="editing ? { transform: `translate(${pan.x}px,${pan.y}px) scale(${canvasScale})` } : {}"
+        :style="editing ? { transform: `translate(${pan.x}px,${pan.y}px) scale(${previewScale})` } : {}"
       >
         <div
           ref="shell"

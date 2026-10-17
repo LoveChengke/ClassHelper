@@ -118,6 +118,7 @@ export interface IslandClassStatePayload {
 
 export interface DesktopBridge {
   islandEditLayout(): Promise<void>;
+  onIslandEditorOpen(handler: () => void): () => void;
   getUpdateProgress(): Promise<ContractReleaseProgressDto>;
   onUpdateProgress(handler: (progress: ContractReleaseProgressDto) => void): () => void;
   /** 是否处于冒烟验证模式（由 ELECTRON_SMOKE_TEST=1 触发），同步可读 */
@@ -253,6 +254,7 @@ declare global {
     island?: IslandRendererBridge;
     /** 冒烟验证钩子，仅在 ELECTRON_SMOKE_TEST=1 时由渲染进程注册 */
     __classhelperSmoke__?: {
+      islandEditorSmoke(open: boolean): Promise<void>;
       islandScheduleSyncSelfTest(): Promise<{ ok: boolean; detail: string }>;
       cacheSelfTest(): Promise<{ ok: boolean; detail: string }>;
       cacheIsolationSelfTest(): Promise<{ ok: boolean; detail: string }>;

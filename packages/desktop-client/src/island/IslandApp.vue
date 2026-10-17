@@ -389,6 +389,7 @@ const islandClass = computed(() => ({
   'hidden-placeholder':
     mode.value === 'hidden' && !appearance.value.idleSliver && !state.value.lessonReminder,
   'ci-lesson-card': !!state.value.lessonReminder,
+  'message-surface': !!state.value.active && mode.value !== 'hidden' && !state.value.lessonReminder,
   sliver: mode.value === 'hidden' && appearance.value.idleSliver,
   urgent: isUrgent.value,
   call: isCall.value,

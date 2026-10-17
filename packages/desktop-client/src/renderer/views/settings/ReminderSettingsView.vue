@@ -2,7 +2,26 @@
 import { onMounted, ref } from 'vue';
 import { classGradeQueryApi } from '../../api/index.js';
 import { useAuthStore } from '../../stores/auth.js';
+import { DEFAULT_LESSON_REMINDERS, type LessonReminderSettings } from '@classhelper/shared';
+import { ElMessage } from 'element-plus';
 const auth = useAuthStore();
+const lesson = ref({ ...DEFAULT_LESSON_REMINDERS });
+onMounted(async () => {
+  const config = await window.desktop?.getConfig();
+  if (config) lesson.value = { ...config.islandLayout.lessonReminders };
+});
+async function saveLesson(patch: Partial<LessonReminderSettings>) {
+  lesson.value = { ...lesson.value, ...patch };
+  const config = await window.desktop?.getConfig();
+  if (!config) return;
+  try {
+    await window.desktop?.saveConfig({
+      islandLayout: { ...config.islandLayout, lessonReminders: { ...lesson.value } },
+    });
+  } catch {
+    ElMessage.error('提醒设置保存失败');
+  }
+}
 /* ------------------------------------------------------------ 班级端成绩查询状态（只读）
  *
  * 「是否允许班级端查看成绩」是**服务端口径**：管理员在 Web 端「班级管理」里开关，
@@ -34,7 +53,51 @@ onMounted(loadGradeQuery);
       </div>
     </div>
 
-    <el-card shadow="never">
+    <el-card shadow="never" class="lesson-channel-settings">
+      <template #header>上下课提醒</template>
+      <p class="text-muted">
+        沿用 ClassIsland 的遮罩、课前倒计时、上下课提示及下节课预告；课中显示课程进度，临近下课显示倒数。
+      </p>
+      <div
+        v-for="channel in [
+          { key: 'prepareEnabled', title: '准备上课提醒' },
+          { key: 'onClassEnabled', title: '上课提醒' },
+          { key: 'endingEnabled', title: '即将下课倒数' },
+          { key: 'classProgressEnabled', title: '经典岛课中常显课程进度' },
+          { key: 'breakEnabled', title: '下课提醒与下节课预告' },
+        ] as const"
+        :key="channel.key"
+        class="lesson-setting-row"
+      >
+        <span>{{ channel.title }}</span>
+        <el-switch
+          :model-value="lesson[channel.key]"
+          :aria-label="channel.title"
+          @change="(v: boolean | string | number) => saveLesson({ [channel.key]: v === true })"
+        />
+      </div>
+      <div class="lesson-setting-row">
+        <span>课前提前（秒）</span>
+        <el-input-number
+          :model-value="lesson.prepareSeconds"
+          :min="5"
+          :max="1800"
+          :step="5"
+          @change="(v: number | undefined) => saveLesson({ prepareSeconds: v ?? 60 })"
+        />
+      </div>
+      <div class="lesson-setting-row">
+        <span>下课倒数提前（秒）</span>
+        <el-input-number
+          :model-value="lesson.endingSeconds"
+          :min="5"
+          :max="600"
+          :step="5"
+          @change="(v: number | undefined) => saveLesson({ endingSeconds: v ?? 60 })"
+        />
+      </div>
+    </el-card>
+    <el-card shadow="never" class="mt-16">
       <template #header>通知提醒</template>
       <p class="text-muted">
         通知与叫人通过 ClassHelper 客户端和灵动岛提醒。普通通知在上课期间暂存，下课后补弹；紧急通知立即提醒。
@@ -62,6 +125,17 @@ onMounted(loadGradeQuery);
 </template>
 
 <style scoped>
+.lesson-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--ch-border);
+}
+.lesson-setting-row:last-child {
+  border-bottom: 0;
+}
 .channel-group {
   display: flex;
   flex-direction: column;

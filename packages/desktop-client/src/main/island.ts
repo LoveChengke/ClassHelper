@@ -171,7 +171,7 @@ class IslandController {
       !this.previewId &&
       !(
         this.state.active &&
-        (this.state.mode === 'expanded' ||
+        (this.explicitShowId === this.state.active.id ||
           (this.state.active.priority === 'URGENT' && this.state.mode !== 'hidden'))
       ),
     );
@@ -183,7 +183,13 @@ class IslandController {
     this.refreshLessonReminder();
   }
   private refreshLessonReminder(): void {
-    const next = this.lessonTracker.update(this.schedules, new Date(this.lessonTestTime ?? Date.now()));
+    let next = this.lessonTracker.update(
+      this.schedules,
+      new Date(this.lessonTestTime ?? Date.now()),
+      getConfig().islandLayout.lessonReminders,
+    );
+    // 自定义布局由课程组件持续显示进度，时间点提醒才临时接管岛体。
+    if (this.customLayout && next?.kind === 'in-class') next = null;
     if (JSON.stringify(next) === JSON.stringify(this.lessonCue)) return;
     this.lessonCue = next;
     // 触摸窗口先放得下新横条，再下发内容；混合宽高变化也只能增大画布。
@@ -209,6 +215,15 @@ class IslandController {
   private boundsFrame: number | null = null;
   /** 外观设置（设置页可调，主进程持久化） */
   private appearance: IslandAppearance = { ...DEFAULT_ISLAND_APPEARANCE };
+  /** 阅读消息时同时关闭原生窗口透明度，防止实色 CSS 仍被窗口整体淡化。 */
+  private get displayOpacity(): number {
+    const readingMessage =
+      this.state.active &&
+      this.state.mode !== 'hidden' &&
+      (!this.customLayout || this.state.mode === 'expanded') &&
+      !this.lessonShowing;
+    return readingMessage ? 1 : this.appearance.opacity;
+  }
   /** 当前是否接收鼠标（固定大包围盒窗口默认穿透，由渲染进程按命中动态打开） */
   /** 是否允许"失焦自动收起"（冒烟可临时关闭，避免焦点抖动干扰断言） */
   private blurCollapseEnabled = true;
@@ -289,6 +304,7 @@ class IslandController {
     return this.editingLayout;
   }
   syncCustomLayout(): void {
+    this.refreshLessonReminder();
     if (this.residentEnabled !== this.residentWasEnabled) {
       this.residentFaded = false;
       this.residentWasEnabled = this.residentEnabled;
@@ -317,42 +333,12 @@ class IslandController {
       this.syncWindow();
     }, 320);
   }
+  private editLayoutHandler: (() => void) | null = null;
+  setEditLayoutHandler(handler: () => void): void {
+    this.editLayoutHandler = handler;
+  }
   editLayout(enabled = true): void {
-    if (enabled) this.residentFaded = false;
-    if (this.layoutSettleTimer) clearTimeout(this.layoutSettleTimer);
-    this.layoutSettleTimer = null;
-    this.settlingLayout = false;
-    this.editingLayout = enabled;
-    this.syncResidentShape();
-    if (enabled) saveConfig({ islandLayout: { ...getConfig().islandLayout, layout: 'custom' } });
-    this.win?.webContents.send('island:layout', getConfig().islandLayout);
-    this.win?.webContents.send('island:editing', enabled);
-    if (this.win && !this.win.isDestroyed()) {
-      this.win.hide();
-      if (enabled) {
-        const area = screen.getDisplayNearestPoint(this.win.getBounds()).workArea;
-        this.win.setBounds(area);
-        this.win.setOpacity(1);
-        if (!(process.env.ELECTRON_SMOKE_TEST === '1' && process.env.ELECTRON_SMOKE_MODE !== 'visual')) {
-          this.win.show();
-          this.win.focus();
-        }
-        this.setInteractive(true, '布局编辑');
-      } else {
-        const area = screen.getDisplayNearestPoint(this.win.getBounds()).workArea;
-        this.customSize = {
-          width: Math.max(40, Math.min(this.customDesiredSize.width, area.width - 2 * ISLAND_SHADOW_PAD)),
-          height: Math.max(24, Math.min(this.customDesiredSize.height, area.height - 2 * ISLAND_SHADOW_PAD)),
-        };
-        this.win.webContents.send('island:viewport', this.customSize);
-        this.applyWindowLayout();
-        if (this.customLayout) {
-          // 退出编辑先保持隐藏，等行工具栏移除、渲染器防抖测量和主进程防抖完成。
-          // 避免把编辑器的占位高度带回常态岛；收缩仍全部发生在不可见期间。
-          this.settleCustomLayout();
-        } else this.syncWindow();
-      }
-    }
+    if (enabled) this.editLayoutHandler?.();
   }
   reportCustomSize(value: { width: number; height: number }): void {
     if (
@@ -1393,7 +1379,7 @@ class IslandController {
       if (this.residentEnabled) this.applyFocusable();
       this.updateResidentPointer();
       this.win.setOpacity(
-        this.appearance.opacity * (this.residentFaded ? CLASSISLAND_ISLAND_METRICS.fadedOpacity : 1),
+        this.displayOpacity * (this.residentFaded ? CLASSISLAND_ISLAND_METRICS.fadedOpacity : 1),
       );
       if (
         !this.win.isVisible() &&
@@ -1408,7 +1394,7 @@ class IslandController {
     if (this.lessonShowing) {
       this.cancelFade();
       if (!this.win.isVisible()) this.applyWindowLayout();
-      this.win.setOpacity(this.appearance.opacity);
+      this.win.setOpacity(this.displayOpacity);
       if (!(process.env.ELECTRON_SMOKE_TEST === '1' && process.env.ELECTRON_SMOKE_MODE !== 'visual'))
         this.win.showInactive();
       this.syncHitFromCursor();
@@ -1441,7 +1427,7 @@ class IslandController {
       this.setInteractive(false, '隐藏态');
       if (this.appearance.idleSliver) {
         this.cancelFade();
-        this.win.setOpacity(this.appearance.opacity);
+        this.win.setOpacity(this.displayOpacity);
         if (!this.win.isVisible()) this.win.showInactive();
         // 细缝也要"可见即可点"：按真实光标位置决定是否接收鼠标
         this.syncHitFromCursor();
@@ -1454,8 +1440,8 @@ class IslandController {
     // 岛应该可见：**必须**先取消可能还在跑的淡出 —— 否则那次淡出会继续把透明度降到 0
     // 并 hide() 掉窗口，造成"状态是胶囊/展开、窗口却被隐藏"的错位（岛看着在、点不动或直接消失）。
     this.cancelFade();
-    if (this.win.getOpacity() !== this.appearance.opacity) {
-      this.win.setOpacity(this.appearance.opacity);
+    if (this.win.getOpacity() !== this.displayOpacity) {
+      this.win.setOpacity(this.displayOpacity);
     }
     if (!this.win.isVisible()) {
       // 窗口位置由固定包围盒决定（applyWindowLayout），这里只负责显示
@@ -1628,7 +1614,7 @@ class IslandController {
 
   private fadeIn(): void {
     if (!this.win || this.win.isDestroyed()) return;
-    const target = this.appearance.opacity;
+    const target = this.displayOpacity;
     if (!this.appearance.animations) {
       this.fadeToken += 1;
       this.win.setOpacity(target);
@@ -1721,7 +1707,7 @@ class IslandController {
       this.win.setAlwaysOnTop(this.appearance.alwaysOnTop, 'screen-saver');
       if (this.win.isVisible()) {
         // 显示中：立即应用透明度（隐藏时由 fadeIn 负责）
-        this.win.setOpacity(this.appearance.opacity);
+        this.win.setOpacity(this.displayOpacity);
       }
     }
     this.emitAppearance();
@@ -1828,7 +1814,7 @@ class IslandController {
       !overControl;
     if (faded === this.residentFaded) return;
     this.residentFaded = faded;
-    this.win.setOpacity(this.appearance.opacity * (faded ? CLASSISLAND_ISLAND_METRICS.fadedOpacity : 1));
+    this.win.setOpacity(this.displayOpacity * (faded ? CLASSISLAND_ISLAND_METRICS.fadedOpacity : 1));
   }
 
   /** 当前岛体矩形（供冒烟验证） */

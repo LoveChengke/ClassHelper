@@ -1604,3 +1604,9 @@ makensis 临时目录、ClassIsland 路径与日志编码等）。这里只列�
 迁移选择同一时段 ID 最小的行，全部原行仍保留；旧数据未记录的群组、临时层和时间点名称无法恢复。
 
 实施选择、问题根因与实测结果见 [实施记录](dev/20261017-implementation.md)。
+
+## 2026-10-17 课程状态与管理后台导航
+
+课程右侧信息与本节进度参考 [LessonControlExpanded](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland.Core/Controls/LessonsControls/LessonControlExpanded.axaml)。新增课中距下课、末段秒数倒数及独立提醒设置；主窗口中的自定义编辑页保留组件拖动与方案管理。
+
+管理后台结构参考 [art-design-pro](https://github.com/Daymychen/art-design-pro) 的 `art-sidebar-menu`、`SidebarSubmenu`、`art-breadcrumb` 与 `art-header-bar`；采用 Vue 3 / Element Plus 原有技术栈，重新实现分组菜单、面包屑、页签和搜索，业务接口和权限校验保持原有入口。

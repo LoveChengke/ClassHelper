@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
-import { STORAGE_KEYS, type PermissionKey, type UserRole } from '@classhelper/shared';
+import { STORAGE_KEYS, type PermissionKey } from '@classhelper/shared';
 import { authApi } from '@/api';
+import ManagementMenu from '@/components/ManagementMenu.vue';
+import { MANAGEMENT_GROUPS, type ManagementMenuItem } from '@/config/navigation';
 import UpdateCheckDialog from '@/components/UpdateCheckDialog.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
@@ -87,90 +89,72 @@ function openAssistant(): void {
  *   （`permission:manage` / `client:manage`）—— 教师被某个权限组授予它之后同样该看见
  *   （见 `visibleMenuItems`）
  */
-interface MenuItem {
-  path: string;
-  title: string;
-  icon: string;
-  roles: UserRole[];
-  /** 可选的**生效权限**门控：有值时还要 `auth.can()` 通过才显示（角色判不出来这一层） */
-  permission?: PermissionKey;
-}
-
-const menuItems: MenuItem[] = [
-  {
-    path: '/plan-editor',
-    title: '时间表与课表编辑',
-    icon: 'Calendar',
-    roles: ['ADMIN', 'TEACHER'],
-    permission: 'schedule:read',
-  },
-  { path: '/roster', title: '学生名单', icon: 'User', roles: ['TEACHER'], permission: 'roster:read' },
-  {
-    path: '/system-settings',
-    title: '系统设置',
-    icon: 'Setting',
-    roles: ['ADMIN', 'TEACHER'],
-    permission: 'system:manage',
-  },
-  { path: '/dashboard', title: '仪表盘', icon: 'Odometer', roles: ['ADMIN', 'TEACHER'] },
-  { path: '/classes', title: '班级管理', icon: 'School', roles: ['ADMIN'] },
-  { path: '/students', title: '学生管理', icon: 'User', roles: ['ADMIN'] },
-  { path: '/teachers', title: '教师管理', icon: 'UserFilled', roles: ['ADMIN'] },
-  { path: '/term-weeks', title: '学期周次', icon: 'Calendar', roles: ['ADMIN'] },
-  { path: '/archives', title: '毕业归档', icon: 'FolderOpened', roles: ['ADMIN'] },
-  {
-    path: '/permissions',
-    title: '权限组',
-    icon: 'Lock',
-    roles: ['ADMIN', 'TEACHER'],
-    permission: 'permission:manage',
-  },
-  { path: '/schedules', title: '课表管理', icon: 'Calendar', roles: ['ADMIN', 'TEACHER'] },
-  { path: '/homeworks', title: '作业发布', icon: 'Notebook', roles: ['ADMIN', 'TEACHER'] },
-  { path: '/notifications', title: '通知发布', icon: 'Bell', roles: ['ADMIN', 'TEACHER'] },
-  { path: '/grades', title: '成绩录入', icon: 'Trophy', roles: ['ADMIN', 'TEACHER'] },
-  {
-    path: '/assistant',
-    title: 'AI 助手',
-    icon: 'MagicStick',
-    // `ai:use` 默认给 ADMIN + TEACHER（教师用一句话发布作业/通知/叫人），
-    // 但仍走**生效权限**细筛：管理员把 ai:use 从某个权限组收回后这里就该消失。
-    roles: ['ADMIN', 'TEACHER'],
-    permission: 'ai:use',
-  },
-  {
-    path: '/clients',
-    title: '客户端',
-    icon: 'Monitor',
-    // 按生效权限展示入口；页内分别校验设备管理、远控和更新权限。
-    roles: ['ADMIN', 'TEACHER'],
-    permission: 'client:read',
-  },
-  {
-    path: '/ai-settings',
-    title: '大模型设置',
-    icon: 'Setting',
-    // 与「权限组」「客户端设备」同一道门控：只有 ai:manage（默认仅管理员）才看得见，
-    // 页面里的配置读写也要求它（教师访问会 403）。
-    roles: ['ADMIN', 'TEACHER'],
-    permission: 'ai:manage',
-  },
-  { path: '/database', title: '数据库管理', icon: 'Coin', roles: ['ADMIN'] },
-];
-
-/**
- * 当前账号可见的菜单。
- *
- * 两道筛子：`roles` 是粗筛（角色级，与后端 `requireRole` 对齐），`permission` 是细筛
- * （生效权限级）——「权限组」必须走后者：教师被权限组授予 `permission:manage` 后
- * 角色还是 TEACHER，靠 `roles` 判断不出来。所有角色都等待生效权限，加载失败时不放行。
- */
+const menuItems = router
+  .getRoutes()
+  .filter((record) => MANAGEMENT_GROUPS.some((g) => (g.paths as readonly string[]).includes(record.path)))
+  .map((record) => ({
+    path: record.path,
+    title: String(record.meta.title || record.path),
+    icon: String(record.meta.icon || 'Setting'),
+    roles: record.meta.roles as string[] | undefined,
+    permission: record.meta.permission as PermissionKey | undefined,
+  }));
 const visibleMenuItems = computed(() =>
-  menuItems.filter((item) => {
-    if (!auth.role || !item.roles.includes(auth.role)) return false;
-    return !item.permission || auth.can(item.permission);
-  }),
+  menuItems.filter(
+    (item) =>
+      !!auth.role &&
+      (!item.roles?.length || item.roles.includes(auth.role)) &&
+      (!item.permission || auth.can(item.permission)),
+  ),
 );
+const menuGroups = computed(() =>
+  MANAGEMENT_GROUPS.map((group) => ({
+    ...group,
+    items: group.paths.flatMap((path) => visibleMenuItems.value.filter((item) => item.path === path)),
+  })).filter((group) => group.items.length),
+);
+const currentGroup = computed(() =>
+  menuGroups.value.find((group) => group.items.some((item) => item.path === route.path)),
+);
+const searchVisible = ref(false);
+const searchQuery = ref('');
+const searchResults = computed(() =>
+  visibleMenuItems.value.filter((item) => item.title.includes(searchQuery.value.trim())),
+);
+const tabs = ref<Array<ManagementMenuItem & { fullPath: string }>>([]);
+function addCurrentTab() {
+  const item = visibleMenuItems.value.find((item) => item.path === route.path);
+  if (!item) return;
+  const tab = tabs.value.find((tab) => tab.path === item.path);
+  if (tab) tab.fullPath = route.fullPath;
+  else tabs.value.push({ path: item.path, title: item.title, icon: item.icon, fullPath: route.fullPath });
+  tabs.value = tabs.value.filter((tab) => visibleMenuItems.value.some((item) => item.path === tab.path));
+  if (tabs.value.length > 20) tabs.value.splice(tabs.value[0]?.path === '/dashboard' ? 1 : 0, 1);
+}
+watch([() => route.fullPath, visibleMenuItems], addCurrentTab, { immediate: true });
+function closeTab(path: string) {
+  if (path === '/dashboard') return;
+  const i = tabs.value.findIndex((tab) => tab.path === path);
+  if (i < 0) return;
+  tabs.value.splice(i, 1);
+  if (route.path === path) void router.push((tabs.value[i] ?? tabs.value[i - 1])?.fullPath || '/dashboard');
+}
+function closeOtherTabs() {
+  tabs.value = tabs.value.filter((tab) => tab.path === route.path || tab.path === '/dashboard');
+}
+function searchNavigate(path: string) {
+  searchVisible.value = false;
+  searchQuery.value = '';
+  void router.push(path);
+}
+function handleSearchShortcut(event: KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    searchVisible.value = !searchVisible.value;
+  }
+}
+onMounted(() => window.addEventListener('keydown', handleSearchShortcut));
+onUnmounted(() => window.removeEventListener('keydown', handleSearchShortcut));
 
 /** 高亮当前菜单：直接比较路由路径，避免依赖路由名 */
 const activeMenu = computed(() => route.path);
@@ -178,171 +162,9 @@ const activeMenu = computed(() => route.path);
 /** 顶栏显示的当前页面标题（小屏下替代侧边栏的"我在哪"提示，1Panel 同款做法） */
 const currentTitle = computed(() => menuItems.find((item) => item.path === route.path)?.title ?? APP_TITLE);
 
-/* -------------------------------------------------------------- 导航指示器 */
-
-/**
- * 侧栏激活项的**滑动指示器**（beUI 的 `shared-layout-bg` / tabs 的 layoutId 手法）。
- *
- * 做法是**一个**绝对定位的药丸跟着激活项平移，而不是让每个菜单项各自画一块底色。
- * 后者在切换时是"旧的瞬间消失、新的瞬间出现"，看不出两者之间的关系；
- * 前者的滑动把「我从这一项去了那一项」这个关系画了出来 —— 这是整个动效层里
- * 唯一一处"传达信息"而非"装饰"的动画。
- *
- * 位置靠**量 DOM**而不是写死数值：菜单项的位置由 Element Plus 的 padding 与行高决定，
- * 写死会在组件库升级、字号变化或菜单文案变长时错位。
- * 用 ResizeObserver 而不是 window.resize：侧栏宽度/菜单重排都可能由非窗口因素触发。
- */
-/**
- * `el-aside` 是**组件**而不是原生标签：模板 ref 拿到的是组件实例，
- * 直接 `.querySelector()` 会 `TypeError: not a function`（实测踩过，而且被
- * `app.config.errorHandler` 吞成了控制台里一行中文异常，界面看着毫无异样）。
- * 组件实例的 `$el` 才是它真正渲染出来的那个 `<aside>` 元素。
- */
-type AsideRef = { $el?: HTMLElement } | HTMLElement | null;
-const asideRef = ref<AsideRef>(null);
-
-function asideElement(): HTMLElement | null {
-  const value = asideRef.value;
-  if (!value) return null;
-  return value instanceof HTMLElement ? value : (value.$el ?? null);
-}
-
-const indicator = ref({ x: 0, y: 0, width: 0, height: 0, visible: false });
-/** 指示器的裁剪框 = 菜单**视口**（滚动容器自身），滚动时激活项滚出去就跟着被裁掉 */
-const indicatorClip = ref({ top: 0, left: 0, width: 0, height: 0 });
-
-/** 菜单滚动容器：桌面侧栏里的 .el-menu（小屏是抽屉里的另一个 el-menu，没有指示器） */
-function menuScroller(): HTMLElement | null {
-  return asideElement()?.querySelector<HTMLElement>('.layout-menu') ?? null;
-}
-
-function syncIndicator(): void {
-  const aside = asideElement();
-  const scroller = menuScroller();
-  const active = scroller?.querySelector<HTMLElement>('.el-menu-item.is-active');
-  if (!aside || !scroller || !active) {
-    indicator.value = { ...indicator.value, visible: false };
-    return;
-  }
-  const asideRect = aside.getBoundingClientRect();
-  const box = scroller.getBoundingClientRect();
-  /*
-   * 以菜单视口为基准量，而不是以整个侧栏为基准。
-   *
-   * 菜单列是可滚动的（见 .layout-menu 的 overflow）：量侧栏的话，激活项被滚出视口后
-   * 指示器会"贴"到品牌区/页脚上。裁剪框跟着菜单视口，指示器就只在菜单里可见。
-   */
-  indicatorClip.value = {
-    top: box.top - asideRect.top,
-    left: box.left - asideRect.left,
-    width: box.width,
-    height: box.height,
-  };
-  const rect = active.getBoundingClientRect();
-  indicator.value = {
-    x: rect.left - box.left,
-    y: rect.top - box.top,
-    width: rect.width,
-    height: rect.height,
-    visible: rect.width > 0 && rect.height > 0,
-  };
-}
-
-const indicatorClipStyle = computed(() => ({
-  top: `${indicatorClip.value.top}px`,
-  left: `${indicatorClip.value.left}px`,
-  width: `${indicatorClip.value.width}px`,
-  height: `${indicatorClip.value.height}px`,
-}));
-
-const indicatorStyle = computed(() => ({
-  width: `${indicator.value.width}px`,
-  height: `${indicator.value.height}px`,
-  transform: `translate(${indicator.value.x}px, ${indicator.value.y}px)`,
-  opacity: indicator.value.visible ? '1' : '0',
-}));
-
-let asideObserver: ResizeObserver | null = null;
-let indicatorFrame = 0;
-let scrollerEl: HTMLElement | null = null;
-let scrollSettleTimer = 0;
-/** 正在跟随滚动：这期间关掉过渡，否则每帧都重新起一段 397ms 的弹簧，看起来"慢吞吞地追" */
-const indicatorFollowing = ref(false);
-const SCROLL_SETTLE_MS = 140;
-
-/**
- * 把测量推迟到下一帧再跑。
- *
- * 侧栏折叠时 `.aside` 的宽度有一整段过渡，`ResizeObserver` 会逐帧回调；若在回调里**同步**
- * 读 `getBoundingClientRect()` 再写样式，就是在每一帧中间强行插入一次同步布局
- * （Chromium 还会因此报 "ResizeObserver loop completed with undelivered notifications"）。
- * 放进 rAF 就变成"本帧布局完成后统一量一次"，代价是跟随慢一帧，肉眼无感。
- */
-function scheduleIndicatorSync(): void {
-  if (indicatorFrame) return;
-  indicatorFrame = requestAnimationFrame(() => {
-    indicatorFrame = 0;
-    syncIndicator();
-  });
-}
-
-/**
- * 滚动菜单时**同步**量一次（不走 rAF 版）：滚动本身已经在合成器上跑，
- * 再隔一帧读数会看到指示器明显落后于菜单。
- */
-function handleMenuScroll(): void {
-  syncIndicator();
-  indicatorFollowing.value = true;
-  window.clearTimeout(scrollSettleTimer);
-  scrollSettleTimer = window.setTimeout(() => {
-    indicatorFollowing.value = false;
-  }, SCROLL_SETTLE_MS);
-}
-
-/** 绑定/解绑菜单滚动监听（小屏没有侧栏，切回来时要重新绑） */
-function bindMenuScroller(): void {
-  const next = menuScroller();
-  if (next === scrollerEl) return;
-  scrollerEl?.removeEventListener('scroll', handleMenuScroll);
-  scrollerEl = next;
-  scrollerEl?.addEventListener('scroll', handleMenuScroll, { passive: true });
-}
-
-/**
- * 首次测量放在 onMounted（而不是 nextTick）：子组件先于父组件挂载完成，
- * 此刻 `.el-menu-item.is-active` 已在文档里，量完再让浏览器首帧绘制 ——
- * 于是指示器**第一次出现就是正确位置**，不会从左上角滑过去。
- */
 onMounted(() => {
-  // 生效权限（`GET /permissions/me`）：菜单里的「权限组」要等它回来才显示。
-  // 失败不阻塞布局，带权限要求的入口保持关闭。
   void auth.ensurePermissions();
-  syncIndicator();
-  bindMenuScroller();
-  const aside = asideElement();
-  if (aside && typeof ResizeObserver !== 'undefined') {
-    asideObserver = new ResizeObserver(scheduleIndicatorSync);
-    asideObserver.observe(aside);
-  }
 });
-
-onUnmounted(() => {
-  if (indicatorFrame) cancelAnimationFrame(indicatorFrame);
-  indicatorFrame = 0;
-  window.clearTimeout(scrollSettleTimer);
-  scrollerEl?.removeEventListener('scroll', handleMenuScroll);
-  scrollerEl = null;
-  asideObserver?.disconnect();
-  asideObserver = null;
-});
-
-// 路由变化后菜单的 active 类由 Element Plus 更新，等一拍再量
-watch(
-  () => route.path,
-  () => {
-    void nextTick(syncIndicator);
-  },
-);
 
 /** 小屏：侧边栏收进抽屉，由顶栏汉堡按钮唤出 */
 const drawerVisible = ref(false);
@@ -356,11 +178,6 @@ watch(
 
 watch(isMobile, (mobile) => {
   if (!mobile) drawerVisible.value = false;
-  // 侧栏是按 v-if 挂载/卸载的：从抽屉切回常驻侧栏后，新的 .el-menu 需要重新绑滚动监听
-  void nextTick(() => {
-    syncIndicator();
-    bindMenuScroller();
-  });
 });
 
 /**
@@ -544,7 +361,6 @@ const tourSteps = computed(() => [
     <!-- 桌面/平板：常驻深色侧边栏（折叠成 64px 图标导轨，见样式里的 .ch-nav.is-collapsed） -->
     <el-aside
       v-if="!isMobile"
-      ref="asideRef"
       :width="ui.sidebarCollapsed ? 'var(--ch-aside-collapsed-width)' : 'var(--ch-aside-width)'"
       class="layout-aside ch-sidebar ch-nav"
       :class="{ 'is-collapsed': ui.sidebarCollapsed }"
@@ -554,23 +370,17 @@ const tourSteps = computed(() => [
         <img class="brand-logo" src="/logo.png" alt="" width="24" height="24" />
         <span class="brand-text">ClassHelper</span>
       </div>
-      <!-- 激活项的滑动指示器：单个药丸在菜单项之间平移，位置由 syncIndicator() 量出来。
-           外层裁剪框贴着**菜单视口**（菜单列可滚动，激活项滚出去时指示器要一起被裁掉），
-           pointer-events:none 是必需的 —— 它盖在菜单项上，否则会把点击吃掉。 -->
-      <div class="nav-indicator-clip" :style="indicatorClipStyle" aria-hidden="true">
-        <div class="nav-indicator" :class="{ 'is-following': indicatorFollowing }" :style="indicatorStyle" />
+      <ManagementMenu
+        :groups="menuGroups"
+        :active="activeMenu"
+        :collapsed="ui.sidebarCollapsed"
+        @select="handleMenuSelect"
+        @expand="ui.toggleSidebar()"
+      />
+      <div class="sidebar-foot">
+        <span class="sidebar-status-dot" />
+        <span v-if="!ui.sidebarCollapsed">{{ connectionText }}</span>
       </div>
-      <el-menu :default-active="activeMenu" class="layout-menu" @select="handleMenuSelect">
-        <el-menu-item
-          v-for="item in visibleMenuItems"
-          :key="item.path"
-          :index="item.path"
-          :title="ui.sidebarCollapsed ? item.title : undefined"
-        >
-          <el-icon><component :is="item.icon" /></el-icon>
-          <span>{{ item.title }}</span>
-        </el-menu-item>
-      </el-menu>
     </el-aside>
 
     <el-container class="layout-body">
@@ -608,7 +418,12 @@ const tourSteps = computed(() => [
               <Fold v-else />
             </el-icon>
           </button>
-          <span class="header-title">{{ isMobile ? currentTitle : APP_TITLE }}</span>
+          <span v-if="isMobile" class="header-title">{{ currentTitle }}</span>
+          <el-breadcrumb v-else class="management-breadcrumb" separator="/" aria-label="当前位置">
+            <el-breadcrumb-item :to="{ path: '/dashboard' }">首页</el-breadcrumb-item>
+            <el-breadcrumb-item v-if="currentGroup">{{ currentGroup.title }}</el-breadcrumb-item>
+            <el-breadcrumb-item>{{ currentTitle }}</el-breadcrumb-item>
+          </el-breadcrumb>
           <el-tag v-if="!isMobile" :type="connectionType" size="small" effect="light" data-tour="conn-tag">
             <span class="header-conn">{{ connectionText }}</span>
           </el-tag>
@@ -628,6 +443,11 @@ const tourSteps = computed(() => [
         </div>
 
         <div class="header-right">
+          <button class="nav-search" aria-label="搜索页面" @click="searchVisible = true">
+            <el-icon><Search /></el-icon>
+            <span v-if="!isMobile">搜索页面</span>
+            <kbd v-if="!isMobile">Ctrl K</kbd>
+          </button>
           <!--
             AI 助手快捷入口：与侧栏「AI 助手」菜单项同一道门控。
             关怀模式打开时挂 .care-emphasis（字号写在 styles/index.css 的关怀模式块里，
@@ -754,6 +574,35 @@ const tourSteps = computed(() => [
         </div>
       </el-header>
 
+      <nav class="workspace-tabs" aria-label="已打开页面">
+        <div class="workspace-tabs-scroll">
+          <div
+            v-for="tab in tabs"
+            :key="tab.path"
+            class="workspace-tab"
+            :class="{ active: route.path === tab.path }"
+          >
+            <button
+              :aria-current="route.path === tab.path ? 'page' : undefined"
+              @click="router.push(tab.fullPath)"
+            >
+              <el-icon><component :is="tab.icon" /></el-icon>
+              {{ tab.title }}
+            </button>
+            <button
+              v-if="tab.path !== '/dashboard'"
+              class="close-tab"
+              :aria-label="`关闭${tab.title}`"
+              @click="closeTab(tab.path)"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+        <button class="tabs-action" title="关闭其他页签" aria-label="关闭其他页签" @click="closeOtherTabs">
+          <el-icon><FolderOpened /></el-icon>
+        </button>
+      </nav>
       <el-main class="layout-main">
         <!--
           这里**刻意不用** `<transition>` 包 router-view。
@@ -786,15 +635,33 @@ const tourSteps = computed(() => [
           <img class="brand-logo" src="/logo.png" alt="" width="24" height="24" />
           <span class="brand-text">ClassHelper</span>
         </div>
-        <el-menu :default-active="activeMenu" class="layout-menu" @select="handleMenuSelect">
-          <el-menu-item v-for="item in visibleMenuItems" :key="item.path" :index="item.path">
-            <el-icon><component :is="item.icon" /></el-icon>
-            <span>{{ item.title }}</span>
-          </el-menu-item>
-        </el-menu>
+        <ManagementMenu :groups="menuGroups" :active="activeMenu" @select="handleMenuSelect" />
       </div>
     </el-drawer>
 
+    <el-dialog
+      v-model="searchVisible"
+      title="搜索页面"
+      width="min(560px, 92vw)"
+      class="navigation-search"
+      @closed="searchQuery = ''"
+    >
+      <el-input
+        v-model="searchQuery"
+        placeholder="输入功能名称"
+        clearable
+        autofocus
+        @keydown.enter="searchResults[0] && searchNavigate(searchResults[0].path)"
+      />
+      <div class="navigation-results">
+        <button v-for="item in searchResults" :key="item.path" @click="searchNavigate(item.path)">
+          <el-icon><component :is="item.icon" /></el-icon>
+          <span>{{ item.title }}</span>
+          <small>{{ menuGroups.find((g) => g.items.some((i) => i.path === item.path))?.title }}</small>
+        </button>
+        <el-empty v-if="!searchResults.length" description="没有匹配的功能" :image-size="64" />
+      </div>
+    </el-dialog>
     <el-dialog v-model="passwordVisible" title="修改密码" width="420px">
       <el-form ref="passwordFormRef" :model="passwordForm" :rules="passwordRules" label-width="90px">
         <el-form-item label="当前密码" prop="currentPassword">
@@ -1176,3 +1043,5 @@ const tourSteps = computed(() => [
   line-height: 1.5;
 }
 </style>
+
+<style src="../styles/management-shell.css"></style>

@@ -507,7 +507,7 @@ onUnmounted(() => {
     <div class="page-header">
       <div>
         <h2 class="page-title">作业发布</h2>
-        <p class="page-subtitle">发布后立即通过 WebSocket 广播到学生客户端（homework:new）</p>
+        <p class="page-subtitle">按班级和课程发布作业，实时送达教室并查看完成情况</p>
       </div>
       <div class="toolbar">
         <el-select

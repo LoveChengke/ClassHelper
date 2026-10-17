@@ -250,3 +250,6 @@
   fill: transparent;
   stroke: none;
 }
+.resident-window .resident-card.message-surface {
+  --wn-bg: #202020;
+}

@@ -21,6 +21,11 @@ import type { IslandNotification, UpdateInfo } from '@classhelper/shared';
  */
 const bridge: DesktopBridge = {
   islandEditLayout: () => ipcRenderer.invoke('island:edit-layout'),
+  onIslandEditorOpen: (handler) => {
+    const listener = () => handler();
+    ipcRenderer.on('island:open-editor', listener);
+    return () => ipcRenderer.removeListener('island:open-editor', listener);
+  },
   smokeTest: process.env.ELECTRON_SMOKE_TEST === '1',
   // 冒烟凭据：只在冒烟模式下透传，供渲染进程的冒烟钩子构造测试数据用。
   // **不走代码字面量**——本文件与渲染产物都会进 app.asar，写死账号等于随安装包把教师口令发出去。

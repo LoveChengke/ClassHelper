@@ -1303,9 +1303,48 @@ export async function islandScheduleSyncSelfTest(): Promise<SmokeCheckResult> {
   }
 }
 
+let restoreIslandEditorSmoke: (() => Promise<void>) | undefined;
+/** 主窗口内编辑器验收使用纯本地 API 替身，结束后恢复登录态、路由与方法。 */
+async function islandEditorSmoke(open: boolean): Promise<void> {
+  if (!open) {
+    await restoreIslandEditorSmoke?.();
+    restoreIslandEditorSmoke = undefined;
+    return;
+  }
+  const [{ api }, { useAuthStore }, { router }] = await Promise.all([
+    import('../api/http.js'),
+    import('../stores/auth.js'),
+    import('../router/index.js'),
+  ]);
+  const auth = useAuthStore(),
+    token = auth.token,
+    path = router.currentRoute.value.fullPath,
+    originalGet = api.get;
+  const onboardingDone = (await window.desktop!.getConfig()).onboardingDone;
+  await window.desktop!.saveConfig({ onboardingDone: true });
+  api.get = (async (url: string) => {
+    if (url.includes('unread-count')) return { count: 0 };
+    if (url.includes('active-week')) return { days: [] };
+    if (url.includes('term')) return { currentWeek: 1, maxWeek: 40 };
+    return [];
+  }) as typeof api.get;
+  auth.applyToken('local-editor-smoke');
+  const { useOnboardingStore } = await import('../stores/onboarding.js');
+  useOnboardingStore().close();
+  restoreIslandEditorSmoke = async () => {
+    await router.push('/login');
+    auth.applyToken(token);
+    await router.push(path);
+    api.get = originalGet;
+    await window.desktop!.saveConfig({ onboardingDone });
+  };
+  await router.push('/settings/island/editor');
+}
+
 /** 注册到 window，供主进程冒烟脚本调用 */
 export function registerSmokeHooks(): void {
   window.__classhelperSmoke__ = {
+    islandEditorSmoke,
     islandScheduleSyncSelfTest,
     cacheSelfTest,
     cacheIsolationSelfTest,

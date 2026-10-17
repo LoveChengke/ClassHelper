@@ -22,6 +22,32 @@ const realtime = useRealtimeStore();
 const loading = ref(false);
 const summary = ref<DashboardSummary | null>(null);
 const unreadCount = ref(0);
+const todayLabel = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  month: 'long',
+  day: 'numeric',
+  weekday: 'long',
+}).format(new Date());
+const quickEntries = computed(() =>
+  [
+    {
+      path: '/plan-editor',
+      title: '编排课表',
+      hint: '时间表与教学安排',
+      icon: 'Calendar',
+      enabled: auth.can('schedule:read'),
+    },
+    { path: '/homeworks', title: '发布作业', hint: '布置并追踪完成情况', icon: 'Notebook', enabled: true },
+    { path: '/notifications', title: '通知与叫人', hint: '实时送达教室', icon: 'Bell', enabled: true },
+    {
+      path: '/clients',
+      title: '客户端',
+      hint: '设备状态与维护',
+      icon: 'Monitor',
+      enabled: auth.can('client:read'),
+    },
+  ].filter((entry) => entry.enabled),
+);
 
 const statCards = computed(() => {
   const data = summary.value;
@@ -100,6 +126,26 @@ function openNotification(item: NotificationDto): void {
       </div>
     </div>
 
+    <section class="dashboard-welcome">
+      <div>
+        <span class="welcome-eyebrow">{{ todayLabel }}</span>
+        <h3>{{ auth.displayName }}，欢迎回来</h3>
+        <p>教学安排、班级动态与设备运行，在这里集中处理。</p>
+      </div>
+      <div class="welcome-symbol" aria-hidden="true">
+        <el-icon><School /></el-icon>
+      </div>
+    </section>
+    <div class="dashboard-shortcuts" aria-label="常用功能">
+      <button v-for="entry in quickEntries" :key="entry.path" @click="router.push(entry.path)">
+        <el-icon><component :is="entry.icon" /></el-icon>
+        <span>
+          <strong>{{ entry.title }}</strong>
+          <small>{{ entry.hint }}</small>
+        </span>
+        <el-icon><Right /></el-icon>
+      </button>
+    </div>
     <div class="stat-grid">
       <StatCard
         v-for="(card, index) in statCards"
@@ -164,6 +210,113 @@ function openNotification(item: NotificationDto): void {
 </template>
 
 <style scoped>
+.dashboard-welcome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 26px 30px;
+  border: 1px solid var(--el-color-primary-light-8);
+  border-radius: 14px;
+  margin-bottom: 16px;
+  background: linear-gradient(110deg, var(--el-color-primary-light-9), var(--ch-surface));
+}
+.welcome-eyebrow {
+  color: var(--ch-text-muted);
+  font-size: 12px;
+}
+.dashboard-welcome h3 {
+  margin: 10px 0;
+  color: var(--ch-text);
+  font-size: 24px;
+  font-weight: 600;
+}
+.dashboard-welcome p {
+  margin: 0;
+  color: var(--ch-text-secondary);
+}
+.welcome-symbol {
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  border-radius: 24px;
+  background: var(--el-color-primary-light-8);
+  color: var(--el-color-primary);
+  font-size: 44px;
+  transform: rotate(-8deg);
+}
+.dashboard-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.dashboard-shortcuts button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px;
+  min-width: 0;
+  border: 1px solid var(--ch-border);
+  border-radius: 12px;
+  background: var(--ch-surface);
+  color: var(--el-color-primary);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.dashboard-shortcuts button:hover {
+  border-color: var(--el-color-primary-light-5);
+  background: var(--el-color-primary-light-9);
+}
+.dashboard-shortcuts button > .el-icon:first-child {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--el-color-primary-light-9);
+  font-size: 22px;
+}
+.dashboard-shortcuts button > .el-icon:last-child {
+  margin-left: auto;
+}
+.dashboard-shortcuts span {
+  min-width: 0;
+}
+.dashboard-shortcuts strong {
+  display: block;
+  color: var(--ch-text);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.dashboard-shortcuts small {
+  display: block;
+  font-size: 11px;
+  color: var(--ch-text-muted);
+  margin-top: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 1200px) {
+  .dashboard-shortcuts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .dashboard-welcome {
+    padding: 20px;
+  }
+  .dashboard-welcome h3 {
+    font-size: 20px;
+  }
+  .welcome-symbol {
+    display: none;
+  }
+  .dashboard-shortcuts button {
+    padding: 12px;
+  }
+}
 .card-header {
   display: flex;
   align-items: center;

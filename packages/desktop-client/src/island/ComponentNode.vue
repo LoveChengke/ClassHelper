@@ -2,6 +2,7 @@
 import { computed, type CSSProperties } from 'vue';
 import {
   ISLAND_COMPONENT_LABELS,
+  resolveClassStatus,
   type IslandComponentNode,
   type IslandState,
   type ScheduleDto,
@@ -23,16 +24,35 @@ function select(event: MouseEvent) {
   emit('select', props.node.id);
 }
 const container = computed(() => ['group', 'stack', 'slide', 'rolling'].includes(props.node.kind));
-const current = computed(() => {
-  const d = new Date(props.now),
-    t = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  return props.schedules.find((s) => s.startTime <= t && s.endTime > t);
-});
-const next = computed(() => {
-  const d = new Date(props.now),
-    t = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  return props.schedules.find((s) => s.startTime > t);
-});
+const today = computed(() =>
+  props.schedules
+    .filter((s) => s.dayOfWeek === (new Date(props.now).getDay() || 7))
+    .sort((a, b) => a.startTime.localeCompare(b.startTime)),
+);
+const status = computed(() => resolveClassStatus(today.value, new Date(props.now)));
+const current = computed(() => today.value.find((s) => s.id === status.value.current?.scheduleId));
+const next = computed(() => today.value.find((s) => s.id === status.value.next?.scheduleId));
+function timeAt(time: string) {
+  const d = new Date(props.now);
+  const [h, m] = time.split(':').map(Number);
+  d.setHours(h!, m!, 0, 0);
+  return d.getTime();
+}
+const elapsed = computed(() =>
+  current.value
+    ? Math.max(
+        0,
+        Math.min(
+          1,
+          (props.now - timeAt(current.value.startTime)) /
+            Math.max(1, timeAt(current.value.endTime) - timeAt(current.value.startTime)),
+        ),
+      )
+    : 0,
+);
+const remaining = computed(() =>
+  current.value ? Math.max(0, Math.ceil((timeAt(current.value.endTime) - props.now) / 1000)) : 0,
+);
 const hidden = computed(
   () =>
     !props.editing &&
@@ -75,21 +95,27 @@ const content = computed(() => {
           .replaceAll('{course}', current.value?.course?.name || '暂无课程')
       : n.settings.text;
   if (n.kind === 'countdown') {
-    const time = n.settings.target === 'school' ? props.schedules.at(-1)?.endTime : next.value?.startTime;
+    const ending = n.settings.target === 'end' || (n.settings.target === 'auto' && !!current.value);
+    const time =
+      n.settings.target === 'school'
+        ? today.value.at(-1)?.endTime
+        : ending
+          ? current.value?.endTime
+          : next.value?.startTime;
     if (!time) return '今日课程已结束';
     const [h, m] = time.split(':').map(Number);
     const end = new Date(d);
     end.setHours(h!, m!, 0, 0);
     const left = Math.max(0, Math.ceil((end.getTime() - props.now) / 1000));
-    return `${n.settings.target === 'school' ? '距放学' : '距上课'} ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+    return `${n.settings.target === 'school' ? '距放学' : ending ? '距下课' : '距上课'} ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
   }
   return '';
 });
 const lessons = computed(() =>
   props.node.settings.display === 'today'
-    ? props.schedules.slice(0, props.node.settings.count)
-    : [props.node.settings.display === 'next' ? next.value : current.value].filter((s): s is ScheduleDto =>
-        Boolean(s),
+    ? today.value.slice(0, props.node.settings.count)
+    : [props.node.settings.display === 'next' ? next.value : current.value || next.value].filter(
+        (s): s is ScheduleDto => Boolean(s),
       ),
 );
 const style = computed<CSSProperties>(() => {
@@ -166,8 +192,22 @@ const style = computed<CSSProperties>(() => {
       <div v-for="s in lessons" :key="s.id" class="lesson-line">
         <strong>{{ s.course?.name }}</strong>
         <small v-if="node.settings.showPeriod" class="lesson-time">{{ s.startTime }}–{{ s.endTime }}</small>
+        <small v-if="node.settings.showProgress && current?.id === s.id" class="lesson-remaining">
+          距下课 {{ Math.floor(remaining / 60) }}:{{ String(remaining % 60).padStart(2, '0') }}
+        </small>
       </div>
       <span v-if="!lessons.length">暂无课程</span>
+      <div
+        v-if="current && node.settings.showProgress && node.settings.display !== 'next'"
+        class="lesson-progress"
+        role="progressbar"
+        :aria-valuenow="Math.round(elapsed * 100)"
+        :aria-valuemin="0"
+        :aria-valuemax="100"
+        :aria-label="`${current.course?.name}课程进度，距下课${remaining}秒`"
+      >
+        <i :style="{ transform: `scaleX(${elapsed})` }" />
+      </div>
     </template>
     <template v-else-if="['notification', 'homework', 'call'].includes(node.kind)">
       <slot v-if="node.id === alertNodeId" name="alerts" />
@@ -197,7 +237,7 @@ const style = computed<CSSProperties>(() => {
 .countdown {
   white-space: nowrap;
 }
-.schedule > div {
+.schedule > .lesson-line {
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -215,8 +255,28 @@ const style = computed<CSSProperties>(() => {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.schedule > div + div {
+.lesson-progress {
+  position: absolute;
+  inset: auto 4px 0;
+  height: 2px;
+  background: #ffffff24;
+  overflow: hidden;
+}
+.lesson-progress i {
+  display: block;
+  height: 100%;
+  background: var(--island-accent, #60a5fa);
+  transform-origin: left;
+  transition: transform 1s linear;
+}
+.schedule > .lesson-line + .lesson-line {
   margin-top: 8px;
+}
+.lesson-remaining {
+  font-size: var(--secondary, 14px);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+  white-space: nowrap;
 }
 .separator > span {
   display: block;

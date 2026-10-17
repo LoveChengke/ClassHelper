@@ -493,6 +493,45 @@ async function main() {
     `出现=${tour?.appeared ?? '-'} 跳过后关闭=${tour?.closed ?? '-'}`,
   );
 
+  const navigation = await win.webContents.executeJavaScript(`(async () => {
+    const pause = () => new Promise(r => setTimeout(r,250));
+    const groups = [...document.querySelectorAll('.management-menu > .el-sub-menu')];
+    const targets = ['/notifications','/homeworks'];
+    let visited = true;
+    for (const path of targets) {
+      const item=document.querySelector('.management-menu [data-path="'+path+'"]');
+      if (!item) { visited=false; continue; }
+      const parent=item.closest('.el-sub-menu');
+      if (!parent.classList.contains('is-opened')) parent.querySelector('.el-sub-menu__title').click();
+      await pause(); item.click(); await pause();
+      visited = visited && location.pathname === path && !!document.querySelector('.management-breadcrumb');
+    }
+    const tabs=document.querySelectorAll('.workspace-tab').length;
+    const active=document.querySelector('.workspace-tab.active')?.textContent.includes('作业');
+    document.querySelector('[aria-label="搜索页面"]').click(); await pause();
+    const input=document.querySelector('.navigation-search input');
+    input.value='通知';input.dispatchEvent(new Event('input',{bubbles:true}));await pause();
+    const result=document.querySelector('.navigation-results button');result?.click();await pause();
+    const searched=location.pathname==='/notifications';
+    const close=document.querySelector('[aria-label="关闭通知发布"]');close?.click();await pause();
+    const closed=location.pathname==='/homeworks'&&!document.querySelector('[aria-label="关闭通知发布"]');
+    document.querySelector('[data-test="nav-collapse-toggle"]').click();await pause();
+    groups[0].querySelector('.management-group-title').click();await pause();
+    const railExpanded=!document.querySelector('.layout-aside.is-collapsed')&&groups[0].classList.contains('is-opened');
+    const current=document.querySelector('.management-menu [data-path="/homeworks"]')?.closest('.el-sub-menu');
+    if(current&&!current.classList.contains('is-opened')) current.querySelector('.el-sub-menu__title').click();await pause();
+
+    return {ok:groups.length>=2&&visited&&tabs>=3&&active&&searched&&closed&&railExpanded,railExpanded,groups:groups.length,tabs,visited,active,searched,closed};
+  })()`);
+  record('二级菜单、面包屑、页签切换关闭和权限内搜索均可用', navigation.ok, JSON.stringify(navigation));
+  if (process.env.UI_SMOKE_SHOTS_DIR) {
+    fs.mkdirSync(process.env.UI_SMOKE_SHOTS_DIR, { recursive: true });
+    fs.writeFileSync(
+      path.join(process.env.UI_SMOKE_SHOTS_DIR, 'desktop-management.png'),
+      (await win.webContents.capturePage()).toPNG(),
+    );
+  }
+
   // 4. 逐一点击侧边栏菜单
   const visited = [];
   const failures = [];

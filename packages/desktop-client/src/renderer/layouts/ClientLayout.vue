@@ -20,6 +20,10 @@ const auth = useAuthStore();
 const realtime = useRealtimeStore();
 const notifications = useNotificationStore();
 const ui = useUiStore();
+const stopEditorNavigation = window.desktop?.onIslandEditorOpen(
+  () => void router.push('/settings/island/editor'),
+);
+onUnmounted(() => stopEditorNavigation?.());
 
 /**
  * 主侧边栏。

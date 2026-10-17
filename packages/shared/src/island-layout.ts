@@ -71,10 +71,11 @@ export interface IslandComponentNode {
     template: boolean;
     hour12: boolean;
     seconds: boolean;
-    target: 'next' | 'school';
+    target: 'auto' | 'next' | 'end' | 'school';
     display: 'current' | 'next' | 'today';
     count: number;
     showPeriod: boolean;
+    showProgress: boolean;
     direction: 'horizontal' | 'vertical';
     gap: number;
     interval: number;
@@ -116,9 +117,29 @@ export interface IslandLayoutSettings {
   residentEnabled: boolean;
   pointerFadeEnabled: boolean;
   pointerFadeReversed: boolean;
+  lessonReminders: LessonReminderSettings;
   activeSchemeId: string;
   schemes: IslandLayoutScheme[];
 }
+/** 上下课通道独立开关；倒数阈值以秒计，配置随本机方案保存。 */
+export interface LessonReminderSettings {
+  prepareEnabled: boolean;
+  onClassEnabled: boolean;
+  breakEnabled: boolean;
+  endingEnabled: boolean;
+  classProgressEnabled: boolean;
+  prepareSeconds: number;
+  endingSeconds: number;
+}
+export const DEFAULT_LESSON_REMINDERS: LessonReminderSettings = {
+  prepareEnabled: true,
+  onClassEnabled: true,
+  breakEnabled: true,
+  endingEnabled: true,
+  classProgressEnabled: true,
+  prepareSeconds: 60,
+  endingSeconds: 60,
+};
 function defaultExpandedRows(): IslandLayoutRow[] {
   const course = islandNode('schedule', 'expanded-schedule');
   course.settings.display = 'today';
@@ -143,10 +164,11 @@ export function islandNode(kind: IslandComponentKind, id: string): IslandCompone
       template: false,
       hour12: false,
       seconds: true,
-      target: 'next',
+      target: 'auto',
       display: 'current',
       count: 5,
       showPeriod: true,
+      showProgress: true,
       direction: 'horizontal',
       gap: 8,
       interval: 5,
@@ -177,6 +199,7 @@ export function defaultIslandLayouts(): IslandLayoutSettings {
     residentEnabled: false,
     pointerFadeEnabled: true,
     pointerFadeReversed: false,
+    lessonReminders: { ...DEFAULT_LESSON_REMINDERS },
     activeSchemeId: 'default',
     schemes: [
       {
@@ -237,10 +260,11 @@ export function normalizeIslandLayouts(input: unknown): IslandLayoutSettings {
         template: s.template === true,
         hour12: s.hour12 === true,
         seconds: s.seconds !== false,
-        target: s.target === 'school' ? 'school' : 'next',
+        target: ['auto', 'next', 'end', 'school'].includes(s.target) ? s.target : 'auto',
         display: ['current', 'next', 'today'].includes(s.display) ? s.display : 'current',
         count: clamp(s.count, 1, 40, 5),
         showPeriod: s.showPeriod !== false,
+        showProgress: s.showProgress !== false,
         direction: s.direction === 'vertical' ? 'vertical' : 'horizontal',
         gap: clamp(s.gap, 0, 64, 8),
         interval: clamp(s.interval, 1, 300, 5),
@@ -331,6 +355,15 @@ export function normalizeIslandLayouts(input: unknown): IslandLayoutSettings {
     residentEnabled: raw.layout === 'custom',
     pointerFadeEnabled: raw.pointerFadeEnabled !== false,
     pointerFadeReversed: raw.pointerFadeReversed === true,
+    lessonReminders: {
+      prepareEnabled: raw.lessonReminders?.prepareEnabled !== false,
+      onClassEnabled: raw.lessonReminders?.onClassEnabled !== false,
+      breakEnabled: raw.lessonReminders?.breakEnabled !== false,
+      endingEnabled: raw.lessonReminders?.endingEnabled !== false,
+      classProgressEnabled: raw.lessonReminders?.classProgressEnabled !== false,
+      prepareSeconds: clamp(raw.lessonReminders?.prepareSeconds, 5, 1800, 60),
+      endingSeconds: clamp(raw.lessonReminders?.endingSeconds, 5, 600, 60),
+    },
     schemes: schemes.length ? schemes : fallback.schemes,
     activeSchemeId: schemes.some((s) => s.id === raw.activeSchemeId)
       ? raw.activeSchemeId

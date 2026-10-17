@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { BrowserWindow } from 'electron';
 import path from 'node:path';
 import { island } from './island.js';
 import { getConfig, saveConfig } from './config.js';
@@ -11,6 +12,10 @@ export async function verifyLayoutSmoke(
   await island.init(null);
   island.setTestInputPassthrough(true);
   const win = island.getWindow()!;
+  const editor = BrowserWindow.getAllWindows().find(
+    (w) => w !== win && !w.isDestroyed() && /\/index\.html(?:#|$)/.test(w.webContents.getURL()),
+  )!;
+  let editingBounds = win.getBounds();
   const pause = () => new Promise<void>((r) => setTimeout(r, 400));
   try {
     await pause();
@@ -27,27 +32,40 @@ export async function verifyLayoutSmoke(
       );
     });
     await check('自定义编辑模式可进入并添加组件行', async () => {
-      island.editLayout();
+      saveConfig({ islandLayout: { ...defaultIslandLayouts(), layout: 'custom' } });
+      island.syncCustomLayout();
       await pause();
-      return win.webContents.executeJavaScript(
-        `(() => { const b=[...document.querySelectorAll('button')].find(b=>b.textContent.includes('在下方新建'));b?.click();return Boolean(document.querySelector('.layout-editor')); })()`,
+      editingBounds = win.getBounds();
+      await editor.webContents.executeJavaScript('window.__classhelperSmoke__.islandEditorSmoke(true)');
+      await pause();
+      return (
+        (await editor.webContents.executeJavaScript(
+          'location.hash.includes("/settings/island/editor") && Boolean(document.querySelector(".aside"))',
+        )) &&
+        editor.webContents.executeJavaScript(
+          `(() => { const b=[...document.querySelectorAll('button')].find(b=>b.textContent.includes('在下方新建'));b?.click();return Boolean(document.querySelector('.layout-editor')); })()`,
+        )
       );
     });
     await check('触摸拖动可跨行并持久化', async () => {
       await pause();
-      await win.webContents.executeJavaScript(`(() => {
+      const dragGeometry = await editor.webContents.executeJavaScript(`(() => {
         const handle=document.querySelector('.node-handle[data-kind=clock]');
         const row=document.querySelectorAll('[data-row]')[1]; if(!handle||!row)throw Error('缺少拖动目标');
         const r=row.getBoundingClientRect(); const x=r.left+Math.min(20,r.width/2),y=r.top+r.height/2;
         handle.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:19,pointerType:'touch',clientX:10,clientY:10}));
         handle.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:19,pointerType:'touch',clientX:x,clientY:y}));
         handle.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:19,pointerType:'touch',clientX:x,clientY:y}));
+        return {row:r.toJSON(), point:{x,y}, hit:document.elementFromPoint(x,y)?.outerHTML.slice(0,600), canvas:document.querySelector('.canvas')?.getBoundingClientRect().toJSON(), stage:document.querySelector('.preview-stage')?.getBoundingClientRect().toJSON()};
       })()`);
       await pause();
-      return getConfig().islandLayout.schemes[0]?.rows[1]?.nodes.some((n) => n.kind === 'clock') === true;
+      const moved =
+        getConfig().islandLayout.schemes[0]?.rows[1]?.nodes.some((n) => n.kind === 'clock') === true;
+      if (!moved) throw new Error(JSON.stringify(dragGeometry));
+      return true;
     });
     await check('组件可以包裹进容器且设置独立保存', async () => {
-      await win.webContents.executeJavaScript(
+      await editor.webContents.executeJavaScript(
         `(() => { const select=document.querySelector('[data-action=wrap]');if(!select)throw Error('未选中组件');select.value='group';select.dispatchEvent(new Event('change',{bubbles:true})); })()`,
       );
       await pause();
@@ -58,38 +76,58 @@ export async function verifyLayoutSmoke(
       );
     });
     await check('组件设置按内容外观高级切换，整体外观单独显示', async () => {
-      const initial = await win.webContents.executeJavaScript(`(() => {
+      const initial = await editor.webContents.executeJavaScript(`(() => {
         const panel=document.querySelector('.settings');
         return panel?.textContent.includes('显示内容') && !panel.textContent.includes('字体大小') && !panel.textContent.includes('背景颜色');
       })()`);
-      await win.webContents.executeJavaScript(`document.querySelectorAll('.panel-tabs button')[1].click()`);
+      await editor.webContents.executeJavaScript(
+        `document.querySelectorAll('.panel-tabs button')[1].click()`,
+      );
       await pause();
-      const appearance = await win.webContents.executeJavaScript(`(() => {
+      const appearance = await editor.webContents.executeJavaScript(`(() => {
         const panel=document.querySelector('.settings');
         return panel?.textContent.includes('字体大小') && !panel.textContent.includes('组件操作');
       })()`);
-      await win.webContents.executeJavaScript(`document.querySelectorAll('.panel-tabs button')[2].click()`);
+      await editor.webContents.executeJavaScript(
+        `document.querySelectorAll('.panel-tabs button')[2].click()`,
+      );
       await pause();
-      const advanced = await win.webContents.executeJavaScript(`(() => {
+      const advanced = await editor.webContents.executeJavaScript(`(() => {
         const panel=document.querySelector('.settings');
         return panel?.textContent.includes('隐藏条件') && !panel.textContent.includes('字体大小');
       })()`);
-      await win.webContents.executeJavaScript(`document.querySelectorAll('.panel-tabs button')[0].click()`);
+      await editor.webContents.executeJavaScript(
+        `document.querySelectorAll('.panel-tabs button')[0].click()`,
+      );
       await pause();
       return initial && appearance && advanced;
+    });
+    await check('主窗口编辑器的预览完整适配画布且不遮挡缩放控件', async () => {
+      return editor.webContents.executeJavaScript(`(() => {
+        const stage=document.querySelector('.preview-stage')?.getBoundingClientRect();
+        const canvas=document.querySelector('.canvas')?.getBoundingClientRect();
+        const footer=document.querySelector('.canvas-footer')?.getBoundingClientRect();
+        return Boolean(stage&&canvas&&footer&&stage.left>=canvas.left&&stage.right<=canvas.right&&stage.bottom<=footer.top-4);
+      })()`);
     });
     if (process.env.ISLAND_SHOTS_DIR) {
       fs.mkdirSync(process.env.ISLAND_SHOTS_DIR, { recursive: true });
       fs.writeFileSync(
         path.join(process.env.ISLAND_SHOTS_DIR, 'custom-editor.png'),
-        (await win.webContents.capturePage()).toPNG(),
+        (await editor.webContents.capturePage()).toPNG(),
       );
     }
     await check('退出编辑后配置可从 getConfig 读回', async () => {
-      island.editLayout(false);
+      await editor.webContents.executeJavaScript('document.querySelector(".done-button")?.click()');
       await pause();
-      return !island.getEditingLayout() && getConfig().islandLayout.schemes[0]!.rows.length === 2;
+      return (
+        !island.getEditingLayout() &&
+        getConfig().islandLayout.schemes[0]!.rows.length === 2 &&
+        !editor.webContents.getURL().includes('/editor') &&
+        win.getBounds().width === editingBounds.width
+      );
     });
+    await editor.webContents.executeJavaScript('window.__classhelperSmoke__.islandEditorSmoke(false)');
     await check('自定义岛统一使用固定画布且常态组件居中适配', async () => {
       await pause();
       return win.webContents.executeJavaScript(`(() => {
@@ -145,6 +183,8 @@ export async function verifyLayoutSmoke(
     });
     await verifyResidentSmoke(check);
   } finally {
+    if (editor && !editor.isDestroyed())
+      await editor.webContents.executeJavaScript('window.__classhelperSmoke__.islandEditorSmoke(false)');
     saveConfig({ islandLayout: original });
     island.syncCustomLayout();
     win.hide();

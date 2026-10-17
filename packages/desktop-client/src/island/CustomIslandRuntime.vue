@@ -254,8 +254,8 @@ function measure() {
 }
 function resizeCanvas(width = innerWidth, height = innerHeight) {
   available.value = {
-    width: Math.max(40, width - 2 * ISLAND_SHADOW_PAD - 4),
-    height: Math.max(40, height - 2 * ISLAND_SHADOW_PAD - 4),
+    width: Math.max(40, Math.min(width, innerWidth) - 2 * ISLAND_SHADOW_PAD - 4),
+    height: Math.max(40, Math.min(height, innerHeight) - 2 * ISLAND_SHADOW_PAD - 4),
   };
   measure();
 }
@@ -263,6 +263,7 @@ const resize = () => resizeCanvas();
 let stopViewport: (() => void) | undefined;
 function visibility() {
   visible.value = !document.hidden;
+  resize();
   void nextTick(reportHit);
 }
 // 不深度监听整份状态；只在目标内容/几何变化时测量，时钟每秒只改文本。
@@ -285,7 +286,11 @@ watch(
 onMounted(() => {
   resize();
   stopViewport = window.island?.onViewport((v) => resizeCanvas(v.width, v.height));
-  observer = new ResizeObserver(measure);
+  observer = new ResizeObserver((entries) => {
+    if (entries.some((entry) => entry.target === document.documentElement)) resize();
+    else measure();
+  });
+  observer.observe(document.documentElement);
   if (compact.value) observer.observe(compact.value);
   if (details.value) observer.observe(details.value);
   if (lessonSource.value) observer.observe(lessonSource.value);
@@ -327,6 +332,7 @@ onUnmounted(() => {
         call: state.active?.kind === 'call',
         'resident-separated': scheme.separated && !expanded && !lesson,
         'resident-lesson': !!lesson,
+        'message-surface': expanded && messages.length > 0 && !lesson,
       }"
       :style="style"
       :role="expanded ? 'region' : 'button'"

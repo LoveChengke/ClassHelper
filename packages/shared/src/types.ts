@@ -1073,7 +1073,7 @@ export type IslandNotificationKind = 'notification' | 'homework' | 'call';
 /** 本机课表产生的临时提醒，不进入教师通知队列或已读记录。 */
 export interface IslandLessonReminder {
   id: string;
-  kind: 'prepare' | 'on-class' | 'break';
+  kind: 'prepare' | 'on-class' | 'break' | 'ending' | 'in-class';
   courseName: string;
   startTime: string;
   endTime: string;
@@ -1081,6 +1081,7 @@ export interface IslandLessonReminder {
   maskUntil: number;
   endsAt: number;
   lessonStartsAt: number;
+  lessonEndsAt?: number;
   nextCourseName?: string;
   nextStartTime?: string;
   nextEndTime?: string;
