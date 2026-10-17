@@ -17,6 +17,8 @@ export interface IslandBridge {
   setEditing(value: boolean): Promise<void>;
   onEditing(handler: (value: boolean) => void): void;
   reportSize(value: { width: number; height: number }): void;
+  reportResidentControl(value: { x: number; y: number; width: number; height: number } | null): void;
+  noteResidentTouch(): void;
   onViewport(handler: (value: { width: number; height: number }) => void): void;
   onSchedules(handler: (value: ContractScheduleDto[]) => void): void;
 
@@ -63,6 +65,8 @@ const bridge: IslandBridge = {
     ipcRenderer.on('island:editing', (_event, value) => handler(value));
   },
   reportSize: (value) => ipcRenderer.send('island:content-size', value),
+  reportResidentControl: (value) => ipcRenderer.send('island:resident-control', value),
+  noteResidentTouch: () => ipcRenderer.send('island:resident-touch'),
   onViewport: (handler) => {
     ipcRenderer.on('island:viewport', (_event, value) => handler(value));
   },

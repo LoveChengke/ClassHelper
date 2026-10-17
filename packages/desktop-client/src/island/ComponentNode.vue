@@ -17,6 +17,11 @@ const props = defineProps<{
   parentHasWidth?: boolean;
 }>();
 const emit = defineEmits<{ select: [id: string]; drag: [event: PointerEvent, id: string] }>();
+function select(event: MouseEvent) {
+  if (!props.editing) return;
+  event.stopPropagation();
+  emit('select', props.node.id);
+}
 const container = computed(() => ['group', 'stack', 'slide', 'rolling'].includes(props.node.kind));
 const current = computed(() => {
   const d = new Date(props.now),
@@ -101,7 +106,7 @@ const style = computed<CSSProperties>(() => {
     width: n.advanced.width ? `${n.advanced.width}px` : undefined,
     maxWidth: n.advanced.maxWidth ? `${n.advanced.maxWidth}px` : undefined,
     alignSelf: !props.parentHasWidth
-      ? 'stretch'
+      ? undefined
       : ({ stretch: 'stretch', start: 'flex-start', center: 'center', end: 'flex-end' } as const)[
           n.advanced.align
         ],
@@ -114,8 +119,8 @@ const style = computed<CSSProperties>(() => {
     '--emphasized': override ? `${a.emphasizedFontSize}px` : undefined,
     '--large': override ? `${a.largeFontSize}px` : undefined,
     '--rolling-duration': `${Math.max(1, 200 / n.settings.speed)}s`,
-    flexDirection: n.settings.direction === 'vertical' ? 'column' : 'row',
-    gap: `${n.settings.gap}px`,
+    flexDirection: container.value ? (n.settings.direction === 'vertical' ? 'column' : 'row') : undefined,
+    gap: container.value ? `${n.settings.gap}px` : undefined,
     display: container.value ? 'flex' : undefined,
   };
 });
@@ -127,7 +132,7 @@ const style = computed<CSSProperties>(() => {
     :class="[{ selected: editing && selectedId === node.id, container, 'node-editing': editing }, node.kind]"
     :style="style"
     :data-node="node.id"
-    @click.stop="editing && emit('select', node.id)"
+    @click="select"
   >
     <button
       v-if="editing"
@@ -168,7 +173,7 @@ const style = computed<CSSProperties>(() => {
       <slot v-if="node.id === alertNodeId" name="alerts" />
       <span v-else-if="editing">{{ ISLAND_COMPONENT_LABELS[node.kind] }}内容组件</span>
     </template>
-    <span v-else :class="{ large: node.kind === 'clock', emphasized: node.kind === 'countdown' }">
+    <span v-else :class="{ emphasized: node.kind === 'clock' || node.kind === 'countdown' }">
       {{ content }}
     </span>
   </div>
@@ -180,6 +185,34 @@ const style = computed<CSSProperties>(() => {
   padding: 6px;
   flex-shrink: 0;
   position: relative;
+}
+.component-node:not(.node-editing) {
+  line-height: 1.4;
+}
+.clock {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.date,
+.countdown {
+  white-space: nowrap;
+}
+.schedule > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.schedule > div + div {
+  margin-top: 8px;
+}
+.separator > span {
+  display: block;
+  width: 1px;
+  height: 24px;
+  overflow: hidden;
+  background: currentColor;
+  font-size: 0;
+  opacity: 0.25;
 }
 .container {
   align-items: center;

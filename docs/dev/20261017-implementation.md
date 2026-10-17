@@ -64,6 +64,26 @@
 
 本轮视觉回归通过 102/102，随后补充的岛宽修正与展开可见性检查通过后台 28/28，并通过二次启动。后台最终几何检查先等待原渲染器的形变兜底和尺寸防抖完成，避免在隐藏窗口的中间动画帧判断最终尺寸。客户端构建、类型检查、lint、改动文件格式检查及文档严格构建均通过。
 
+## 可选常驻岛
+
+本机 `islandLayout.residentEnabled` 默认关闭，仅在 custom 模式生效。开启后，现有方案 rows 作为收起内容，新增 expandedRows 保存没有通知时点击展开的内容；两套内容在同一编辑器中切换编辑，随方案复制、导入导出和本机配置一起保存。旧配置自动补齐展开布局，不改变原来的常驻选择。
+
+按本次产品要求，常驻模式中普通、紧急和叫人消息都先提示右侧铃铛及去重后的数量，点击常驻内容、铃铛或按 Enter/空格才展开原通知列表；上课时允许主动查看。没有消息时展开自定义内容，收起、处理完成及通知撤回后保留常驻岛。经典模式与关闭常驻的自定义模式继续使用原提醒规则。
+
+铃铛固定占位，避免收消息时内容横移。普通组件默认继承行的垂直居中对齐；原先无条件 align-self:stretch 会使不同字号文字从顶部排版，现只在父容器有宽度且明确配置时应用覆盖对齐。时钟采用等宽数字，分隔符保持固定线高，展开页标题与收起按钮在同一基准线上。设置页重新获得焦点时读回本机配置，避免编辑器内改常驻选项后主设置页显示旧值。
+
+新增隔离检查覆盖旧配置兼容、空闲常驻、铃铛与文本对齐、无消息展开/收起、普通与紧急消息点击展示、同 id 去重、课堂中查看、键盘展开、处理完成后的窗口几何、空闲展开时新消息提示、两套内容独立编辑和关闭常驻恢复经典模式。截图留档于 `.cache/resident-island-shots/`。
+
+### 再次核对 ClassIsland 尺寸与避让设置
+
+2026-10-17 重新从 GitHub master 读取 [经典主题](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/XamlThemes/ClassicTheme/Styles.axaml)、[Fluent 主题](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/XamlThemes/FluentTheme/Styles.axaml)、[默认设置](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/Models/Settings.cs)、[窗口设置页](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/Views/SettingPages/WindowSettingsPage.axaml)、[外观设置页](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/Views/SettingPages/AppearanceSettingsPage.axaml)及 [行样式](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/Controls/MainWindowLine.axaml)。主题行高为 40、内容左右留白 12；四档字体为 14/16/18/20，时钟用强调字号 18；默认圆角 8、背景不透明度 0.5、缩放 1、行距 5。共享 CLASSISLAND_ISLAND_METRICS 作为唯一尺寸与默认值表，常驻行移除上下 12px 留白。缩放、圆角与背景透明度范围也与上游一致。
+
+原生窗口复用现有光标轮询，在常驻背景移入时降低到 5% 不透明度并开启点击穿透，移出恢复；支持反转及关闭。保留独立的右侧交互入口：无消息时是小展开箭头，有消息时显示铃铛与数量。它不触发避让，避免和此前点击查看通知的要求冲突；编辑、展开和触笔/触摸后 1 秒内暂停避让。这是为本产品保留交互入口的明确适配，上游原始主界面默认整体穿透。未引入 RawInput/.NET 依赖，轮询方式对应上游默认 UseRawInput=false。窗口隐藏或淡化不清空消息队列。
+
+补充后台检查实测常驻行 40px、原生 setOpacity 的 5% 比例、点击穿透状态、移出恢复、反转/关闭淡化、右侧入口与触摸宽限期。源码缓存和截图分别留在 `.cache/classisland-current/`、`.cache/resident-island-ci-shots/`。
+
+最终构建视觉验收 118/118，随后后台重启检查 43/43、单实例锁和配置句柄释放通过；全仓类型、lint、构建与产物凭据门禁、格式及文档严格检查通过。最终截图为 `.cache/resident-island-ci-final-shots/`，验收日志为 `.cache/resident-island-ci-visual-final.log`。本次不修改业务数据库、不打包或推送发布。
+
 ## 十项自检
 
 1. 第三周周三第二节：ClassPlan 的规则与 ClassPlanEntry 的 timeLayoutItemId → `resolveActiveClassPlan` → `loadTermContext/resolveCurrentWeek` → `projectPlan` → `/schedules/active-week` → `refreshIslandSchedule` 的整周 IndexedDB 缓存 → `recomputeClassState` 发送当天课程 → `ComponentNode.vue` 课程表组件。

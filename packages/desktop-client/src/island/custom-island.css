@@ -19,6 +19,129 @@
   flex-direction: column;
   gap: var(--custom-row-gap);
 }
+.custom-card .layout-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--custom-row-gap);
+  min-width: 0;
+}
+.custom-card .custom-inner.resident-compact {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.custom-card.resident-size {
+  padding: 0 var(--resident-padding, 12px);
+}
+.custom-card.resident-size .row-content,
+.custom-card.resident-size .row-components {
+  height: var(--resident-height, 40px);
+  min-height: var(--resident-height, 40px);
+}
+.custom-card.resident-size .row-components {
+  gap: 0;
+}
+.custom-card.resident-size .component-node:not(.node-editing) {
+  height: var(--resident-height, 40px);
+  max-height: var(--resident-height, 40px);
+  padding: 0 calc(var(--row-gap, 12px) / 2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.custom-card.resident-size .component-node.schedule {
+  flex-direction: column;
+}
+.custom-card.resident-size .schedule small,
+.custom-card.resident-size .schedule strong {
+  line-height: 1.05;
+}
+.custom-card.resident-size .separator > span {
+  height: 20px;
+}
+.custom-card[role='button'] {
+  cursor: pointer;
+}
+.custom-card[role='button']:focus-visible {
+  outline: 2px solid #8dafff;
+  outline-offset: -3px;
+}
+.custom-card .resident-bell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  margin: 0;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #ffda8b;
+  cursor: pointer;
+}
+.custom-card .resident-bell:hover {
+  background: #ffffff1a;
+}
+.custom-card .resident-bell.bell-empty {
+  color: #ffffff60;
+}
+.custom-card .resident-bell svg {
+  width: 18px;
+  height: 18px;
+}
+.custom-card .resident-bell span {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  display: grid;
+  place-items: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: #f45b58;
+  color: white;
+  font:
+    600 9px/1 'Segoe UI',
+    sans-serif;
+  box-shadow: 0 0 0 2px var(--custom-color);
+}
+.custom-card .resident-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 4px 6px 12px;
+  border-bottom: 1px solid #ffffff1a;
+  margin-bottom: 4px;
+  color: #ffffff94;
+  font-size: 12px;
+}
+.custom-card .resident-panel-heading button {
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: #ffffff0d;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.layout-editor .surface-tabs {
+  pointer-events: auto;
+  display: flex;
+  gap: 6px;
+}
+.layout-editor .surface-tabs button {
+  font-size: 12px;
+}
+.layout-editor .surface-tabs button.active {
+  color: var(--editor-accent);
+  background: #edf2ff;
+  border-color: #b6c8f0;
+}
 .custom-card .layout-row {
   display: flex;
   flex-direction: column;

@@ -13,6 +13,24 @@ export const ISLAND_COMPONENTS = [
   'homework',
   'call',
 ] as const;
+/** ClassIsland master：MainWindowLine 与 Models/Settings.cs（2026-10-17 核对）。 */
+export const CLASSISLAND_ISLAND_METRICS = {
+  rowHeight: 40,
+  horizontalPadding: 12,
+  radius: 8,
+  opacity: 0.5,
+  scale: 1,
+  scaleMin: 0.75,
+  scaleMax: 2.5,
+  radiusMax: 20,
+  rowSpacingMax: 150,
+  secondaryFontSize: 14,
+  bodyFontSize: 16,
+  emphasizedFontSize: 18,
+  largeFontSize: 20,
+  rowSpacing: 5,
+  fadedOpacity: 0.05,
+} as const;
 export type IslandComponentKind = (typeof ISLAND_COMPONENTS)[number];
 export const ISLAND_COMPONENT_LABELS: Record<IslandComponentKind, string> = {
   date: '日期',
@@ -83,6 +101,8 @@ export interface IslandLayoutScheme {
   id: string;
   name: string;
   rows: IslandLayoutRow[];
+  /** 常驻岛没有待处理通知时，点击展开所显示的内容。 */
+  expandedRows: IslandLayoutRow[];
   scale: number;
   color: string;
   foreground: string;
@@ -93,8 +113,25 @@ export interface IslandLayoutScheme {
 }
 export interface IslandLayoutSettings {
   layout: 'fixed' | 'custom';
+  residentEnabled: boolean;
+  pointerFadeEnabled: boolean;
+  pointerFadeReversed: boolean;
   activeSchemeId: string;
   schemes: IslandLayoutScheme[];
+}
+function defaultExpandedRows(): IslandLayoutRow[] {
+  const course = islandNode('schedule', 'expanded-schedule');
+  course.settings.display = 'today';
+  return [
+    {
+      id: 'expanded-main',
+      name: '展开内容',
+      main: true,
+      allowNotifications: false,
+      gap: 12,
+      nodes: [islandNode('date', 'expanded-date'), course],
+    },
+  ];
 }
 export function islandNode(kind: IslandComponentKind, id: string): IslandComponentNode {
   return {
@@ -117,10 +154,10 @@ export function islandNode(kind: IslandComponentKind, id: string): IslandCompone
     },
     appearance: {
       resourceOverridingEnabled: false,
-      secondaryFontSize: 12,
+      secondaryFontSize: 14,
       bodyFontSize: 16,
-      emphasizedFontSize: 20,
-      largeFontSize: 28,
+      emphasizedFontSize: 18,
+      largeFontSize: 20,
       customForegroundEnabled: false,
       foreground: '#ffffff',
       customBackgroundEnabled: false,
@@ -137,11 +174,15 @@ export function islandNode(kind: IslandComponentKind, id: string): IslandCompone
 export function defaultIslandLayouts(): IslandLayoutSettings {
   return {
     layout: 'fixed',
+    residentEnabled: false,
+    pointerFadeEnabled: true,
+    pointerFadeReversed: false,
     activeSchemeId: 'default',
     schemes: [
       {
         id: 'default',
         name: '默认组件方案',
+        expandedRows: defaultExpandedRows(),
         rows: [
           {
             id: 'main',
@@ -158,12 +199,12 @@ export function defaultIslandLayouts(): IslandLayoutSettings {
           },
         ],
         scale: 1,
-        color: '#202024',
+        color: '#000000',
         foreground: '#ffffff',
-        opacity: 0.85,
-        radius: 24,
+        opacity: 0.5,
+        radius: 8,
         separated: false,
-        spacing: 8,
+        spacing: 5,
       },
     ],
   };
@@ -173,6 +214,7 @@ export function normalizeIslandLayouts(input: unknown): IslandLayoutSettings {
   const fallback = defaultIslandLayouts();
   if (!input || typeof input !== 'object') return fallback;
   const raw = input as IslandLayoutSettings;
+  const resident = raw.layout === 'custom' && raw.residentEnabled === true;
   const clamp = (n: unknown, min: number, max: number, value: number) =>
     typeof n === 'number' && Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : value;
   const color = (v: unknown, value: string) =>
@@ -206,10 +248,10 @@ export function normalizeIslandLayouts(input: unknown): IslandLayoutSettings {
       },
       appearance: {
         resourceOverridingEnabled: a.resourceOverridingEnabled === true,
-        secondaryFontSize: clamp(a.secondaryFontSize, 8, 96, 12),
+        secondaryFontSize: clamp(a.secondaryFontSize, 8, 96, 14),
         bodyFontSize: clamp(a.bodyFontSize, 8, 96, 16),
-        emphasizedFontSize: clamp(a.emphasizedFontSize, 8, 96, 20),
-        largeFontSize: clamp(a.largeFontSize, 8, 128, 28),
+        emphasizedFontSize: clamp(a.emphasizedFontSize, 8, 96, 18),
+        largeFontSize: clamp(a.largeFontSize, 8, 128, 20),
         customForegroundEnabled: a.customForegroundEnabled === true,
         foreground: color(a.foreground, '#ffffff'),
         customBackgroundEnabled: a.customBackgroundEnabled === true,
@@ -233,10 +275,8 @@ export function normalizeIslandLayouts(input: unknown): IslandLayoutSettings {
         : [],
     };
   };
-  const schemes: IslandLayoutScheme[] = [];
-  for (const scheme of (Array.isArray(raw.schemes) ? raw.schemes : []).slice(0, 20)) {
-    if (!scheme || !Array.isArray(scheme.rows)) continue;
-    const rows = scheme.rows
+  const normalizeRows = (input: IslandLayoutRow[]): IslandLayoutRow[] => {
+    const rows = input
       .filter((r) => r && typeof r === 'object')
       .slice(0, 12)
       .map((r, i) => ({
@@ -249,28 +289,47 @@ export function normalizeIslandLayouts(input: unknown): IslandLayoutSettings {
           .map((n) => node(n, 0))
           .filter((n): n is IslandComponentNode => Boolean(n)),
       }));
-    if (!rows.length) continue;
+    if (!rows.length) return [];
     if (!rows.some((r) => r.main)) rows[0]!.main = true;
     let main = false;
     for (const r of rows) {
       if (r.main && main) r.main = false;
       if (r.main) main = true;
     }
+    return rows;
+  };
+  const schemes: IslandLayoutScheme[] = [];
+  for (const scheme of (Array.isArray(raw.schemes) ? raw.schemes : []).slice(0, 20)) {
+    if (!scheme || !Array.isArray(scheme.rows)) continue;
+    const rows = normalizeRows(scheme.rows);
+    if (!rows.length) continue;
+    const expandedRows = normalizeRows(
+      Array.isArray(scheme.expandedRows) ? scheme.expandedRows : defaultExpandedRows(),
+    );
     schemes.push({
       id: String(scheme.id || `scheme-${schemes.length}`).slice(0, 100),
       name: String(scheme.name || '组件方案').slice(0, 64),
       rows,
-      scale: clamp(scheme.scale, 0.5, 3, 1),
-      color: color(scheme.color, '#202024'),
+      expandedRows: expandedRows.length ? expandedRows : normalizeRows(defaultExpandedRows()),
+      scale: clamp(
+        scheme.scale,
+        resident ? CLASSISLAND_ISLAND_METRICS.scaleMin : 0.5,
+        resident ? CLASSISLAND_ISLAND_METRICS.scaleMax : 3,
+        1,
+      ),
+      color: color(scheme.color, '#000000'),
       foreground: color(scheme.foreground, '#ffffff'),
-      opacity: clamp(scheme.opacity, 0.1, 1, 0.85),
-      radius: clamp(scheme.radius, 0, 100, 24),
+      opacity: clamp(scheme.opacity, resident ? 0 : 0.1, 1, 0.5),
+      radius: clamp(scheme.radius, 0, resident ? CLASSISLAND_ISLAND_METRICS.radiusMax : 100, 8),
       separated: scheme.separated === true,
-      spacing: clamp(scheme.spacing, 0, 100, 8),
+      spacing: clamp(scheme.spacing, 0, resident ? CLASSISLAND_ISLAND_METRICS.rowSpacingMax : 100, 5),
     });
   }
   return {
     layout: raw.layout === 'custom' ? 'custom' : 'fixed',
+    residentEnabled: raw.layout === 'custom' && raw.residentEnabled === true,
+    pointerFadeEnabled: raw.pointerFadeEnabled !== false,
+    pointerFadeReversed: raw.pointerFadeReversed === true,
     schemes: schemes.length ? schemes : fallback.schemes,
     activeSchemeId: schemes.some((s) => s.id === raw.activeSchemeId)
       ? raw.activeSchemeId

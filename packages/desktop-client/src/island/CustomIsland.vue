@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type CSSProperties } from 'vue';
 import {
   ISLAND_COMPONENT_LABELS,
+  CLASSISLAND_ISLAND_METRICS as CI,
   ISLAND_SHADOW_PAD,
   islandNode,
   normalizeIslandLayouts,
@@ -37,13 +38,68 @@ watch(
   { deep: true },
 );
 const scheme = computed(() => draft.value.schemes.find((s) => s.id === draft.value.activeSchemeId)!);
+const editingSurface = ref<'compact' | 'expanded'>('compact');
+const pendingCount = computed(
+  () => new Set([props.state.active?.id, ...props.state.queued.map((item) => item.id)].filter(Boolean)).size,
+);
+const residentCompact = computed(
+  () => draft.value.residentEnabled && !props.editing && props.state.mode !== 'expanded',
+);
+const idleExpanded = computed(
+  () =>
+    draft.value.residentEnabled &&
+    !props.editing &&
+    props.state.mode === 'expanded' &&
+    pendingCount.value === 0,
+);
+const rows = computed(() =>
+  (props.editing ? editingSurface.value === 'expanded' : idleExpanded.value)
+    ? scheme.value.expandedRows
+    : scheme.value.rows,
+);
+function setSurface(surface: 'compact' | 'expanded') {
+  editingSurface.value = surface;
+  selectedId.value = '';
+  selectedRowId.value = '';
+  panel.value = 'appearance';
+}
+function openResident(event: Event) {
+  if (!residentCompact.value || (event.target as HTMLElement).closest('button, a, input, select, textarea'))
+    return;
+  window.island?.sendAction('expand');
+}
+function residentKey(event: KeyboardEvent) {
+  if (event.target !== event.currentTarget) return;
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    openResident(event);
+  }
+}
+function expandResident() {
+  window.island?.sendAction('expand');
+}
+function collapseResident() {
+  window.island?.sendAction('collapse');
+}
+function onPointerDown(event: PointerEvent) {
+  if (event.pointerType === 'touch' || event.pointerType === 'pen') window.island?.noteResidentTouch();
+}
+function restoreClassIslandAppearance() {
+  Object.assign(scheme.value, {
+    scale: CI.scale,
+    color: '#000000',
+    opacity: CI.opacity,
+    radius: CI.radius,
+    spacing: CI.rowSpacing,
+  });
+  for (const row of [...scheme.value.rows, ...scheme.value.expandedRows]) row.gap = 12;
+  save();
+}
 const selectedId = ref(''),
   selectedKind = ref<IslandComponentKind>('clock');
 const panel = ref<'component' | 'row' | 'appearance'>('appearance');
 const selectedRowId = ref('');
-const activeRow = computed(
-  () => scheme.value.rows.find((r) => r.id === selectedRowId.value) || scheme.value.rows[0]!,
-);
+const activeRow = computed(() => rows.value.find((r) => r.id === selectedRowId.value) || rows.value[0]!);
 const componentGroups = [
   { name: '日常信息', kinds: ['clock', 'date', 'schedule', 'countdown', 'text', 'separator'] },
   { name: '消息提醒', kinds: ['notification', 'homework', 'call'] },
@@ -75,14 +131,14 @@ function allNodes(nodes: IslandComponentNode[]): IslandComponentNode[] {
   return nodes.flatMap((n) => [n, ...allNodes(n.children)]);
 }
 const selected = computed(() =>
-  scheme.value.rows.flatMap((r) => allNodes(r.nodes)).find((n) => n.id === selectedId.value),
+  rows.value.flatMap((r) => allNodes(r.nodes)).find((n) => n.id === selectedId.value),
 );
 const alertRow = computed(
   () =>
-    scheme.value.rows.find((r) => r.main && r.allowNotifications) ||
-    scheme.value.rows.find((r) => r.allowNotifications),
+    rows.value.find((r) => r.main && r.allowNotifications) || rows.value.find((r) => r.allowNotifications),
 );
 const alertNodeId = computed(() => {
+  if (residentCompact.value || idleExpanded.value) return '';
   const kind = props.state.active?.kind ?? 'notification';
   return (
     (alertRow.value &&
@@ -90,7 +146,13 @@ const alertNodeId = computed(() => {
     ''
   );
 });
-const hasMessage = computed(() => props.state.mode !== 'hidden' && Boolean(props.state.active));
+const hasMessage = computed(
+  () =>
+    props.state.mode !== 'hidden' &&
+    Boolean(props.state.active) &&
+    (!draft.value.residentEnabled || props.state.mode === 'expanded') &&
+    !props.editing,
+);
 const shellStyle = computed<CSSProperties>(() => ({
   width: viewport.value.width ? `${viewport.value.width}px` : 'max-content',
   minHeight: !props.editing && viewport.value.height ? `${viewport.value.height}px` : undefined,
@@ -103,8 +165,17 @@ const shellStyle = computed<CSSProperties>(() => ({
     Math.round(scheme.value.opacity * 255)
       .toString(16)
       .padStart(2, '0'),
-  '--custom-radius': `${scheme.value.radius}px`,
+  '--custom-radius': `${scheme.value.radius * (draft.value.residentEnabled ? scheme.value.scale : 1)}px`,
   '--custom-row-gap': `${scheme.value.spacing}px`,
+  ...(draft.value.residentEnabled
+    ? {
+        '--secondary': `${CI.secondaryFontSize}px`,
+        '--emphasized': `${CI.emphasizedFontSize}px`,
+        '--large': `${CI.largeFontSize}px`,
+        '--resident-height': `${CI.rowHeight}px`,
+        '--resident-padding': `${CI.horizontalPadding * scheme.value.scale}px`,
+      }
+    : {}),
   gap: `${scheme.value.spacing}px`,
 }));
 function id() {
@@ -117,7 +188,7 @@ function save() {
   savedAt.value = '已自动保存';
 }
 function addRow(after: number) {
-  scheme.value.rows.splice(after + 1, 0, {
+  rows.value.splice(after + 1, 0, {
     id: id(),
     name: '新主界面行',
     main: false,
@@ -125,7 +196,7 @@ function addRow(after: number) {
     gap: 8,
     nodes: [],
   });
-  selectRow(scheme.value.rows[after + 1]!.id);
+  selectRow(rows.value[after + 1]!.id);
   save();
 }
 function add(kind = selectedKind.value, row = activeRow.value) {
@@ -136,7 +207,7 @@ function add(kind = selectedKind.value, row = activeRow.value) {
   save();
 }
 function findList(nodeId: string, nodes?: IslandComponentNode[]): IslandComponentNode[] | null {
-  for (const list of nodes ? [nodes] : scheme.value.rows.map((r) => r.nodes)) {
+  for (const list of nodes ? [nodes] : rows.value.map((r) => r.nodes)) {
     if (list.some((n) => n.id === nodeId)) return list;
     for (const n of list) {
       const found = findList(nodeId, n.children);
@@ -182,7 +253,7 @@ function newScheme() {
   const copy = JSON.parse(JSON.stringify(scheme.value));
   copy.id = id();
   copy.name = name;
-  for (const r of copy.rows) {
+  for (const r of [...copy.rows, ...copy.expandedRows]) {
     r.id = id();
     for (const n of allNodes(r.nodes)) n.id = id();
   }
@@ -256,16 +327,16 @@ function drop() {
   if (!drag) return;
   const moving = drag;
   drag = null;
-  const row = scheme.value.rows.find((r) => r.id === moving.rowId);
+  const row = rows.value.find((r) => r.id === moving.rowId);
   if (!row) return;
   if (moving.type === 'library') {
     add(moving.kind, row);
     return;
   }
   if (moving.type === 'row') {
-    const from = scheme.value.rows.findIndex((r) => r.id === moving.id),
-      to = scheme.value.rows.indexOf(row);
-    if (from >= 0) scheme.value.rows.splice(to, 0, scheme.value.rows.splice(from, 1)[0]!);
+    const from = rows.value.findIndex((r) => r.id === moving.id),
+      to = rows.value.indexOf(row);
+    if (from >= 0) rows.value.splice(to, 0, rows.value.splice(from, 1)[0]!);
     save();
     return;
   }
@@ -316,6 +387,10 @@ function measure() {
             parseFloat(padding?.paddingBottom || '0'),
         ),
       });
+      const control = shell.value?.querySelector('.resident-bell')?.getBoundingClientRect();
+      window.island?.reportResidentControl(
+        control ? { x: control.x, y: control.y, width: control.width, height: control.height } : null,
+      );
     }
   }, 120);
 }
@@ -336,6 +411,7 @@ onUnmounted(() => {
 <template>
   <div
     :class="editing ? 'layout-editor' : 'custom-window'"
+    @pointerdown.capture="onPointerDown"
     @pointermove="panMove"
     @pointerup="
       drop();
@@ -409,7 +485,7 @@ onUnmounted(() => {
         <label class="field">
           添加到
           <select :value="activeRow.id" @change="selectedRowId = ($event.target as HTMLSelectElement).value">
-            <option v-for="row in scheme.rows" :key="row.id" :value="row.id">{{ row.name }}</option>
+            <option v-for="row in rows" :key="row.id" :value="row.id">{{ row.name }}</option>
           </select>
         </label>
         <button class="primary-button wide-button" @click="add()">
@@ -419,7 +495,15 @@ onUnmounted(() => {
     </aside>
     <main :class="{ canvas: editing }" @pointerdown="panStart">
       <div v-if="editing" class="canvas-toolbar">
-        <span>岛内预览</span>
+        <nav v-if="draft.residentEnabled" class="surface-tabs" aria-label="编辑常驻岛内容">
+          <button :class="{ active: editingSurface === 'compact' }" @click="setSurface('compact')">
+            收起时
+          </button>
+          <button :class="{ active: editingSurface === 'expanded' }" @click="setSurface('expanded')">
+            无通知展开时
+          </button>
+        </nav>
+        <span v-else>岛内预览</span>
         <div>
           <button
             :class="{ active: panel === 'appearance' }"
@@ -447,36 +531,78 @@ onUnmounted(() => {
         <div
           ref="shell"
           class="custom-card"
-          :class="{ separated: scheme.separated, 'has-alert': hasMessage }"
+          :class="{ separated: scheme.separated, 'has-alert': hasMessage, 'resident-size': residentCompact }"
+          :role="residentCompact ? 'button' : undefined"
+          :tabindex="residentCompact ? 0 : undefined"
+          :aria-label="
+            residentCompact ? (pendingCount ? `查看 ${pendingCount} 条通知` : '展开常驻岛') : undefined
+          "
+          :aria-expanded="draft.residentEnabled && !editing ? state.mode === 'expanded' : undefined"
+          @click="openResident"
+          @keydown="residentKey"
           :data-priority="hasMessage ? state.active?.priority : undefined"
           :style="[shellStyle, editing ? { width: 'max-content', maxWidth: 'none', maxHeight: 'none' } : {}]"
         >
-          <div ref="inner" class="custom-inner" :style="{ zoom: scheme.scale }">
-            <section
-              v-for="row in scheme.rows"
-              :key="row.id"
-              :data-row="row.id"
-              class="layout-row"
-              :class="{ 'row-selected': editing && selectedRowId === row.id, 'row-editing': editing }"
-              :style="{ '--row-gap': `${row.gap}px` }"
-            >
-              <div v-if="editing" class="row-tools">
-                <button class="row-drag" aria-label="拖动行" @pointerdown="startDrag($event, 'row', row.id)">
-                  ⠿
-                </button>
-                <button class="row-name" @click="selectRow(row.id)">
-                  {{ row.name }}
-                  <span v-if="row.main">主要行</span>
-                </button>
-                <button class="row-settings" :aria-label="`${row.name}设置`" @click="selectRow(row.id)">
-                  行设置
-                </button>
-              </div>
-              <div class="row-content" @click.self="editing && selectRow(row.id)">
-                <div class="row-components">
+          <div
+            ref="inner"
+            class="custom-inner"
+            :class="{ 'resident-compact': residentCompact }"
+            :style="{ zoom: scheme.scale }"
+          >
+            <header v-if="idleExpanded" class="resident-panel-heading">
+              <span>常驻岛</span>
+              <button aria-label="收起常驻岛" @click.stop="collapseResident">收起 ↑</button>
+            </header>
+            <div class="layout-rows">
+              <section
+                v-for="row in rows"
+                :key="row.id"
+                :data-row="row.id"
+                class="layout-row"
+                :class="{ 'row-selected': editing && selectedRowId === row.id, 'row-editing': editing }"
+                :style="{ '--row-gap': `${row.gap}px` }"
+              >
+                <div v-if="editing" class="row-tools">
+                  <button
+                    class="row-drag"
+                    aria-label="拖动行"
+                    @pointerdown="startDrag($event, 'row', row.id)"
+                  >
+                    ⠿
+                  </button>
+                  <button class="row-name" @click="selectRow(row.id)">
+                    {{ row.name }}
+                    <span v-if="row.main">主要行</span>
+                  </button>
+                  <button class="row-settings" :aria-label="`${row.name}设置`" @click="selectRow(row.id)">
+                    行设置
+                  </button>
+                </div>
+                <div class="row-content" @click.self="editing && selectRow(row.id)">
+                  <div class="row-components">
+                    <ComponentNode
+                      v-for="n in row.nodes.filter(
+                        (n) => !['notification', 'homework', 'call'].includes(n.kind),
+                      )"
+                      :key="n.id"
+                      :node="n"
+                      :state="state"
+                      :now="now"
+                      :schedules="schedules"
+                      :editing="editing"
+                      :selected-id="selectedId"
+                      :alert-node-id="alertNodeId"
+                      @select="selectNode"
+                      @drag="(e, id) => startDrag(e, 'node', id)"
+                    >
+                      <template #alerts>
+                        <div id="custom-alert-host" :ref="hostRef" v-show="hasMessage" />
+                      </template>
+                    </ComponentNode>
+                  </div>
                   <ComponentNode
-                    v-for="n in row.nodes.filter(
-                      (n) => !['notification', 'homework', 'call'].includes(n.kind),
+                    v-for="n in row.nodes.filter((n) =>
+                      ['notification', 'homework', 'call'].includes(n.kind),
                     )"
                     :key="n.id"
                     :node="n"
@@ -493,39 +619,44 @@ onUnmounted(() => {
                       <div id="custom-alert-host" :ref="hostRef" v-show="hasMessage" />
                     </template>
                   </ComponentNode>
+                  <div
+                    v-if="row.id === alertRow?.id && !alertNodeId"
+                    id="custom-alert-host"
+                    :ref="hostRef"
+                    v-show="hasMessage"
+                  />
+                  <span v-if="editing && !row.nodes.length" class="empty-row">拖入组件，或从左侧添加</span>
                 </div>
-                <ComponentNode
-                  v-for="n in row.nodes.filter((n) => ['notification', 'homework', 'call'].includes(n.kind))"
-                  :key="n.id"
-                  :node="n"
-                  :state="state"
-                  :now="now"
-                  :schedules="schedules"
-                  :editing="editing"
-                  :selected-id="selectedId"
-                  :alert-node-id="alertNodeId"
-                  @select="selectNode"
-                  @drag="(e, id) => startDrag(e, 'node', id)"
-                >
-                  <template #alerts>
-                    <div id="custom-alert-host" :ref="hostRef" v-show="hasMessage" />
-                  </template>
-                </ComponentNode>
-                <div
-                  v-if="row.id === alertRow?.id && !alertNodeId"
-                  id="custom-alert-host"
-                  :ref="hostRef"
-                  v-show="hasMessage"
-                />
-                <span v-if="editing && !row.nodes.length" class="empty-row">拖入组件，或从左侧添加</span>
-              </div>
-            </section>
+              </section>
+            </div>
+            <button
+              v-if="residentCompact"
+              class="resident-bell"
+              :class="{ 'bell-empty': !pendingCount }"
+              :aria-label="pendingCount ? `查看 ${pendingCount} 条通知` : '展开常驻岛'"
+              @click.stop="expandResident"
+            >
+              <ComponentIcon v-if="pendingCount" kind="notification" />
+              <svg
+                v-else
+                viewBox="0 0 24 24"
+                width="18"
+                height="18"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                aria-hidden="true"
+              >
+                <path d="m8 10 4 4 4-4" />
+              </svg>
+              <span v-if="pendingCount">{{ pendingCount > 99 ? '99+' : pendingCount }}</span>
+            </button>
           </div>
         </div>
         <button
           v-if="editing"
           class="add-row-button"
-          @click="addRow(scheme.rows.findIndex((r) => r.id === activeRow.id))"
+          @click="addRow(rows.findIndex((r) => r.id === activeRow.id))"
         >
           ＋ 在下方新建主界面行
         </button>
@@ -584,7 +715,7 @@ onUnmounted(() => {
               class="wide-button"
               :disabled="activeRow.main"
               @click="
-                scheme.rows.forEach((r) => (r.main = r.id === activeRow.id));
+                rows.forEach((r) => (r.main = r.id === activeRow.id));
                 save();
               "
             >
@@ -593,14 +724,12 @@ onUnmounted(() => {
             <p class="field-hint">提醒优先显示在主要行内；若该行禁用提醒，则显示在下一条允许提醒的行内。</p>
           </section>
           <section class="setting-section">
-            <button class="wide-button" @click="addRow(scheme.rows.indexOf(activeRow))">
-              在此行下方新增行
-            </button>
+            <button class="wide-button" @click="addRow(rows.indexOf(activeRow))">在此行下方新增行</button>
             <button
               class="wide-button danger-button"
-              :disabled="scheme.rows.length < 2"
+              :disabled="rows.length < 2"
               @click="
-                scheme.rows.splice(scheme.rows.indexOf(activeRow), 1);
+                rows.splice(rows.indexOf(activeRow), 1);
                 selectedRowId = '';
                 save();
               "
@@ -614,9 +743,43 @@ onUnmounted(() => {
         <div class="inspector-heading">
           <span class="eyebrow">方案设置</span>
           <h2>整体外观</h2>
-          <p>所有组件共用一个灵动岛</p>
+          <p>
+            {{
+              draft.residentEnabled
+                ? editingSurface === 'compact'
+                  ? '正在编辑收起时的常驻内容'
+                  : '正在编辑没有通知时的展开内容'
+                : '所有组件共用一个灵动岛'
+            }}
+          </p>
         </div>
         <div class="inspector-body" @change="save">
+          <section class="setting-section">
+            <label class="toggle-field">
+              <span>常驻岛</span>
+              <input type="checkbox" v-model="draft.residentEnabled" @change="setSurface('compact')" />
+            </label>
+            <p class="field-hint">
+              开启后始终显示收起内容，收到消息时显示铃铛，点击查看通知；没有通知时展开另一套自定义内容。
+            </p>
+          </section>
+          <section v-if="draft.residentEnabled" class="setting-section">
+            <h3>ClassIsland 窗口设置</h3>
+            <p class="field-hint">
+              基准岛高 40 px，默认缩放 1×；正文 16、时钟 18 px。背景移入淡化并穿透，右侧展开按钮保持可用。
+            </p>
+            <label class="toggle-field">
+              <span>指针移入淡化</span>
+              <input type="checkbox" v-model="draft.pointerFadeEnabled" />
+            </label>
+            <label v-if="draft.pointerFadeEnabled" class="toggle-field">
+              <span>反转指针移入淡化</span>
+              <input type="checkbox" v-model="draft.pointerFadeReversed" />
+            </label>
+            <button class="wide-button" @click="restoreClassIslandAppearance">
+              恢复 ClassIsland 默认外观
+            </button>
+          </section>
           <section class="setting-section">
             <h3>当前方案</h3>
             <label class="field">
@@ -624,8 +787,14 @@ onUnmounted(() => {
               <input v-model="scheme.name" />
             </label>
             <label class="field inline-field">
-              内容缩放
-              <input type="number" v-model.number="scheme.scale" min="0.5" max="3" step="0.1" />
+              界面缩放
+              <input
+                type="number"
+                v-model.number="scheme.scale"
+                :min="draft.residentEnabled ? CI.scaleMin : 0.5"
+                :max="draft.residentEnabled ? CI.scaleMax : 3"
+                step="0.05"
+              />
             </label>
           </section>
           <section class="setting-section">
@@ -641,20 +810,38 @@ onUnmounted(() => {
             <label class="field">
               背景透明度
               <div class="range-field">
-                <input type="range" v-model.number="scheme.opacity" min="0.1" max="1" step="0.05" />
+                <input
+                  type="range"
+                  v-model.number="scheme.opacity"
+                  :min="draft.residentEnabled ? 0 : 0.1"
+                  max="1"
+                  step="0.05"
+                />
                 <output>{{ Math.round(scheme.opacity * 100) }}%</output>
               </div>
             </label>
             <label class="field inline-field">
               圆角
-              <input type="number" v-model.number="scheme.radius" min="0" max="100" />
+              <input
+                type="number"
+                v-model.number="scheme.radius"
+                min="0"
+                :max="draft.residentEnabled ? CI.radiusMax : 100"
+                step="0.5"
+              />
             </label>
           </section>
           <section class="setting-section">
             <h3>多行布局</h3>
             <label class="field inline-field">
               行间距
-              <input type="number" v-model.number="scheme.spacing" min="0" max="80" />
+              <input
+                type="number"
+                v-model.number="scheme.spacing"
+                min="0"
+                :max="draft.residentEnabled ? CI.rowSpacingMax : 100"
+                step="5"
+              />
             </label>
             <label class="toggle-field">
               <span>各行分离显示</span>

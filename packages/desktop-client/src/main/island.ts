@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { BrowserWindow, ipcMain, screen } from 'electron';
 import {
   DEFAULT_ISLAND_APPEARANCE,
+  CLASSISLAND_ISLAND_METRICS,
   normalizeIslandLayouts,
   ISLAND_POSITIONS,
   ISLAND_SHADOW_PAD,
@@ -201,14 +202,46 @@ class IslandController {
   private get customLayout(): boolean {
     return getConfig().islandLayout.layout === 'custom';
   }
+  private get residentEnabled(): boolean {
+    return this.customLayout && getConfig().islandLayout.residentEnabled;
+  }
+  private residentWasEnabled = false;
+  private residentFaded = false;
+  private residentTouchUntil = 0;
+  private residentControl: { x: number; y: number; width: number; height: number } | null = null;
   getEditingLayout(): boolean {
     return this.editingLayout;
   }
   syncCustomLayout(): void {
+    if (this.residentEnabled !== this.residentWasEnabled) {
+      this.residentFaded = false;
+      this.residentWasEnabled = this.residentEnabled;
+      this.clearTimers();
+      this.state = {
+        ...this.state,
+        mode: this.state.active ? 'pill' : 'hidden',
+        listExpanded: false,
+        updatedAt: Date.now(),
+      };
+      if (this.residentEnabled) this.settleCustomLayout();
+      this.emit();
+    }
     this.win?.webContents.send('island:layout', getConfig().islandLayout);
     this.syncWindow();
   }
+  /** 常驻岛的离散收起：先隐藏，等两端内容尺寸防抖完成后以常态尺寸重新显示。 */
+  private settleCustomLayout(): void {
+    if (this.layoutSettleTimer) clearTimeout(this.layoutSettleTimer);
+    this.settlingLayout = true;
+    this.win?.hide();
+    this.layoutSettleTimer = setTimeout(() => {
+      this.layoutSettleTimer = null;
+      this.settlingLayout = false;
+      this.syncWindow();
+    }, 320);
+  }
   editLayout(enabled = true): void {
+    if (enabled) this.residentFaded = false;
     if (this.layoutSettleTimer) clearTimeout(this.layoutSettleTimer);
     this.layoutSettleTimer = null;
     this.settlingLayout = false;
@@ -238,12 +271,7 @@ class IslandController {
         if (this.customLayout) {
           // 退出编辑先保持隐藏，等行工具栏移除、渲染器防抖测量和主进程防抖完成。
           // 避免把编辑器的占位高度带回常态岛；收缩仍全部发生在不可见期间。
-          this.settlingLayout = true;
-          this.layoutSettleTimer = setTimeout(() => {
-            this.layoutSettleTimer = null;
-            this.settlingLayout = false;
-            this.syncWindow();
-          }, 320);
+          this.settleCustomLayout();
         } else this.syncWindow();
       }
     }
@@ -418,7 +446,7 @@ class IslandController {
       if (this.editingLayout) return;
       // 冒烟里可以临时关掉"失焦收起"，避免测试过程被无关的焦点变化打断（默认开启）
       if (!this.blurCollapseEnabled) return;
-      if (this.state.mode !== 'expanded' || this.state.inClass) return;
+      if (this.state.mode !== 'expanded' || (this.state.inClass && !this.residentEnabled)) return;
       // 设置页预览：示例岛要继续留在屏幕上（用户在调滑块时主窗口一直是焦点）
       if (this.previewId && this.state.active?.id === this.previewId) return;
       const sinceActivated = Date.now() - this.state.updatedAt;
@@ -483,6 +511,10 @@ class IslandController {
     // 首次进入时同步一次外观与状态，保证渲染进程不会停在初始默认值
     this.emitAppearance();
     this.emit();
+    if (this.residentEnabled) {
+      this.residentWasEnabled = true;
+      this.settleCustomLayout();
+    }
     logger.info('灵动岛已就绪（置顶透明窗口，顶部居中）');
   }
 
@@ -636,6 +668,22 @@ class IslandController {
     }
     if (this.previewId && this.previewId !== notification.id) this.endPreview(this.previewId);
 
+    if (this.residentEnabled) {
+      // 常驻模式按用户选择先亮铃铛，普通/紧急/叫人均由点击打开；已经在看通知时继续显示列表。
+      const showingNotifications = this.state.mode === 'expanded' && this.state.active !== null;
+      if (this.state.active && this.state.active.id !== notification.id)
+        this.state.queued = [
+          ...this.state.queued.filter((item) => item.id !== this.state.active!.id),
+          this.state.active,
+        ];
+      this.activate(
+        notification,
+        notification.priority === 'URGENT' ? 'urgent' : 'new',
+        showingNotifications ? 'expanded' : 'pill',
+      );
+      return;
+    }
+
     if (this.isImmediate(notification)) {
       // 插播：如果正在展示别的消息，把它放回队列
       if (this.state.active && this.state.active.id !== notification.id) {
@@ -693,6 +741,12 @@ class IslandController {
     this.state.inClass = payload.inClass;
     this.state.currentPeriodEnd = payload.currentPeriodEnd ?? null;
 
+    if (this.residentEnabled) {
+      this.state.updatedAt = Date.now();
+      this.emit();
+      return;
+    }
+
     if (payload.inClass) {
       if (!wasInClass) logger.info('灵动岛：进入上课时间段，自动隐藏');
       this.explicitShowId = null;
@@ -743,6 +797,16 @@ class IslandController {
     );
     switch (payload.action) {
       case 'expand': {
+        if (this.residentEnabled) {
+          this.clearTimers();
+          const pending = this.pendingNotifications();
+          this.state.active = pending[0] ?? null;
+          this.state.queued = pending.slice(1);
+          this.explicitShowId = this.state.active?.id ?? null;
+          this.setState({ mode: 'expanded', listExpanded: false });
+          if (this.state.active) this.scheduleCollapse(TIMEOUTS.expanded);
+          break;
+        }
         // 上课时段：普通通知（含普通叫人）一律不显示；但紧急通知 / 紧急叫人本来就是必须
         // 立刻看到的，收起（回缩为胶囊）之后必须能再次点开——否则学生会误以为消息消失了。
         const showing = this.state.active;
@@ -816,6 +880,11 @@ class IslandController {
         break;
       }
       case 'collapse':
+        if (this.residentEnabled) {
+          this.clearTimers();
+          this.setState({ mode: this.pendingNotifications().length ? 'pill' : 'hidden', reason: null });
+          break;
+        }
         // 点击卡片空白处 / 右上角收起按钮 / 点击屏幕任意位置：回缩到灵动岛（胶囊）
         // 上课时段：普通通知彻底隐藏；**叫人 / 紧急消息**回缩为胶囊（保持可见，允许再次展开）
         if (this.state.inClass && !this.isOpenable(this.state.active)) {
@@ -876,6 +945,10 @@ class IslandController {
     this.clearTimers();
     this.explicitShowId = null;
     if (!this.win || this.win.isDestroyed()) return;
+    if (this.residentEnabled) {
+      this.setState({ mode: 'hidden', reason: null });
+      return;
+    }
     // 开启"空闲细缝"时不能走 fadeOut + skipWindow：那样会完全隐藏，
     // 必须让 syncWindow() 把窗口收成一条细缝（上课时段仍由 syncWindow 兜底为立即隐藏）。
     if (this.appearance.idleSliver) {
@@ -975,6 +1048,9 @@ class IslandController {
 
   destroy(): void {
     this.clearTimers();
+    if (this.layoutSettleTimer) clearTimeout(this.layoutSettleTimer);
+    this.layoutSettleTimer = null;
+    this.settlingLayout = false;
     this.stopHitPoll();
     this.cancelBoundsAnimation();
     if (this.win && !this.win.isDestroyed()) this.win.destroy();
@@ -1155,6 +1231,8 @@ class IslandController {
 
   /** 状态变更：先通知渲染进程，再驱动窗口尺寸/透明度动画 */
   private setState(patch: Partial<IslandState>, options: { skipWindow?: boolean } = {}): void {
+    if (this.residentEnabled && this.state.mode === 'expanded' && patch.mode && patch.mode !== 'expanded')
+      this.settleCustomLayout();
     this.state = { ...this.state, ...patch, updatedAt: Date.now() };
     // 离开展开态就把"展开更多"复位：下次再点开时默认回到"只显示前三条"
     if (this.state.mode !== 'expanded') this.state.listExpanded = false;
@@ -1193,7 +1271,11 @@ class IslandController {
       if (this.settlingLayout) return;
       this.cancelFade();
       this.applyWindowLayout();
-      this.win.setOpacity(this.appearance.opacity);
+      if (this.residentEnabled) this.applyFocusable();
+      this.updateResidentPointer();
+      this.win.setOpacity(
+        this.appearance.opacity * (this.residentFaded ? CLASSISLAND_ISLAND_METRICS.fadedOpacity : 1),
+      );
       if (
         !this.win.isVisible() &&
         !(process.env.ELECTRON_SMOKE_TEST === '1' && process.env.ELECTRON_SMOKE_MODE !== 'visual')
@@ -1527,11 +1609,12 @@ class IslandController {
     // 但**注入光标**（冒烟用 setHitTestCursor 模拟指针在岛上/岛外）照常生效，
     // 否则「光标轮询校正命中」「岛外穿透」这类断言全会被自己的开关弄红。
     const passthrough = this.testInputPassthrough && this.cursorOverride === null;
-    const next = passthrough
-      ? false
-      : this.touchMode || this.editingLayout || this.customLayout
-        ? true
-        : interactive;
+    const next =
+      passthrough || this.residentFaded
+        ? false
+        : this.touchMode || this.editingLayout || this.customLayout
+          ? true
+          : interactive;
     if (this.interactive === next) return;
     this.interactive = next;
     logger.info(
@@ -1560,6 +1643,45 @@ class IslandController {
     // 触摸模式：窗口要一直贴合岛体，而"收小"必须等岛真的收小之后再做（否则形变中的卡片被窗口裁掉）。
     // 渲染进程每 ≥50ms 就会上报一次真实几何，正好拿来当这个判据。
     this.syncTouchLayout();
+  }
+  setResidentControl(rect: { x: number; y: number; width: number; height: number } | null): void {
+    this.residentControl =
+      rect &&
+      [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) &&
+      rect.width > 0 &&
+      rect.height > 0
+        ? { ...rect }
+        : null;
+  }
+  noteResidentTouch(): void {
+    this.residentTouchUntil = Date.now() + 1000;
+    this.updateResidentPointer();
+    this.setInteractive(true, '常驻岛触摸操作');
+  }
+  private updateResidentPointer(cursor?: { x: number; y: number } | null): void {
+    if (!this.win || this.win.isDestroyed()) return;
+    const settings = getConfig().islandLayout;
+    const point = this.cursorLocal(cursor);
+    const control = this.residentControl;
+    const overControl = Boolean(
+      point &&
+      control &&
+      point.x >= control.x &&
+      point.x <= control.x + control.width &&
+      point.y >= control.y &&
+      point.y <= control.y + control.height,
+    );
+    const faded =
+      this.residentEnabled &&
+      settings.pointerFadeEnabled &&
+      !this.editingLayout &&
+      Date.now() >= this.residentTouchUntil &&
+      this.state.mode !== 'expanded' &&
+      this.isInsideHitRect(point) !== settings.pointerFadeReversed &&
+      !overControl;
+    if (faded === this.residentFaded) return;
+    this.residentFaded = faded;
+    this.win.setOpacity(this.appearance.opacity * (faded ? CLASSISLAND_ISLAND_METRICS.fadedOpacity : 1));
   }
 
   /** 当前岛体矩形（供冒烟验证） */
@@ -1707,13 +1829,14 @@ class IslandController {
 
   /** 按光标位置校正命中（不依赖渲染进程是否收到 mousemove） */
   private syncHitFromCursor(cursor?: { x: number; y: number } | null): void {
+    this.updateResidentPointer(cursor);
     if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) {
       this.setInteractive(false, '窗口不可见');
       return;
     }
     // 完全隐藏（含淡出过程中）：一律不再接收鼠标，避免窗口在消失的几百毫秒里吞掉桌面点击。
     // 空闲细缝态（idleSliver）是"可见即可点"，不走这条。
-    if (this.state.mode === 'hidden' && !this.appearance.idleSliver) {
+    if (this.state.mode === 'hidden' && !this.appearance.idleSliver && !this.customLayout) {
       this.setInteractive(false, '隐藏态');
       return;
     }
@@ -2018,6 +2141,12 @@ export function registerIslandIpc(): void {
   });
   ipcMain.handle('island:edit-layout', () => island.editLayout());
   ipcMain.handle('island:get-editing', () => island.getEditingLayout());
+  ipcMain.on('island:resident-control', (event, value) => {
+    if (event.sender === island.getWindow()?.webContents) island.setResidentControl(value);
+  });
+  ipcMain.on('island:resident-touch', (event) => {
+    if (event.sender === island.getWindow()?.webContents) island.noteResidentTouch();
+  });
   ipcMain.handle('island:set-editing', (_event, value: unknown) => island.editLayout(value === true));
   ipcMain.on('island:content-size', (event, value) => {
     if (event.sender === island.getWindow()?.webContents) island.reportCustomSize(value);

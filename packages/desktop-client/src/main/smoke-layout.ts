@@ -3,6 +3,7 @@ import path from 'node:path';
 import { island } from './island.js';
 import { getConfig, saveConfig } from './config.js';
 import { defaultIslandLayouts, ISLAND_SHADOW_PAD } from '@classhelper/shared';
+import { verifyResidentSmoke } from './smoke-resident.js';
 export async function verifyLayoutSmoke(
   check: (name: string, action: () => Promise<boolean | string> | boolean) => Promise<void>,
 ) {
@@ -183,6 +184,7 @@ export async function verifyLayoutSmoke(
         `document.querySelectorAll('.custom-card .component-node.notification, .custom-card .component-node.homework, .custom-card .component-node.call').length === 0`,
       );
     });
+    await verifyResidentSmoke(check);
   } finally {
     saveConfig({ islandLayout: original });
     island.syncCustomLayout();

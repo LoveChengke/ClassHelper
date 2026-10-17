@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { confirmAction } from '../../composables/confirm.js';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
   DEFAULT_ISLAND_APPEARANCE,
@@ -28,18 +28,56 @@ function editLayout() {
   void window.desktop?.islandEditLayout();
 }
 const layoutMode = ref<'fixed' | 'custom'>('fixed');
+const residentEnabled = ref(false);
+const pointerFadeEnabled = ref(true);
+const pointerFadeReversed = ref(false);
 async function changeLayout() {
   const config = await window.desktop?.getConfig();
   if (config)
-    await window.desktop?.saveConfig({ islandLayout: { ...config.islandLayout, layout: layoutMode.value } });
+    await window.desktop?.saveConfig({
+      islandLayout: {
+        ...config.islandLayout,
+        layout: layoutMode.value,
+        residentEnabled: residentEnabled.value,
+      },
+    });
 }
 async function chooseLayout(mode: 'fixed' | 'custom') {
   layoutMode.value = mode;
+  if (mode === 'fixed') residentEnabled.value = false;
   await changeLayout();
 }
+async function changeResident(value: boolean | string | number) {
+  residentEnabled.value = value === true;
+  if (residentEnabled.value) layoutMode.value = 'custom';
+  await changeLayout();
+}
+async function changePointerFade(
+  key: 'pointerFadeEnabled' | 'pointerFadeReversed',
+  value: boolean | string | number,
+) {
+  const config = await window.desktop?.getConfig();
+  if (!config) return;
+  const saved = await window.desktop?.saveConfig({
+    islandLayout: { ...config.islandLayout, [key]: value === true },
+  });
+  if (saved) {
+    pointerFadeEnabled.value = saved.islandLayout.pointerFadeEnabled;
+    pointerFadeReversed.value = saved.islandLayout.pointerFadeReversed;
+  }
+}
+async function loadLayout() {
+  const settings = (await window.desktop?.getConfig())?.islandLayout;
+  layoutMode.value = settings?.layout ?? 'fixed';
+  residentEnabled.value = settings?.residentEnabled ?? false;
+  pointerFadeEnabled.value = settings?.pointerFadeEnabled ?? true;
+  pointerFadeReversed.value = settings?.pointerFadeReversed ?? false;
+}
 onMounted(async () => {
-  layoutMode.value = (await window.desktop?.getConfig())?.islandLayout.layout ?? 'fixed';
+  await loadLayout();
+  window.addEventListener('focus', loadLayout);
 });
+onUnmounted(() => window.removeEventListener('focus', loadLayout));
 
 /**
  * 左右边距是否有效：只在停靠左 / 右时生效。
@@ -140,12 +178,48 @@ onMounted(async () => {
           <span>在岛内排列时钟、课程和消息等组件</span>
         </button>
       </div>
+      <div class="resident-setting">
+        <div>
+          <strong>常驻岛</strong>
+          <p>始终显示自定义内容；收到消息后显示铃铛，点击查看。没有通知时可展开另一套自定义内容。</p>
+        </div>
+        <el-switch :model-value="residentEnabled" aria-label="常驻岛" @change="changeResident" />
+      </div>
       <div v-if="layoutMode === 'custom'" class="layout-edit-entry">
         <div>
           <strong>按你的习惯布置岛内内容</strong>
-          <p>在预览中添加和排列组件，点选组件即可设置；更改自动保存到本机。</p>
+          <p>
+            {{
+              residentEnabled
+                ? '分别编辑「收起时」与「无通知展开时」的内容，点选组件即可设置。'
+                : '在预览中添加和排列组件，点选组件即可设置；更改自动保存到本机。'
+            }}
+          </p>
         </div>
         <el-button type="primary" @click="editLayout">编辑岛内组件</el-button>
+      </div>
+      <div v-if="residentEnabled" class="resident-window-options">
+        <div>
+          <strong>ClassIsland 窗口设置</strong>
+          <p>
+            常驻行基准高度 40 px。指针移入背景后淡化至 5%
+            并穿透，右侧铃铛或展开按钮保持可用；编辑、展开和触摸交互期间暂停避让。
+          </p>
+        </div>
+        <label>
+          <span>指针移入淡化</span>
+          <el-switch
+            :model-value="pointerFadeEnabled"
+            @change="(value: boolean | string | number) => changePointerFade('pointerFadeEnabled', value)"
+          />
+        </label>
+        <label v-if="pointerFadeEnabled">
+          <span>反转指针移入淡化</span>
+          <el-switch
+            :model-value="pointerFadeReversed"
+            @change="(value: boolean | string | number) => changePointerFade('pointerFadeReversed', value)"
+          />
+        </label>
       </div>
     </el-card>
 
@@ -325,6 +399,47 @@ onMounted(async () => {
 <style scoped>
 .layout-mode-card {
   margin-bottom: 20px;
+}
+.resident-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+.resident-setting strong {
+  font-size: 14px;
+}
+.resident-setting p {
+  max-width: 620px;
+  margin: 8px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.8;
+}
+.resident-window-options {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+.resident-window-options strong {
+  font-size: 14px;
+}
+.resident-window-options p {
+  margin: 8px 0 14px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.8;
+}
+.resident-window-options label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 40px;
+  font-size: 13px;
 }
 .layout-choices {
   display: grid;
