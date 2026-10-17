@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, shallowRef } from 'vue';
+import { nextTick, onMounted, onUnmounted, ref, shallowRef } from 'vue';
 import {
   defaultIslandLayouts,
   DEFAULT_ISLAND_APPEARANCE,
@@ -10,7 +10,7 @@ import {
 } from '@classhelper/shared';
 import FixedIsland from './IslandApp.vue';
 import CustomIsland from './CustomIsland.vue';
-import ResidentIsland from './ResidentIsland.vue';
+import CustomIslandRuntime from './CustomIslandRuntime.vue';
 const settings = ref(defaultIslandLayouts()),
   editing = ref(false),
   ready = ref(false);
@@ -18,7 +18,7 @@ const schedules = ref<ScheduleDto[]>([]);
 const appearance = ref<IslandAppearance>({ ...DEFAULT_ISLAND_APPEARANCE });
 const nativeVisible = ref(false);
 const alertHost = shallowRef<HTMLElement | null>(null);
-const resident = () => settings.value.layout === 'custom' && settings.value.residentEnabled && !editing.value;
+const resident = () => settings.value.layout === 'custom' && !editing.value;
 const state = ref<IslandState>({
   mode: 'hidden',
   active: null,
@@ -37,7 +37,10 @@ async function done() {
   editing.value = false;
   await window.island?.setEditing(false);
 }
+let heartbeat: ReturnType<typeof setInterval>;
+onUnmounted(() => clearInterval(heartbeat));
 onMounted(async () => {
+  heartbeat = setInterval(() => window.island?.alive(), 5000);
   const bridge = window.island;
   if (bridge) {
     bridge.onLayout((value) => (settings.value = value));
@@ -49,6 +52,7 @@ onMounted(async () => {
     nativeVisible.value = await bridge.getVisible();
     appearance.value = await bridge.getAppearance();
     settings.value = await bridge.getLayout();
+    schedules.value = await bridge.getSchedules();
     state.value = await bridge.getState();
     editing.value = await bridge.getEditing();
   }
@@ -57,7 +61,7 @@ onMounted(async () => {
 });
 </script>
 <template>
-  <ResidentIsland
+  <CustomIslandRuntime
     v-if="resident()"
     :settings="settings"
     :state="state"
@@ -70,6 +74,7 @@ onMounted(async () => {
     :settings="settings"
     :state="state"
     :editing="editing"
+    :appearance="appearance"
     :schedules="schedules"
     @save="save"
     @done="done"

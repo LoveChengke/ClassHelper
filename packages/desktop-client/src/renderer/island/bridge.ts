@@ -23,11 +23,11 @@ import { useRealtimeStore } from '../stores/realtime.js';
  * 职责：把"当前是否在上课时间段"这件事算出来并同步给主进程 ——
  * 主进程据此决定通知是"立即弹出"还是"上课期间隐藏、下课后自动弹出"。
  *
- * 判定完全基于本地缓存的课表（离线也能算），并每 10 秒复算一次，
- * 因此下课后最多 10 秒内会自动弹出暂存的通知。
+ * 判定完全基于本地缓存的课表（离线也能算），并每秒复算一次，
+ * 因此下课后最多 1 秒内会自动弹出暂存的通知。
  */
-const TICK_INTERVAL_MS = 10_000;
-const REFRESH_INTERVAL_MS = 5 * 60_000;
+const TICK_INTERVAL_MS = 1_000;
+const REFRESH_INTERVAL_MS = 30_000;
 
 let schedules: ScheduleDto[] = [];
 let currentPeriod: ClassPeriod | null = null;
@@ -54,27 +54,38 @@ export async function refreshIslandSchedules(): Promise<void> {
   if (!auth.token) return;
   const scope = getCacheScope();
   const classId = auth.classId ?? undefined;
-  await appStore.refreshTerm(classId);
-  if (scope !== getCacheScope() || !auth.token) return;
   const request = ++scheduleRequest;
+  if (scope !== getCacheScope() || !auth.token || request !== scheduleRequest) return;
   const week = appStore.currentWeek;
   const result = await fetchWithCache<ScheduleDto[]>(
     'schedules',
     `week:${week}`,
-    async () =>
-      (
+    async () => {
+      const data = (
         await api.get<ContractActiveClassPlanWeekDto>('/schedules/active-week', { classId, week })
-      ).days.flatMap((day) => day.schedules),
+      ).days.flatMap((day) => day.schedules);
+      // 网络结果先上岛，IndexedDB 写入不再挡住可见内容；旧请求与切换账号的结果不得回写。
+      if (scope !== getCacheScope() || request !== scheduleRequest || !auth.token)
+        throw new Error('课表刷新已被新请求替代');
+      schedules = data;
+      scheduleWeek = week;
+      recomputeClassState(true);
+      return data;
+    },
     [],
   );
   if (scope !== getCacheScope() || request !== scheduleRequest) return;
   if (result.error && !result.updatedAt) return;
-  schedules = result.data;
-  scheduleWeek = week;
-  recomputeClassState(true);
+  if (result.fromCache) {
+    schedules = result.data;
+    scheduleWeek = week;
+    recomputeClassState(true);
+  }
 }
 
+let sentDay = '';
 function recomputeClassState(force = false): void {
+  const day = new Date().toDateString();
   const appStore = useAppStore();
   const status = resolveClassStatus(schedules, new Date(), scheduleWeek);
   const nextInClass = status.inClass;
@@ -83,7 +94,8 @@ function recomputeClassState(force = false): void {
     currentPeriod?.endTime === status.current?.endTime;
   currentPeriod = status.current;
 
-  if (!force && nextInClass === inClass && samePeriod) return;
+  if (!force && day === sentDay && nextInClass === inClass && samePeriod) return;
+  sentDay = day;
   inClass = nextInClass;
 
   window.desktop?.islandSetClassState({
@@ -329,6 +341,10 @@ export function subscribeIslandMarkAllRead(): void {
 
 /** 具名的课表变更处理器：匿名函数在停止时无法 off 掉，会随"登出→登录"越挂越多 */
 function onScheduleUpdated(): void {
+  // 教学周校正并行进行，课表变更不再等待另一个接口；周次改变由 watch 补取。
+  void useAppStore()
+    .refreshTerm(useAuthStore().classId ?? undefined)
+    .catch(() => undefined);
   void refreshIslandSchedules().catch(() => undefined);
 }
 
@@ -341,14 +357,15 @@ export function startIslandBridge(): void {
     },
   );
 
-  void refreshIslandSchedules().catch(() => undefined);
+  onScheduleUpdated();
+  useRealtimeStore().on('__connected__', onScheduleUpdated);
 
   // 课表变更（教师改课）立即复算，避免"下课后不弹出"或"上课没隐藏"
   useRealtimeStore().on(SOCKET_EVENTS.scheduleUpdated, onScheduleUpdated);
 
   tickTimer = setInterval(() => recomputeClassState(), TICK_INTERVAL_MS);
   refreshTimer = setInterval(() => {
-    void refreshIslandSchedules().catch(() => undefined);
+    onScheduleUpdated();
   }, REFRESH_INTERVAL_MS);
 }
 
@@ -370,6 +387,8 @@ export function stopIslandBridge(): void {
   stopWeekWatch = null;
 
   useRealtimeStore().off(SOCKET_EVENTS.scheduleUpdated, onScheduleUpdated);
+  useRealtimeStore().off('__connected__', onScheduleUpdated);
+  sentDay = '';
   schedules = [];
   currentPeriod = null;
   inClass = false;
@@ -381,5 +400,6 @@ export function stopIslandBridge(): void {
     inClass: false,
     currentPeriodEnd: null,
     week: useAppStore().currentWeek,
+    schedules: [],
   });
 }

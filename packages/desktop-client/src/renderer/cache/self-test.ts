@@ -1192,9 +1192,121 @@ export async function aboutPageSelfTest(): Promise<SmokeCheckResult> {
   }
 }
 
+/** 本地替换 API，不连接真实服务：覆盖变更推送、重连与迟到响应。 */
+export async function islandScheduleSyncSelfTest(): Promise<SmokeCheckResult> {
+  const [{ api }, { useAuthStore }, { useAppStore }, { useRealtimeStore }, bridge, { SOCKET_EVENTS }] =
+    await Promise.all([
+      import('../api/http.js'),
+      import('../stores/auth.js'),
+      import('../stores/app.js'),
+      import('../stores/realtime.js'),
+      import('../island/bridge.js'),
+      import('@classhelper/shared'),
+    ]);
+  const auth = useAuthStore(),
+    app = useAppStore(),
+    realtime = useRealtimeStore();
+  const token = auth.token,
+    week = app.currentWeek,
+    originalGet = api.get,
+    originalOn = realtime.on;
+  const callbacks = new Map<string, (value: unknown) => void>();
+  const terms: Array<(value: unknown) => void> = [];
+  let name = '变更后课程',
+    calls = 0,
+    delay = false,
+    release: (() => void) | undefined;
+  const snapshot = (courseName: string) => ({
+    days: [
+      {
+        schedules: [
+          {
+            id: 'local-live-course',
+            classId: 'local',
+            courseId: 'local-course',
+            dayOfWeek: new Date().getDay() || 7,
+            startTime: '00:00',
+            endTime: '23:59',
+            weekStart: 1,
+            weekEnd: 40,
+            weekParity: 'ALL',
+            course: { id: 'local-course', name: courseName },
+          },
+        ],
+      },
+    ],
+  });
+  bridge.stopIslandBridge();
+  const key = `week:${week}`,
+    cached = await cacheGet('schedules', key);
+  try {
+    auth.applyToken('local-smoke-schedule');
+    api.get = <T>(url: string): Promise<T> => {
+      if (url === '/schedules/active-week') {
+        calls++;
+        const data = snapshot(name);
+        if (delay) {
+          delay = false;
+          return new Promise<T>((resolve) => {
+            release = () => resolve(data as T);
+          });
+        }
+        return Promise.resolve(data as T);
+      }
+      // 模拟很慢的学期接口，不能再挡住课表推送。
+      return new Promise<T>((resolve) => terms.push((value) => resolve(value as T)));
+    };
+    realtime.on = (event, handler) => {
+      callbacks.set(event, handler);
+      originalOn(event, handler);
+    };
+    bridge.startIslandBridge();
+    const wait = async (expected: string) => {
+      const deadline = performance.now() + 700;
+      while (performance.now() < deadline) {
+        if (bridge.getIslandSchedules()[0]?.course?.name === expected) return true;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      return false;
+    };
+    const started = performance.now();
+    callbacks.get(SOCKET_EVENTS.scheduleUpdated)?.({});
+    const changed = await wait(name),
+      elapsed = performance.now() - started;
+    name = '断线重连课程';
+    callbacks.get('__connected__')?.({});
+    const reconnected = await wait(name);
+    name = '迟到的旧课程';
+    delay = true;
+    const old = bridge.refreshIslandSchedules();
+    await new Promise((r) => setTimeout(r, 10));
+    name = '最新课程';
+    await bridge.refreshIslandSchedules();
+    release?.();
+    await old;
+    const fresh = bridge.getIslandSchedules()[0]?.course?.name === name;
+    const saved = await cacheGet<Array<{ course?: { name: string } }>>('schedules', key);
+    const cacheFresh = saved?.value[0]?.course?.name === name;
+    return {
+      ok: changed && reconnected && fresh && cacheFresh && calls === 5,
+      detail: `本地推送刷新 ${Math.round(elapsed)}ms，重连=${reconnected}，迟到响应隔离=${fresh && cacheFresh}，课表请求=${calls}`,
+    };
+  } finally {
+    bridge.stopIslandBridge();
+    api.get = originalGet;
+    realtime.on = originalOn;
+    for (const resolve of terms) resolve({ currentWeek: week, maxWeek: 40 });
+    auth.applyToken(token);
+    app.currentWeek = week;
+    if (cached) await cacheSet('schedules', key, cached.value);
+    else await cacheRemove('schedules', key);
+  }
+}
+
 /** 注册到 window，供主进程冒烟脚本调用 */
 export function registerSmokeHooks(): void {
   window.__classhelperSmoke__ = {
+    islandScheduleSyncSelfTest,
     cacheSelfTest,
     cacheIsolationSelfTest,
     offlineScenario,

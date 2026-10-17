@@ -7,6 +7,7 @@ import {
   islandNode,
   normalizeIslandLayouts,
   type IslandLayoutSettings,
+  type IslandAppearance,
   type IslandComponentKind,
   type IslandComponentNode,
   type IslandState,
@@ -19,6 +20,7 @@ const props = defineProps<{
   settings: IslandLayoutSettings;
   state: IslandState;
   editing: boolean;
+  appearance: IslandAppearance;
   schedules: ScheduleDto[];
 }>();
 const emit = defineEmits<{
@@ -84,17 +86,6 @@ function collapseResident() {
 function onPointerDown(event: PointerEvent) {
   if (event.pointerType === 'touch' || event.pointerType === 'pen') window.island?.noteResidentTouch();
 }
-function restoreClassIslandAppearance() {
-  Object.assign(scheme.value, {
-    scale: CI.scale,
-    color: '#000000',
-    opacity: CI.opacity,
-    radius: CI.radius,
-    spacing: CI.rowSpacing,
-  });
-  for (const row of [...scheme.value.rows, ...scheme.value.expandedRows]) row.gap = 12;
-  save();
-}
 const selectedId = ref(''),
   selectedKind = ref<IslandComponentKind>('clock');
 const panel = ref<'component' | 'row' | 'appearance'>('appearance');
@@ -158,14 +149,15 @@ const shellStyle = computed<CSSProperties>(() => ({
   minHeight: !props.editing && viewport.value.height ? `${viewport.value.height}px` : undefined,
   maxWidth: `calc(100vw - ${2 * ISLAND_SHADOW_PAD}px)`,
   maxHeight: `calc(100vh - ${2 * ISLAND_SHADOW_PAD}px)`,
-  color: scheme.value.foreground,
-  fontSize: '16px',
+  color: '#ffffffeb',
+  fontSize: `${props.appearance.fontSize}px`,
   '--custom-color':
-    scheme.value.color +
-    Math.round(scheme.value.opacity * 255)
-      .toString(16)
-      .padStart(2, '0'),
-  '--custom-radius': `${scheme.value.radius * (draft.value.residentEnabled ? scheme.value.scale : 1)}px`,
+    props.appearance.style === 'glass'
+      ? '#202024cd'
+      : props.appearance.style === 'tinted'
+        ? '#0b0b0f'
+        : '#000000',
+  '--custom-radius': `${props.appearance.radius}px`,
   '--custom-row-gap': `${scheme.value.spacing}px`,
   ...(draft.value.residentEnabled
     ? {
@@ -364,6 +356,7 @@ function panMove(e: PointerEvent) {
     pan.value = { x: panning.originX + e.clientX - panning.x, y: panning.originY + e.clientY - panning.y };
   move(e);
 }
+let stopViewport: (() => void) | undefined;
 let observer: ResizeObserver | undefined,
   measureTimer: ReturnType<typeof setTimeout> | undefined,
   clock: ReturnType<typeof setInterval>;
@@ -399,12 +392,13 @@ onMounted(() => {
   clock = setInterval(() => (now.value = Date.now()), 1000);
   observer = new ResizeObserver(measure);
   if (inner.value) observer.observe(inner.value);
-  window.island?.onViewport((v) => (viewport.value = v));
+  stopViewport = window.island?.onViewport((v) => (viewport.value = v));
   measure();
 });
 onUnmounted(() => {
   clearInterval(clock);
   clearTimeout(measureTimer);
+  stopViewport?.();
   observer?.disconnect();
 });
 </script>
@@ -495,15 +489,14 @@ onUnmounted(() => {
     </aside>
     <main :class="{ canvas: editing }" @pointerdown="panStart">
       <div v-if="editing" class="canvas-toolbar">
-        <nav v-if="draft.residentEnabled" class="surface-tabs" aria-label="编辑常驻岛内容">
+        <nav class="surface-tabs" aria-label="编辑自定义灵动岛内容">
           <button :class="{ active: editingSurface === 'compact' }" @click="setSurface('compact')">
-            收起时
+            常态内容
           </button>
           <button :class="{ active: editingSurface === 'expanded' }" @click="setSurface('expanded')">
             无通知展开时
           </button>
         </nav>
-        <span v-else>岛内预览</span>
         <div>
           <button
             :class="{ active: panel === 'appearance' }"
@@ -755,30 +748,9 @@ onUnmounted(() => {
         </div>
         <div class="inspector-body" @change="save">
           <section class="setting-section">
-            <label class="toggle-field">
-              <span>常驻岛</span>
-              <input type="checkbox" v-model="draft.residentEnabled" @change="setSurface('compact')" />
-            </label>
             <p class="field-hint">
-              开启后始终显示收起内容，收到消息时显示铃铛，点击查看通知；没有通知时展开另一套自定义内容。
+              通知、外观与弹出动画沿用经典灵动岛。在应用的灵动岛设置中调整颜色、字号、圆角和动画速度。
             </p>
-          </section>
-          <section v-if="draft.residentEnabled" class="setting-section">
-            <h3>ClassIsland 窗口设置</h3>
-            <p class="field-hint">
-              基准岛高 40 px，默认缩放 1×；正文 16、时钟 18 px。背景移入淡化并穿透，右侧展开按钮保持可用。
-            </p>
-            <label class="toggle-field">
-              <span>指针移入淡化</span>
-              <input type="checkbox" v-model="draft.pointerFadeEnabled" />
-            </label>
-            <label v-if="draft.pointerFadeEnabled" class="toggle-field">
-              <span>反转指针移入淡化</span>
-              <input type="checkbox" v-model="draft.pointerFadeReversed" />
-            </label>
-            <button class="wide-button" @click="restoreClassIslandAppearance">
-              恢复 ClassIsland 默认外观
-            </button>
           </section>
           <section class="setting-section">
             <h3>当前方案</h3>
@@ -794,40 +766,6 @@ onUnmounted(() => {
                 :min="draft.residentEnabled ? CI.scaleMin : 0.5"
                 :max="draft.residentEnabled ? CI.scaleMax : 3"
                 step="0.05"
-              />
-            </label>
-          </section>
-          <section class="setting-section">
-            <h3>岛体</h3>
-            <label class="field inline-field">
-              背景颜色
-              <input type="color" v-model="scheme.color" />
-            </label>
-            <label class="field inline-field">
-              文字颜色
-              <input type="color" v-model="scheme.foreground" />
-            </label>
-            <label class="field">
-              背景透明度
-              <div class="range-field">
-                <input
-                  type="range"
-                  v-model.number="scheme.opacity"
-                  :min="draft.residentEnabled ? 0 : 0.1"
-                  max="1"
-                  step="0.05"
-                />
-                <output>{{ Math.round(scheme.opacity * 100) }}%</output>
-              </div>
-            </label>
-            <label class="field inline-field">
-              圆角
-              <input
-                type="number"
-                v-model.number="scheme.radius"
-                min="0"
-                :max="draft.residentEnabled ? CI.radiusMax : 100"
-                step="0.5"
               />
             </label>
           </section>

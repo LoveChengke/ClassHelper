@@ -57,6 +57,7 @@ export async function runQuickSmoke(win: BrowserWindow): Promise<void> {
   });
   for (const [name, method] of [
     ['IndexedDB 缓存读写', 'cacheSelfTest'],
+    ['课表变更和重连立即刷新，慢学期接口与迟到响应不阻塞', 'islandScheduleSyncSelfTest'],
     ['断网缓存回退', 'offlineScenario'],
     ['服务端与班级缓存隔离', 'cacheIsolationSelfTest'],
   ]) {

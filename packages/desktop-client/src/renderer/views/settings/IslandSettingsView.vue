@@ -44,12 +44,7 @@ async function changeLayout() {
 }
 async function chooseLayout(mode: 'fixed' | 'custom') {
   layoutMode.value = mode;
-  if (mode === 'fixed') residentEnabled.value = false;
-  await changeLayout();
-}
-async function changeResident(value: boolean | string | number) {
-  residentEnabled.value = value === true;
-  if (residentEnabled.value) layoutMode.value = 'custom';
+  residentEnabled.value = mode === 'custom';
   await changeLayout();
 }
 async function changePointerFade(
@@ -152,7 +147,7 @@ onMounted(async () => {
     <div class="page-header">
       <div>
         <h2 class="page-title">灵动岛</h2>
-        <p class="page-subtitle">屏幕上方的消息浮窗：外观、停靠位置与动画</p>
+        <p class="page-subtitle">经典岛与自定义岛共用外观、停靠位置、动画与提醒规则</p>
       </div>
     </div>
 
@@ -175,36 +170,20 @@ onMounted(async () => {
           @click="chooseLayout('custom')"
         >
           <strong>自定义灵动岛</strong>
-          <span>在岛内排列时钟、课程和消息等组件</span>
+          <span>常驻显示时钟、课程等组件，通知沿用经典岛</span>
         </button>
-      </div>
-      <div class="resident-setting">
-        <div>
-          <strong>常驻岛</strong>
-          <p>始终显示自定义内容；收到消息后显示铃铛，点击查看。没有通知时可展开另一套自定义内容。</p>
-        </div>
-        <el-switch :model-value="residentEnabled" aria-label="常驻岛" @change="changeResident" />
       </div>
       <div v-if="layoutMode === 'custom'" class="layout-edit-entry">
         <div>
           <strong>按你的习惯布置岛内内容</strong>
-          <p>
-            {{
-              residentEnabled
-                ? '分别编辑「收起时」与「无通知展开时」的内容，点选组件即可设置。'
-                : '在预览中添加和排列组件，点选组件即可设置；更改自动保存到本机。'
-            }}
-          </p>
+          <p>编辑常态内容与无通知展开内容；通知样式、弹出规则和外观设置与经典岛共用。</p>
         </div>
         <el-button type="primary" @click="editLayout">编辑岛内组件</el-button>
       </div>
-      <div v-if="residentEnabled" class="resident-window-options">
+      <div v-if="layoutMode === 'custom'" class="resident-window-options">
         <div>
-          <strong>ClassIsland 窗口设置</strong>
-          <p>
-            常驻行基准高度 40 px。指针移入背景后淡化至 5%
-            并穿透，右侧铃铛或展开按钮保持可用；编辑、展开和触摸交互期间暂停避让。
-          </p>
+          <strong>指针避让</strong>
+          <p>指针移入后淡化并穿透，右侧展开入口保持可用；展开和触摸交互期间暂停避让。</p>
         </div>
         <label>
           <span>指针移入淡化</span>
@@ -225,87 +204,86 @@ onMounted(async () => {
 
     <el-card shadow="never">
       <template #header>
-        <span>{{ layoutMode === 'fixed' ? '外观与位置' : '位置与提醒' }}</span>
+        <span>外观、位置与弹出</span>
       </template>
-      <el-form label-width="96px" label-position="left">
-        <template v-if="layoutMode === 'fixed'">
-          <el-form-item :label="`高度 ${island.height}px`">
-            <el-slider
-              :model-value="island.height"
-              :min="RANGES.height.min"
-              :max="RANGES.height.max"
-              :step="1"
-              @input="(value: number) => applyIslandAppearance({ height: value })"
+      <p class="text-muted">紧急消息立即展开；课中普通通知暂存，下课后展开。自定义岛可点击铃铛主动查看。</p>
+      <el-form label-width="110px" label-position="left">
+        <el-form-item :label="`${layoutMode === 'custom' ? '通知高度' : '高度'} ${island.height}px`">
+          <el-slider
+            :model-value="island.height"
+            :min="RANGES.height.min"
+            :max="RANGES.height.max"
+            :step="1"
+            @input="(value: number) => applyIslandAppearance({ height: value })"
+          />
+        </el-form-item>
+        <el-form-item :label="`${layoutMode === 'custom' ? '通知宽度' : '宽度'} ${island.width}px`">
+          <el-slider
+            :model-value="island.width"
+            :min="RANGES.width.min"
+            :max="RANGES.width.max"
+            :step="2"
+            @input="(value: number) => applyIslandAppearance({ width: value })"
+          />
+        </el-form-item>
+        <el-form-item :label="`圆角 ${island.radius}px`">
+          <el-slider
+            :model-value="island.radius"
+            :min="RANGES.radius.min"
+            :max="RANGES.radius.max"
+            :step="1"
+            @input="(value: number) => applyIslandAppearance({ radius: value })"
+          />
+        </el-form-item>
+        <el-form-item :label="`不透明度 ${Math.round(island.opacity * 100)}%`">
+          <el-slider
+            :model-value="island.opacity"
+            :min="RANGES.opacity.min"
+            :max="RANGES.opacity.max"
+            :step="0.05"
+            @input="(value: number) => applyIslandAppearance({ opacity: value })"
+          />
+        </el-form-item>
+        <el-form-item :label="`字号 ${island.fontSize}px`">
+          <el-slider
+            :model-value="island.fontSize"
+            :min="RANGES.fontSize.min"
+            :max="RANGES.fontSize.max"
+            :step="1"
+            @input="(value: number) => applyIslandAppearance({ fontSize: value })"
+          />
+        </el-form-item>
+        <el-form-item :label="`动画速度 ${island.speed.toFixed(1)}x`">
+          <el-slider
+            :model-value="island.speed"
+            :min="RANGES.speed.min"
+            :max="RANGES.speed.max"
+            :step="0.1"
+            @input="(value: number) => applyIslandAppearance({ speed: value })"
+          />
+        </el-form-item>
+        <el-form-item label="主题色">
+          <el-color-picker
+            :model-value="island.accent"
+            @change="(value: string | null) => applyIslandAppearance({ accent: value ?? '#0a84ff' })"
+          />
+          <span class="text-muted ml-8">用于高亮、按钮与进度条</span>
+        </el-form-item>
+        <el-form-item label="视觉风格">
+          <el-select
+            :model-value="island.style"
+            style="width: 180px"
+            @change="(value: IslandStyle) => applyIslandAppearance({ style: value })"
+          >
+            <el-option
+              v-for="item in styleOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
             />
-          </el-form-item>
-          <el-form-item :label="`宽度 ${island.width}px`">
-            <el-slider
-              :model-value="island.width"
-              :min="RANGES.width.min"
-              :max="RANGES.width.max"
-              :step="2"
-              @input="(value: number) => applyIslandAppearance({ width: value })"
-            />
-          </el-form-item>
-          <el-form-item :label="`圆角 ${island.radius}px`">
-            <el-slider
-              :model-value="island.radius"
-              :min="RANGES.radius.min"
-              :max="RANGES.radius.max"
-              :step="1"
-              @input="(value: number) => applyIslandAppearance({ radius: value })"
-            />
-          </el-form-item>
-          <el-form-item :label="`不透明度 ${Math.round(island.opacity * 100)}%`">
-            <el-slider
-              :model-value="island.opacity"
-              :min="RANGES.opacity.min"
-              :max="RANGES.opacity.max"
-              :step="0.05"
-              @input="(value: number) => applyIslandAppearance({ opacity: value })"
-            />
-          </el-form-item>
-          <el-form-item :label="`字号 ${island.fontSize}px`">
-            <el-slider
-              :model-value="island.fontSize"
-              :min="RANGES.fontSize.min"
-              :max="RANGES.fontSize.max"
-              :step="1"
-              @input="(value: number) => applyIslandAppearance({ fontSize: value })"
-            />
-          </el-form-item>
-          <el-form-item :label="`动画速度 ${island.speed.toFixed(1)}x`">
-            <el-slider
-              :model-value="island.speed"
-              :min="RANGES.speed.min"
-              :max="RANGES.speed.max"
-              :step="0.1"
-              @input="(value: number) => applyIslandAppearance({ speed: value })"
-            />
-          </el-form-item>
-          <el-form-item label="主题色">
-            <el-color-picker
-              :model-value="island.accent"
-              @change="(value: string | null) => applyIslandAppearance({ accent: value ?? '#0a84ff' })"
-            />
-            <span class="text-muted ml-8">用于高亮、按钮与进度条</span>
-          </el-form-item>
-          <el-form-item label="视觉风格">
-            <el-select
-              :model-value="island.style"
-              style="width: 180px"
-              @change="(value: IslandStyle) => applyIslandAppearance({ style: value })"
-            >
-              <el-option
-                v-for="item in styleOptions"
-                :key="item.value"
-                :label="item.label"
-                :value="item.value"
-              />
-            </el-select>
-            <span class="text-muted ml-8">纯黑 / 毛玻璃（半透明）/ 主题色渐变</span>
-          </el-form-item>
-        </template>
+          </el-select>
+          <span class="text-muted ml-8">纯黑 / 毛玻璃（半透明）/ 主题色渐变</span>
+        </el-form-item>
         <el-form-item label="显示位置">
           <el-select
             :model-value="island.position"

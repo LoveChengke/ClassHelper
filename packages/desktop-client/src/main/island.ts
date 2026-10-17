@@ -203,7 +203,7 @@ class IslandController {
     return getConfig().islandLayout.layout === 'custom';
   }
   private get residentEnabled(): boolean {
-    return this.customLayout && getConfig().islandLayout.residentEnabled;
+    return this.customLayout;
   }
   private residentWasEnabled = false;
   private residentFaded = false;
@@ -514,11 +514,17 @@ class IslandController {
      * 用户看到的就是「点了没反应 / 点开又立刻缩回去」。
      * 因此这里再用**指针位置**兜一层：指针还在岛上就绝不收起（详见 isCursorOnIsland）。
      */
+    win.on('resize', () => {
+      if (this.customLayout && !this.editingLayout && this.ready && !win.isDestroyed()) {
+        const { width, height } = win.getContentBounds();
+        win.webContents.send('island:viewport', { width, height });
+      }
+    });
     win.on('blur', () => {
       if (this.editingLayout) return;
       // 冒烟里可以临时关掉"失焦收起"，避免测试过程被无关的焦点变化打断（默认开启）
       if (!this.blurCollapseEnabled) return;
-      if (this.state.mode !== 'expanded' || (this.state.inClass && !this.residentEnabled)) return;
+      if (this.state.mode !== 'expanded') return;
       // 设置页预览：示例岛要继续留在屏幕上（用户在调滑块时主窗口一直是焦点）
       if (this.previewId && this.state.active?.id === this.previewId) return;
       const sinceActivated = Date.now() - this.state.updatedAt;
@@ -582,6 +588,7 @@ class IslandController {
     }
     // 首次进入时同步一次外观与状态，保证渲染进程不会停在初始默认值
     this.emitAppearance();
+    this.win?.webContents.send('island:schedules', this.schedules);
     this.emit();
     if (this.residentEnabled) {
       this.residentWasEnabled = true;
@@ -592,6 +599,11 @@ class IslandController {
 
   getWindow(): BrowserWindow | null {
     return this.win;
+  }
+
+  private schedules: ContractScheduleDto[] = [];
+  getSchedules(): ContractScheduleDto[] {
+    return [...this.schedules];
   }
 
   getState(): IslandState {
@@ -740,22 +752,6 @@ class IslandController {
     }
     if (this.previewId && this.previewId !== notification.id) this.endPreview(this.previewId);
 
-    if (this.residentEnabled) {
-      // 常驻模式按用户选择先亮铃铛，普通/紧急/叫人均由点击打开；已经在看通知时继续显示列表。
-      const showingNotifications = this.state.mode === 'expanded' && this.state.active !== null;
-      if (this.state.active && this.state.active.id !== notification.id)
-        this.state.queued = [
-          ...this.state.queued.filter((item) => item.id !== this.state.active!.id),
-          this.state.active,
-        ];
-      this.activate(
-        notification,
-        notification.priority === 'URGENT' ? 'urgent' : 'new',
-        showingNotifications ? 'expanded' : 'pill',
-      );
-      return;
-    }
-
     if (this.isImmediate(notification)) {
       // 插播：如果正在展示别的消息，把它放回队列
       if (this.state.active && this.state.active.id !== notification.id) {
@@ -807,17 +803,14 @@ class IslandController {
 
   /** 上课状态变化：进入上课隐藏；下课则自动弹出队列 */
   setClassState(payload: IslandClassStatePayload): void {
-    if (Array.isArray(payload.schedules))
-      this.win?.webContents.send('island:schedules', payload.schedules.slice(0, 100));
+    if (Array.isArray(payload.schedules)) {
+      this.schedules = payload.schedules.slice(0, 100);
+      if (this.ready && this.win && !this.win.isDestroyed())
+        this.win.webContents.send('island:schedules', this.schedules);
+    }
     const wasInClass = this.state.inClass;
     this.state.inClass = payload.inClass;
     this.state.currentPeriodEnd = payload.currentPeriodEnd ?? null;
-
-    if (this.residentEnabled) {
-      this.state.updatedAt = Date.now();
-      this.emit();
-      return;
-    }
 
     if (payload.inClass) {
       if (!wasInClass) logger.info('灵动岛：进入上课时间段，自动隐藏');
@@ -1114,6 +1107,10 @@ class IslandController {
     if (!this.win || this.win.isDestroyed()) return;
     // 焦点/可激活性统一由 applyFocusable 维护（窗口必须始终可激活，否则丢 mousedown）
     if (this.win.isFocused()) this.win.blur();
+    if (this.customLayout) {
+      this.syncWindow();
+      return;
+    }
     if (this.win.isVisible()) this.win.hide();
     this.win.setOpacity(1);
   }
@@ -2223,6 +2220,9 @@ export const island = new IslandController();
 
 /** 注册灵动岛相关 IPC（主窗口渲染进程 -> 主进程；灵动岛渲染进程 -> 主进程） */
 export function registerIslandIpc(): void {
+  ipcMain.handle('island:get-schedules', (event) =>
+    event.sender === island.getWindow()?.webContents ? island.getSchedules() : [],
+  );
   ipcMain.handle('island:get-layout', () => getConfig().islandLayout);
   ipcMain.handle('island:save-layout', (_event, value: unknown) => {
     const result = saveConfig({ islandLayout: normalizeIslandLayouts(value) }).islandLayout;

@@ -90,25 +90,21 @@ export async function verifyLayoutSmoke(
       await pause();
       return !island.getEditingLayout() && getConfig().islandLayout.schemes[0]!.rows.length === 2;
     });
-    await check('自定义窗口等于卡片加阴影留白且夹紧工作区', async () => {
+    await check('自定义岛统一使用固定画布且常态组件居中适配', async () => {
       await pause();
-      const rect = await win.webContents.executeJavaScript(
-        `(() => {const r=document.querySelector('.custom-card').getBoundingClientRect(), inner=document.querySelector('.custom-inner').getBoundingClientRect();return {width:r.width,height:r.height,contentWidth:inner.width+24,contentHeight:inner.height+24};})()`,
-      );
-      const box = win.getBounds();
-      return (
-        Math.abs(box.width - rect.width - 2 * ISLAND_SHADOW_PAD) <= 2 &&
-        Math.abs(box.height - rect.height - 2 * ISLAND_SHADOW_PAD) <= 2 &&
-        Math.abs(rect.width - rect.contentWidth) <= 2 &&
-        Math.abs(rect.height - rect.contentHeight) <= 2
-      );
+      return win.webContents.executeJavaScript(`(() => {
+        const card=document.querySelector('.resident-card'), source=card?.querySelector('.resident-compact');
+        if(!card||!source)return false;
+        const r=card.getBoundingClientRect(),s=source.getBoundingClientRect();
+        return r.width<=innerWidth-${2 * ISLAND_SHADOW_PAD}&&r.height<=innerHeight-${2 * ISLAND_SHADOW_PAD}&&Math.abs(r.left+r.width/2-s.left-s.width/2)<=2;
+      })()`);
     });
-    await check('自定义提醒复用原渲染器且进入主要行', async () => {
+    await check('自定义岛紧急通知立即弹出并复用经典通知内容', async () => {
       island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1 });
       island.pushNotification({
         id: 'custom-smoke-alert',
         title: '组件化提醒验收',
-        content: '通知、作业与叫人共用原卡片行为',
+        content: '通知、作业与叫人共用经典卡片',
         priority: 'URGENT',
         createdAt: new Date().toISOString(),
         teacherName: '临时教师',
@@ -116,50 +112,13 @@ export async function verifyLayoutSmoke(
       });
       await pause();
       await pause();
-      return win.webContents.executeJavaScript(
-        `(() => {const host=document.querySelector('#custom-alert-host'),node=host?.querySelector('.island-root.embedded');return Boolean(node&&node.textContent.includes('组件化提醒验收')&&host.closest('[data-row]')===document.querySelector('[data-row]'));})()`,
-      );
-    });
-    await check('提醒展开内容可见，岛宽取组件与提醒的较宽者', async () => {
-      const deadline = Date.now() + 4000;
-      while (Date.now() < deadline) {
-        const fits = await win.webContents.executeJavaScript(`(() => {
-          const card=document.querySelector('.custom-card'), host=card?.querySelector('#custom-alert-host');
-          const layer=host?.querySelector('.expanded-layer');
-          if(!card||!host||!layer||Number(getComputedStyle(layer).opacity)<0.95)return false;
-          const rows=[...card.querySelectorAll('.row-components')].map(row=>row.getBoundingClientRect().width);
-          const expected=Math.max(...rows,host.getBoundingClientRect().width)+24;
-          const outer=card.getBoundingClientRect(), inner=host.getBoundingClientRect();
-          return Math.abs(outer.width-expected)<=2 && inner.bottom<=outer.bottom+1;
-        })()`);
-        if (fits) return true;
-        await pause();
-      }
-      return false;
-    });
-    // 隐藏窗口的 rAF 可能限流；先等原渲染器的形变兜底与尺寸防抖落地，再验最终几何。
-    await check('组件与提醒同处岛体内部，提醒没有第二层岛壳', async () => {
-      return win.webContents.executeJavaScript(`(() => {
-        const card=document.querySelector('.custom-card'), host=card?.querySelector('#custom-alert-host');
-        const shape=host?.querySelector('.shape'), content=host?.querySelector('.content');
-        if(!card||!host||!shape||!content)return false;
-        const outer=card.getBoundingClientRect(), inner=host.getBoundingClientRect();
-        return document.querySelectorAll('.custom-card').length===1 && getComputedStyle(shape).display==='none'
-          && getComputedStyle(content).clipPath==='none' && inner.left>=outer.left && inner.right<=outer.right+1
-          && inner.top>=outer.top && inner.bottom<=outer.bottom+1 && Boolean(card.querySelector('.clock'));
+      const result = await win.webContents.executeJavaScript(`(() => {
+        const card=document.querySelector('.resident-card'), content=card?.querySelector('.classic-notifications'),r=card?.getBoundingClientRect(),c=content?.getBoundingClientRect();
+        const valid=Boolean(content&&content.textContent.includes('组件化提醒验收')&&card.querySelectorAll('.shape').length===1&&c.left>=r.left-1&&c.right<=r.right+1&&c.bottom<=r.bottom+1);
+        return {valid,card:r?.toJSON(),content:c?.toJSON(),shape:card?.querySelectorAll('.shape').length};
       })()`);
-    });
-    await check('主要行禁用提醒后按允许提醒的行回落', async () => {
-      const changed = getConfig().islandLayout;
-      const rows = changed.schemes[0]!.rows;
-      rows[0]!.allowNotifications = false;
-      saveConfig({ islandLayout: changed });
-      island.syncCustomLayout();
-      await pause();
-      await pause();
-      return win.webContents.executeJavaScript(
-        `(() => {const host=document.querySelector('#custom-alert-host');return Boolean(host?.querySelector('.island-root.embedded')&&host.closest('[data-row]')===document.querySelectorAll('[data-row]')[1]);})()`,
-      );
+      if (!result.valid) throw Error(JSON.stringify(result));
+      return island.getState().mode === 'expanded';
     });
     if (process.env.ISLAND_SHOTS_DIR)
       fs.writeFileSync(

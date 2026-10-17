@@ -1,0 +1,743 @@
+/*
+ * 排版系数（必须与 @classhelper/shared 的 ISLAND_TYPE_SCALE 保持一致）：
+ * title 1.08 / body 0.95 / meta 0.78 / badge 0.76 / pillTitle 0.92 / pillSub 0.74
+ *
+ * 关键：所有文本尺寸都由 --island-font 通过 calc() 推导，所以「字号」设置一改，
+ * 岛内文字立即整体等比缩放（WinIsland 的 font_size 模型），不存在写死的字号。
+ */
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+body {
+  font-family:
+    -apple-system, 'Segoe UI Variable Display', 'Segoe UI', 'Microsoft YaHei', 'PingFang SC',
+    'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.island-root {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  background: transparent;
+}
+
+/* ---------------------------------------------------------------- 卡片与形状 */
+
+.island-root.embedded .island-card {
+  left: 0 !important;
+  top: 0 !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: none !important;
+}
+
+.island-card {
+  position: absolute;
+  display: block;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: var(--island-font, 13px);
+  text-align: left;
+  cursor: pointer;
+  /* 配色 token（默认：WinIsland 纯黑风格） */
+  --wn-bg: #000000;
+  --wn-border: rgba(255, 255, 255, 0.118);
+  --wn-text-1: rgba(255, 255, 255, 0.92);
+  --wn-text-2: rgba(255, 255, 255, 0.72);
+  --wn-text-3: rgba(255, 255, 255, 0.58);
+  --wn-surface: rgba(255, 255, 255, 0.1);
+  --wn-surface-hover: rgba(255, 255, 255, 0.18);
+  --wn-divider: rgba(255, 255, 255, 0.09);
+}
+
+.island-card[data-style='glass'] {
+  /* WinIsland「glass 无 host backdrop」降级色：比纯黑透一点，但保证任何桌面下都不是白底 */
+  --wn-bg: rgba(32, 32, 36, 0.804);
+  --wn-border: rgba(255, 255, 255, 0.157);
+  --wn-surface: rgba(255, 255, 255, 0.14);
+  --wn-surface-hover: rgba(255, 255, 255, 0.22);
+}
+
+.island-card[data-style='tinted'] {
+  --wn-bg: #0b0b0f;
+  --wn-border: rgba(255, 255, 255, 0.14);
+}
+
+.island-card.hidden-placeholder {
+  visibility: hidden;
+}
+
+/* 连续圆角形状：填充 + 1px 描边（描边画在裁切之外，与 WinIsland 一致） */
+.island-card .shape {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+}
+
+.island-card .shape path {
+  fill: var(--wn-bg);
+  stroke: var(--wn-border);
+  stroke-width: 1;
+  /*
+    投影**始终声明**，形态切换只改参数 —— 不要写成"只在 .expanded 上挂 filter"。
+    给元素加 / 去 CSS filter 会让 Chromium 新建或销毁它的渲染表面（effect node），
+    而首帧的合成可能发生在新表面栅格化完成之前，那一帧会被当作空内容画出去；
+    卡片的底色恰恰就画在这个被过滤的元素上（fill 在本元素），于是**开/合的那一瞬间
+    底座会闪掉一帧、只剩未过滤的文字层**（用户反馈的"开合时一瞬间的闪动"）。
+    胶囊态用 0 0 0：硬轮廓投影正好压在路径底下，肉眼等同无投影，与 WinIsland
+    "只有展开态有投影"的观感一致。
+  */
+  filter: drop-shadow(0 var(--card-shadow-y, 0px) var(--card-shadow-blur, 0px) rgba(0, 0, 0, 0.11));
+}
+
+/* 内容层裁切到同一形状内；内部两层（胶囊层 / 展开层）交叉淡入 */
+.island-card .content {
+  position: absolute;
+  inset: 0;
+  display: block;
+  clip-path: var(--card-path);
+  overflow: hidden;
+}
+
+.island-card .layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  pointer-events: none;
+}
+
+/* 只有"当前形态"的那一层响应鼠标，避免透明层的按钮被误点 */
+.island-card.pill .pill-layer,
+.island-card.expanded .expanded-layer {
+  pointer-events: auto;
+}
+
+/* 展开态投影（WinIsland: rgba(0,0,0,.11)、y+2、σ=3 → CSS 0 2px 3px）。
+   只改参数、不动 filter 声明本身，理由见上面的 .shape path。 */
+.island-card.expanded .shape path {
+  --card-shadow-y: 2px;
+  --card-shadow-blur: 3px;
+}
+
+/* 状态色：只做"内层微染 + 描边"，不外溢（保持桌面干净，也不会有光晕硬边） */
+.island-card.urgent .shape path,
+.island-card.call .shape path {
+  stroke: color-mix(in srgb, var(--state-color) 62%, rgba(255, 255, 255, 0.2));
+}
+
+.island-card .tint {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.island-card.urgent .tint {
+  opacity: 1;
+  background: radial-gradient(120% 90% at 50% 0%, rgba(255, 69, 58, 0.22), transparent 68%);
+}
+
+.island-card.call .tint {
+  opacity: 1;
+  background: radial-gradient(120% 90% at 50% 0%, rgba(255, 159, 10, 0.2), transparent 68%);
+}
+
+.island-card[data-style='tinted'] .tint {
+  opacity: 1;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--island-accent) 30%, transparent),
+    transparent 62%
+  );
+}
+
+/* ---------------------------------------------------------------- 胶囊（compact） */
+
+.pill-layer {
+  flex-direction: row;
+  align-items: center;
+  /* 水平对齐交给 .pill-inner（它固定为胶囊几何，且按停靠方式贴边/居中） */
+  justify-content: flex-start;
+}
+
+/**
+ * 胶囊内容盒：**固定为胶囊自己的宽高与内边距**，不随卡片形变重排。
+ *
+ * 为什么必须固定：卡片在开合时 268 ⇄ 424 变宽变窄，而中心停靠下卡片的左右边都会动。
+ * 内容若跟着卡片宽度走，就会出现"文字先按宽卡片铺开、再随卡片收窄被省略号收回"
+ * （用户反馈的"新消息那行字往右跳一下再缩回"），底部也会被收缩的形状裁掉一块。
+ * 固定成胶囊几何后：文字在整段动画里位置与省略号都不变，只是随卡片一起淡出/淡入。
+ *
+ * 贴哪条边与卡片停靠方式一致（左停靠贴左、右停靠贴右、居中则居中对齐）——
+ * 这样卡片变宽时内容也不会横移，静止态外观与之前完全一致。
+ */
+.pill-inner {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: calc(var(--island-font, 13px) * 0.62);
+  width: var(--island-w, 268px);
+  height: 100%;
+  padding: 0 calc(var(--island-font, 13px) * 0.78);
+}
+
+.island-card[data-anchor='center'] .pill-layer {
+  justify-content: center;
+}
+
+.island-card[data-anchor='right'] .pill-layer {
+  justify-content: flex-end;
+}
+
+/**
+ * 收回动画（`reason === 'closing'`）：胶囊收回过程中**不显示任何胶囊内容**。
+ *
+ * 这时状态已经在同一帧清空（没有可展示的消息），若照常渲染胶囊层，卡片刚收回就会闪出
+ * 一句"新消息 · 点击查看" —— 语义正好相反。这里保留 DOM（宽度固定为 `--island-w`，
+ * 内容盒不会重排，符合"开合时胶囊内容不许重排"的约定）只把内容隐藏，
+ * 卡片形状照样沿既有弹簧收回，随后由主进程淡出窗口。
+ */
+.island-card.closing .pill-inner {
+  opacity: 0;
+}
+
+.pill-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: calc(var(--island-font, 13px) * 1.24);
+  height: calc(var(--island-font, 13px) * 1.24);
+  border-radius: 50%;
+  background: var(--wn-surface);
+  color: var(--wn-text-1);
+}
+
+.pill-icon svg {
+  width: calc(var(--island-font, 13px) * 0.86);
+  height: calc(var(--island-font, 13px) * 0.86);
+}
+
+.pill-icon.call {
+  color: #ff9f0a;
+}
+
+.pill-icon.urgent {
+  color: #ff453a;
+}
+
+.pill-icon.homework {
+  color: var(--island-accent);
+}
+
+.pill-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 1px;
+}
+
+.pill-title {
+  font-size: calc(var(--island-font, 13px) * 0.92);
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--wn-text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pill-sub {
+  font-size: calc(var(--island-font, 13px) * 0.74);
+  line-height: 1.15;
+  color: var(--wn-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 多条消息时把类型做成胶囊小标签（叫人/作业/通知），收起状态也能一眼看出内容构成 */
+.pill-types {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--island-font, 13px) * 0.2);
+  flex: 0 0 auto;
+  padding-right: calc(var(--island-font, 13px) * 0.2);
+}
+
+.pill-type {
+  font-size: calc(var(--island-font, 13px) * 0.6);
+  line-height: 1.4;
+  padding: 0 calc(var(--island-font, 13px) * 0.36);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--wn-text-2);
+  white-space: nowrap;
+}
+
+.pill-chevron {
+  display: inline-flex;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.34);
+  flex: 0 0 auto;
+}
+
+.pill-chevron svg {
+  width: calc(var(--island-font, 13px) * 0.86);
+  height: calc(var(--island-font, 13px) * 0.86);
+}
+
+/* ---------------------------------------------------------------- 展开卡（expanded） */
+
+.expanded-layer {
+  /* 关键：展开层必须纵向排列。此前把 flex-direction 从基类挪到分层时漏了这一条，
+     导致展开卡内容横排（标题/元信息/按钮散落，实机可见） */
+  flex-direction: column;
+  padding: calc(var(--island-font, 13px) * 1.4) calc(var(--island-font, 13px) * 1.6);
+  gap: calc(var(--island-font, 13px) * 0.7);
+  justify-content: center;
+}
+
+/*
+ * 多条通知的列表形态。
+ *
+ * 这里的每个尺寸都必须与 @classhelper/shared 的 `ISLAND_LIST_METRICS` 一一对应：
+ * 主进程按那份度量算出**窗口包围盒**（列表比普通展开卡高，窗口不够高会把底部按钮裁掉），
+ * 渲染进程按同一份度量排布。改这里就必须改那里，否则会出现"最后一行被切掉"。
+ * 选择器一律写成 `.expanded-layer.list-mode ...`（比基类的单类选择器更具体），
+ * 免得被后面定义的 `.title` / `.body` 覆盖掉尺寸——那样高度就对不上算出来的值了。
+ */
+.expanded-layer.list-mode {
+  /* 高度已经算准，改 flex-start：居中排版一旦有像素级误差会把上下两端同时切掉 */
+  justify-content: flex-start;
+}
+
+.expanded-layer.list-mode .head {
+  height: calc(var(--island-font, 13px) * 1.7);
+}
+
+.expanded-layer.list-mode .title {
+  flex: 0 0 auto;
+  display: block;
+  height: calc(var(--island-font, 13px) * 1.4);
+  line-height: 1.4;
+  -webkit-line-clamp: unset;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.expanded-layer.list-mode .body {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: calc(var(--island-font, 13px) * 0.4);
+  justify-content: flex-start;
+  overflow: hidden;
+}
+
+.head-icon.list {
+  background: color-mix(in srgb, var(--island-accent) 20%, transparent);
+  color: var(--island-accent);
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--island-font, 13px) * 0.55);
+  flex: 0 0 auto;
+  width: 100%;
+  height: calc(var(--island-font, 13px) * 2.7);
+  padding: 0 calc(var(--island-font, 13px) * 0.6);
+  border: none;
+  border-radius: calc(var(--island-font, 13px) * 0.5);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--wn-text-1);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--ch-dur-fast) var(--ch-ease-out);
+}
+
+.row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: calc(var(--island-font, 13px) * 1.3);
+  height: calc(var(--island-font, 13px) * 1.3);
+  border-radius: calc(var(--island-font, 13px) * 0.36);
+  background: var(--wn-surface);
+  color: var(--wn-text-2);
+}
+
+.row-icon svg {
+  width: calc(var(--island-font, 13px) * 0.86);
+  height: calc(var(--island-font, 13px) * 0.86);
+}
+
+.row-icon.call {
+  color: #ff9f0a;
+}
+
+.row-icon.homework {
+  color: var(--island-accent);
+}
+
+.row-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.row-title {
+  font-size: calc(var(--island-font, 13px) * 0.9);
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-sub {
+  font-size: calc(var(--island-font, 13px) * 0.68);
+  line-height: 1.1;
+  color: var(--wn-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: calc(var(--island-font, 13px) * 1.25);
+  padding: 0 calc(var(--island-font, 13px) * 0.5);
+  border-radius: 999px;
+  font-size: calc(var(--island-font, 13px) * 0.68);
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.78);
+}
+
+/* 列表底部的提示行：能展开时是按钮，屏幕到任务栏了就是一句"去应用里看" */
+.list-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  height: calc(var(--island-font, 13px) * 2.1);
+}
+
+.more-btn {
+  border: none;
+  background: var(--wn-surface);
+  color: var(--wn-text-1);
+  height: 100%;
+  width: 100%;
+  border-radius: calc(var(--island-font, 13px) * 0.5);
+  font-size: calc(var(--island-font, 13px) * 0.76);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--ch-dur-fast) var(--ch-ease-out);
+}
+
+.more-app {
+  font-size: calc(var(--island-font, 13px) * 0.76);
+  color: var(--wn-text-3);
+  white-space: nowrap;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--island-font, 13px) * 0.7);
+  flex: 0 0 auto;
+}
+
+.head-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--island-font, 13px) * 1.62);
+  height: calc(var(--island-font, 13px) * 1.62);
+  border-radius: calc(var(--island-font, 13px) * 0.5);
+  background: var(--wn-surface);
+  color: var(--wn-text-1);
+  flex: 0 0 auto;
+}
+
+.head-icon svg {
+  width: calc(var(--island-font, 13px) * 1.05);
+  height: calc(var(--island-font, 13px) * 1.05);
+}
+
+.head-icon.urgent {
+  background: rgba(255, 69, 58, 0.2);
+  color: #ff453a;
+}
+
+.head-icon.call {
+  background: rgba(255, 159, 10, 0.2);
+  color: #ff9f0a;
+}
+
+.head-icon.homework {
+  background: color-mix(in srgb, var(--island-accent) 22%, transparent);
+  color: var(--island-accent);
+}
+
+.head-meta {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--island-font, 13px) * 0.55);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: calc(var(--island-font, 13px) * 1.5);
+  padding: 0 calc(var(--island-font, 13px) * 0.62);
+  border-radius: 999px;
+  font-size: calc(var(--island-font, 13px) * 0.76);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: color-mix(in srgb, var(--island-accent) 26%, transparent);
+  color: color-mix(in srgb, var(--island-accent) 70%, #ffffff);
+  flex: 0 0 auto;
+}
+
+.badge-urgent {
+  background: rgba(255, 69, 58, 0.24);
+  color: #ff6961;
+}
+
+.badge-high {
+  background: rgba(255, 159, 10, 0.22);
+  color: #ffb340;
+}
+
+.badge-low,
+.badge-normal {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.badge-call {
+  background: rgba(255, 159, 10, 0.24);
+  color: #ffb340;
+}
+
+.badge-homework {
+  background: color-mix(in srgb, var(--island-accent) 26%, transparent);
+  color: color-mix(in srgb, var(--island-accent) 72%, #ffffff);
+}
+
+.live-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--island-font, 13px) * 0.32);
+  font-size: calc(var(--island-font, 13px) * 0.76);
+  color: #ff6961;
+  white-space: nowrap;
+}
+
+.live-dot.call {
+  color: #ffb340;
+}
+
+.live-dot.muted {
+  color: var(--wn-text-3);
+}
+
+.head-sub {
+  font-size: calc(var(--island-font, 13px) * 0.78);
+  color: var(--wn-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--island-font, 13px) * 1.7);
+  height: calc(var(--island-font, 13px) * 1.7);
+  border: none;
+  border-radius: 50%;
+  background: var(--wn-surface);
+  color: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition:
+    background var(--ch-dur-fast) var(--ch-ease-out),
+    color var(--ch-dur-fast) var(--ch-ease-out);
+}
+
+.icon-btn svg {
+  width: calc(var(--island-font, 13px) * 0.8);
+  height: calc(var(--island-font, 13px) * 0.8);
+}
+
+.title {
+  margin: 0;
+  font-size: calc(var(--island-font, 13px) * 1.08);
+  font-weight: 700;
+  line-height: 1.3;
+  color: #fff;
+  flex: 0 0 auto;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.body {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--island-font, 13px) * 0.35);
+  overflow: hidden;
+}
+
+.content-text {
+  margin: 0;
+  font-size: calc(var(--island-font, 13px) * 0.95);
+  line-height: 1.42;
+  color: var(--wn-text-2);
+  word-break: break-word;
+}
+
+.call-hint {
+  margin: 0;
+  font-size: calc(var(--island-font, 13px) * 0.85);
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--state-color) 66%, #ffffff);
+  word-break: break-word;
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--island-font, 13px) * 0.7);
+  flex: 0 0 auto;
+  margin-top: calc(var(--island-font, 13px) * 0.5);
+  padding-top: calc(var(--island-font, 13px) * 0.7);
+  border-top: 1px solid var(--wn-divider);
+}
+
+.more {
+  font-size: calc(var(--island-font, 13px) * 0.78);
+  color: var(--wn-text-2);
+  white-space: nowrap;
+}
+
+.more.muted {
+  color: var(--wn-text-3);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--island-font, 13px) * 0.5);
+  flex: 0 0 auto;
+}
+
+.ghost-btn,
+.solid-btn {
+  height: calc(var(--island-font, 13px) * 2.05);
+  padding: 0 calc(var(--island-font, 13px) * 0.9);
+  border: none;
+  border-radius: 999px;
+  font-size: calc(var(--island-font, 13px) * 0.76);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--ch-dur-fast) var(--ch-ease-out),
+    transform var(--ch-dur-instant) var(--ch-ease-out);
+}
+
+.ghost-btn {
+  background: var(--wn-surface);
+  color: var(--wn-text-1);
+}
+
+.solid-btn {
+  background: #ffffff;
+  color: #0b0b0f;
+}
+
+.island-card.call .solid-btn {
+  background: #ff9f0a;
+  color: #1a1205;
+}
+
+.island-card.urgent .solid-btn {
+  background: #ff453a;
+  color: #ffffff;
+}
+
+.ghost-btn:active,
+.solid-btn:active {
+  transform: scale(0.97);
+}
+
+/* --------------------------------------------------------------- 悬停微交互
+ *
+ * **必须关在 `@media (hover: hover) and (pointer: fine)` 里**：教室机器上的希沃触摸屏
+ * 点一下会产生"幽灵 hover"并**一直粘着**，直到点别处才消失 —— 不关的话，点过「知道了」
+ * 的按钮会永远保持高亮（同 AGENTS.md §5 第 30 条那类问题）。
+ * 这是 beUI `useHoverCapable` 的 CSS 版：纯样式效果用媒体查询就够，不必挂 composable。
+ */
+@media (hover: hover) and (pointer: fine) {
+  .list-row:hover {
+    background: var(--wn-surface);
+  }
+
+  .more-btn:hover,
+  .ghost-btn:hover {
+    background: var(--wn-surface-hover);
+  }
+
+  .icon-btn:hover {
+    background: var(--wn-surface-hover);
+    color: #ffffff;
+  }
+}
+
+/* 同一个通知组件用于经典岛绝对层与自定义岛自然测量层。 */
+.classic-notifications {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}

@@ -1,4 +1,4 @@
-/* ClassIsland ClassicTheme: 40px 行高、12px 内边距、550ms 背景、200ms 内容淡入。 */
+/* 自定义岛：共用经典岛形状/动效与通知排版，组件行采用居中自然尺寸并自适应。 */
 .resident-window {
   position: fixed;
   inset: 10px;
@@ -16,18 +16,14 @@
   max-width: none;
   max-height: none;
   overflow: hidden;
-  overflow: clip;
+  clip-path: var(--card-path);
   isolation: isolate;
   pointer-events: auto;
-  background: var(--resident-background);
+  background: none;
   border-radius: var(--resident-radius);
-  font-size: 16px;
+  font-size: var(--island-font);
   line-height: 1.4;
-  box-shadow: 0 2px 3px #0000001c;
-  transition:
-    width var(--resident-duration) cubic-bezier(0, 1, 0.5, 1.1),
-    height var(--resident-duration) cubic-bezier(0, 1, 0.5, 1.1),
-    border-radius var(--resident-fade-duration) ease;
+  box-shadow: none;
 }
 .resident-window[data-anchor='left'] .resident-card {
   left: 0;
@@ -86,7 +82,7 @@
   align-items: center;
   gap: 6px;
   padding: 0 12px;
-  min-height: 40px;
+  min-height: max(40px, calc(var(--island-font) * 2.5));
 }
 .resident-window .resident-card.resident-separated {
   background: transparent;
@@ -109,17 +105,20 @@
 .resident-card .layout-rows {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
   min-width: 0;
 }
 .resident-card .row-components {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0;
-  min-height: 40px;
+  min-height: max(40px, calc(var(--island-font) * 2.5));
 }
 .resident-card .resident-compact .component-node:not(.container) {
-  min-height: 40px;
-  max-height: 40px;
+  min-height: max(40px, calc(var(--island-font) * 2.5));
+
   display: flex;
   align-items: center;
   padding: 0 calc(var(--row-gap, 12px) / 2);
@@ -158,6 +157,7 @@
 .resident-card .resident-details {
   min-width: 160px;
   padding: 0 12px 12px;
+  text-align: center;
 }
 .resident-card .resident-panel-heading {
   display: flex;
@@ -193,89 +193,6 @@
   width: 100%;
   max-width: 100%;
 }
-.resident-card .resident-messages {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.resident-card .list-row {
-  display: block;
-  height: auto;
-  min-height: 0;
-  padding: 12px;
-  border: 1px solid #ffffff18;
-  border-radius: 6px;
-  background: #ffffff08;
-}
-.resident-card .resident-message-title {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.resident-card .resident-message-title strong {
-  flex: 1;
-  min-width: 0;
-  font-size: 16px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.resident-card .resident-message-title > span {
-  flex: none;
-  color: #ffffff80;
-  font-size: 11px;
-}
-.resident-card .list-row[data-priority='URGENT'] .resident-message-title > span {
-  color: #ff9c94;
-}
-.resident-card .list-row p {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  margin: 6px 0;
-  font-size: 14px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-  white-space: pre-line;
-}
-.resident-card .list-row:only-of-type p {
-  -webkit-line-clamp: 5;
-}
-.resident-card .list-row small {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: #ffffff80;
-}
-.resident-card .resident-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding-top: 4px;
-}
-.resident-card .resident-actions button:first-child {
-  margin-right: auto;
-}
-.resident-card .resident-actions button,
-.resident-card .resident-more {
-  border: 0;
-  border-radius: 6px;
-  padding: 8px 10px;
-  background: #ffffff0d;
-  color: inherit;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.resident-card .resident-actions .solid-btn {
-  background: #ffffffdd;
-  color: #202124;
-}
 .resident-card button:focus-visible {
   outline: 2px solid #adc4ff;
   outline-offset: -2px;
@@ -301,4 +218,38 @@
   to {
     opacity: 1;
   }
+}
+
+.resident-card .resident-details.with-messages {
+  padding: 0;
+  min-width: 0;
+}
+.resident-card .classic-notifications {
+  position: relative;
+  text-align: center;
+}
+.resident-card .classic-notifications .head-meta {
+  justify-content: center;
+}
+.resident-card .classic-notifications .foot {
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.resident-card .classic-notifications .row-text {
+  align-items: center;
+}
+.resident-card .classic-notifications .row-title,
+.resident-card .classic-notifications .row-sub {
+  max-width: 100%;
+}
+.resident-card .resident-source .component-node {
+  text-align: center;
+  justify-content: center;
+}
+.resident-card .resident-compact .schedule > div {
+  align-items: center;
+}
+.resident-card.resident-separated > .shape,
+.resident-card.resident-separated > .tint {
+  visibility: hidden;
 }

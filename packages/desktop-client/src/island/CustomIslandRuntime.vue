@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type CSSProperties } from 'vue';
 import {
-  CLASSISLAND_ISLAND_METRICS as CI,
   ISLAND_SHADOW_PAD,
-  PRIORITY_LABELS,
   PRIORITY_RANK,
   type IslandAppearance,
   type IslandLayoutSettings,
@@ -12,6 +10,9 @@ import {
 } from '@classhelper/shared';
 import ComponentNode from './ComponentNode.vue';
 import ComponentIcon from './ComponentIcon.vue';
+import ClassicNotifications from './ClassicNotifications.vue';
+import { squirclePath } from './squircle.js';
+import { SpringValue } from './spring.js';
 
 const props = defineProps<{
   settings: IslandLayoutSettings;
@@ -28,7 +29,7 @@ const messages = computed(() => {
   );
   return [...unique.values()].sort(
     (a, b) =>
-      PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
+      PRIORITY_RANK[b.priority] - PRIORITY_RANK[a.priority] ||
       Date.parse(b.createdAt) - Date.parse(a.createdAt),
   );
 });
@@ -47,13 +48,6 @@ const anchor = computed(() =>
       ? 'right'
       : 'center',
 );
-const capacity = computed(() =>
-  Math.max(1, Math.floor((available.value.height / scheme.value.scale - 130) / 104)),
-);
-const visibleMessages = computed(() =>
-  messages.value.slice(0, props.state.listExpanded ? capacity.value : Math.min(3, capacity.value)),
-);
-const remaining = computed(() => messages.value.length - visibleMessages.value.length);
 function fitted(size: { width: number; height: number }) {
   // 以未变形内容测量；字体、配置缩放、行数和屏幕变化都参与适配，不从动画中的壳反推内容。
   const scale = Math.min(
@@ -66,23 +60,75 @@ function fitted(size: { width: number; height: number }) {
 const compactFit = computed(() => fitted(natural.value.compact));
 const detailsFit = computed(() => fitted(natural.value.details));
 const fit = computed(() => (expanded.value ? detailsFit.value : compactFit.value));
+const morph = ref({ width: 40, height: 40, radius: 20 });
+const springs = { width: new SpringValue(40), height: new SpringValue(40), radius: new SpringValue(20) };
+const path = computed(() => squirclePath(morph.value.width, morph.value.height, morph.value.radius));
 const style = computed<CSSProperties>(() => ({
-  width: `${fit.value.width}px`,
-  height: `${fit.value.height}px`,
-  color: scheme.value.foreground,
-  '--resident-background': `${scheme.value.color}${Math.round(scheme.value.opacity * 255)
-    .toString(16)
-    .padStart(2, '0')}`,
-  '--resident-radius': `${scheme.value.radius * fit.value.scale}px`,
+  width: `${morph.value.width}px`,
+  height: `${morph.value.height}px`,
+  '--card-path': `path("${path.value}")`,
+  '--island-font': `${props.appearance.fontSize}px`,
+  '--island-accent': props.appearance.accent,
+  '--state-color':
+    props.state.active?.priority === 'URGENT'
+      ? '#ff453a'
+      : props.state.active?.kind === 'call'
+        ? '#ff9f0a'
+        : props.appearance.accent,
+  '--resident-background': 'var(--wn-bg)',
+  '--resident-radius': `${morph.value.radius}px`,
   '--resident-scale': fit.value.scale,
   '--custom-row-gap': `${scheme.value.spacing}px`,
   '--resident-row-width': `${Math.max(60, available.value.width / scheme.value.scale - 58)}px`,
-  '--secondary': `${CI.secondaryFontSize}px`,
-  '--emphasized': `${CI.emphasizedFontSize}px`,
-  '--large': `${CI.largeFontSize}px`,
-  '--resident-duration': motion.value ? `${550 / props.appearance.speed}ms` : '0ms',
+  '--secondary': `${props.appearance.fontSize * 0.78}px`,
+  '--emphasized': `${props.appearance.fontSize * 1.1}px`,
+  '--large': `${props.appearance.fontSize * 1.3}px`,
   '--resident-fade-duration': motion.value ? `${200 / props.appearance.speed}ms` : '0ms',
 }));
+let morphFrame = 0;
+let morphFallback: ReturnType<typeof setTimeout> | undefined;
+function animate() {
+  const size = fit.value;
+  const radius = Math.min(
+    expanded.value ? props.appearance.radius * 2.4 : props.appearance.radius,
+    size.width / 2,
+    size.height / 2,
+  );
+  const target = { width: size.width, height: size.height, radius };
+  const snap = () => {
+    cancelAnimationFrame(morphFrame);
+    morphFrame = 0;
+    clearTimeout(morphFallback);
+    for (const key of ['width', 'height', 'radius'] as const) springs[key].snap(target[key]);
+    morph.value = target;
+    void nextTick(reportHit);
+  };
+  if (!motion.value || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    snap();
+    return;
+  }
+  for (const key of ['width', 'height', 'radius'] as const) springs[key].setTarget(target[key]);
+  clearTimeout(morphFallback);
+  morphFallback = setTimeout(snap, 1200 / props.appearance.speed);
+  if (morphFrame) return;
+  let last = performance.now();
+  const frame = (time: number) => {
+    const dt = (time - last) * props.appearance.speed;
+    last = time;
+    // 三个维度每帧都推进；不能用短路 || 导致后面的维度等宽度结束才开始。
+    const moving = Object.values(springs)
+      .map((s) => s.step(dt))
+      .some(Boolean);
+    morph.value = { width: springs.width.value, height: springs.height.value, radius: springs.radius.value };
+    if (moving) morphFrame = requestAnimationFrame(frame);
+    else {
+      morphFrame = 0;
+      clearTimeout(morphFallback);
+      void nextTick(reportHit);
+    }
+  };
+  morphFrame = requestAnimationFrame(frame);
+}
 function action(value: 'expand' | 'collapse' | 'expand-list' | 'dismiss-all' | 'mark-all-read' | 'open-app') {
   window.island?.sendAction(value);
 }
@@ -161,26 +207,36 @@ function measure() {
     });
   });
 }
-function resize() {
+function resizeCanvas(width = innerWidth, height = innerHeight) {
   available.value = {
-    width: Math.max(40, innerWidth - 2 * ISLAND_SHADOW_PAD - 4),
-    height: Math.max(40, innerHeight - 2 * ISLAND_SHADOW_PAD - 4),
+    width: Math.max(40, width - 2 * ISLAND_SHADOW_PAD - 4),
+    height: Math.max(40, height - 2 * ISLAND_SHADOW_PAD - 4),
   };
   measure();
 }
+const resize = () => resizeCanvas();
+let stopViewport: (() => void) | undefined;
 function visibility() {
   visible.value = !document.hidden;
   void nextTick(reportHit);
 }
 // 不深度监听整份状态；只在目标内容/几何变化时测量，时钟每秒只改文本。
 watch([expanded, scheme, () => props.state.listExpanded, messages], measure, { deep: true, flush: 'post' });
-watch(fit, trackHit, { flush: 'post' });
+watch(
+  [fit, motion, () => props.appearance.radius, () => props.appearance.speed],
+  () => {
+    animate();
+    trackHit();
+  },
+  { flush: 'post' },
+);
 watch(
   () => props.appearance.position,
   () => void nextTick(trackHit),
 );
 onMounted(() => {
   resize();
+  stopViewport = window.island?.onViewport((v) => resizeCanvas(v.width, v.height));
   observer = new ResizeObserver(measure);
   if (compact.value) observer.observe(compact.value);
   if (details.value) observer.observe(details.value);
@@ -190,10 +246,13 @@ onMounted(() => {
   void document.fonts.ready.then(measure);
 });
 onUnmounted(() => {
+  stopViewport?.();
   observer?.disconnect();
   clearInterval(clock);
   clearTimeout(hitTimer);
   cancelAnimationFrame(hitFrame);
+  cancelAnimationFrame(morphFrame);
+  clearTimeout(morphFallback);
   window.removeEventListener('resize', resize);
   document.removeEventListener('visibilitychange', visibility);
   window.island?.reportResidentControl(null);
@@ -209,19 +268,42 @@ onUnmounted(() => {
   >
     <section
       ref="shell"
-      class="custom-card resident-card"
-      :class="{ 'resident-open': expanded, 'resident-separated': scheme.separated && !expanded }"
+      class="custom-card resident-card island-card"
+      :data-style="appearance.style"
+      :class="{
+        'resident-open': expanded,
+        expanded,
+        pill: !expanded,
+        urgent: state.active?.priority === 'URGENT',
+        call: state.active?.kind === 'call',
+        'resident-separated': scheme.separated && !expanded,
+      }"
       :style="style"
       :role="expanded ? 'region' : 'button'"
       tabindex="0"
       :aria-label="
-        expanded ? '常驻岛内容' : messages.length ? `查看 ${messages.length} 条通知` : '展开常驻岛'
+        expanded
+          ? '自定义灵动岛内容'
+          : messages.length
+            ? `查看 ${messages.length} 条通知`
+            : '展开自定义灵动岛'
       "
       :aria-expanded="expanded"
       @click="open"
       @keydown="key"
       @transitionend.self="reportHit"
     >
+      <svg
+        class="shape"
+        :width="morph.width"
+        :height="morph.height"
+        :viewBox="`0 0 ${morph.width} ${morph.height}`"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <path :d="path" />
+      </svg>
+      <span class="tint" aria-hidden="true" />
       <div
         class="resident-page resident-compact-page"
         :style="{ '--resident-scale': compactFit.scale }"
@@ -256,7 +338,7 @@ onUnmounted(() => {
           <button
             class="resident-bell"
             :class="{ 'bell-empty': !messages.length }"
-            :aria-label="messages.length ? `查看 ${messages.length} 条通知` : '展开常驻岛'"
+            :aria-label="messages.length ? `查看 ${messages.length} 条通知` : '展开自定义灵动岛'"
             @click.stop="action('expand')"
           >
             <ComponentIcon v-if="messages.length" kind="notification" />
@@ -287,48 +369,27 @@ onUnmounted(() => {
           ref="details"
           class="resident-source resident-details"
           :class="{ 'with-messages': messages.length }"
-          :style="
-            messages.length ? { width: `${Math.min(440, available.width / scheme.scale)}px` } : undefined
-          "
         >
-          <header class="resident-panel-heading">
-            <span>{{ messages.length ? `通知 · ${messages.length}` : '常驻岛' }}</span>
-            <button class="icon-btn" aria-label="收起常驻岛" @click.stop="action('collapse')">
+          <ClassicNotifications
+            v-if="messages.length"
+            id="custom-alert-host"
+            :state="state"
+            :appearance="appearance"
+            :max-height="available.height / scheme.scale"
+          />
+          <header v-else class="resident-panel-heading">
+            <span>自定义灵动岛</span>
+            <button class="icon-btn" aria-label="收起自定义灵动岛" @click.stop="action('collapse')">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
                 <path d="m8 14 4-4 4 4" />
               </svg>
             </button>
           </header>
-          <div v-if="messages.length" id="custom-alert-host" class="resident-messages">
-            <article
-              v-for="item in visibleMessages"
-              :key="item.id"
-              class="list-row"
-              :data-priority="item.priority"
-            >
-              <div class="resident-message-title">
-                <strong>{{ item.title }}</strong>
-                <span>{{ PRIORITY_LABELS[item.priority] }}</span>
-              </div>
-              <p>{{ item.content }}</p>
-              <small>{{ [item.teacherName, item.courseName].filter(Boolean).join(' · ') }}</small>
-            </article>
-            <button
-              v-if="remaining"
-              class="resident-more"
-              @click.stop="action(state.listExpanded ? 'open-app' : 'expand-list')"
-            >
-              {{
-                state.listExpanded ? `其余 ${remaining} 条在应用中查看` : `展开更多（还有 ${remaining} 条）`
-              }}
-            </button>
-            <footer class="resident-actions">
-              <button @click.stop="action('open-app')">查看完整内容</button>
-              <button @click.stop="action('mark-all-read')">标为已读</button>
-              <button class="solid-btn" @click.stop="action('dismiss-all')">知道了</button>
-            </footer>
-          </div>
-          <div v-else class="layout-rows resident-expanded-rows" :style="{ gap: `${scheme.spacing}px` }">
+          <div
+            v-if="!messages.length"
+            class="layout-rows resident-expanded-rows"
+            :style="{ gap: `${scheme.spacing}px` }"
+          >
             <section
               v-for="row in scheme.expandedRows"
               :key="row.id"
@@ -356,4 +417,4 @@ onUnmounted(() => {
     </section>
   </div>
 </template>
-<style src="./resident-island.css"></style>
+<style src="./custom-runtime.css"></style>

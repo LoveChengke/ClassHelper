@@ -110,7 +110,7 @@ const style = computed<CSSProperties>(() => {
       : ({ stretch: 'stretch', start: 'flex-start', center: 'center', end: 'flex-end' } as const)[
           n.advanced.align
         ],
-    textAlign: n.advanced.align === 'center' ? 'center' : 'start',
+    textAlign: n.advanced.align === 'start' ? 'start' : n.advanced.align === 'end' ? 'end' : 'center',
     color: override && a.customForegroundEnabled ? a.foreground : undefined,
     background: override && a.customBackgroundEnabled ? color : undefined,
     borderRadius: override && a.customCornerRadiusEnabled ? `${a.cornerRadius}px` : undefined,

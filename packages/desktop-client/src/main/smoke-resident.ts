@@ -60,7 +60,7 @@ export async function verifyResidentSmoke(
   scheme.expandedRows[0]!.nodes = [islandNode('date', 'resident-date'), expandedText];
   island.handleAction({ action: 'dismiss-all' });
   await pause();
-  await check('旧岛配置默认关闭常驻，并兼容补齐空闲展开布局', () => {
+  await check('旧自定义配置迁移到统一常驻界面，并补齐空闲展开布局', () => {
     const legacy = JSON.parse(JSON.stringify(fixture));
     delete legacy.residentEnabled;
     delete legacy.schemes[0].expandedRows;
@@ -69,7 +69,7 @@ export async function verifyResidentSmoke(
     Object.assign(oversized.schemes[0], { scale: 99, radius: 99, opacity: -1, spacing: 999 });
     const bounds = normalizeIslandLayouts(oversized).schemes[0]!;
     return (
-      !value.residentEnabled &&
+      value.residentEnabled &&
       value.schemes[0]!.expandedRows[0]!.nodes.length > 0 &&
       bounds.scale === 2.5 &&
       bounds.radius === 20 &&
@@ -164,7 +164,9 @@ export async function verifyResidentSmoke(
   });
   await shot('resident-empty-expanded');
   await check('无通知展开页可以收回常驻岛且尺寸恢复', async () => {
-    await win.webContents.executeJavaScript(`document.querySelector('[aria-label="收起常驻岛"]')?.click()`);
+    await win.webContents.executeJavaScript(
+      `document.querySelector('[aria-label="收起自定义灵动岛"]')?.click()`,
+    );
     await pause(800);
     return (
       island.getState().mode === 'hidden' &&
@@ -187,7 +189,7 @@ export async function verifyResidentSmoke(
     island.pushNotification(message('resident-normal', '常驻通知一', 'NORMAL'));
     await pause();
     return (
-      island.getState().mode === 'pill' &&
+      island.getState().mode === 'hidden' &&
       (await win.webContents.executeJavaScript(`(() => {
       const card=document.querySelector('.custom-card'),bell=card?.querySelector('.resident-bell');
       return Boolean(bell&&!bell.classList.contains('bell-empty')&&bell.textContent.trim()==='1'&&Math.abs(card.getBoundingClientRect().width-${compactWidth})<=2&&!card.classList.contains('has-alert'));
@@ -195,18 +197,20 @@ export async function verifyResidentSmoke(
     );
   });
   await shot('resident-bell');
-  await check('紧急消息也先提示铃铛，重复消息不增加数量', async () => {
+  await check('紧急消息沿用经典岛立即展开，重复消息不增加数量', async () => {
     island.pushNotification(message('resident-urgent', '常驻通知二', 'URGENT'));
     island.pushNotification(message('resident-urgent', '常驻通知二', 'URGENT'));
     await pause();
     return (
-      island.getState().mode === 'pill' &&
+      island.getState().mode === 'expanded' &&
       (await win.webContents.executeJavaScript(
         `document.querySelector('.resident-bell')?.textContent.trim()==='2'`,
       ))
     );
   });
   await check('点击铃铛展开通知列表，上课时也可主动查看', async () => {
+    island.handleAction({ action: 'collapse' });
+    await pause(800);
     await win.webContents.executeJavaScript(`document.querySelector('.resident-bell')?.click()`);
     await pause(1800);
     return (
@@ -219,7 +223,7 @@ export async function verifyResidentSmoke(
   await shot('resident-notifications');
   await check('收起通知保留铃铛，键盘可重新展开', async () => {
     await win.webContents.executeJavaScript(
-      `document.querySelector('.resident-panel-heading .icon-btn')?.click()`,
+      `document.querySelector('.classic-notifications .icon-btn')?.click()`,
     );
     await pause(800);
     const collapsed = island.getState().mode === 'pill';
@@ -253,10 +257,57 @@ export async function verifyResidentSmoke(
     await pause();
     island.pushNotification(message('resident-after-open', '展开后新消息', 'NORMAL'));
     await pause(800);
-    const collapsed = island.getState().mode === 'pill';
+    const collapsed = island.getState().mode === 'hidden';
     island.handleAction({ action: 'dismiss-all' });
     await pause();
     return collapsed;
+  });
+  await check('课表变更立即传到常态与展开组件，重新加载后仍恢复最新快照', async () => {
+    const updated = [
+      {
+        id: 'island-schedule-live',
+        classId: 'local',
+        courseId: 'local-course',
+        dayOfWeek: new Date().getDay() || 7,
+        startTime: '00:00',
+        endTime: '23:59',
+        location: null,
+        weekStart: 1,
+        weekEnd: 40,
+        weekParity: 'ALL' as const,
+        createdAt: new Date().toISOString(),
+        course: { id: 'local-course', name: '实时课程' },
+      },
+    ];
+    const settings = JSON.parse(JSON.stringify(fixture));
+    settings.schemes[0].rows[0].nodes = [islandNode('schedule', 'live-schedule')];
+    saveConfig({ islandLayout: settings });
+    island.syncCustomLayout();
+    await pause();
+    const started = Date.now();
+    island.setClassState({ inClass: false, currentPeriodEnd: null, week: 1, schedules: updated });
+    const waitForCourse = async () => {
+      for (let i = 0; i < 30; i++) {
+        if (
+          await win.webContents.executeJavaScript(
+            `document.querySelector('.resident-compact .schedule')?.textContent.includes('实时课程')`,
+          )
+        )
+          return true;
+        await pause(20);
+      }
+      return false;
+    };
+    const immediate = (await waitForCourse()) && Date.now() - started < 600;
+    await win.webContents.reload();
+    await pause(800);
+    const restored = await waitForCourse();
+    const snapshot = await win.webContents.executeJavaScript('window.island.getSchedules()');
+    saveConfig({ islandLayout: fixture });
+    island.syncCustomLayout();
+    await pause(800);
+    island.setClassState({ inClass: true, currentPeriodEnd: null, week: 1, schedules: [] });
+    return immediate && restored && snapshot[0]?.course?.name === '实时课程';
   });
   await check('常驻岛开合复用固定画布，动画中没有滚动容器或旧胶囊形变', async () => {
     const bounds = new Set<string>();
@@ -365,8 +416,8 @@ export async function verifyResidentSmoke(
     island.handleAction({ action: 'expand-list' });
     await pause(800);
     const geometry = await win.webContents.executeJavaScript(`(() => {
-      const card=document.querySelector('.resident-card'), footer=card.querySelector('.resident-actions'), r=card.getBoundingClientRect(), f=footer?.getBoundingClientRect();
-      return {r:r.toJSON(),f:f?.toJSON(), fits:Boolean(f&&f.bottom<=r.bottom+1&&f.left>=r.left&&f.right<=r.right+1&&card.querySelector('.resident-more')&&[card,...card.querySelectorAll('*')].every(n=>!['auto','scroll'].includes(getComputedStyle(n).overflowY)))};
+      const card=document.querySelector('.resident-card'), footer=card.querySelector('.classic-notifications .foot'), r=card.getBoundingClientRect(), f=footer?.getBoundingClientRect();
+      return {r:r.toJSON(),f:f?.toJSON(), fits:Boolean(f&&f.bottom<=r.bottom+1&&f.left>=r.left&&f.right<=r.right+1&&(card.querySelector('.list-hint')||card.querySelectorAll('.list-row').length===8)&&[card,...card.querySelectorAll('*')].every(n=>!['auto','scroll'].includes(getComputedStyle(n).overflowY)))};
     })()`);
     await shot('resident-many-notifications');
     island.handleAction({ action: 'dismiss-all' });

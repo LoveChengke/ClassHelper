@@ -21,7 +21,8 @@ export interface IslandBridge {
   reportSize(value: { width: number; height: number }): void;
   reportResidentControl(value: { x: number; y: number; width: number; height: number } | null): void;
   noteResidentTouch(): void;
-  onViewport(handler: (value: { width: number; height: number }) => void): void;
+  onViewport(handler: (value: { width: number; height: number }) => void): () => void;
+  getSchedules(): Promise<ContractScheduleDto[]>;
   onSchedules(handler: (value: ContractScheduleDto[]) => void): void;
 
   onState(handler: (state: IslandState) => void): void;
@@ -74,8 +75,12 @@ const bridge: IslandBridge = {
   reportResidentControl: (value) => ipcRenderer.send('island:resident-control', value),
   noteResidentTouch: () => ipcRenderer.send('island:resident-touch'),
   onViewport: (handler) => {
-    ipcRenderer.on('island:viewport', (_event, value) => handler(value));
+    const listener = (_event: Electron.IpcRendererEvent, value: { width: number; height: number }) =>
+      handler(value);
+    ipcRenderer.on('island:viewport', listener);
+    return () => ipcRenderer.removeListener('island:viewport', listener);
   },
+  getSchedules: () => ipcRenderer.invoke('island:get-schedules'),
   onSchedules: (handler) => {
     ipcRenderer.on('island:schedules', (_event, value) => handler(value));
   },

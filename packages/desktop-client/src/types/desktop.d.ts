@@ -253,6 +253,7 @@ declare global {
     island?: IslandRendererBridge;
     /** 冒烟验证钩子，仅在 ELECTRON_SMOKE_TEST=1 时由渲染进程注册 */
     __classhelperSmoke__?: {
+      islandScheduleSyncSelfTest(): Promise<{ ok: boolean; detail: string }>;
       cacheSelfTest(): Promise<{ ok: boolean; detail: string }>;
       cacheIsolationSelfTest(): Promise<{ ok: boolean; detail: string }>;
       offlineScenario(): Promise<{ ok: boolean; detail: string }>;

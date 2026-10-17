@@ -214,7 +214,7 @@ export function normalizeIslandLayouts(input: unknown): IslandLayoutSettings {
   const fallback = defaultIslandLayouts();
   if (!input || typeof input !== 'object') return fallback;
   const raw = input as IslandLayoutSettings;
-  const resident = raw.layout === 'custom' && raw.residentEnabled === true;
+  const resident = raw.layout === 'custom';
   const clamp = (n: unknown, min: number, max: number, value: number) =>
     typeof n === 'number' && Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : value;
   const color = (v: unknown, value: string) =>
@@ -327,7 +327,8 @@ export function normalizeIslandLayouts(input: unknown): IslandLayoutSettings {
   }
   return {
     layout: raw.layout === 'custom' ? 'custom' : 'fixed',
-    residentEnabled: raw.layout === 'custom' && raw.residentEnabled === true,
+    // 旧常驻开关保留为兼容字段；自定义布局统一常驻，不再分成两种运行模式。
+    residentEnabled: raw.layout === 'custom',
     pointerFadeEnabled: raw.pointerFadeEnabled !== false,
     pointerFadeReversed: raw.pointerFadeReversed === true,
     schemes: schemes.length ? schemes : fallback.schemes,
