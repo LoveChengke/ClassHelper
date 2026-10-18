@@ -195,7 +195,14 @@ class IslandController {
     if (JSON.stringify(next) === JSON.stringify(this.lessonCue)) return;
     this.lessonCue = next;
     // 触摸窗口先放得下新横条，再下发内容；混合宽高变化也只能增大画布。
-    if (this.lessonShowing) this.syncTouchLayout();
+    if (this.lessonShowing) {
+      // 通知收回的延迟回调不能在课表提醒出现后再隐藏同一扇原生窗口。
+      if (this.closeTimer) clearTimeout(this.closeTimer);
+      this.closeTimer = null;
+      this.cancelFade();
+      this.syncResidentShape(true);
+      this.syncTouchLayout();
+    }
     this.emit();
     this.syncWindow();
   }
@@ -1106,6 +1113,10 @@ class IslandController {
    * 所以"窗口最终会隐藏"的既有断言（含轮询写法）不受影响。
    */
   private finishClose(): void {
+    if (this.lessonShowing || this.coursewareShowing) {
+      this.setState({ mode: 'hidden', reason: null });
+      return;
+    }
     // 动画期间又来了新消息 / 被显式唤起：这次收回归属于旧的一批，放弃收尾
     if (this.state.mode !== 'pill' || this.state.reason !== 'closing') return;
     if (this.state.active || this.state.queued.length > 0) return;

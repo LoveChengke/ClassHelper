@@ -1,4 +1,7 @@
-import type { ReleaseProgressDto as ContractReleaseProgressDto, CoursewareTransfer } from '@classhelper/shared';
+import type {
+  ReleaseProgressDto as ContractReleaseProgressDto,
+  CoursewareTransfer,
+} from '@classhelper/shared';
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS, UPDATE_AVAILABLE_CHANNEL } from '../main/channels.js';
 import type { ClientAgentStatus } from '../main/client-agent.js';
@@ -22,6 +25,7 @@ import type { IslandNotification, UpdateInfo } from '@classhelper/shared';
 const bridge: DesktopBridge = {
   downloadCourseware: (id) => ipcRenderer.invoke('courseware:download', id),
   revealCourseware: (id) => ipcRenderer.invoke('courseware:reveal', id),
+  listLocalCourseware: () => ipcRenderer.invoke('courseware:local-list'),
   syncCourseware: () => ipcRenderer.invoke('courseware:sync'),
   getCoursewareTransfer: () => ipcRenderer.invoke('courseware:get-progress'),
   onCoursewareTransfer: (handler) => {

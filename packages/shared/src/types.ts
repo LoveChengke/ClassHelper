@@ -1,5 +1,6 @@
 import type { CoursewareTransfer } from './courseware.js';
 import type {
+  ClientUpdateProgressDto,
   PermissionScope as ContractPermissionScope,
   ReleaseProgressDto as ContractReleaseProgressDto,
 } from './class-plan.js';
@@ -1552,6 +1553,7 @@ export interface ClientCommandDto {
 
 /** Web 端「客户端设备」列表里的一台机器 */
 export interface ClientDeviceDto {
+  updateProgress?: ClientUpdateProgressDto | null;
   id: string;
   classId: string | null;
   className: string | null;
@@ -1590,6 +1592,7 @@ export interface ClientDeviceDto {
 
 /** `POST /api/clients/heartbeat`：客户端每 30 秒一次的上报 */
 export interface ClientHeartbeatRequest {
+  updateProgress?: ClientUpdateProgressDto;
   /** 旧版缺省为 1；第二版正确解析统一响应并支持安装时机。 */
   agentProtocol?: number;
   deviceKey: string;

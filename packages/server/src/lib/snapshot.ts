@@ -60,6 +60,7 @@ export const SNAPSHOT_TABLES = [
   'Grade',
   'ClientDevice',
   'Courseware',
+  'CoursewareFolder',
   'CoursewareVisibility',
   'CoursewarePush',
   'CoursewareReceipt',

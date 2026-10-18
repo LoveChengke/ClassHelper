@@ -11,6 +11,24 @@ const clientCommandKindSchema = z.enum(
 
 /** 设备标识（客户端主进程生成并持久化的 UUID） */
 const deviceKeySchema = z.string().trim().min(8, '设备标识不合法').max(80, '设备标识不合法');
+export const updateProgressSchema = z.object({
+  version: z.string().trim().max(40),
+  stage: z.enum([
+    'idle',
+    'downloading',
+    'verifying',
+    'ready',
+    'waiting',
+    'installing',
+    'failed',
+    'completed',
+  ]),
+  downloadedBytes: z.number().int().min(0),
+  totalBytes: z.number().int().min(0),
+  percent: z.number().min(0).max(100).nullable(),
+  error: z.string().max(1000),
+});
+export const clientProgressSchema = z.object({ deviceKey: deviceKeySchema, progress: updateProgressSchema });
 
 /** `POST /api/clients/heartbeat`：客户端每 30 秒一次的上报 */
 export const clientHeartbeatSchema = z.object({
@@ -22,6 +40,7 @@ export const clientHeartbeatSchema = z.object({
   autoUpdate: z.boolean().optional(),
   pendingVersion: z.string().trim().max(40).nullable().optional(),
   stateNote: z.string().trim().max(120).optional(),
+  updateProgress: updateProgressSchema.optional(),
 });
 
 /**

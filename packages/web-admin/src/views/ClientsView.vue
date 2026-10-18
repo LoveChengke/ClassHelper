@@ -18,13 +18,13 @@
  * **禁用 + tooltip 说明**而不是直接隐藏：让老师知道"有这件事、需要权限"，而不是以为系统没有。
  */
 import ReleaseProgress from '@/components/ReleaseProgress.vue';
+import ClientUpdateStatus from '@/components/ClientUpdateStatus.vue';
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   CLIENT_COMMAND_EXPIRE_MS,
   CLIENT_COMMAND_KINDS,
   CLIENT_COMMAND_LABELS,
-  CLIENT_HEARTBEAT_INTERVAL_MS,
   clientReleaseFileName,
   compareVersions,
   normalizeVersion,
@@ -47,7 +47,7 @@ const { isMobile } = useResponsive();
 const auth = useAuthStore();
 
 /** 自动刷新间隔：跟客户端心跳同频，刷太快没有新数据 */
-const AUTO_REFRESH_MS = CLIENT_HEARTBEAT_INTERVAL_MS;
+const AUTO_REFRESH_MS = 3000;
 
 function can(key: PermissionKey): boolean {
   return auth.can(key);
@@ -214,9 +214,6 @@ function classLabel(device: ClientDeviceDto): string {
 }
 
 /** 「已指定 <版本>」：只显示版本号，避免与「已下载待安装」挤在一起 */
-function targetVersionLabel(device: ClientDeviceDto): string {
-  return normalizeVersion(device.updateTargetVersion) || device.updateTargetVersion;
-}
 
 /* -------------------------------------------------------------- 下发更新 */
 
@@ -814,20 +811,8 @@ const deviceEmptyText = computed(() =>
             <span v-else>—</span>
           </template>
         </el-table-column>
-        <el-table-column label="更新" min-width="150">
-          <template #default="{ row }">
-            <template v-if="row.pendingVersion">
-              <el-tag class="client-tag" size="small" type="success" effect="plain">
-                已下载待安装 v{{ normalizeVersion(row.pendingVersion) }}
-              </el-tag>
-            </template>
-            <template v-if="row.updateTargetVersion">
-              <el-tag class="client-tag" size="small" type="primary" effect="plain">
-                已指定 v{{ targetVersionLabel(row) }}
-              </el-tag>
-            </template>
-            <span v-if="!row.pendingVersion && !row.updateTargetVersion" class="text-muted">—</span>
-          </template>
+        <el-table-column label="更新过程" min-width="290">
+          <template #default="{ row }"><ClientUpdateStatus :device="row" /></template>
         </el-table-column>
 
         <el-table-column label="操作" width="150" fixed="right">

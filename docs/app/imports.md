@@ -22,7 +22,7 @@ description: 表格预览、名单与成绩校验，以及完整离线档案导�
 
 ## 完整 ClassIsland 档案
 
-在“课表管理 → 导入 ClassIsland 课程表”选择或粘贴 JSON，先预览再导入。
+在“课表档案 → 导入档案”选择或粘贴 JSON，先预览再导入。
 完整输入包含 TimeLayouts、ClassPlans、Subjects 字典，可包含 ClassPlanGroups 和 OrderedSchedules 等配置。
 JSON 只作为离线文件导入，不依赖在线联动插件。
 

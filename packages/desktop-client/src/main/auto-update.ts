@@ -14,6 +14,26 @@ import {
 import { getConfig, saveConfig } from './config.js';
 import { island } from './island.js';
 import { logger } from './logger.js';
+import { connectionEvents } from './config-events.js';
+
+let updateEpoch = 0;
+let downloadAbort = new AbortController();
+connectionEvents.on('changed', () => {
+  updateEpoch++;
+  downloadAbort.abort();
+  downloadAbort = new AbortController();
+  policy = null;
+  installationRetryAt = 0;
+  installResultChecked = false;
+  updateProgress = {
+    version: '',
+    stage: 'idle',
+    downloadedBytes: 0,
+    totalBytes: 0,
+    percent: null,
+    error: '',
+  };
+});
 
 /**
  * 服务端统一下发的自动更新（下载 + 空闲时静默安装）。
@@ -28,15 +48,24 @@ import { logger } from './logger.js';
  *    否则会与"安装器正在覆盖自己"撞车 —— Windows 上正在运行的程序文件是删不掉的）。
  */
 
-let policy: Pick<ClientHeartbeatResponse, 'updateTargetVersion' | 'updateMode' | 'updateNotBefore'> | null =
-  null;
+let policy:
+  | (Pick<ClientHeartbeatResponse, 'updateTargetVersion' | 'updateMode' | 'updateNotBefore'> & {
+      serverUrl: string;
+      username: string;
+    })
+  | null = null;
 function policyPath(): string {
   return path.join(pendingUpdateDir(), 'policy.json');
 }
 function loadPolicy(): typeof policy {
-  if (policy) return policy;
+  if (policy)
+    return policy.serverUrl === getConfig().serverUrl && policy.username === getConfig().username
+      ? policy
+      : null;
   try {
     policy = JSON.parse(fs.readFileSync(policyPath(), 'utf8'));
+    if (policy?.serverUrl !== getConfig().serverUrl || policy?.username !== getConfig().username)
+      policy = null;
   } catch {
     /* 尚无下发策略 */
   }
@@ -58,7 +87,23 @@ function removeManagedInstaller(file: string): void {
 
 /** 每次成功心跳先同步策略；取消或更换目标后旧包不得自行安装。 */
 export function syncUpdatePolicy(next: ClientHeartbeatResponse): void {
+  if (policy && policy.updateTargetVersion !== next.updateTargetVersion) {
+    installationRetryAt = 0;
+    updateEpoch++;
+    downloadAbort.abort();
+    downloadAbort = new AbortController();
+    updateProgress = {
+      version: next.updateTargetVersion || '',
+      stage: 'idle',
+      downloadedBytes: 0,
+      totalBytes: 0,
+      percent: null,
+      error: '',
+    };
+  }
   policy = {
+    serverUrl: getConfig().serverUrl,
+    username: getConfig().username,
     updateTargetVersion: next.updateTargetVersion,
     updateMode: next.updateMode ?? 'idle',
     updateNotBefore: next.updateNotBefore ?? null,
@@ -86,6 +131,8 @@ export function pendingUpdateDir(): string {
 let mainWindowHiddenAt: number | null = null;
 /** 本进程是否已经发起过安装（防止心跳与 hide 事件重复触发） */
 let installing = false;
+let installationRetryAt = 0;
+let installResultChecked = false;
 let updateProgress: ContractReleaseProgressDto = {
   version: '',
   stage: 'idle',
@@ -95,12 +142,69 @@ let updateProgress: ContractReleaseProgressDto = {
   error: '',
 };
 export function getUpdateProgress() {
+  if (!installResultChecked) {
+    installResultChecked = true;
+    const resultFile = path.join(pendingUpdateDir(), 'install-result.json');
+    try {
+      const result = JSON.parse(fs.readFileSync(resultFile, 'utf8').replace(/^\uFEFF/, ''));
+      if (
+        result.serverUrl === getConfig().serverUrl &&
+        result.username === getConfig().username &&
+        typeof result.version === 'string' &&
+        result.version === getConfig().pendingUpdateVersion &&
+        isNewerVersion(app.getVersion(), result.version) &&
+        typeof result.error === 'string' &&
+        result.error
+      ) {
+        updateProgress = {
+          ...updateProgress,
+          version: result.version,
+          stage: 'failed',
+          error: result.error.slice(0, 1000),
+        };
+        installationRetryAt = Date.now() + 5 * 60_000;
+        fs.rmSync(resultFile, { force: true });
+      }
+    } catch {
+      /* 尚未执行安装助手，或上一次已成功。 */
+    }
+  }
   return { ...updateProgress };
 }
 let progressPublishedAt = 0;
+let reportAt = 0;
+let reporting: Promise<boolean> = Promise.resolve(true);
+/** 与心跳分离，按顺序上报；安装前等待该队列完成再退出。 */
+function reportProgress(): Promise<boolean> {
+  const config = getConfig(),
+    snapshot = getUpdateProgress(),
+    epoch = updateEpoch;
+  if (!config.token || process.env.ELECTRON_SMOKE_TEST === '1') return Promise.resolve(true);
+  reporting = reporting
+    .catch(() => false)
+    .then(async () => {
+      if (epoch !== updateEpoch) return false;
+      try {
+        const response = await fetch(`${config.serverUrl}/api/clients/update-progress`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${config.token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ deviceKey: config.deviceKey, progress: snapshot }),
+          signal: AbortSignal.timeout(5000),
+          redirect: 'error',
+        });
+        if (!response.ok) logger.warn(`更新进度上报失败：HTTP ${response.status}`);
+        return response.ok;
+      } catch (error) {
+        logger.warn(`更新进度上报失败：${String(error)}`);
+        return false;
+      }
+    });
+  return reporting;
+}
 function publishProgress(patch: Partial<typeof updateProgress>) {
   const previousStage = updateProgress.stage;
   updateProgress = { ...updateProgress, ...patch };
+  updateProgress.error = updateProgress.error.slice(0, 1000);
   updateProgress.percent = updateProgress.totalBytes
     ? Math.min(100, Math.round((updateProgress.downloadedBytes / updateProgress.totalBytes) * 100))
     : null;
@@ -108,6 +212,10 @@ function publishProgress(patch: Partial<typeof updateProgress>) {
   progressPublishedAt = Date.now();
   for (const win of BrowserWindow.getAllWindows())
     if (!win.isDestroyed()) win.webContents.send('client:update-progress', getUpdateProgress());
+  if (previousStage !== updateProgress.stage || Date.now() - reportAt >= 2000) {
+    reportAt = Date.now();
+    void reportProgress();
+  }
 }
 /**
  * 退出本进程的回调（由 index.ts 注册成既有的 `quitApp()`）。
@@ -175,6 +283,7 @@ export function shouldConsider(version: string): boolean {
  * - 同一版本已经下载过（`pendingUpdateVersion` 命中且文件还在）：跳过下载，直接尝试安装。
  */
 export async function considerUpdate(info: ClientUpdateInfoDto, targetVersion: string): Promise<void> {
+  const epoch = updateEpoch;
   const version = targetVersion.trim() || info.version.trim();
   if (!shouldConsider(version)) {
     logger.info(`忽略服务端下发的更新 ${version || '（未指定版本）'}：自动更新已在设置中关闭`);
@@ -189,6 +298,13 @@ export async function considerUpdate(info: ClientUpdateInfoDto, targetVersion: s
   if (config.pendingUpdateVersion === version) {
     const existing = config.pendingUpdateFile;
     if (existing && fs.existsSync(existing)) {
+      publishProgress({
+        version,
+        stage: 'waiting',
+        downloadedBytes: info.size,
+        totalBytes: info.size,
+        error: '',
+      });
       logger.info(`更新 ${version} 早已下载完成，直接尝试安装`);
       await maybeInstallPendingUpdate();
       return;
@@ -222,7 +338,8 @@ export async function considerUpdate(info: ClientUpdateInfoDto, targetVersion: s
     logger.info(`开始下载更新 ${version}（${info.fileName}，${formatSize(info.size)}）`);
     const response = await fetch(url, {
       headers: { authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      signal: AbortSignal.any([AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS), downloadAbort.signal]),
+      redirect: 'error',
     });
     if (!response.ok) {
       throw new Error(`下载失败：HTTP ${response.status}`);
@@ -235,13 +352,20 @@ export async function considerUpdate(info: ClientUpdateInfoDto, targetVersion: s
     const handle = await fsp.open(temp, 'w');
     try {
       for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-        await handle.write(chunk);
+        let offset = 0;
+        while (offset < chunk.byteLength) {
+          const { bytesWritten } = await handle.write(chunk, offset, chunk.byteLength - offset);
+          if (!bytesWritten) throw new Error('更新包写入失败');
+          offset += bytesWritten;
+        }
         publishProgress({ downloadedBytes: updateProgress.downloadedBytes + chunk.byteLength });
       }
     } finally {
       await handle.close();
     }
 
+    if (epoch !== updateEpoch) return;
+    if (info.size > 0 && updateProgress.downloadedBytes !== info.size) throw new Error('更新包长度不匹配');
     publishProgress({ stage: 'verifying' });
     const digest = await sha256File(temp);
     const expected = info.sha256.trim().toLowerCase();
@@ -264,7 +388,7 @@ export async function considerUpdate(info: ClientUpdateInfoDto, targetVersion: s
     await fsp.rm(target, { force: true });
     await fsp.rename(temp, target);
     publishProgress({ stage: 'waiting' });
-    if (loadPolicy()?.updateTargetVersion !== version) {
+    if (epoch !== updateEpoch || loadPolicy()?.updateTargetVersion !== version) {
       removeManagedInstaller(target);
       return;
     }
@@ -277,6 +401,7 @@ export async function considerUpdate(info: ClientUpdateInfoDto, targetVersion: s
     await maybeInstallPendingUpdate();
   } catch (error) {
     await fsp.rm(temp, { force: true }).catch(() => undefined);
+    if (epoch !== updateEpoch) return;
     publishProgress({ stage: 'failed', error: String(error) });
     logger.error(`下载更新 ${version} 失败：${error instanceof Error ? error.message : String(error)}`);
   } finally {
@@ -319,6 +444,7 @@ export async function maybeInstallPendingUpdate(): Promise<void> {
   const courseware = island.getCoursewareTransfer();
   if (courseware && ['downloading', 'verifying'].includes(courseware.stage)) return;
   if (installing) return;
+  if (Date.now() < installationRetryAt) return;
   if (process.env.ELECTRON_SMOKE_TEST === '1') return;
 
   const config = getConfig();
@@ -375,15 +501,36 @@ export async function maybeInstallPendingUpdate(): Promise<void> {
   }
 
   installing = true;
-  publishProgress({ stage: 'installing' });
+  const installEpoch = updateEpoch;
+  publishProgress({ version, stage: 'installing', error: '' });
+  const reported = await reporting;
+  if (!reported) {
+    installing = false;
+    publishProgress({ stage: 'waiting', error: '安装前状态尚未送达服务端，等待网络恢复后重试' });
+    return;
+  }
+  if (
+    installEpoch !== updateEpoch ||
+    loadPolicy()?.updateTargetVersion !== version ||
+    getConfig().autoUpdate === false
+  ) {
+    installing = false;
+    return;
+  }
   logger.info(`开始静默安装更新 ${version}：${installer}`);
   try {
-    const exe = app.getPath('exe');
+    const exe = process.env.PORTABLE_EXECUTABLE_FILE || app.getPath('exe');
     const quote = (value: string): string => "'" + value.replaceAll("'", "''") + "'";
+    const config = getConfig();
+    const resultFile = path.join(pendingUpdateDir(), 'install-result.json');
+    // 上一次失败的结果不能冒充这一次：安装开始时先清掉，只有本轮失败才重新写入。
+    fs.rmSync(resultFile, { force: true });
     const script =
-      `$ErrorActionPreference = 'Stop'; Wait-Process -Id ${process.pid} -ErrorAction SilentlyContinue; ` +
-      `$installer = Start-Process -FilePath ${quote(installer)} -ArgumentList '/S','--updated','--force-run' -Wait -PassThru; ` +
-      `if ($installer.ExitCode -ne 0 -and (Test-Path -LiteralPath ${quote(exe)})) { Start-Process -FilePath ${quote(exe)} }`;
+      `$ErrorActionPreference = 'Stop'; try { Wait-Process -Id ${process.pid} -ErrorAction SilentlyContinue; ` +
+      `$installer = Start-Process -FilePath ${quote(installer)} -ArgumentList '/S','--updated','--force-run' -WindowStyle Hidden -Wait -PassThru; ` +
+      `if ($installer.ExitCode -ne 0) { throw ('安装器退出码：' + $installer.ExitCode) } ` +
+      `} catch { @{ version=${quote(version)}; serverUrl=${quote(config.serverUrl)}; username=${quote(config.username)}; error=$_.Exception.Message } | ConvertTo-Json -Compress | Set-Content -LiteralPath ${quote(resultFile)} -Encoding UTF8; ` +
+      `if (Test-Path -LiteralPath ${quote(exe)}) { Start-Process -FilePath ${quote(exe)} -WindowStyle Hidden } }`;
     const encoded = Buffer.from(script, 'utf16le').toString('base64');
     const child = spawn(
       'powershell.exe',
@@ -408,6 +555,7 @@ export async function maybeInstallPendingUpdate(): Promise<void> {
     }
   } catch (error) {
     installing = false;
+    publishProgress({ stage: 'failed', error: String(error).slice(0, 1000) });
     logger.error(
       `启动更新安装失败（将在下次满足安装条件时重试）：${error instanceof Error ? error.message : String(error)}`,
     );

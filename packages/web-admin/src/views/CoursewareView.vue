@@ -8,6 +8,7 @@ import {
   type CoursewareDto,
   type CoursewareClassDto,
   type CoursewareUploadRequest,
+  type CoursewareFolderDto,
 } from '@classhelper/shared';
 import { api } from '@/api/http';
 import { useAuthStore } from '@/stores/auth';
@@ -19,6 +20,7 @@ const items = ref<CoursewareDto[]>([]),
 const file = ref<File | null>(null),
   classIds = ref<string[]>([]),
   mode = ref<'cloud' | 'push'>('cloud');
+const fileInput = ref<HTMLInputElement>();
 const loading = ref(false),
   uploading = ref(false),
   progress = ref(0),
@@ -30,11 +32,51 @@ const scopeItem = ref<CoursewareDto | null>(null),
   scopeMode = ref<'visibility' | 'push'>('visibility'),
   saving = ref(false);
 const canWrite = computed(() => auth.can('courseware:write'));
+const folders = ref<CoursewareFolderDto[]>([]),
+  folderPath = ref(''),
+  folderFilter = ref('');
+const grouping = ref<'date' | 'folder'>('date');
+const dateFolder = ref('');
+const dateFolders = computed(() =>
+  [
+    ...new Set(
+      items.value.map((item) => item.archivePath?.split('/').slice(0, -1).join('/') || item.archiveDate),
+    ),
+  ]
+    .sort()
+    .reverse(),
+);
+async function newFolder() {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '输入文件夹名称，可用 / 创建多层分类，如 地理/必修一',
+      '新建文件夹',
+    );
+    const path = String(value ?? '').trim();
+    if (!path) return;
+    await api.post('/courseware/folders', { path });
+    await refresh();
+    folderPath.value = path;
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') throw error;
+  }
+}
+async function move(item: CoursewareDto, target: string) {
+  await api.patch(`/courseware/${item.id}/folder`, { folderPath: target });
+  await refresh();
+}
 const filtered = computed(() =>
   items.value.filter(
     (item) =>
       (!query.value || `${item.name} ${item.teacher.name}`.includes(query.value)) &&
       (!category.value || item.category === category.value) &&
+      (grouping.value !== 'folder' ||
+        !folderFilter.value ||
+        item.folderPath === folderFilter.value ||
+        item.folderPath?.startsWith(folderFilter.value + '/')) &&
+      (grouping.value !== 'date' ||
+        !dateFolder.value ||
+        (item.archivePath?.startsWith(dateFolder.value + '/') ?? item.archiveDate === dateFolder.value)) &&
       (!date.value || item.archiveDate === date.value),
   ),
 );
@@ -42,13 +84,25 @@ function size(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 function choose(event: Event) {
-  file.value = (event.target as HTMLInputElement).files?.[0] ?? null;
+  const picked = (event.target as HTMLInputElement).files?.[0];
+  // 取消选择时不丢掉上一次选中的文件。
+  if (picked) file.value = picked;
+}
+function pickFile() {
+  if (!fileInput.value) return;
+  // 允许重新选择同一个文件：清空后再打开选择器。
+  fileInput.value.value = '';
+  fileInput.value.click();
 }
 async function refresh() {
   loading.value = true;
   try {
     items.value = await api.get<CoursewareDto[]>('/courseware');
-    if (canWrite.value) classes.value = await api.get<CoursewareClassDto[]>('/courseware/classes');
+    if (canWrite.value)
+      [classes.value, folders.value] = await Promise.all([
+        api.get<CoursewareClassDto[]>('/courseware/classes'),
+        api.get<CoursewareFolderDto[]>('/courseware/folders'),
+      ]);
   } finally {
     loading.value = false;
   }
@@ -64,6 +118,7 @@ async function upload() {
     size: file.value.size,
     classIds: [...classIds.value],
     mode: mode.value,
+    folderPath: folderPath.value,
   };
   uploading.value = true;
   progress.value = 0;
@@ -133,7 +188,7 @@ onMounted(() => void refresh());
     <header class="page-header">
       <div>
         <h2 class="page-title">课件</h2>
-        <p>保存教学文件，按日期与类型归档，发送到自己的授课班级。</p>
+        <p>创建文件夹分类，或按教师、上传年份、月、日、时间浏览课件。</p>
       </div>
       <el-button :loading="loading" @click="refresh">刷新</el-button>
     </header>
@@ -141,7 +196,34 @@ onMounted(() => void refresh());
       <h3>上传课件</h3>
       <el-form label-position="top" :disabled="uploading">
         <el-form-item label="文件（最大 512 MB）">
-          <input aria-label="选择课件文件" type="file" @change="choose" />
+          <div class="file-picker">
+            <el-button :disabled="uploading" @click="pickFile">
+              {{ file ? '重新选择文件' : '选择文件' }}
+            </el-button>
+            <span v-if="file" class="file-name">{{ file.name }} · {{ size(file.size) }}</span>
+            <span v-else class="file-placeholder">未选择文件</span>
+            <input
+              ref="fileInput"
+              aria-label="选择课件文件"
+              type="file"
+              :disabled="uploading"
+              class="hidden-input"
+              @change="choose"
+            />
+          </div>
+        </el-form-item>
+        <el-form-item label="分类文件夹">
+          <div class="folder-picker">
+            <el-select v-model="folderPath" clearable placeholder="按上传日期自动归档">
+              <el-option
+                v-for="folder in folders"
+                :key="folder.id"
+                :value="folder.path"
+                :label="folder.path"
+              />
+            </el-select>
+            <el-button @click="newFolder">新建文件夹</el-button>
+          </div>
         </el-form-item>
         <el-form-item label="可见范围">
           <el-select
@@ -176,6 +258,16 @@ onMounted(() => void refresh());
     </el-card>
     <el-card shadow="never" class="table-card" v-loading="loading">
       <div class="filters">
+        <el-radio-group v-model="grouping">
+          <el-radio-button value="date">日期归档</el-radio-button>
+          <el-radio-button value="folder">文件夹分类</el-radio-button>
+        </el-radio-group>
+        <el-select v-if="grouping === 'folder'" v-model="folderFilter" clearable placeholder="全部文件夹">
+          <el-option v-for="folder in folders" :key="folder.id" :value="folder.path" :label="folder.path" />
+        </el-select>
+        <el-select v-else v-model="dateFolder" filterable clearable placeholder="教师 / 年 / 月 / 日 / 时间">
+          <el-option v-for="folder in dateFolders" :key="folder" :value="folder" :label="folder" />
+        </el-select>
         <el-input v-model="query" clearable placeholder="搜索文件名、教师" />
         <el-select v-model="category" clearable placeholder="全部类型">
           <el-option v-for="(label, key) in COURSEWARE_CATEGORIES" :key="key" :label="label" :value="key" />
@@ -184,6 +276,26 @@ onMounted(() => void refresh());
       </div>
       <el-table :data="filtered" empty-text="暂无课件">
         <el-table-column prop="name" label="文件名称" min-width="220" show-overflow-tooltip />
+        <el-table-column label="分类 / 归档位置" min-width="230">
+          <template #default="{ row }">
+            <el-select
+              v-if="canWrite && row.teacher.id === auth.user?.id"
+              :model-value="row.folderPath || ''"
+              clearable
+              size="small"
+              placeholder="自动日期归档"
+              @change="move(row, $event || '')"
+            >
+              <el-option
+                v-for="folder in folders"
+                :key="folder.id"
+                :value="folder.path"
+                :label="folder.path"
+              />
+            </el-select>
+            <small class="archive-path">{{ row.archivePath }}</small>
+          </template>
+        </el-table-column>
         <el-table-column label="类型" width="110">
           <template #default="{ row }">
             {{ COURSEWARE_CATEGORIES[(row as CoursewareDto).category] }} · {{ row.extension || '无扩展名' }}
@@ -276,5 +388,39 @@ p,
 }
 .el-progress {
   margin-top: 16px;
+}
+.folder-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  width: 100%;
+}
+.folder-picker .el-select {
+  flex: 1 1 220px;
+}
+.archive-path {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--el-text-color-secondary);
+  margin-top: 6px;
+}
+.file-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.file-name,
+.file-placeholder {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--el-text-color-regular);
+}
+.file-placeholder {
+  color: var(--el-text-color-secondary);
+}
+.hidden-input {
+  display: none;
 }
 </style>

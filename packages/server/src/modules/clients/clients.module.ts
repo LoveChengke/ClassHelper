@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { ClientUpdateProgressDto } from '@classhelper/shared';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
 import { authenticate, getAuthUser, requireAnyPermission, requirePermission } from '../../middleware/auth.js';
@@ -7,6 +8,7 @@ import { defineModule } from '../module.types.js';
 import {
   clientCommandAckSchema,
   clientHeartbeatSchema,
+  clientProgressSchema,
   createClientCommandSchema,
   listClientDevicesQuerySchema,
   pushClientUpdateSchema,
@@ -20,6 +22,14 @@ import * as clientService from './clients.service.js';
 
 const router = Router();
 router.use(authenticate());
+router.post('/update-progress', validate({ body: clientProgressSchema }), async (req, res) => {
+  const input = validatedBody<{
+    deviceKey: string;
+    progress: ClientUpdateProgressDto;
+  }>(req);
+  await clientService.reportUpdateProgress(getAuthUser(req), input.deviceKey, input.progress);
+  sendOk(res, null);
+});
 
 /**
  * POST /api/clients/heartbeat - 客户端每 30 秒上报一次

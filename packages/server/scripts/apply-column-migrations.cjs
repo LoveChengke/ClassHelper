@@ -26,6 +26,24 @@ if (!dbEntry) {
 /** 需要保证存在的列（新增迁移时在这里追加一行） */
 const COLUMNS = [
   {
+    table: 'Courseware',
+    column: 'archivePath',
+    sql: `ALTER TABLE "Courseware" ADD COLUMN "archivePath" TEXT NOT NULL DEFAULT ''`,
+    note: '上传日期归档路径',
+  },
+  {
+    table: 'Courseware',
+    column: 'folderPath',
+    sql: `ALTER TABLE "Courseware" ADD COLUMN "folderPath" TEXT NOT NULL DEFAULT ''`,
+    note: '自建分类目录',
+  },
+  {
+    table: 'ClientDevice',
+    column: 'updateProgress',
+    sql: `ALTER TABLE "ClientDevice" ADD COLUMN "updateProgress" TEXT NOT NULL DEFAULT ''`,
+    note: '设备更新进度',
+  },
+  {
     table: 'Schedule',
     column: 'weekParity',
     sql: `ALTER TABLE "Schedule" ADD COLUMN "weekParity" TEXT NOT NULL DEFAULT 'ALL'`,

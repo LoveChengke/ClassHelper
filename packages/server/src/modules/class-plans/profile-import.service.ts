@@ -6,6 +6,7 @@ import { assertCanManageSchedule } from '../../lib/access.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { notifyScheduleChanged } from './class-plans.service.js';
+import { getMaxTermWeeks } from '../../lib/term.js';
 const record = z.record(z.string(), z.unknown());
 function object(value: unknown): Record<string, unknown> {
   const parsed = record.safeParse(value);
@@ -39,6 +40,7 @@ export async function importProfile(user: TokenPayload, classId: string, payload
   if (Object.keys(plans).length > 500 || Object.keys(layouts).length > 100)
     throw ApiError.badRequest('导入课表过多');
   const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
+  const maxWeeks = await getMaxTermWeeks();
   const warnings: string[] = [];
   const stable = (kind: string, id: string) =>
     `profile-${kind}-${createHash('sha256')
@@ -183,6 +185,14 @@ export async function importProfile(user: TokenPayload, classId: string, payload
         )
           throw ApiError.badRequest('导入启用规则不合法（支持1–9周轮换）');
         const previous = await tx.classPlan.findUnique({ where: { id: stable('plan', id) } });
+        const range = z
+          .object({
+            start: z.number().int().min(1).max(maxWeeks),
+            end: z.number().int().min(1).max(maxWeeks),
+          })
+          .refine((r) => r.start <= r.end)
+          .safeParse({ start: p.WeekStart ?? 1, end: Math.min(Number(p.WeekEnd ?? maxWeeks), maxWeeks) });
+        if (!range.success) throw ApiError.badRequest('导入课表生效周次无效');
         const data = {
           classId,
           name: String(p.Name || '导入课表').slice(0, 64),
@@ -191,8 +201,11 @@ export async function importProfile(user: TokenPayload, classId: string, payload
           weekday,
           weekCountDiv,
           weekCountDivTotal,
+          weekStart: range.data.start,
+          weekEnd: range.data.end,
           isEnabled: p.IsEnabled !== false,
           isOverlay: p.IsOverlay === true,
+          overlayDate: typeof p.OverlayDate === 'string' && isDayKey(p.OverlayDate) ? p.OverlayDate : null,
         };
         const plan = await tx.classPlan.upsert({
           where: { id: stable('plan', id) },

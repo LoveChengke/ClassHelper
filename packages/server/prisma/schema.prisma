@@ -35,6 +35,7 @@ datasource db {
 /// 账号：管理员 / 教师 / ClassHelper 班级端。**学生不在这里**（见 Student）。
 model User {
   coursewares Courseware[]
+  coursewareFolders CoursewareFolder[]
   id           String   @id @default(cuid())
   /// 登录名：教师即**工号**，班级端即班级码
   username     String   @unique
@@ -530,6 +531,7 @@ model ClientDevice {
   lastIp    String @default("")
   /// 客户端上报的当前状态说明（如"上课中/已隐藏"，仅展示用）
   stateNote String @default("")
+  updateProgress String @default("")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -730,6 +732,8 @@ model Courseware {
   category String
   extension String
   archiveDate String
+  archivePath String @default("")
+  folderPath String @default("")
   storagePath String @unique
   sha256 String
   createdAt DateTime @default(now())
@@ -737,6 +741,15 @@ model Courseware {
   visibility CoursewareVisibility[]
   pushes CoursewarePush[]
   @@index([ownerId, createdAt])
+}
+
+/// 教师自建目录与文件可见权限分开；目录本身不授予班级访问权。
+model CoursewareFolder {
+  id String @id @default(cuid())
+  ownerId String
+  path String
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  @@unique([ownerId, path])
 }
 
 model CoursewareVisibility {

@@ -421,6 +421,27 @@ try {
     assert.equal(rows[0].weekCountDivTotal, 4);
     assert.equal(rows[0].layout.points.length, 4);
   });
+  const archive = await request(`/class-plans/profile?classId=${cls.id}`);
+  const beforeArchive = imported.find((p: { name: string }) => p.name === '上游四周');
+  const exportedPlan = archive.ClassPlans[beforeArchive.id];
+  check('完整档案导出保留四种时间点、空课位置与轮换规则', () => {
+    assert.equal(archive.TimeLayouts[exportedPlan.TimeLayoutId].Layouts.length, 4);
+    assert.equal(exportedPlan.TimeRule.WeekCountDivTotal, 4);
+    assert.equal(
+      exportedPlan.Classes.length,
+      beforeArchive.layout.points.filter((p: { timeType: string }) => p.timeType === 'LESSON').length,
+    );
+  });
+  await request('/class-plans/import/profile', 'POST', { classId: cls.id, payload: archive }, undefined, 201);
+  const afterArchive = await request(`/class-plans?classId=${cls.id}`);
+  check('导出档案可重新导入且保留课程与周次范围', () => {
+    const restored = afterArchive.find(
+      (p: { id: string; name: string }) => p.name === '上游四周' && p.id !== beforeArchive.id,
+    );
+    assert.equal(restored.weekStart, beforeArchive.weekStart);
+    assert.equal(restored.weekEnd, beforeArchive.weekEnd);
+    assert.equal(restored.entries.length, beforeArchive.entries.length);
+  });
   let enabled = false;
   const os = {
     platform: 'win32',

@@ -75,6 +75,11 @@ export interface ReleaseProgressDto {
   percent: number | null;
   error: string;
 }
+/** 设备上报状态与服务端缓存安装包的下载状态分开。 */
+export interface ClientUpdateProgressDto extends Omit<ReleaseProgressDto, 'stage'> {
+  stage: ReleaseProgressDto['stage'] | 'completed';
+  updatedAt?: string;
+}
 export interface CollectiveGradeAnalysisDto {
   mode: 'collective';
   classId: string;

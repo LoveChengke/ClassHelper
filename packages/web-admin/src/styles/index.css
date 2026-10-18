@@ -907,6 +907,36 @@ body {
   }
 }
 
+/* 原生文件选择保留键盘与读屏能力，按钮外观与管理端控件保持一致。 */
+input[type='file']:not([hidden]) {
+  max-width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: var(--el-text-color-regular);
+}
+input[type='file']::file-selector-button {
+  padding: 8px 16px;
+  margin-right: 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.toolbar {
+  row-gap: 12px;
+}
+.toolbar > .el-button + .el-button {
+  margin-left: 0;
+}
+.el-form--inline .el-form-item {
+  max-width: 100%;
+}
+.el-form-item__content {
+  min-width: 0;
+}
+
 /*
  * 抽屉（el-drawer）。和弹窗不同，抽屉的位移由 `.el-drawer` **自身**的
  * `transition: all var(--el-transition-duration)` 承载（`.el-drawer-fade-*` 那组类

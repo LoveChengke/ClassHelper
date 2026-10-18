@@ -1,6 +1,5 @@
 import {
   dayKeyLocal,
-  resolveClassStatus,
   DEFAULT_LESSON_REMINDERS,
   type LessonReminderSettings,
   type IslandLessonReminder,
@@ -23,16 +22,18 @@ export class LessonReminderTracker {
     const at = now.getTime();
     const keyOf = (s: ScheduleDto, kind: IslandLessonReminder['kind']) =>
       `${dayKeyLocal(now)}:${s.id}:${s.startTime}:${s.endTime}:${kind}`;
-    const status = resolveClassStatus(schedules, now);
     const timeAt = (time: string) => {
       const d = new Date(now);
-      const [h, m] = time.split(':').map(Number);
-      d.setHours(h!, m!, 0, 0);
+      const [h, m, s = 0] = time.split(':').map(Number);
+      d.setHours(h!, m!, s, 0);
       return d.getTime();
     };
-    const today = schedules.filter((s) => s.dayOfWeek === (now.getDay() || 7));
-    const current = today.find((s) => s.id === status.current?.scheduleId);
-    const next = today.find((s) => s.id === status.next?.scheduleId);
+    const today = schedules
+      .filter((s) => s.dayOfWeek === (now.getDay() || 7))
+      .sort((a, b) => timeAt(a.startTime) - timeAt(b.startTime));
+    // 已解析日课表只按准确时间比较，避免带秒的课时提前触发或错过上课遮罩。
+    const current = today.find((s) => at >= timeAt(s.startTime) && at < timeAt(s.endTime));
+    const next = today.find((s) => timeAt(s.startTime) > at);
     const ended = today
       .filter((s) => at >= timeAt(s.endTime) && at - timeAt(s.endTime) < 12_000)
       .sort((a, b) => b.endTime.localeCompare(a.endTime))[0];
@@ -74,12 +75,14 @@ export class LessonReminderTracker {
     const entered = this.current?.id === id && at >= this.current.startedAt ? this.current.startedAt : at;
     const start = timeAt(lesson.startTime);
     const end = timeAt(lesson.endTime);
+    // 导入的 ClassIsland 时间点可能带秒；提醒条只显示到分钟，宽度保持稳定。
+    const clock = (value: string) => value.slice(0, 5);
     return (this.current = {
       id,
       kind,
       courseName: lesson.course?.name || '课程',
-      startTime: lesson.startTime,
-      endTime: lesson.endTime,
+      startTime: clock(lesson.startTime),
+      endTime: clock(lesson.endTime),
       startedAt: entered,
       maskUntil:
         kind === 'ending' || kind === 'in-class'
@@ -100,8 +103,8 @@ export class LessonReminderTracker {
       lessonStartsAt: start,
       lessonEndsAt: end,
       nextCourseName: kind === 'break' ? next?.course?.name : undefined,
-      nextStartTime: kind === 'break' ? next?.startTime : undefined,
-      nextEndTime: kind === 'break' ? next?.endTime : undefined,
+      nextStartTime: kind === 'break' && next ? clock(next.startTime) : undefined,
+      nextEndTime: kind === 'break' && next ? clock(next.endTime) : undefined,
     });
   }
 }

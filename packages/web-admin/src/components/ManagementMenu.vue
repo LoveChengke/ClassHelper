@@ -103,7 +103,23 @@ watch(
   width: 0;
 }
 .management-menu.menu-rail :deep(.el-sub-menu__title) {
-  padding: 0 14px !important;
+  padding: 0 !important;
+  margin: 4px 0 !important;
+  width: 48px;
+  height: 44px;
+  justify-content: center;
+}
+.management-menu.menu-rail .management-group-title {
+  justify-content: center;
+  gap: 0;
+  min-width: 20px;
+}
+.management-menu.menu-rail .management-group-title span {
+  flex: 0 0 0;
+  overflow: hidden;
+}
+.management-menu.menu-rail :deep(.el-sub-menu__icon-arrow) {
+  visibility: hidden;
 }
 .management-menu.menu-rail {
   overflow-x: hidden;

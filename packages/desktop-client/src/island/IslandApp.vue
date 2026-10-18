@@ -390,7 +390,7 @@ const islandClass = computed(() => ({
     mode.value === 'hidden' && !appearance.value.idleSliver && !state.value.lessonReminder,
   'ci-lesson-card': !!state.value.lessonReminder,
   'message-surface': !!state.value.active && mode.value !== 'hidden' && !state.value.lessonReminder,
-  sliver: mode.value === 'hidden' && appearance.value.idleSliver,
+  sliver: mode.value === 'hidden' && appearance.value.idleSliver && !state.value.lessonReminder,
   urgent: isUrgent.value,
   call: isCall.value,
   homework: isHomework.value,

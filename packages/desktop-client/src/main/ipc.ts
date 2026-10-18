@@ -1,4 +1,10 @@
-import { downloadCourseware, getCoursewareTransfer, pollCourseware, revealCourseware } from './courseware.js';
+import {
+  downloadCourseware,
+  getCoursewareTransfer,
+  pollCourseware,
+  revealCourseware,
+  listLocalCourseware,
+} from './courseware.js';
 import { island } from './island.js';
 import { getUpdateProgress } from './auto-update.js';
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
@@ -17,7 +23,10 @@ export { IPC_CHANNELS };
 export function registerIpcHandlers(): void {
   ipcMain.handle('courseware:download', (_event, id: string) => downloadCourseware(id));
   ipcMain.handle('courseware:reveal', (_event, id: string) => revealCourseware(id));
-  ipcMain.handle('courseware:sync', () => { void pollCourseware(); });
+  ipcMain.handle('courseware:local-list', () => listLocalCourseware());
+  ipcMain.handle('courseware:sync', () => {
+    void pollCourseware();
+  });
   ipcMain.handle('courseware:get-progress', () => getCoursewareTransfer());
   ipcMain.handle('client:get-update-progress', () => getUpdateProgress());
   ipcMain.handle(IPC_CHANNELS.getConfig, (): DesktopStoredConfig => getConfig());

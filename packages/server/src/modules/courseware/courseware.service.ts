@@ -8,6 +8,7 @@ import type { Request } from 'express';
 import {
   COURSEWARE_MAX_BYTES,
   coursewareCategory,
+  coursewareArchivePath,
   dayKeyLocal,
   SOCKET_EVENTS,
   type CoursewareDto,
@@ -37,6 +38,8 @@ function dto(row: RecordWithRelations): CoursewareDto {
     category: row.category as CoursewareDto['category'],
     extension: row.extension,
     archiveDate: row.archiveDate,
+    archivePath: row.archivePath || coursewareArchivePath(row.owner.name, row.createdAt, row.name),
+    folderPath: row.folderPath,
     sha256: row.sha256,
     createdAt: row.createdAt.toISOString(),
     teacher: row.owner,
@@ -104,13 +107,18 @@ export async function listCourseware(user: TokenPayload) {
 }
 export async function uploadCourseware(user: TokenPayload, input: CoursewareUploadRequest, req: Request) {
   const classIds = await validateClasses(user, input.classIds);
+  await assertFolder(user, input.folderPath || '');
   if (!req.is('application/octet-stream')) throw ApiError.badRequest('请使用二进制文件上传');
   if (req.headers['content-length'] && Number(req.headers['content-length']) !== input.size)
     throw ApiError.badRequest('文件长度与上传信息不符');
+  const uploadedAt = new Date();
+  const owner = await prisma.user.findUniqueOrThrow({ where: { id: user.sub }, select: { name: true } });
+  const archivePath = coursewareArchivePath(owner.name, uploadedAt, input.name);
   const category = coursewareCategory(input.name),
-    archiveDate = dayKeyLocal(new Date());
+    archiveDate = dayKeyLocal(uploadedAt);
   const extension = path.extname(input.name).slice(1).toLowerCase();
-  const relative = path.join(archiveDate, category, randomUUID());
+  // UUID 隔离同名教师或同秒上传；对外归档路径始终使用上传时的教师名和时间。
+  const relative = path.join(randomUUID(), archivePath);
   const file = path.join(coursewareRoot, relative),
     partial = `${file}.part`;
   await fsp.mkdir(path.dirname(file), { recursive: true });
@@ -142,6 +150,9 @@ export async function uploadCourseware(user: TokenPayload, input: CoursewareUplo
         category,
         extension,
         archiveDate,
+        archivePath,
+        folderPath: input.folderPath || '',
+        createdAt: uploadedAt,
         storagePath: relative,
         sha256: hash.digest('hex'),
         visibility: { create: classIds.map((classId) => ({ classId })) },
@@ -155,6 +166,35 @@ export async function uploadCourseware(user: TokenPayload, input: CoursewareUplo
     await Promise.all([fsp.rm(partial, { force: true }), fsp.rm(file, { force: true })]);
     throw error;
   }
+}
+async function assertFolder(user: TokenPayload, folderPath: string) {
+  if (
+    folderPath &&
+    !(await prisma.coursewareFolder.findUnique({
+      where: { ownerId_path: { ownerId: user.sub, path: folderPath } },
+    }))
+  )
+    throw ApiError.badRequest('请选择自己创建的文件夹');
+}
+export async function listFolders(user: TokenPayload) {
+  const rows = await prisma.coursewareFolder.findMany({
+    where: { ownerId: user.sub },
+    orderBy: { path: 'asc' },
+  });
+  return rows.map((row) => ({ id: row.id, path: row.path }));
+}
+export async function createFolder(user: TokenPayload, folderPath: string) {
+  const row = await prisma.coursewareFolder.upsert({
+    where: { ownerId_path: { ownerId: user.sub, path: folderPath } },
+    create: { ownerId: user.sub, path: folderPath },
+    update: {},
+  });
+  return { id: row.id, path: row.path };
+}
+export async function moveCourseware(user: TokenPayload, id: string, folderPath: string) {
+  await owned(user, id);
+  await assertFolder(user, folderPath);
+  return dto(await prisma.courseware.update({ where: { id }, data: { folderPath }, include }));
 }
 export async function setVisibility(user: TokenPayload, id: string, ids: string[]) {
   await owned(user, id);

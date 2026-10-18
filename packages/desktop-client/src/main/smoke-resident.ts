@@ -558,7 +558,15 @@ export async function verifyResidentSmoke(
         await pause(800);
         if (island.getState().lessonReminder?.kind !== 'prepare') return false;
         const mask = await win.webContents.executeJavaScript(
-          `(() => {const cue=document.querySelector('${layout === 'custom' ? '.resident-lesson-page' : '.ci-fixed-lesson'} .ci-mask')||document.querySelector('.ci-fixed-lesson .ci-mask');return Boolean(cue&&cue.querySelectorAll('polygon').length===5);})()`,
+          `(() => {
+            const cue=document.querySelector('${layout === 'custom' ? '.resident-lesson-page' : '.ci-fixed-lesson'} .ci-mask')||document.querySelector('.ci-fixed-lesson .ci-mask');
+            if (!cue || cue.querySelectorAll('polygon').length !== 5) return false;
+            const card=cue.closest('.ci-lesson'), title=card?.querySelector('.ci-mask-title');
+            const bounds=card?.getBoundingClientRect(), painted=cue.getBBox();
+            let opacity=1, node=card;
+            while(node&&node!==document.body){const style=getComputedStyle(node);if(style.visibility==='hidden'||style.display==='none')return false;opacity*=Number(style.opacity);node=node.parentElement;}
+            return Boolean(bounds&&bounds.width>=290&&bounds.height>=39&&painted.width>=bounds.width*.9&&title&&Number(getComputedStyle(title).opacity)>.8&&opacity>.8);
+          })()`,
         );
         if (!mask) return false;
         await shot('lesson-prepare-mask-' + layout);

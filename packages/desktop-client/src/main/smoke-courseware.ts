@@ -8,7 +8,7 @@ import { app } from 'electron';
 import type { CoursewareDto } from '@classhelper/shared';
 import { defaultIslandLayouts } from '@classhelper/shared';
 import { getConfig, saveConfig } from './config.js';
-import { downloadCourseware, getCoursewareTransfer } from './courseware.js';
+import { downloadCourseware, getCoursewareTransfer, listLocalCourseware } from './courseware.js';
 import { island } from './island.js';
 export async function verifyCoursewareSmoke(
   check: (name: string, action: () => Promise<boolean | string> | boolean) => Promise<void>,
@@ -93,12 +93,24 @@ export async function verifyCoursewareSmoke(
     });
     await job;
     await check('课件校验完成后保存正式文件并显示完成', async () => {
-      const files = await localFiles();
+      const files = (await localFiles()).filter((file) => file.endsWith('.pptx'));
       return (
         getCoursewareTransfer()?.stage === 'completed' &&
         getCoursewareTransfer()?.progress === 100 &&
         files.length === 1 &&
         (await fs.readFile(files[0]!)).equals(bytes)
+      );
+    });
+    await check('本机归档索引支持离线浏览且路径按教师年月日时间分类', async () => {
+      const saved = await listLocalCourseware();
+      const files = (await localFiles()).filter((file) => file.endsWith('.pptx'));
+      return (
+        saved.some((local) => local.id === item.id) &&
+        files.some((file) =>
+          /Teachers[\\/]临时课件教师[\\/]\d{4}[\\/]\d{2}[\\/]\d{2}[\\/]\d{2}-\d{2}-\d{2}[\\/]课件接收验证\.pptx$/.test(
+            file,
+          ),
+        )
       );
     });
     await check('已完整接收的相同课件不重复传输', async () => {

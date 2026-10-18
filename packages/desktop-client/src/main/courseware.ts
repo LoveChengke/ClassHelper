@@ -9,6 +9,8 @@ import { app, BrowserWindow, shell } from 'electron';
 import {
   COURSEWARE_MAX_BYTES,
   COURSEWARE_TRANSFER_TIMEOUT_MS,
+  coursewareArchivePath,
+  coursewarePathSegment,
   type ApiResponse,
   type CoursewareDto,
   type CoursewarePushDto,
@@ -74,6 +76,34 @@ async function digest(file: string) {
   for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
   return hash.digest('hex');
 }
+interface LocalCourseware {
+  item: CoursewareDto;
+  relativePath: string;
+}
+function localFile(root: string, relative: string) {
+  const file = path.resolve(root, relative);
+  if (!file.startsWith(path.resolve(root) + path.sep)) throw new Error('课件路径无效');
+  return file;
+}
+async function localRecord(id: string, root = scopeDirectory()): Promise<LocalCourseware | null> {
+  try {
+    return JSON.parse(await fsp.readFile(path.join(root, '.index', `${id}.json`), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+export async function listLocalCourseware(): Promise<CoursewareDto[]> {
+  if (!getConfig().token) return [];
+  const root = scopeDirectory();
+  const startedEpoch = epoch;
+  const names = await fsp.readdir(path.join(root, '.index')).catch(() => []);
+  const result: CoursewareDto[] = [];
+  for (const name of names.filter((name) => /^[a-z0-9-]+\.json$/i.test(name))) {
+    const record = await localRecord(name.slice(0, -5), root);
+    if (record && fs.existsSync(localFile(root, record.relativePath))) result.push(record.item);
+  }
+  return startedEpoch === epoch ? result.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
+}
 export function downloadCourseware(id: string): Promise<void> {
   checkId(id);
   const startedEpoch = epoch,
@@ -99,10 +129,22 @@ export function downloadCourseware(id: string): Promise<void> {
           !/^[a-f0-9]{64}$/.test(item.sha256)
         )
           throw new Error('课件文件信息无效');
-        const safeName =
-          `_${item.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '')}`.slice(0, 182);
-        const dir = path.join(scopeDirectory(), id),
-          file = path.join(dir, safeName);
+        const root = scopeDirectory();
+        const stored = await localRecord(id, root);
+        let relativePath =
+          stored?.relativePath ||
+          (item.archivePath || coursewareArchivePath(item.teacher.name, new Date(item.createdAt), item.name))
+            .split('/')
+            .map(coursewarePathSegment)
+            .join(path.sep);
+        let file = localFile(root, relativePath);
+        // 同秒、同名文件不得覆盖先前课件；重试通过本地索引始终定位同一文件。
+        if (!stored && fs.existsSync(file)) {
+          const ext = path.extname(file);
+          relativePath = relativePath.slice(0, relativePath.length - ext.length) + ` (${id})` + ext;
+          file = localFile(root, relativePath);
+        }
+        const dir = path.dirname(file);
         partial = `${file}.part`;
         const base: CoursewareTransfer = {
           id,
@@ -164,6 +206,17 @@ export function downloadCourseware(id: string): Promise<void> {
           await fsp.rename(partial, file);
         }
         if (startedEpoch !== epoch) throw new Error('登录会话已切换');
+        await fsp.mkdir(path.join(root, '.index'), { recursive: true });
+        const indexFile = path.join(root, '.index', `${id}.json`);
+        await fsp.writeFile(
+          `${indexFile}.part`,
+          JSON.stringify({
+            item: { ...item, archivePath: relativePath.split(path.sep).join('/') },
+            relativePath,
+          }),
+          'utf8',
+        );
+        await fsp.rename(`${indexFile}.part`, indexFile);
         publish({ ...base, receivedBytes: item.size, progress: 100, stage: 'completed' });
       } catch (error) {
         if (partial) await fsp.rm(partial, { force: true }).catch(() => undefined);
@@ -232,6 +285,15 @@ export async function pollCourseware() {
 }
 export async function revealCourseware(id: string) {
   checkId(id);
+  if (!getConfig().token) throw new Error('请先登录班级账号');
+  const stored = await localRecord(id);
+  if (stored) {
+    const file = localFile(scopeDirectory(), stored.relativePath);
+    if (fs.existsSync(file)) {
+      shell.showItemInFolder(file);
+      return;
+    }
+  }
   const dir = path.join(scopeDirectory(), id);
   const names = await fsp.readdir(dir).catch(() => []);
   const file = names.find((name) => !name.endsWith('.part'));

@@ -14,13 +14,23 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/layouts/AdminLayout.vue'),
     redirect: '/dashboard',
     children: [
-      { path: 'courseware', name: 'courseware', component: () => import('@/views/CoursewareView.vue'), meta: { title: '课件', icon: 'FolderOpened', roles: ['ADMIN', 'TEACHER'], permission: 'courseware:read' } },
+      {
+        path: 'courseware',
+        name: 'courseware',
+        component: () => import('@/views/CoursewareView.vue'),
+        meta: {
+          title: '课件',
+          icon: 'FolderOpened',
+          roles: ['ADMIN', 'TEACHER'],
+          permission: 'courseware:read',
+        },
+      },
       {
         path: 'plan-editor',
         name: 'plan-editor',
         component: () => import('@/views/PlanEditorView.vue'),
         meta: {
-          title: '时间表与课表编辑',
+          title: '课表档案',
           icon: 'Calendar',
           roles: ['ADMIN', 'TEACHER'],
           permission: 'schedule:read',
@@ -79,7 +89,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'schedules',
         name: 'schedules',
-        component: () => import('@/views/SchedulesView.vue'),
+        redirect: '/plan-editor',
         meta: { title: '课表管理', icon: 'Calendar' },
       },
       {

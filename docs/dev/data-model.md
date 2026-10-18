@@ -42,6 +42,7 @@ description: 现行模型职责、迁移与快照边界。
 | `ScheduledClassPlan`   | 按本地日期预定日课表                               |
 | `PromotionRun`         | 年度升级幂等与审计                                 |
 | `Courseware`           | 文件元数据、上传教师、存储路径与 SHA256            |
+| `CoursewareFolder`     | 教师自建分类目录，按上传者隔离                     |
 | `CoursewareVisibility` | 课件可见班级                                       |
 | `CoursewarePush`       | 按班级的推送任务                                   |
 | `CoursewareReceipt`    | 按设备的课件接收回执                               |

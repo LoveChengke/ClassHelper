@@ -10,7 +10,13 @@ import {
 } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedQuery, validatedParams } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
-import { coursewareDeviceQuery, coursewareScopeSchema, coursewareUploadQuery } from './courseware.schemas.js';
+import {
+  coursewareDeviceQuery,
+  coursewareScopeSchema,
+  coursewareUploadQuery,
+  coursewareFolderSchema,
+  coursewareMoveSchema,
+} from './courseware.schemas.js';
 import type { CoursewareUploadRequest } from '@classhelper/shared';
 import * as service from './courseware.service.js';
 const router = Router();
@@ -21,6 +27,26 @@ router.get('/', requireStaffPermission('courseware:read'), async (req, res) =>
 );
 router.get('/classes', ...staff, async (req, res) =>
   sendOk(res, await service.teachingClasses(getAuthUser(req))),
+);
+router.get('/folders', ...staff, async (req, res) =>
+  sendOk(res, await service.listFolders(getAuthUser(req))),
+);
+router.post('/folders', ...staff, validate({ body: coursewareFolderSchema }), async (req, res) =>
+  sendCreated(res, await service.createFolder(getAuthUser(req), validatedBody<{ path: string }>(req).path)),
+);
+router.patch(
+  '/:id/folder',
+  ...staff,
+  validate({ params: idParamSchema, body: coursewareMoveSchema }),
+  async (req, res) =>
+    sendOk(
+      res,
+      await service.moveCourseware(
+        getAuthUser(req),
+        validatedParams<{ id: string }>(req).id,
+        validatedBody<{ folderPath: string }>(req).folderPath,
+      ),
+    ),
 );
 router.get(
   '/transfers',

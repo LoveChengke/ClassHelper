@@ -1,4 +1,5 @@
 import { importProfile } from './profile-import.service.js';
+import { exportProfile } from './profile-export.service.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../lib/db.js';
@@ -82,6 +83,9 @@ layouts.delete(
 
 const plans = Router();
 plans.use(authenticate());
+plans.get('/profile', validate({ query: z.object({ classId: z.string().min(1) }) }), async (req, res) =>
+  sendOk(res, await exportProfile(getAuthUser(req), validatedQuery<{ classId: string }>(req).classId)),
+);
 plans.post(
   '/import/profile',
   requirePermission('schedule:write'),

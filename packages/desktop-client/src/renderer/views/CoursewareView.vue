@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
   COURSEWARE_CATEGORIES,
@@ -12,6 +12,27 @@ import { fetchWithCache } from '../cache/index.js';
 import { getCacheScope } from '../cache/scope.js';
 import { useRealtimeStore } from '../stores/realtime.js';
 const realtime = useRealtimeStore();
+const localItems = ref<CoursewareDto[]>([]),
+  library = ref<'shared' | 'local'>('shared'),
+  teacher = ref(''),
+  archive = ref('');
+const source = computed(() => (library.value === 'local' ? localItems.value : items.value));
+const teachers = computed(() => [...new Set(source.value.map((item) => item.teacher.name))]);
+const archiveFolders = computed(() => [
+  ...new Set(
+    source.value
+      .filter((item) => !teacher.value || item.teacher.name === teacher.value)
+      .map((item) => item.archivePath?.split('/').slice(0, -1).join('/') || item.archiveDate),
+  ),
+]);
+async function refreshLocal() {
+  localItems.value = (await window.desktop?.listLocalCourseware()) || [];
+}
+// 两个来源的教师与目录不通用，切换时清空，避免看到空列表却找不到原因。
+watch(library, () => {
+  teacher.value = '';
+  archive.value = '';
+});
 const items = ref<CoursewareDto[]>([]),
   loading = ref(false),
   offline = ref(false),
@@ -22,15 +43,19 @@ const query = ref(''),
   busy = ref<string[]>([]),
   transfer = ref<CoursewareTransfer | null>(null);
 const filtered = computed(() =>
-  items.value.filter(
+  source.value.filter(
     (item) =>
       (!query.value || `${item.name} ${item.teacher.name}`.includes(query.value)) &&
       (!category.value || item.category === category.value) &&
+      (!teacher.value || item.teacher.name === teacher.value) &&
+      (!archive.value ||
+        (item.archivePath?.startsWith(archive.value + '/') ?? item.archiveDate === archive.value)) &&
       (!date.value || item.archiveDate === date.value),
   ),
 );
 let disposed = false;
 async function refresh() {
+  await refreshLocal();
   const scope = getCacheScope();
   loading.value = true;
   try {
@@ -53,6 +78,7 @@ async function download(item: CoursewareDto) {
   busy.value.push(item.id);
   try {
     await window.desktop.downloadCourseware(item.id);
+    await refreshLocal();
     ElMessage.success('课件已下载，可打开所在文件夹');
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : String(e));
@@ -77,6 +103,7 @@ onMounted(() => {
   timer = setInterval(() => void refresh(), 30000);
   offProgress = window.desktop?.onCoursewareTransfer((value) => {
     transfer.value = value;
+    if (value?.stage === 'completed') void refreshLocal();
   });
   void window.desktop?.getCoursewareTransfer().then((value) => {
     if (!disposed) transfer.value = value;
@@ -122,6 +149,16 @@ onUnmounted(() => {
       <p v-if="transfer.error">{{ transfer.error }}</p>
     </el-card>
     <div class="filters">
+      <el-radio-group v-model="library">
+        <el-radio-button value="shared">班级共享</el-radio-button>
+        <el-radio-button value="local">本机归档</el-radio-button>
+      </el-radio-group>
+      <el-select v-model="teacher" clearable placeholder="全部教师" @change="archive = ''">
+        <el-option v-for="name in teachers" :key="name" :label="name" :value="name" />
+      </el-select>
+      <el-select v-model="archive" clearable filterable placeholder="年 / 月 / 日 / 时间">
+        <el-option v-for="folder in archiveFolders" :key="folder" :label="folder" :value="folder" />
+      </el-select>
       <el-input v-model="query" clearable placeholder="搜索课件或教师" />
       <el-select v-model="category" clearable placeholder="全部类型">
         <el-option v-for="(label, key) in COURSEWARE_CATEGORIES" :key="key" :label="label" :value="key" />
@@ -129,8 +166,12 @@ onUnmounted(() => {
       <el-date-picker v-model="date" value-format="YYYY-MM-DD" placeholder="归档日期" />
     </div>
     <el-card shadow="never" class="table-card" v-loading="loading">
-      <el-table :data="filtered" empty-text="老师还没有向本班共享课件">
+      <el-table
+        :data="filtered"
+        :empty-text="library === 'local' ? '本机还没有已归档的课件' : '老师还没有向本班共享课件'"
+      >
         <el-table-column prop="name" label="课件名称" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="archivePath" label="归档路径" min-width="250" show-overflow-tooltip />
         <el-table-column label="类型" min-width="110">
           <template #default="{ row }">
             {{ COURSEWARE_CATEGORIES[(row as CoursewareDto).category] }} · {{ row.extension || '无扩展名' }}
@@ -143,7 +184,13 @@ onUnmounted(() => {
         </el-table-column>
         <el-table-column label="操作" min-width="200">
           <template #default="{ row }">
-            <el-button link type="primary" :loading="busy.includes(row.id)" @click="download(row)">
+            <el-button
+              v-if="library === 'shared'"
+              link
+              type="primary"
+              :loading="busy.includes(row.id)"
+              @click="download(row)"
+            >
               下载
             </el-button>
             <el-button link @click="reveal(row.id)">打开文件夹</el-button>

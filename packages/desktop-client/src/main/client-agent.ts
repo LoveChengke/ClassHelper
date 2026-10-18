@@ -15,7 +15,12 @@ import {
   type ClientHeartbeatResponse,
   type ClientUpdateInfoDto,
 } from '@classhelper/shared';
-import { maybeInstallPendingUpdate, considerUpdate, syncUpdatePolicy } from './auto-update.js';
+import {
+  maybeInstallPendingUpdate,
+  considerUpdate,
+  syncUpdatePolicy,
+  getUpdateProgress,
+} from './auto-update.js';
 import { connectionEvents, type ConnectionEvent } from './config-events.js';
 import { getConfig } from './config.js';
 import { island } from './island.js';
@@ -178,6 +183,7 @@ async function beat(): Promise<void> {
       autoUpdate: config.autoUpdate !== false,
       pendingVersion: pendingVersionOrNull(),
       stateNote: currentStateNote(),
+      updateProgress: getUpdateProgress(),
     };
     const response = await fetch(`${config.serverUrl}/api/clients/heartbeat`, {
       method: 'POST',

@@ -16,6 +16,7 @@ let passed = 0;
 const h = {
   config: {
     serverUrl: 'http://127.0.0.1:4199',
+    username: 'temporary-class',
     token: 'test-session',
     deviceKey: 'regression-device-key',
     autoUpdate: true,
@@ -58,12 +59,13 @@ h.spawn = (file, args, options) => {
 };
 const mockSources = {
   electron: `const h=globalThis.__clientAgentTest;
-    export const BrowserWindow={getAllWindows:()=>[{isDestroyed:()=>false,isVisible:()=>h.visible}]};
+    export const BrowserWindow={getAllWindows:()=>[{isDestroyed:()=>false,isVisible:()=>h.visible,webContents:{send:()=>{}}}]};
     export const app={getVersion:()=>h.version,getPath:(name)=>name==='exe'?'C:/测试目录/ClassHelper.exe':${JSON.stringify(temp)},quit:()=>h.quitCount++};
     export const dialog={showMessageBox:async()=>({response:h.confirmed?1:0})};`,
   config: `const h=globalThis.__clientAgentTest; export const getConfig=()=>h.config;
     export const saveConfig=(patch)=>Object.assign(h.config,patch);`,
-  island: `export const island={getState:()=>({inClass:globalThis.__clientAgentTest.inClass})};`,
+  island: `export const island={getState:()=>({inClass:globalThis.__clientAgentTest.inClass}),getCoursewareTransfer:()=>null};`,
+  courseware: `export const pollCourseware=async()=>{};`,
   logger: `export const logger={info:()=>{},warn:()=>{},error:()=>{},debug:()=>{}};`,
   process: `export const spawn=(...args)=>globalThis.__clientAgentTest.spawn(...args);`,
 };
@@ -84,7 +86,7 @@ try {
             path: args.path === 'electron' ? 'electron' : 'process',
             namespace: 'mock',
           }));
-          b.onResolve({ filter: /^\.\/(config|island|logger)\.js$/ }, (args) => ({
+          b.onResolve({ filter: /^\.\/(config|island|logger|courseware)\.js$/ }, (args) => ({
             path: path.basename(args.path, '.js'),
             namespace: 'mock',
           }));
@@ -96,7 +98,7 @@ try {
             contents:
               fs.readFileSync(args.path, 'utf8') +
               `\nexport { beat, handleCommand, executeCommand };
-          export { syncUpdatePolicy, considerUpdate, maybeInstallPendingUpdate, setQuitHandler } from './auto-update.js';`,
+          export { syncUpdatePolicy, considerUpdate, maybeInstallPendingUpdate, setQuitHandler, getUpdateProgress } from './auto-update.js';`,
             loader: 'ts',
           }));
         },
@@ -117,6 +119,10 @@ try {
     if (url.includes('/ack')) {
       h.acked.push(JSON.parse(options.body));
       return { ok: !h.ackFails, status: h.ackFails ? 503 : 200 };
+    }
+    if (url.includes('/update-progress')) {
+      (h.progressReports ??= []).push(JSON.parse(options.body));
+      return { ok: true, status: 200 };
     }
     if (url.includes('/heartbeat'))
       return { ok: true, status: 200, json: async () => ({ success: true, data: responseData }) };
@@ -146,9 +152,9 @@ try {
   });
   h.confirmed = false;
   await agent.handleCommand(command('cancel'));
-  check('本机取消不执行系统命令且失败回执', () => {
-    assert.equal(h.spawned.length, 1);
-    assert.equal(h.acked.at(-1).ok, false);
+  check('远控立即执行并回执，不受旧版确认选项影响', () => {
+    assert.equal(h.spawned.length, 2);
+    assert.equal(h.acked.at(-1).ok, true);
   });
   h.confirmed = true;
   h.spawnCode = 5;
@@ -245,6 +251,28 @@ try {
     assert.match(script, /-ArgumentList '\/S','--updated','--force-run'/);
     assert.match(script, /if \(\$installer.ExitCode -ne 0/);
     assert.match(script, /-WindowStyle|Start-Process/);
+    assert.equal(h.progressReports.at(-1).progress.stage, 'installing');
+    assert.match(script, /catch \{/);
+    assert.match(script, /install-result\.json/);
+    fs.writeFileSync(path.join(root, '.cache', 'verified-update-helper.ps1'), script, 'utf8');
+  });
+  fs.writeFileSync(
+    path.join(temp, 'updates', 'install-result.json'),
+    JSON.stringify({
+      version: '2.0.0',
+      serverUrl: h.config.serverUrl,
+      username: h.config.username,
+      error: '模拟安装器退出码：5',
+    }),
+  );
+  const failedInstall = await import(`${pathToFileURL(bundle).href}?installer-failed=1`);
+  const countBeforeRetry = h.spawned.length;
+  const failure = failedInstall.getUpdateProgress();
+  await failedInstall.maybeInstallPendingUpdate();
+  check('安装助手失败后重启客户端可恢复原因并退避重试', () => {
+    assert.equal(failure.stage, 'failed');
+    assert.match(failure.error, /退出码：5/);
+    assert.equal(h.spawned.length, countBeforeRetry);
   });
   console.log(`客户端代理回归：${passed}/${passed} 项通过`);
 } finally {

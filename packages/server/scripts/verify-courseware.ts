@@ -91,7 +91,7 @@ async function request(route: string, token = tokens[0], body?: unknown, method 
 }
 const bytes = Buffer.from('ClassHelper 课件流式上传验收\n'.repeat(3000));
 async function upload(
-  options: Partial<{ name: string; size: number; classIds: string[]; mode: string }> = {},
+  options: Partial<{ name: string; size: number; classIds: string[]; mode: string; folderPath: string }> = {},
   token = tokens[0],
   data = bytes,
 ) {
@@ -166,9 +166,41 @@ try {
   check('API 不暴露服务端路径', !('storagePath' in item));
   const stored = await prisma.courseware.findUniqueOrThrow({ where: { id: item.id } });
   check(
-    '文件按日期和类型保存',
-    stored.storagePath.startsWith(path.join(item.archiveDate, 'presentation')) &&
+    '文件按教师、年、月、日、上传时间保存',
+    /^Teachers\/课件教师甲\/\d{4}\/\d{2}\/\d{2}\/\d{2}-\d{2}-\d{2}\/第1课 演示\.pptx$/.test(
+      item.archivePath || '',
+    ) &&
+      stored.storagePath.endsWith(path.join(...item.archivePath!.split('/'))) &&
       (await fs.readFile(path.join(process.env.COURSEWARE_DIR!, stored.storagePath))).equals(bytes),
+  );
+  const folder = await request('/courseware/folders', tokens[0], { path: '地理/必修一' });
+  check('教师可创建多层分类文件夹', folder.status === 201 && folder.data.path === '地理/必修一');
+  check('文件夹按教师隔离', (await request('/courseware/folders', tokens[1])).data.length === 0);
+  check(
+    '拒绝目录穿越文件夹',
+    (await request('/courseware/folders', tokens[0], { path: '../越界' })).status === 422,
+  );
+  check(
+    '班级不能创建文件夹',
+    (await request('/courseware/folders', classTokens[0], { path: '越权' })).status === 403,
+  );
+  const moved = await request(
+    `/courseware/${item.id}/folder`,
+    tokens[0],
+    { folderPath: folder.data.path },
+    'PATCH',
+  );
+  check(
+    '课件可分类到自建文件夹且日期归档保持稳定',
+    moved.data.folderPath === folder.data.path && moved.data.archivePath === item.archivePath,
+  );
+  check(
+    '不能借用其他教师文件夹上传',
+    (await upload({ folderPath: folder.data.path, classIds: [] }, tokens[1])).status === 400,
+  );
+  check(
+    '不能移动其他教师课件',
+    (await request(`/courseware/${item.id}/folder`, tokens[1], { folderPath: '' }, 'PATCH')).status === 403,
   );
   check(
     '班级仅看到自己可见的课件',
@@ -266,6 +298,83 @@ try {
   });
   check('收回写权限立即禁止上传', (await upload()).status === 403);
   await prisma.permissionGroupItem.create({ data: { groupId: defaultGroup.id, key: 'courseware:write' } });
+  const device = await prisma.clientDevice.findUniqueOrThrow({ where: { deviceKey: 'courseware-device-1' } });
+  await prisma.clientDevice.update({ where: { id: device.id }, data: { updateTargetVersion: '2.0.0' } });
+  const updateProgress = {
+    version: '2.0.0',
+    stage: 'downloading',
+    downloadedBytes: 50,
+    totalBytes: 100,
+    percent: 50,
+    error: '',
+  };
+  check(
+    '客户端可上报更新下载进度',
+    (
+      await request('/clients/update-progress', classTokens[0], {
+        deviceKey: device.deviceKey,
+        progress: updateProgress,
+      })
+    ).status === 200,
+  );
+  check(
+    '其他班级不能冒报设备更新进度',
+    (
+      await request('/clients/update-progress', classTokens[1], {
+        deviceKey: device.deviceKey,
+        progress: updateProgress,
+      })
+    ).status === 403,
+  );
+  await request('/clients/update-progress', classTokens[0], {
+    deviceKey: device.deviceKey,
+    progress: { ...updateProgress, stage: 'installing', percent: 100 },
+  });
+  await request('/clients/update-progress', classTokens[0], {
+    deviceKey: device.deviceKey,
+    progress: updateProgress,
+  });
+  let state = await prisma.clientDevice.findUniqueOrThrow({ where: { id: device.id } });
+  check('迟到的下载状态不覆盖安装中状态', JSON.parse(state.updateProgress).stage === 'installing');
+  await request('/clients/heartbeat', classTokens[0], {
+    deviceKey: device.deviceKey,
+    clientVersion: '2.0.0',
+  });
+  state = await prisma.clientDevice.findUniqueOrThrow({ where: { id: device.id } });
+  check(
+    '新版上线心跳确认完成并记录实际版本',
+    JSON.parse(state.updateProgress).stage === 'completed' &&
+      JSON.parse(state.updateProgress).version === '2.0.0',
+  );
+  await prisma.clientDevice.update({
+    where: { id: device.id },
+    data: { updateTargetVersion: '', updateProgress: '' },
+  });
+  await request('/clients/update-progress', classTokens[0], {
+    deviceKey: device.deviceKey,
+    progress: updateProgress,
+  });
+  state = await prisma.clientDevice.findUniqueOrThrow({ where: { id: device.id } });
+  check('取消目标后忽略旧任务进度', state.updateProgress === '');
+  const teacherDeviceKey = 'courseware-teacher-device';
+  await request('/clients/heartbeat', tokens[0], { deviceKey: teacherDeviceKey, clientVersion: '1.0.0' });
+  let teacherDevice = await prisma.clientDevice.findUniqueOrThrow({ where: { deviceKey: teacherDeviceKey } });
+  check('教师电脑设备不绑定班级', teacherDevice.classId === null);
+  await prisma.clientDevice.update({
+    where: { id: teacherDevice.id },
+    data: { updateTargetVersion: '2.0.0' },
+  });
+  check(
+    '教师电脑可上报自己的更新进度',
+    (
+      await request('/clients/update-progress', tokens[0], {
+        deviceKey: teacherDeviceKey,
+        progress: { ...updateProgress, version: '2.0.0' },
+      })
+    ).status === 200,
+  );
+  teacherDevice = await prisma.clientDevice.findUniqueOrThrow({ where: { deviceKey: teacherDeviceKey } });
+  check('教师电脑更新进度已记录', JSON.parse(teacherDevice.updateProgress).stage === 'downloading');
   const snapshot = await exportSnapshot(prisma, 'sqlite');
   check(
     '备份包含课件、可见范围、推送和回执',
@@ -275,7 +384,13 @@ try {
       snapshot.data.CoursewareVisibility.length > 0,
   );
   const oldSnapshot = structuredClone(snapshot);
-  for (const key of ['Courseware', 'CoursewarePush', 'CoursewareReceipt', 'CoursewareVisibility'])
+  for (const key of [
+    'Courseware',
+    'CoursewareFolder',
+    'CoursewarePush',
+    'CoursewareReceipt',
+    'CoursewareVisibility',
+  ])
     delete (oldSnapshot.data as Record<string, unknown>)[key];
   assertValidSnapshot(oldSnapshot);
   check('允许读取升级前的旧版快照', true);
@@ -319,7 +434,9 @@ try {
   await restoreSnapshot(prisma, 'sqlite', snapshot);
   check(
     '恢复数据库后保留课件共享和回执数据',
-    (await prisma.courseware.count()) === 3 && (await prisma.coursewareReceipt.count()) === 1,
+    (await prisma.courseware.count()) === 3 &&
+      (await prisma.coursewareReceipt.count()) === 1 &&
+      (await prisma.coursewareFolder.count()) === 1,
   );
   console.log(`=== 课件隔离验收：${count}/${count} 项通过 ===`);
 } finally {

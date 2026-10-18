@@ -58,6 +58,7 @@ const time = computed(() =>
 );
 const regions = ref([0, 0, 0, 0, 0]);
 let frame = 0;
+let fallback: ReturnType<typeof setTimeout> | undefined;
 // ClassIsland SlantedMaskControl：5 个斜切区域、30°偏移、两侧向中央打开，中央向两侧关闭。
 const polygons = computed(() => {
   const offset = Math.tan(Math.PI / 6) * 40;
@@ -71,12 +72,21 @@ const polygons = computed(() => {
 });
 function animateMask() {
   cancelAnimationFrame(frame);
+  clearTimeout(fallback);
   const target = mask.value ? 1 : 0;
   if (!props.motion) {
     regions.value = [target, target, target, target, target];
     return;
   }
   const from = [...regions.value];
+  // 隐藏窗口恢复或系统合成暂停时 rAF 可能停住，遮罩仍须在有限时间内成为可见实体。
+  fallback = setTimeout(
+    () => {
+      cancelAnimationFrame(frame);
+      regions.value = [target, target, target, target, target];
+    },
+    600 / Math.max(0.25, props.appearance.speed),
+  );
   const started = performance.now();
   const delays = mask.value ? [0, 90, 120, 90, 0] : [120, 90, 0, 90, 120];
   const update = (at: number) => {
@@ -109,6 +119,7 @@ onMounted(() => {
 onUnmounted(() => {
   observer?.disconnect();
   cancelAnimationFrame(frame);
+  clearTimeout(fallback);
 });
 </script>
 
@@ -137,7 +148,7 @@ onUnmounted(() => {
         <strong>{{ leftSeconds }}</strong>
         秒
       </span>
-      <span v-else class="ci-countdown">课间休息</span>
+      <span v-else class="ci-countdown">{{ reminder.kind === 'on-class' ? '开始上课' : '课间休息' }}</span>
       <span class="ci-lesson-course">
         <span>
           {{
@@ -146,8 +157,8 @@ onUnmounted(() => {
               : '下节课是：'
           }}
         </span>
-        <strong>{{ course }}</strong>
-        <small>{{ time }}</small>
+        <strong>{{ course || '今日课程已结束' }}</strong>
+        <small v-if="course">{{ time }}</small>
       </span>
     </div>
     <div
@@ -194,8 +205,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 24px;
-  padding: 0 28px;
+  gap: 12px;
+  padding: 0 14px;
   white-space: nowrap;
   transition: opacity var(--ci-duration) ease-in;
 }
@@ -222,6 +233,7 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 .ci-lesson-course small {
+  flex-shrink: 0;
   font-size: 14px;
   font-variant-numeric: tabular-nums;
 }

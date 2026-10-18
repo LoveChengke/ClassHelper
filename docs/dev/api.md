@@ -44,8 +44,10 @@ API 前缀 /api，JWT 使用 Authorization: Bearer。成功/失败结构以 `lib
 | /imports/template、/table/preview、/table/commit                                                           | 表格导入，按 kind 再检查角色、导入权限、班级和科目                     |
 | /imports/class-plan/preview、/imports/class-plan                                                           | 旧预览与完整档案提交；提交走关系化导入                                 |
 | /imports/time-layout[/:id]、/time-layout/preview                                                           | 时间配置兼容入口，写入/删除需 timetable:manage                         |
+| GET /class-plans/profile?classId=                                                                          | 完整档案导出，按班级范围读取，保留时间点与课表关联                     |
 | GET /courseware、/courseware/:id、/:id/download                                                            | 课件目录/详情/下载；员工需 courseware:read，班级端按可见范围           |
 | POST /courseware/upload、/:id/push；PATCH /courseware/:id/visibility；DELETE /courseware/:id               | 写入 courseware:write + 员工身份；本人文件、任课班级与可见范围限制     |
+| GET/POST /courseware/folders；PATCH /courseware/:id/folder                                                 | 员工 courseware:write；目录与课件均限本人                              |
 | GET /courseware/transfers；POST /courseware/transfers/:id/ack                                              | 班级端补领、逐设备回执                                                 |
 
 ## 设备、系统与运维
@@ -53,6 +55,7 @@ API 前缀 /api，JWT 使用 Authorization: Bearer。成功/失败结构以 `lib
 | 路径/动作                                                                                               | 行为及边界                                                           |
 | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | POST /clients/heartbeat、/clients/commands/:id/ack                                                      | 登录设备心跳/回执，校验 deviceKey 和归属                             |
+| POST /clients/update-progress                                                                           | 设备上传下载、校验、等待、安装和失败状态，校验设备班级归属           |
 | GET /clients/devices；DELETE /clients/devices/:id                                                       | 设备读取/维护，分别检查功能键和范围                                  |
 | POST /clients/commands                                                                                  | remote:control + 对应范围，白名单动作                                |
 | POST /clients/updates                                                                                   | client:update，安装策略 immediate/after-school/idle                  |

@@ -3223,6 +3223,7 @@ async function main() {
     'AppSetting',
     'ClientDevice',
     'Courseware',
+    'CoursewareFolder',
     'CoursewareVisibility',
     'CoursewarePush',
     'CoursewareReceipt',

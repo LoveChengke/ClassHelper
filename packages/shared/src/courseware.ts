@@ -37,6 +37,9 @@ export interface CoursewareDto {
   archiveDate: string;
   sha256: string;
   createdAt: string;
+  /** 上传时固定的归档相对路径，不含服务端磁盘根目录。 */
+  archivePath?: string;
+  folderPath?: string;
   teacher: { id: string; name: string };
   classes: CoursewareClassDto[];
 }
@@ -45,6 +48,34 @@ export interface CoursewareUploadRequest {
   size: number;
   classIds: string[];
   mode: 'cloud' | 'push';
+  folderPath?: string;
+}
+export interface CoursewareFolderDto {
+  id: string;
+  path: string;
+}
+
+/** 跨平台目录名；保留中文，处理 Windows 保留名与路径分隔符。 */
+export function coursewarePathSegment(value: string): string {
+  const safe =
+    value
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+      .replace(/[. ]+$/, '')
+      .slice(0, 180) || '_';
+  return /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(safe) ? `_${safe}` : safe;
+}
+
+export function coursewareArchivePath(teacher: string, uploadedAt: Date, name: string): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return [
+    'Teachers',
+    coursewarePathSegment(teacher),
+    String(uploadedAt.getFullYear()),
+    pad(uploadedAt.getMonth() + 1),
+    pad(uploadedAt.getDate()),
+    [uploadedAt.getHours(), uploadedAt.getMinutes(), uploadedAt.getSeconds()].map(pad).join('-'),
+    coursewarePathSegment(name),
+  ].join('/');
 }
 export interface CoursewarePushDto {
   id: string;

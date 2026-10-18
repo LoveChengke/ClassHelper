@@ -2,6 +2,8 @@ import {
   CLIENT_COMMAND_EXPIRE_MS,
   CLIENT_COMMAND_LABELS,
   CLIENT_ONLINE_WINDOW_MS,
+  compareVersions,
+  type ClientUpdateProgressDto,
   type ClientUpdateMode,
   type ClientCommandAckRequest,
   type ClientCommandDto,
@@ -47,6 +49,7 @@ type DeviceRow = {
   lastHeartbeatAt: Date | null;
   lastIp: string;
   stateNote: string;
+  updateProgress: string;
   createdAt: Date;
   updatedAt: Date;
   class?: { id: string; name: string } | null;
@@ -153,6 +156,25 @@ export async function heartbeat(
   })) as unknown as DeviceRow;
 
   const targetVersion = device.updateTargetVersion.trim();
+  if (targetVersion && input.clientVersion && compareVersions(input.clientVersion, targetVersion) >= 0) {
+    await prisma.clientDevice.updateMany({
+      where: { id: device.id, updateTargetVersion: targetVersion },
+      data: {
+        pendingVersion: '',
+        updateProgress: JSON.stringify({
+          version: input.clientVersion,
+          stage: 'completed',
+          downloadedBytes: 0,
+          totalBytes: 0,
+          percent: 100,
+          error: '',
+          updatedAt: now.toISOString(),
+        }),
+      },
+    });
+  } else if (input.updateProgress && input.updateProgress.stage !== 'idle') {
+    await reportUpdateProgress(user, input.deviceKey, input.updateProgress);
+  }
   const [command, update] = await Promise.all([
     findPendingCommand(device.id, now),
     targetVersion ? clientReleases.resolveUpdateInfo(targetVersion) : Promise.resolve(null),
@@ -174,6 +196,46 @@ export async function heartbeat(
         : update,
     command: command ? toCommandDto(command) : null,
   };
+}
+
+export async function reportUpdateProgress(
+  user: TokenPayload,
+  deviceKey: string,
+  progress: ClientUpdateProgressDto,
+) {
+  const device = await prisma.clientDevice.findUnique({ where: { deviceKey } });
+  // 教师/管理员电脑不绑定班级（会话与设备两侧都是 null），同样允许上报自己的进度。
+  if (!device || device.classId !== resolveClassId(user)) throw ApiError.forbidden('设备不属于当前班级');
+  // 已取消或更换目标的迟到进度不得覆盖当前任务。
+  if (progress.version !== device.updateTargetVersion || progress.stage === 'completed') return;
+  const previous = readUpdateProgress(device.updateProgress);
+  if (previous?.version === progress.version && previous.stage === 'completed') return;
+  const stages = ['idle', 'downloading', 'verifying', 'ready', 'waiting', 'installing', 'completed'];
+  if (
+    previous?.version === progress.version &&
+    previous.stage !== 'failed' &&
+    progress.stage !== 'failed' &&
+    !progress.error &&
+    stages.indexOf(progress.stage) < stages.indexOf(previous.stage)
+  )
+    return;
+  await prisma.clientDevice.updateMany({
+    where: {
+      id: device.id,
+      updateTargetVersion: progress.version,
+      updateProgress: device.updateProgress,
+    },
+    data: {
+      updateProgress: JSON.stringify({ ...progress, updatedAt: new Date().toISOString() }),
+    },
+  });
+}
+function readUpdateProgress(raw: string): ClientUpdateProgressDto | null {
+  try {
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** POST /api/clients/commands/:id/ack - 客户端执行完远控命令后的回执 */
@@ -263,6 +325,7 @@ export async function listDevices(
       lastHeartbeatAt: heartbeat ? heartbeat.toISOString() : null,
       lastIp: row.lastIp,
       stateNote: row.stateNote,
+      updateProgress: readUpdateProgress(row.updateProgress),
       online: Boolean(heartbeat && now.getTime() - heartbeat.getTime() < CLIENT_ONLINE_WINDOW_MS),
       pendingCommand: pending ? toCommandDto(pending) : null,
       lastCommand: last ? toCommandDto(last) : null,
@@ -390,6 +453,7 @@ export async function pushUpdate(
       where: { id: device.id },
       data: {
         updateTargetVersion: target,
+        updateProgress: '',
         updateMode: clear ? 'idle' : input.mode,
         updateNotBefore:
           !clear && input.mode === 'after-school'

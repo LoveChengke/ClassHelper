@@ -36,7 +36,7 @@ const RESULT_FILE = process.env.UI_SMOKE_RESULT ?? '';
  */
 const MENU_ITEMS = [
   { label: '仪表盘', path: '/dashboard' },
-  { label: '课表管理', path: '/schedules' },
+  { label: '课表档案', path: '/plan-editor' },
   { label: '作业发布', path: '/homeworks' },
   { label: '通知发布', path: '/notifications' },
   { label: '课件', path: '/courseware' },
@@ -504,7 +504,10 @@ async function main() {
       if (!item) { visited=false; continue; }
       const parent=item.closest('.el-sub-menu');
       if (!parent.classList.contains('is-opened')) parent.querySelector('.el-sub-menu__title').click();
-      await pause(); item.click(); await pause();
+      await pause(); item.click();
+      const routeDeadline=Date.now()+6000;
+      while(Date.now()<routeDeadline && (location.pathname!==path || !document.querySelector('.management-breadcrumb'))) await new Promise(r=>setTimeout(r,60));
+      await pause();
       visited = visited && location.pathname === path && !!document.querySelector('.management-breadcrumb');
     }
     const tabs=document.querySelectorAll('.workspace-tab').length;
@@ -595,9 +598,9 @@ async function main() {
     `document.querySelector('.courseware-page .el-table__body')?.textContent.includes(${JSON.stringify(coursewareName)})`,
   );
   const coursewareUploaded = await win.webContents.executeJavaScript(
-    `(() => {const row=[...document.querySelectorAll('.courseware-page .el-table__row')].find(e=>e.textContent.includes(${JSON.stringify(coursewareName)}));return Boolean(row&&row.textContent.includes('仅自己')&&row.textContent.includes('演示文稿'));})()`,
+    `(() => {const row=[...document.querySelectorAll('.courseware-page .el-table__row')].find(e=>e.textContent.includes(${JSON.stringify(coursewareName)}));return Boolean(row&&row.textContent.includes('仅自己')&&row.textContent.includes('演示文稿')&&row.textContent.includes('Teachers'));})()`,
   );
-  record('课件真实上传并按类型归档，未选班级时仅自己可见', coursewareUploaded);
+  record('课件真实上传并按教师、年、月、日、时间归档，未选班级时仅自己可见', coursewareUploaded);
   if (process.env.UI_SMOKE_SHOTS_DIR)
     fs.writeFileSync(
       path.join(process.env.UI_SMOKE_SHOTS_DIR, 'courseware-web.png'),
@@ -1001,16 +1004,16 @@ async function main() {
   const layoutDialog = await win.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
-      (node.textContent ?? '').trim().startsWith('课表管理'),
+      (node.textContent ?? '').trim().startsWith('课表档案'),
     );
     if (!menu) return { ok: false, reason: '未找到课表管理菜单' };
     menu.click();
     const deadline = Date.now() + 6000;
-    while (Date.now() < deadline && location.pathname !== '/schedules') await sleep(80);
+    while (Date.now() < deadline && location.pathname !== '/plan-editor') await sleep(80);
     await sleep(600);
 
     const buttons = Array.from(document.querySelectorAll('button'));
-    const openButton = buttons.find((node) => (node.textContent ?? '').trim() === '导入 ClassIsland 课程表');
+    const openButton = buttons.find((node) => (node.textContent ?? '').trim() === '导入档案');
     if (!openButton) return { ok: false, reason: '课表页没有"导入 ClassIsland 课程表"按钮（班主任权限未生效？）' };
     // 旧入口必须已经下线（需求 ⑩）
     const legacy = buttons.some((node) => (node.textContent ?? '').trim() === '导入时间配置');
@@ -1086,173 +1089,6 @@ async function main() {
     return true;
   })()`);
   await sleep(300);
-
-  // 7.8 授课科目统一：新增课表的科目下拉直接列出"全校统一科目"（不必按班级先录入课程），
-  //     选中后自动建课并写入课表；用例结束把这条课表删掉，保证不污染演示数据。
-  //
-  // 前置：种子数据给每个班建满了全部科目，"统一科目（自动建课）"那组就永远是空的。
-  // 这里先删掉本班一门**没有任何课表/作业/成绩引用**的科目（通用技术，演示课表只用前 11 门），
-  // 让下拉里真的出现"可自动建课"的分组；用例跑完会自动把它建回来（净效果为零）。
-  const sparePrep = await win.webContents.executeJavaScript(`(async () => {
-    const token = localStorage.getItem('classhelper.token') ?? '';
-    const headers = { authorization: 'Bearer ' + token };
-    const classLabel = (document.querySelector('.toolbar .el-select')?.textContent ?? '').trim();
-    const classes = (await (await fetch('/api/classes', { headers })).json()).data ?? [];
-    const target = classes.find((item) => item.name === classLabel) ?? classes[0];
-    if (!target) return { ok: false, classLabel, classCount: classes.length };
-    const courses = (await (await fetch('/api/courses?classId=' + target.id, { headers })).json()).data ?? [];
-    const spare = courses.find((item) => item.name === '通用技术');
-    if (!spare) return { ok: true, className: target.name, removed: false };
-    const status = (await fetch('/api/courses/' + spare.id, { method: 'DELETE', headers })).status;
-    // 关键：页面上的课程列表是**进入课表页时拉一次**的，删完必须重新加载，
-    // 否则「统一科目」分组仍按旧的课程表算，依旧是空的。
-    if (status === 200) {
-      location.reload();
-      return { ok: true, className: target.name, removed: true, reloading: true };
-    }
-    return { ok: true, className: target.name, removed: false, status };
-  })()`);
-  console.log('[ui-smoke] 统一科目用例前置：', JSON.stringify(sparePrep));
-
-  if (sparePrep?.reloading) {
-    // 等页面重新加载并回到课表页（新增课表按钮是这条用例的入口）
-    const reloadDeadline = Date.now() + 15000;
-    let ready = false;
-    while (Date.now() < reloadDeadline && !ready) {
-      await sleep(200);
-      ready = await win.webContents.executeJavaScript(
-        `Array.from(document.querySelectorAll('button')).some((node) => (node.textContent ?? '').trim() === '新增课表')`,
-      );
-    }
-    if (!ready) console.log('[ui-smoke] 警告：删课科目后页面重载超时');
-  }
-
-  const unifiedSubject = await win.webContents.executeJavaScript(`(async () => {
-    const openButton = Array.from(document.querySelectorAll('button')).find((node) =>
-      (node.textContent ?? '').trim() === '新增课表',
-    );
-    if (!openButton) return { ok: false, reason: '课表页没有「新增课表」按钮（当前账号不是班主任？）' };
-    openButton.click();
-    const deadline = Date.now() + 5000;
-    while (Date.now() < deadline && !document.querySelector('.el-dialog')) {
-      await new Promise((resolve) => setTimeout(resolve, 60));
-    }
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    const dialog = Array.from(document.querySelectorAll('.el-dialog')).find((node) =>
-      (node.querySelector('.el-dialog__title')?.textContent ?? '').includes('新增课表'),
-    );
-    if (!dialog) return { ok: false, reason: '新增课表弹窗未打开' };
-    const selects = Array.from(dialog.querySelectorAll('.el-select__wrapper'));
-    if (selects.length < 2) return { ok: false, reason: '弹窗里没有科目/星期下拉' };
-
-    // 打开科目下拉，读取"统一科目"分组
-    selects[0].click();
-    await new Promise((resolve) => setTimeout(resolve, 450));
-    const groups = Array.from(document.querySelectorAll('.el-select-group__title')).map((node) =>
-      node.textContent.trim(),
-    );
-    // Element Plus 的 el-option-group 结构是：.el-select-group__wrap > (.el-select-group__title + ul.el-select-group)
-    const unifiedWrap = Array.from(document.querySelectorAll('.el-select-group__wrap')).find((node) =>
-      (node.querySelector('.el-select-group__title')?.textContent ?? '').includes('统一科目'),
-    );
-    const unifiedNames = unifiedWrap
-      ? Array.from(unifiedWrap.querySelectorAll('.el-select-dropdown__item')).map((node) =>
-          node.textContent.trim(),
-        )
-      : [];
-    if (unifiedNames.length === 0) {
-      return { ok: false, reason: '科目下拉里没有「统一科目」分组（该班已把所有科目都建好了？）', groups };
-    }
-    const subjectName = unifiedNames[0];
-    const subjectOption = Array.from(unifiedWrap.querySelectorAll('.el-select-dropdown__item')).find(
-      (node) => node.textContent.trim() === subjectName,
-    );
-    subjectOption.click();
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    // 星期改成周日（避开演示课表的周一~周五），时间用默认值
-    selects[1].click();
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    const sunday = Array.from(document.querySelectorAll('.el-select-dropdown__item')).find((node) =>
-      (node.textContent ?? '').trim() === '周日',
-    );
-    if (!sunday) return { ok: false, reason: '星期下拉里没有「周日」' };
-    sunday.click();
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    const save = Array.from(dialog.querySelectorAll('.el-dialog__footer button')).find((node) =>
-      (node.textContent ?? '').trim() === '保存',
-    );
-    if (!save) return { ok: false, reason: '弹窗没有保存按钮' };
-    save.click();
-
-    // 等课表列表出现这条（课程名 = 统一科目名）
-    const listDeadline = Date.now() + 8000;
-    let rowText = '';
-    while (Date.now() < listDeadline) {
-      const rows = Array.from(document.querySelectorAll('.timetable-cell'));
-      const hit = rows.find((row) => (row.textContent ?? '').includes(subjectName));
-      if (hit) {
-        rowText = (hit.textContent ?? '').replace(/\\s+/g, ' ').trim();
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    }
-    return { ok: Boolean(rowText), subjectName, groups, unifiedCount: unifiedNames.length, rowText };
-  })()`);
-  record(
-    '课表科目为全校统一目录（选中自动建课并写入课表）',
-    Boolean(unifiedSubject?.ok) && (unifiedSubject?.unifiedCount ?? 0) >= 1,
-    `统一科目分组=${(unifiedSubject?.groups ?? []).join('/') || '-'} 可选项=${unifiedSubject?.unifiedCount ?? 0} ` +
-      `科目=${unifiedSubject?.subjectName ?? '-'} 新行="${unifiedSubject?.rowText ?? ''}"` +
-      `${unifiedSubject?.reason ? ` 原因=${unifiedSubject.reason}` : ''}`,
-  );
-
-  // 删掉刚写入的那条课表**以及自动建出来的课程**，保持演示数据不变
-  const removedUnified = await win.webContents.executeJavaScript(`(async () => {
-    const rows = Array.from(document.querySelectorAll('.timetable-cell'));
-    const row = rows.find((item) => (item.textContent ?? '').includes(${JSON.stringify(
-      unifiedSubject?.subjectName ?? '',
-    )}));
-    if (!row) return { ok: false, reason: '列表里找不到刚写入的课表行' };
-    const removeButton = Array.from(row.querySelectorAll('button')).find((node) =>
-      (node.textContent ?? '').trim() === '删除',
-    );
-    if (!removeButton) return { ok: false, reason: '行内没有删除按钮' };
-    removeButton.click();
-    const confirmDeadline = Date.now() + 5000;
-    while (Date.now() < confirmDeadline && !document.querySelector('.el-message-box')) {
-      await new Promise((resolve) => setTimeout(resolve, 60));
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    const confirm = Array.from(document.querySelectorAll('.el-message-box__btns button')).find((node) =>
-      (node.textContent ?? '').trim() === '确定',
-    );
-    if (!confirm) return { ok: false, reason: '确认弹窗没有确定按钮' };
-    confirm.click();
-    await new Promise((resolve) => setTimeout(resolve, 900));
-
-    // 自动建课留下的课程行也一并删掉（该科目本来不在这个班里）
-    const token = localStorage.getItem('classhelper.token') ?? '';
-    const headers = { authorization: 'Bearer ' + token };
-    // 工具栏第一个选择器就是班级选择器；el-select 非 filterable 时选中项是 span 文本，读 textContent
-    const classLabel = (document.querySelector('.toolbar .el-select')?.textContent ?? '').trim();
-    const classes = (await (await fetch('/api/classes', { headers })).json()).data ?? [];
-    const target = classes.find((item) => item.name === classLabel);
-    if (!target) return { ok: true, courseRemoved: false, reason: '未能定位当前班级：' + classLabel };
-    const courses = (await (await fetch('/api/courses?classId=' + target.id, { headers })).json()).data ?? [];
-    const created = courses.find((item) => item.name === ${JSON.stringify(unifiedSubject?.subjectName ?? '')});
-    if (!created) return { ok: true, courseRemoved: false };
-    const removed = await fetch('/api/courses/' + created.id, { method: 'DELETE', headers });
-    return { ok: true, courseRemoved: removed.ok, className: target.name };
-  })()`);
-  record(
-    '课表用例收尾：统一科目课表与自动建的课程都已删除（不污染演示数据）',
-    Boolean(removedUnified?.ok),
-    removedUnified?.ok
-      ? `课表已删除；课程已删除=${removedUnified.courseRemoved === true}（班级=${removedUnified.className ?? '-'}）`
-      : `原因=${removedUnified?.reason ?? '-'}`,
-  );
 
   // 客户端页保留设备、远控与安装包入口；退役联动入口已移除。
   const clientsUi = await win.webContents.executeJavaScript(`(async () => {
@@ -1521,23 +1357,76 @@ async function runPlanEditorChecks(win) {
   await win.loadURL(new URL('/plan-editor', TARGET_URL).href);
   const ready = await waitFor(
     win,
-    `document.body.innerText.includes('星期 × 时间点') && Boolean(document.querySelector('.editor-table tbody tr'))`,
+    `document.body.innerText.includes('课表编辑') && Boolean(document.querySelector('.course-row'))`,
   );
-  record('日课表编辑器周视图与显式时间点行可用', ready);
+  record('统一课表档案工作区与课程时段编辑可用', ready);
   const save = await win.webContents.executeJavaScript(
-    `(() => {const b=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='保存日课表');b?.click();return Boolean(b&&!b.disabled);})()`,
+    `(() => {const b=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='保存课表');b?.click();return Boolean(b&&!b.disabled);})()`,
   );
   const saved = save && (await waitFor(win, `document.body.innerText.includes('整张日课表已保存')`));
   record('日课表整表保存可以从页面提交', saved);
   await win.webContents.executeJavaScript(
-    `(() => {[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent.includes('时间表'))?.click();})()`,
+    `(() => {[...document.querySelectorAll('.editor-nav button')].find(e=>e.textContent.trim()==='时间表')?.click();})()`,
   );
   record(
     '时间表页四种时间点与管理员保存入口可见',
     await waitFor(
       win,
-      `document.body.innerText.includes('添加时间点') && document.body.innerText.includes('保存时间表')`,
+      `document.body.innerText.includes('新建课时') && document.body.innerText.includes('保存时间表')`,
     ),
+  );
+  const quickAdd = await win.webContents.executeJavaScript(`(async () => {
+    const rows = () => document.querySelectorAll('.time-row');
+    const before = rows().length;
+    [...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='＋ 新建课时')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    const after = rows().length;
+    const last = rows()[after - 1];
+    const values = last ? [...last.querySelectorAll('.el-date-editor input')].map((input) => input.value) : [];
+    const [start, end] = values;
+    const diff = (() => {
+      if (!/^\\d{2}:\\d{2}$/.test(start ?? '') || !/^\\d{2}:\\d{2}$/.test(end ?? '')) return -1;
+      const [h1, m1] = start.split(':').map(Number), [h2, m2] = end.split(':').map(Number);
+      return h2 * 60 + m2 - (h1 * 60 + m1);
+    })();
+    return { before, after, start, end, diff };
+  })()`);
+  record(
+    '时间表新建课时按快速时长生成起止时间',
+    quickAdd.after === quickAdd.before + 1 && quickAdd.diff === 45,
+    `行数 ${quickAdd.before}→${quickAdd.after} 时间=${quickAdd.start ?? '-'}–${quickAdd.end ?? '-'} 分钟=${quickAdd.diff}`,
+  );
+  await win.webContents.executeJavaScript(
+    `document.querySelector('.editor-nav button:nth-child(5)').click()`,
+  );
+  record(
+    '整周预览与当前生效课表保持一致',
+    await waitFor(
+      win,
+      `document.body.innerText.includes('整周课表预览') && document.querySelector('.week-grid .el-table__body')`,
+    ),
+  );
+  await win.webContents.executeJavaScript(`document.querySelector('.editor-nav button:first-child').click()`);
+  await sleep(300);
+  const collapsedBefore = await win.webContents.executeJavaScript(
+    `Boolean(document.querySelector('.layout-aside.is-collapsed'))`,
+  );
+  if (!collapsedBefore)
+    await win.webContents.executeJavaScript(`document.querySelector('.nav-toggle').click()`);
+  await sleep(700);
+  const rail = await win.webContents.executeJavaScript(`(() => {
+    const aside=document.querySelector('.layout-aside').getBoundingClientRect();
+    const icons=[...document.querySelectorAll('.management-group-title .el-icon')].filter(e=>e.getBoundingClientRect().width>0);
+    return icons.length>0 && icons.every(e=>{ const r=e.getBoundingClientRect(); return r.width>=18&&r.left>=aside.left&&r.right<=aside.right; });
+  })()`);
+  record('折叠侧栏分组图标完整显示且未被侧栏裁切', rail);
+  if (!collapsedBefore)
+    await win.webContents.executeJavaScript(`document.querySelector('.nav-toggle').click()`);
+  await sleep(700);
+  fs.mkdirSync(path.join(__dirname, '../../docs/screenshots'), { recursive: true });
+  fs.writeFileSync(
+    path.join(__dirname, '../../docs/screenshots/plan-editor-workspace.png'),
+    (await win.webContents.capturePage()).toPNG(),
   );
   await win.loadURL(new URL('/system-settings', TARGET_URL).href);
   record(
