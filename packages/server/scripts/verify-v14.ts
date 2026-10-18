@@ -12,7 +12,12 @@ import { exportSnapshot } from '../src/lib/snapshot.js';
 import { createAutostartController } from '../src/modules/system/autostart.js';
 import { getMaxTermWeeks } from '../src/lib/term.js';
 import { setSetting, SETTING_KEYS } from '../src/lib/settings.js';
-import { normalizeIslandLayouts, defaultIslandLayouts, buildAutoTermWeeks } from '@classhelper/shared';
+import {
+  CLASSISLAND_ISLAND_METRICS,
+  normalizeIslandLayouts,
+  defaultIslandLayouts,
+  buildAutoTermWeeks,
+} from '@classhelper/shared';
 if (!process.env.DATABASE_URL?.includes('v14-verification')) throw new Error('只能对专用临时验证数据库运行');
 let count = 0;
 function check(name: string, fn: () => void) {
@@ -351,8 +356,8 @@ try {
         { id: 'x', rows: [{ nodes: [], main: true }], scale: 999, color: 'url(https://example.com)' },
       ],
     });
-    assert.equal(invalid.schemes[0]!.scale, 3);
-    assert.equal(invalid.schemes[0]!.color, '#202024');
+    assert.equal(invalid.schemes[0]!.scale, CLASSISLAND_ISLAND_METRICS.scaleMax);
+    assert.equal(invalid.schemes[0]!.color, defaultIslandLayouts().schemes[0]!.color);
   });
 
   const legacy = await request(
