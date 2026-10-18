@@ -19,7 +19,7 @@ ClassHelper（Class Helper）是给中小学班级用的一套信息管理系统
   </a>
   <a class="ch-card" href="app/index.md">
     <span class="ch-card-title">已经在用了</span>
-    <span class="ch-card-desc">课表、作业、通知、叫人、成绩、灵动岛，每一项具体怎么用。</span>
+    <span class="ch-card-desc">课表、作业、通知、叫人、课件、成绩、灵动岛的使用说明。</span>
   </a>
   <a class="ch-card" href="management/index.md">
     <span class="ch-card-title">负责运维</span>
@@ -55,8 +55,8 @@ ClassHelper（Class Helper）是给中小学班级用的一套信息管理系统
 
 **一、老师发，教室弹。** Web 端发布的内容通过 Socket.IO 按班级房间广播，客户端与灵动岛实时更新。
 
-**二、上课时段不打扰。** 「上课时段」由课表实时判定，普通通知只进队列、下课自动补弹，
-紧急通知和叫人则立刻弹出来 —— 服务端强制拦截，绕开界面直接调接口一样会被拦。
+**二、课堂提醒有明确规则。** 经典岛普通通知暂存到下课，普通叫人保留可点胶囊，紧急消息立即展开；
+自定义常驻岛先显示铃铛，由用户主动查看。课堂发布紧急通知还需服务端确认。
 
 **三、离线可用。** 客户端先写 IndexedDB，断网时回退缓存并在顶部提示；
 恢复连接后自动重新拉取，教室网络抖一下不会让大屏变白。

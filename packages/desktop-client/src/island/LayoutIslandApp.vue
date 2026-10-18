@@ -8,6 +8,7 @@ import {
   type ScheduleDto,
 } from '@classhelper/shared';
 import FixedIsland from './IslandApp.vue';
+import CoursewareTransfer from './CoursewareTransfer.vue';
 import './custom-island.css';
 import CustomIslandRuntime from './CustomIslandRuntime.vue';
 const settings = ref(defaultIslandLayouts()),
@@ -50,12 +51,13 @@ onMounted(async () => {
 </script>
 <template>
   <CustomIslandRuntime
-    v-if="resident()"
+    v-if="resident() && !state.coursewareTransfer"
     :settings="settings"
     :state="state"
     :schedules="schedules"
     :appearance="appearance"
     :native-visible="nativeVisible"
   />
-  <FixedIsland v-if="ready" v-show="!resident()" :suspended="resident()" />
+  <FixedIsland v-if="ready" v-show="!resident() && !state.coursewareTransfer" :suspended="resident() || !!state.coursewareTransfer" />
+  <CoursewareTransfer v-if="state.coursewareTransfer" :transfer="state.coursewareTransfer" :appearance="appearance" />
 </template>

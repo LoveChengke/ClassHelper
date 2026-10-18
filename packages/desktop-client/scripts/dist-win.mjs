@@ -136,7 +136,7 @@ function normalizeIntegrityLabel(dir) {
     run([dir, '/setintegritylevel', 'Medium', '/T', '/C']);
     console.log('[dist] 已把交付物完整性标签修正为 Medium：', dir);
   } catch (error) {
-    console.warn('[dist] 完整性标签修正失败（交付物可能装不上，见 AGENTS.md §7 第 7 条）：', error.message);
+    console.warn('[dist] 完整性标签修正失败（交付物可能装不上，见 AGENTS.md 的现行工程约定）：', error.message);
   }
   // 目录自身恢复为"继承父目录的 Low"，保证下次构建时带 Low 标签的 7za 仍能写进这个目录。
   // 宿主目录树本来就没有 Low 标签体系时，这一步会被系统拒绝（保持继承即可），属正常，不提示。

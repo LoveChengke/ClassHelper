@@ -730,7 +730,7 @@ body {
  *
  * **必须关在 `@media (hover: hover) and (pointer: fine)` 里**：教室机器上的希沃触摸屏
  * 点一下会产生"幽灵 hover"并**一直粘着**，直到点别处才消失 —— 不关的话，点过「知道了」
- * 的按钮会永远保持高亮（同 AGENTS.md §5 第 30 条那类问题）。
+ * 的按钮会永远保持高亮（同 AGENTS.md 的现行工程约定那类问题）。
  * 这是 beUI `useHoverCapable` 的 CSS 版：纯样式效果用媒体查询就够，不必挂 composable。
  */
 @media (hover: hover) and (pointer: fine) {

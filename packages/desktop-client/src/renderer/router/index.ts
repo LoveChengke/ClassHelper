@@ -18,6 +18,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../layouts/ClientLayout.vue'),
     redirect: '/schedule',
     children: [
+      { path: 'courseware', name: 'courseware', component: () => import('../views/CoursewareView.vue'), meta: { title: '课件' } },
       {
         path: 'schedule',
         name: 'schedule',

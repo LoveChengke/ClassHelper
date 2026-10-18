@@ -36,7 +36,7 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * 当前账号的**生效权限**（`GET /api/permissions/me`）。
    *
-   * 只用来决定"入口显不显示"，**不是**另一套权限规则（AGENTS.md §5 第 3 条）——
+   * 只用来决定"入口显不显示"，**不是**另一套权限规则（AGENTS.md 的现行工程约定）——
    * 真正的拦截始终在服务端。页面刷新后这里是空的，由 `AdminLayout` 挂载时调
    * {@link ensurePermissions} 补上。
    */

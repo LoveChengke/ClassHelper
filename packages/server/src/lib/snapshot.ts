@@ -59,6 +59,10 @@ export const SNAPSHOT_TABLES = [
   'NotificationRead',
   'Grade',
   'ClientDevice',
+  'Courseware',
+  'CoursewareVisibility',
+  'CoursewarePush',
+  'CoursewareReceipt',
   'ClientCommand',
   'ClientRelease',
   'AiAudit',
@@ -132,6 +136,8 @@ export function assertValidSnapshot(value: unknown): asserts value is DatabaseSn
   }
   for (const table of SNAPSHOT_TABLES) {
     const rows = (snapshot.data as Record<string, unknown>)[table];
+    // 旧版本快照没有课件表；允许恢复，文件实体仍需单独备份。
+    if (rows === undefined && table.startsWith('Courseware')) continue;
     if (!Array.isArray(rows)) {
       throw new Error(`快照缺少表 ${table} 的数据`);
     }
@@ -174,7 +180,7 @@ export async function restoreSnapshot(
       }
     }
     for (const table of SNAPSHOT_TABLES) {
-      const rows = snapshot.data[table].map((row) => {
+      const rows = (snapshot.data[table] ?? []).map((row) => {
         if (table !== 'Class' || typeof row !== 'object' || row === null) return row;
         const copy = { ...(row as Record<string, unknown>) };
         delete copy.notificationChannel;

@@ -48,6 +48,10 @@ export const useRealtimeStore = defineStore('realtime', () => {
   }
 
   function bind(instance: Socket): void {
+    instance.on(SOCKET_EVENTS.coursewareChanged, (payload: { id: string }) => {
+      dispatch(SOCKET_EVENTS.coursewareChanged, payload);
+      void window.desktop?.syncCourseware();
+    });
     instance.on(SOCKET_EVENTS.clientReleaseProgress, (payload) => {
       dispatch(SOCKET_EVENTS.clientReleaseProgress, payload);
     });

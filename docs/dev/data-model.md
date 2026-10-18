@@ -1,133 +1,74 @@
 ---
 title: 数据模型
-description: 24 张表的职责、跨库通用约定、迁移历史与启动时自动迁移。
+description: 现行模型职责、迁移与快照边界。
 ---
 
 # 数据模型
 
-模型定义只有一份：`packages/server/prisma/schema.prisma`。
+模型定义以 `packages/server/prisma/schema.prisma` 为准，迁移以 `prisma/migrations/` 为准。
+仅维护一份 schema，SQLite/MySQL 切换改 provider；不使用 Prisma enum 和 `@db.*`。
 
-## 跨库通用约定
+## 模型职责
 
-- 默认是 **SQLite**（Prisma 7 的 libSQL driver adapter，数据文件 `packages/server/prisma/dev.db`）；
-- 字段**只用** `String / Int / Float / Boolean / DateTime`，**不用 Prisma enum、不用 `@db.*` 原生类型**；
-  角色与优先级存字符串，在 API 层用 zod 校验 —— 这样 SQLite 与 MySQL 行为完全一致；
-- 因此切库只需改 `provider` 与连接串（`pnpm db:switch:mysql` 就地改写它，没有第二份 schema）；
-- 主键统一用 cuid 字符串，便于多端离线生成与合并。
+| 模型                   | 职责                                               |
+| ---------------------- | -------------------------------------------------- |
+| `User`                 | 教师与管理员账号；学生不在此表，班级凭据在 Class   |
+| `Student`              | 学生名单、学号、在读/转出/毕业状态，无密码和角色   |
+| `StudentClassTransfer` | 调班与转出历史，保留班级/姓名快照                  |
+| `ArchivedYear`         | 毕业届别与统计快照                                 |
+| `TermWeek`             | 逐周日期区间，classId 空串为全校默认               |
+| `Class`                | 班级、班级码/密码、班主任、周数与成绩查询开关      |
+| `Course`               | 班级+科目+教师任课关系，含简称和室外标记           |
+| `Schedule`             | 旧课表迁移审计来源，现行接口不再以它为业务真值     |
+| `Homework`             | 作业与本地 assignDate；dueAt 为遗留列              |
+| `HomeworkStatus`       | 按 studentId 记录作业完成状态                      |
+| `Notification`         | 通知/叫人记录、优先级与本地 assignDate             |
+| `NotificationRead`     | 按 studentId 记录已读                              |
+| `TimeLayout`           | 共享或班级自有时间表；旧 items JSON 保留迁移审计   |
+| `Grade`                | studentId、课程、考试、分数和等级                  |
+| `PermissionGroup`      | 默认/自定义/岗位组及 scope/scopeValue              |
+| `PermissionGroupItem`  | 组内权限键                                         |
+| `UserPermissionGroup`  | 账号与组的多对多分配                               |
+| `AppSetting`           | 周次、升级、AI 和系统设置                          |
+| `ClientDevice`         | deviceKey、心跳、更新目标与状态                    |
+| `ClientCommand`        | 白名单远控、有效期与执行回执                       |
+| `ClientRelease`        | 服务端缓存安装包、SHA256 与大小                    |
+| `AiAudit`              | 助手解析审计，不保存 API Key                       |
+| `Exam`                 | 考试名称与是否计入总分                             |
+| `TimeLayoutItem`       | 有序时间点及类型，被课程显式引用                   |
+| `ClassPlanGroup`       | 班级课表群组、全局/默认标记                        |
+| `ClassPlan`            | 日课表、时间表、轮换、启用与临时层规则             |
+| `ClassPlanEntry`       | 日课表与时间点、课程的外键关联、空课/停用/换课标记 |
+| `ScheduledClassPlan`   | 按本地日期预定日课表                               |
+| `PromotionRun`         | 年度升级幂等与审计                                 |
+| `Courseware`           | 文件元数据、上传教师、存储路径与 SHA256            |
+| `CoursewareVisibility` | 课件可见班级                                       |
+| `CoursewarePush`       | 按班级的推送任务                                   |
+| `CoursewareReceipt`    | 按设备的课件接收回执                               |
 
-## 两条核心不变量
+学生和账号分离：Student 没有密码/角色；教师/管理员存 User，CLASS_DEVICE 只是 Class 登录形成的会话。
+任课关系只在 Course；班主任关系在 Class.teacherId，可以与任课关系指向同一账号。
+课表真值是 ClassPlan/ClassPlanEntry/TimeLayoutItem，旧 Schedule 与 TimeLayout.items 不再参与现行业务写入。
+周次口径见[课表](../app/schedules.md)，成绩限制见[成绩](../app/grades.md)。
 
-这两条是 2026-10-06 那次重构立下的，后面所有表都围着它们转：
+## 迁移与启动
 
-**① 学生不是账号。** `Student` 是独立的一张表，只有学号 / 姓名 / 班级 / 性别 / 家长手机号 /
-状态，**没有 `passwordHash`、没有 `role`、没有登录字段** —— 「学生不能登录」由表结构保证，
-不再靠"登录前先判 role === 'STUDENT' 并 403"这类代码分支维持。
-`User` 因此收缩为**纯账号表**（管理员 / 教师 / ClassHelper 班级端）。
+不要删除或重写已应用的 SQLite 迁移目录。源码开发使用 `pnpm --filter @classhelper/server db:deploy`。
+安装形态由 `lib/db-bootstrap.ts` 执行启动迁移，账本 `_ch_migrations` 记录已执行目录。
+升级迁移包含学生表拆分、联动退役、关系化课表、权限范围、年度升级和课件表；具体顺序读取 migrations。
+历史学生迁移中的 STUDENT 只用于搬运旧数据，不是现行账号角色。
+MySQL 建模走受支持的换库流程，不能直接执行 SQLite SQL，详见[MySQL](../management/mysql.md)。
 
-**② 任课关系的唯一来源是 `Course`。** `Course(classId, name, teacherId)` 就是
-「班级 + 科目 + 教师」这条关系本身，作业与成绩都挂在它上面；班主任另由 `Class.teacherId` 表示
-（每班 1 人）。历史上那张**没有科目**的 `ClassTeacher` 协作表已删除 —— 两套关系并存必然漂移。
-同一位教师可以在同一个班同时是班主任和某科科任老师：两处指向同一个 `User`，不重复建号，
-权限在 `@classhelper/shared` 的 `resolveClassRole()` 里合并。
+## 快照与文件
 
-## 24 张表
+`lib/snapshot.ts` 的 `SNAPSHOT_TABLES` 是备份/导入/跨库迁移表清单，按依赖顺序导出，恢复阶段临时关闭外键检查并分批写入。
+模型新增或删除必须同步此清单；不要在文档复制固定表数。
+JSON 快照包含课件元数据、可见范围、推送与回执，**不含文件实体**；完整备份需带上课件目录。
+User.careMode 是预留列；当前 Web 偏好在 localStorage，客户端偏好在本机 config.json，不宣称已有跨设备同步。
 
-| 表                                                                             | 职责                                             | 值得注意的字段                                                                                                                                                                                      |
-| ------------------------------------------------------------------------------ | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `User`                                                                         | **纯账号表**：管理员 / 教师 / ClassHelper 班级端 | `username`（教师即**工号**，班级端即班级码）、`role`、`phone`、`careMode`（关怀模式偏好，目前只由本机界面读写）；**学生不在这里**                                                                   |
-| `Student`                                                                      | 学生名单记录（**没有账号**）                     | `studentNo`（学号，唯一，唯一标识与查询键）、`classId`、`status`、`archivedYearId`                                                                                                                  |
-| `StudentClassTransfer`                                                         | 调班 / 转出历史                                  | 班级 id 与班级名**都存快照且不建外键**（班级删了历史仍要能读）、`mode`（single｜batch｜transfer-out）                                                                                               |
-| `ArchivedYear`                                                                 | 毕业归档的届别档案                               | `enrollmentYear`（届别，唯一）、`graduationYear`、归档时的统计快照                                                                                                                                  |
-| `Class`                                                                        | 班级                                             | `name`（**「2026级1班」**，由 `enrollmentYear` + `classIndex` 生成）、`code` + `passwordHash`（班级端账号）、`termWeeks`、`termStartDate`、`studentGradeQueryEnabled`、`archivedYearId`             |
-| `TermWeek`                                                                     | 学期逐周日期区间                                 | `classId`（**空串 = 全校默认**）、`weekNumber`、`startDate` / `endDate`                                                                                                                             |
-| `Course`                                                                       | 课程 = **「班级 + 科目 + 教师」任课关系**        | `teacherId` 就是该班该科的任课老师；`@@unique([classId, name])`                                                                                                                                     |
-| `Schedule`                                                                     | 课表条目                                         | `weekStart` / `weekEnd` / `weekParity`（单双周）/ `source`（manual）                                                                                                                                |
-| `Homework`                                                                     | 作业                                             | `assignDate`（所属日期）、`attachmentUrl`；`dueAt` 是已下线的遗留列                                                                                                                                 |
-| `HomeworkStatus`                                                               | 学生作业完成状态                                 | `@@unique([homeworkId, studentId])`                                                                                                                                                                 |
-| `Notification`                                                                 | 通知                                             | `priority`、`assignDate`（所属本地日期，禁止 UTC 切片）；`@@index([classId, assignDate])` 供按天归档                                                                                                |
-| `NotificationRead`                                                             | 已读记录                                         | `@@unique([notificationId, studentId])`                                                                                                                                                             |
-| `TimeLayout`                                                                   | 节次时间配置（ClassIsland 同款 JSON 导入得到）   | `items` 是 JSON 字符串：`[{ index, name, startTime, endTime, type, skipped }]`                                                                                                                      |
-| `Grade`                                                                        | 成绩                                             | `studentId`、`score` / `totalScore`、`levelType`（percent｜letter｜custom）与 `level`                                                                                                               |
-| `PermissionGroup`                                                              | 权限组（角色之上的**默认模板**）                 | `name`（唯一）、`builtin`（内置组不可删）；生效集合见 [角色与权限](permissions.md)                                                                                                                  |
-| `PermissionGroupItem`                                                          | 权限组里的一个权限键（一行一个键）               | `@@unique([groupId, key])`；键取值必须是 shared 的 `PERMISSION_KEYS` 之一                                                                                                                           |
-| `UserPermissionGroup`                                                          | 账号 ←→ 权限组 的分配关系（可属多个组）          | `@@unique([userId, groupId])`；**没有任何行 = 回落角色默认模板**                                                                                                                                    |
-| `AppSetting`                                                                   | 全局键值设置（大模型配置 / 开发者模式）          | `key` 即主键、`value` 存字符串（复杂结构存 JSON）；密钥类值做 AES-256-GCM 加密后存这里（**只进不出**）                                                                                              |
-| `ClientDevice`                                                                 | ClassHelper 客户端设备（教室 / 学生机）          | `deviceKey`（唯一，客户端生成）、`classId`、`clientVersion`、`updateTargetVersion`、`lastHeartbeatAt`（**客户端在线判定看 `ClientDevice.lastHeartbeatAt`**：每 30 秒心跳，90 秒内有成功上报即在线。 |
-| 更新目标、安装策略与最早安装时间持久化在设备记录中，离线设备下次上线继续领取。 |
+## 修改模型时
 
-**`Schedule.source`** —— 联动退役后历史同步课表统一归为 `manual`，保留排课数据。
-
-**`Homework.dueAt`** —— 截止时间功能已下线，UI 与接口都不再读写它。
-保留列是为了**不对已安装的库做破坏性迁移**；新库里它恒为 `null`。
-
-**`Notification.assignDate`** —— 与 `Homework.assignDate` 同口径：**本地日期**（`YYYY-MM-DD`），
-创建时用 `dayKeyLocal()` 写入，按天 / 区间归档都读它。**不要用 `createdAt` 切 UTC 当"哪一天"** ——
-晚上发的通知会被算到第二天。`@@index([classId, assignDate])` 是归档查询的支撑。
-
-**`User.careMode`** —— 关怀模式的账号级偏好列（放大正文与控件）。**目前服务端没有任何接口读写它**：
-Web 端存在 `localStorage`（`classhelper.admin.careMode` + `careScale`），客户端存在本机 `config.json`。
-列先建好是为了将来跨设备同步偏好时不必再迁移；别把它当成"已有服务端开关"。
-
-**`TermWeek.classId` 用空串而不是 null 表示"全校默认"** —— SQLite 与 MySQL 的唯一约束都把
-NULL 视作互不相同，`@@unique([classId, weekNumber])` 用 null 就形同虚设。
-
-## 迁移历史（17 个）
-
-```
-init → add_time_layout → add_class_account → add_schedule_week_parity →
-add_class_term_weeks → add_classisland_integration → add_class_notification_channel →
-add_homework_assign_date → add_push_kind → add_schedule_source →
-add_student_table → add_student_grade_query → add_grade_level →
-add_classhelper_heartbeat → add_archives → add_term_weeks →
-add_permission_groups_and_clients
-```
-
-`add_student_table` 是一次真正的表重构（不是加列）：新建 `Student` / `StudentClassTransfer`、
-把 `User` 里 `role='STUDENT'` 的行**按 id 原样搬过去**、把 `Grade` / `HomeworkStatus` /
-`NotificationRead` 的外键从 `userId` 换到 `studentId`、删掉 `Enrollment` 与 `ClassTeacher`。
-因为学生行的 id 保持不变，三张个人数据表的 `userId` 可以直接当 `studentId` 用，历史一条不丢。
-
-`add_permission_groups_and_clients` 是纯加表 / 加列：新建 `PermissionGroup` /
-`PermissionGroupItem` / `UserPermissionGroup`（权限组）、`AppSetting`（全局键值设置）、
-`ClientDevice` / `ClientCommand`（客户端设备与远控）、`ClientRelease`（安装包缓存）、
-`AiAudit`（大模型审计），并给 `Notification` 加 `assignDate` + `[classId, assignDate]` 索引、
-给 `User` 加 `careMode`。没有数据搬运，旧库直接补跑即可。
-
-### 启动时自动迁移
-
-`src/lib/db-bootstrap.ts` 用一张账本表 `_ch_migrations` 记录已执行的迁移目录名：
-
-| 情况     | 行为                                                |
-| -------- | --------------------------------------------------- |
-| 全新安装 | 依次执行全部迁移并创建初始管理员                    |
-| 覆盖安装 | 只补跑账本里没有的迁移（已存在的表 / 索引自动跳过） |
-| 已是最新 | **不做任何写操作**                                  |
-
-日志会写明「全新安装 / 升级安装」、应用了几个迁移、跳过了几个已存在对象。
-用户因此**不需要手动执行 `prisma migrate deploy`**。
-
-## 备份格式就是这份模型的拓扑序导出
-
-「数据库管理」里的备份 / 导出导入 / 跨库迁移共用一种 JSON 快照：**23 张表按拓扑序导出**
-（见 `lib/snapshot.ts` 的 `SNAPSHOT_TABLES`，现在共 23 项，顺序为
-`User` → `PermissionGroup` → `PermissionGroupItem` → `UserPermissionGroup` → `AppSetting` →
-`ArchivedYear` → `Class` → `Student` → … → `AiAudit`），恢复时**临时关闭外键检查** ——
-因为 `Class.teacherId → User` 与 `Student.classId → Class` 是一条链、
-`Class/Student.archivedYearId → ArchivedYear` 又是一条，任何排序都会被其中一侧卡死。
-见[数据库管理](../management/database.md)。
-
-## 开发时的模型改动
-
-1. 改 `schema.prisma`；
-2. 在 `prisma/migrations/` 下加一个迁移目录（用
-   `pnpm --filter @classhelper/server db:deploy` 应用，**别用 `pnpm db:migrate`** ——
-   它在 Windows 上不可靠）。要改已有表结构而不只是加列时，可以先用
-   `pnpm exec prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`
-   生成骨架，再手工补数据搬运语句；
-3. 改完核对 **`SNAPSHOT_TABLES`**（新增 / 删除表要同步）与 `deleteTeacher` 的护栏清单
-   （它必须覆盖 `Class.teacherId` / `Course.teacherId` / `Homework.createdBy` /
-   `Notification.createdBy` 四项）；
-   再回到 `packages/server/scripts/apply-column-migrations.cjs` 补上可 `ALTER TABLE` 的简单列。
-
-模型总数与迁移个数会随版本增长，以 `schema.prisma` 与 `prisma/migrations/` 的实际内容为准；
-本文里的数字标注的是**当前代码库**的状态。
+1. 同步 schema、迁移、shared 契约、服务层、相关前端与快照清单。
+2. 核对外键级联与删除护栏，特别是教师的班级、课程、作业、通知和课件。
+3. 在临时库验证新建和旧库升级；不对真实业务库运行 seed/reset。
+4. 重新生成 Prisma Client，并按修改范围执行[验收](testing.md)。

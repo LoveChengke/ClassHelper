@@ -10,6 +10,7 @@ import { getCacheScope, scopedKey } from './scope.js';
  */
 
 export const CACHE_STORES = [
+  'courseware',
   'profile',
   'classes',
   'schedules',
@@ -32,7 +33,7 @@ export interface CacheStoreStat {
 }
 
 const DB_NAME = 'classhelper-cache';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let databasePromise: Promise<IDBDatabase> | null = null;
 

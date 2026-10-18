@@ -316,6 +316,8 @@ function formatSize(bytes: number): string {
  * 每次心跳后与主窗口隐藏后都会调用。
  */
 export async function maybeInstallPendingUpdate(): Promise<void> {
+  const courseware = island.getCoursewareTransfer();
+  if (courseware && ['downloading', 'verifying'].includes(courseware.stage)) return;
   if (installing) return;
   if (process.env.ELECTRON_SMOKE_TEST === '1') return;
 

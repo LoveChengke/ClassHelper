@@ -531,7 +531,7 @@ export function isNewerVersion(
  * 客户端安装包的**文件名约定**。
  *
  * 与 GitHub Release 上上传的 ASCII 名、以及官网下载页的离线兜底直链
- * **必须一致**（AGENTS.md §4.4：改名要三处一起改）。
+ * **必须一致**（AGENTS.md 的现行工程约定：改名要三处一起改）。
  */
 export function clientReleaseFileName(version: string): string {
   return `ClassHelper-${normalizeVersion(version)}-x64-client-setup.exe`;
@@ -541,7 +541,7 @@ export function clientReleaseFileName(version: string): string {
  * 服务端从 GitHub 拉取客户端安装包的直链。
  *
  * 服务端替教室机器"代下"再缓存（教室常常没有外网）—— Web 端**不能**直连 GitHub
- * （CSP 的 connect-src 只有 self / ws / CORS_ORIGIN，见 AGENTS.md §5 第 52 条）。
+ * （CSP 的 connect-src 只有 self / ws / CORS_ORIGIN，见 AGENTS.md 的现行工程约定）。
  */
 export function clientReleaseDownloadUrl(version: string): string {
   const tag = `v${normalizeVersion(version)}`;

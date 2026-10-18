@@ -24,7 +24,7 @@ import type { AiInterpretInput, UpdateAiSettingsInput } from './ai.schemas.js';
  * 设计边界（照 approved 计划）：
  * 1. 模型只输出结构化意图（`{action, params, confidence}`），服务端用**与手动入口同一份 zod**
  *    二次校验后返回预览；真正落库由前端确认后调既有端点（`POST /homeworks` 等），
- *    于是权限断言、上课时段紧急通知保护全部自动复用（AGENTS.md §5 第 5/14 条）；
+ *    于是权限断言、上课时段紧急通知保护全部自动复用（AGENTS.md 的现行工程约定）；
  * 2. **密钥只进不出**：`AppSetting` 里存的是 `encryptSecret()` 的密文，任何 GET 都不回传；
  * 3. `provider: 'mock'` 用确定性规则离线解析 —— 自动化验收**绝不访问外网**（§5 第 52 条），
  *    真实模型走 `provider: 'openai'` 时的 `{baseUrl}/chat/completions`。

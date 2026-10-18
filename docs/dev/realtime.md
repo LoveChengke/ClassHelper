@@ -1,79 +1,49 @@
 ---
 title: 实时事件（Socket.IO）
-description: 事件清单、房间规则，以及新增一个实时事件要同时改哪三处。
+description: 实际事件与房间、断线恢复和客户端提醒分工。
 ---
 
 # 实时事件（Socket.IO）
 
-## 连接
+连接使用 `io(url, { auth: { token } })`，服务端在握手校验 JWT。
+事件与房间定义在 shared 的 `constants.ts`，载荷类型在 shared 的 `types.ts`，以这些契约和发送点为准。
 
-```ts
-io(url, { auth: { token } }); // 握手阶段用 JWT 鉴权
-```
+## 房间与定向推送
 
-客户端断线由 Socket.IO 自动重连。教室机器断线期间的变更，重连后靠各页重新拉取补齐
-（客户端在检测到服务器恢复时会触发 `onServerRecovered`）；**灵动岛的上课时段暂存通知**由服务端保留、
-下课后补发，不依赖重连。
+| 房间            | 作用                                               |
+| --------------- | -------------------------------------------------- |
+| class:{classId} | 某班级的业务广播                                   |
+| session:{id}    | 会话定向名；员工 id 为账号 id，班级端 id 为班级 id |
+| role:{role}     | 角色房间名，定义在共享常量                         |
+| teacher:{id}    | 教师房间名，定义在共享常量                         |
+| students        | 班级端连接的广播房间，代表全班，不是个人学生账号   |
+| teachers        | 教师和管理员连接的广播房间                         |
 
-## 事件清单
+`realtime/socket.ts` 当前显式 join 可访问的 class 房间与 students/teachers 广播房间；
+同时在 connected 载荷列出 session/role 名。不能把共享常量或该列表当成所有房间均已成功 join 的证明，实际订阅以 join 调用为准。
+业务经 `realtime/bus.ts` 的 emitToClass/emitToSession/emitToRooms 推送。
+叫人记录属于班级通知，并发送班级广播与班级会话定向事件；学生本身没有连接和个人房间。
 
-事件名定义在 `@classhelper/shared` 的 `SOCKET_EVENTS` —— **不要手写字符串**。
+## 主要事件
 
-| 事件                                  | 方向            | 载荷                                             |
-| ------------------------------------- | --------------- | ------------------------------------------------ |
-| `connected`                           | 服务端 → 客户端 | `{ userId, role, rooms }`                        |
-| `notification:new`                    | 服务端 → 客户端 | `NotificationDto`                                |
-| `homework:new`                        | 服务端 → 客户端 | `HomeworkDto`                                    |
-| `homework:updated`                    | 服务端 → 客户端 | `HomeworkDto & { deleted?: boolean }`            |
-| `homework:status`                     | 服务端 → 客户端 | `HomeworkStatusDto & { classId }`                |
-| `grade:updated`                       | 服务端 → 客户端 | `GradeDto`                                       |
-| `schedule:updated`                    | 服务端 → 客户端 | `{ classId, action, schedule? }`                 |
-| `class:updated`                       | 服务端 → 客户端 | `{ classId, action }`                            |
-| `call:new`                            | 服务端 → 客户端 | 叫人消息（定向到 `user:{studentId}` / 班级设备） |
-| `class:join` / `class:leave` / `ping` | 客户端 → 服务端 | 手动订阅班级（服务端二次校验权限）               |
+| 事件                                              | 内容                                                       |
+| ------------------------------------------------- | ---------------------------------------------------------- |
+| connected                                         | `{ sessionId, role, rooms }`                               |
+| notification:new / notification:deleted           | 通知新增/撤回；客户端同步列表、缓存和岛队列                |
+| homework:new / homework:updated / homework:status | 作业新增、修改/删除与完成状态                              |
+| grade:updated                                     | 成绩变化通知；载荷按范围与隐私规则发送，客户端按需重新读取 |
+| schedule:updated / class:updated                  | 课表/班级变化，重新加载对应数据                            |
+| courseware:changed                                | 课件列表/可见范围/推送变化，触发客户端检查                 |
+| client:release-progress                           | 服务端缓存客户端安装包的进度                               |
+| call:new                                          | 叫人内容，与 notification:new 按同 id 合并去重             |
+| class:join / class:leave / ping                   | 客户端订阅/离开班级、探活；join 重新校验范围               |
 
-## 房间规则
+事件没有持久离线消息队列保证。重连后由页面和恢复钩子重新拉取业务数据。
+普通通知上课暂存是客户端岛控制器的本机行为，服务端仍即时落库广播；
+断线通知补弹由客户端未读读取逻辑处理，课件未收任务由服务端保存、客户端心跳补领。
+经典/自定义模式的展示差异见[通知与提醒](../app/notifications.md)。
 
-房间名定义在 `SOCKET_ROOMS`：
+## 修改事件
 
-| 房间                  | 谁在里面                          |
-| --------------------- | --------------------------------- |
-| `class:{classId}`     | 这个班的所有在线端                |
-| `user:{userId}`       | 某个用户自己的连接                |
-| `teacher:{teacherId}` | 某个教师                          |
-| `role:{role}`         | 某一角色（`ADMIN` / `TEACHER` …） |
-| `students`            | 全部 ClassHelper 班级端连接       |
-| `teachers`            | 全部教师端连接                    |
-
-服务端通过 `realtime/bus.ts` 的 `emitToClass` / `emitToUser` 发事件 ——
-**业务模块不直接依赖 Socket.IO 实例**，只依赖事件总线。
-
-## 新增一个实时事件要改三处
-
-```
-① 服务端    shared/src/constants.ts 的 SOCKET_EVENTS 加常量
-            → business service 调 bus.emitToXxx(...)
-            → realtime/socket.ts 房间映射（如果需要新房间）
-② Web 端    web-admin/src/stores/realtime.ts 订阅
-③ 客户端    desktop-client/src/renderer/stores/realtime.ts 订阅
-            → 灵动岛也依赖它（renderer/island/bridge.ts）
-```
-
-**只改服务端不会报错**，只是前端静静地不更新 —— 所以这三处必须一起改。
-事件名一律取自共享常量，不要手写字符串（拼错一个字就是一个静默失效）。
-
-## 事件到达之后发生什么
-
-以通知为例：
-
-```
-服务端写库 → bus.emitToClass(classId, notification:new)
-   ├─► Web 端 stores/realtime.ts  → 通知列表刷新
-   └─► 客户端 stores/realtime.ts  → 更新内存状态 + 写回 IndexedDB
-                                    └─► island/bridge.ts → pushNotificationToIsland()
-                                          └─► 主进程 IslandController 决定：隐藏 / 胶囊 / 详情
-                                                └─► 灵动岛渲染进程 IslandApp.vue
-```
-
-上课时段的取舍（隐藏还是立即展开）由主进程的 `IslandController` 按当前上课状态决定，
-见[通知与提醒](../app/notifications.md)与[灵动岛](../app/island.md)。
+同步修改共享事件名与载荷、服务端发送点、Web `stores/realtime.ts`、客户端 `stores/realtime.ts` 及相关缓存/岛逻辑。
+不要手写事件名；只改服务端会导致前端静默不刷新。涉及成绩时另检查隐私载荷和班级范围。

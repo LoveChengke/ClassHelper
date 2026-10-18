@@ -5,7 +5,7 @@ export const MANAGEMENT_GROUPS = [
     id: 'teaching',
     title: '教学事务',
     icon: 'Notebook',
-    paths: ['/schedules', '/plan-editor', '/homeworks', '/notifications', '/grades'],
+    paths: ['/schedules', '/plan-editor', '/homeworks', '/notifications', '/courseware', '/grades'],
   },
   {
     id: 'school',

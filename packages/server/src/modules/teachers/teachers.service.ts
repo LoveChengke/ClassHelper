@@ -104,11 +104,12 @@ export async function resetTeacherPassword(
 export async function deleteTeacher(userId: string): Promise<void> {
   const teacher = await findTeacherOrThrow(userId);
 
-  const [ownedClasses, courses, homeworks, notifications] = await Promise.all([
+  const [ownedClasses, courses, homeworks, notifications, coursewares] = await Promise.all([
     prisma.class.count({ where: { teacherId: teacher.id } }),
     prisma.course.count({ where: { teacherId: teacher.id } }),
     prisma.homework.count({ where: { createdBy: teacher.id } }),
     prisma.notification.count({ where: { createdBy: teacher.id } }),
+    prisma.courseware.count({ where: { ownerId: teacher.id } }),
   ]);
   if (ownedClasses > 0) {
     throw ApiError.conflict(
@@ -126,6 +127,8 @@ export async function deleteTeacher(userId: string): Promise<void> {
       `「${teacher.name}」还是 ${courses} 门课的任课老师，请先在班级管理里改掉该科的任课老师再删除`,
     );
   }
+
+  if (coursewares > 0) throw ApiError.conflict(`「${teacher.name}」还有 ${coursewares} 个课件，请先清理课件再删除账号`);
 
   await prisma.user.delete({ where: { id: teacher.id } });
 }

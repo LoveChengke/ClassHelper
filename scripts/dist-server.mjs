@@ -1,7 +1,7 @@
 /**
  * 服务端 + Web 管理端 生产打包脚本：pnpm dist:server
  *
- * 交付产物统一落到 releases/server/<版本>/（releases/ 不入库，与客户端/插件同级）：
+ * 交付产物统一落到 releases/server/<版本>/（releases/ 不入库，与客户端同级）：
  *
  * 产出（Windows）：
  *   releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe  Windows 安装程序（NSIS）
@@ -50,7 +50,7 @@ const PRODUCT = 'ClassHelper 服务端';
 const PORT = '4000';
 const LINUX_ARCH = 'x64';
 
-// 产物根：releases/server/<版本>/（releases/ 不入库，见 AGENTS.md §4）
+// 产物根：releases/server/<版本>/（releases/ 不入库，见 AGENTS.md 的现行工程约定）
 const outRoot = path.join(root, 'releases', 'server', VERSION);
 const INSTALLER_DIR = path.join(outRoot, '安装包');
 const GENERATED_DIR = path.join(outRoot, '构建中间');
@@ -219,7 +219,7 @@ function copyRecursive(from, to) {
 function buildRuntime() {
   // 后端代码：保留 dist 层级，保证代码里 serverRoot 的计算（../..）与开发环境一致
   // 注：dist 里没有 .d.ts / *.map —— packages/server/tsconfig.build.json 显式关掉了它们
-  //（那三样占了原 dist 的 82%，运行时一个都用不到，见 AGENTS.md §5 第 54 条）。
+  //（那三样占了原 dist 的 82%，运行时一个都用不到，见 AGENTS.md 的现行工程约定）。
   copyRecursive(path.join(serverDir, 'dist'), path.join(staging, 'server', 'dist'));
   // 迁移文件（首次启动 AUTO_MIGRATE 使用）
   copyRecursive(
@@ -312,7 +312,7 @@ const sizeMb = (target) => Math.round(dirSize(target) / 1024 / 1024);
  * 其余方言（postgresql / cockroachdb / sqlserver）的 wasm 一个字节都用不上。
  *
  * 原则：只删数据文件与文档，**不碰任何会被 require 的入口**；每一条都写明依据。
- * 改这里之前先看「为什么安全」，改完务必按 AGENTS.md §8 的清单复验一次
+ * 改这里之前先看「为什么安全」，改完务必按 AGENTS.md 的现行工程约定 的清单复验一次
  * （尤其是数据库管理模块的「生成客户端 / 一键切换」—— 它是唯一会调用 Prisma CLI 的地方）。
  */
 function pruneRuntime() {

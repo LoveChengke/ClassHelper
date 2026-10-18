@@ -117,6 +117,13 @@ export interface IslandClassStatePayload {
 }
 
 export interface DesktopBridge {
+  downloadCourseware(id: string): Promise<void>;
+  revealCourseware(id: string): Promise<void>;
+  syncCourseware(): Promise<void>;
+  getCoursewareTransfer(): Promise<import('@classhelper/shared').CoursewareTransfer | null>;
+  onCoursewareTransfer(
+    handler: (value: import('@classhelper/shared').CoursewareTransfer | null) => void,
+  ): () => void;
   islandEditLayout(): Promise<void>;
   onIslandEditorOpen(handler: () => void): () => void;
   getUpdateProgress(): Promise<ContractReleaseProgressDto>;

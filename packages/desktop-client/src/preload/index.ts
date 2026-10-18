@@ -1,4 +1,4 @@
-import type { ReleaseProgressDto as ContractReleaseProgressDto } from '@classhelper/shared';
+import type { ReleaseProgressDto as ContractReleaseProgressDto, CoursewareTransfer } from '@classhelper/shared';
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS, UPDATE_AVAILABLE_CHANNEL } from '../main/channels.js';
 import type { ClientAgentStatus } from '../main/client-agent.js';
@@ -20,6 +20,15 @@ import type { IslandNotification, UpdateInfo } from '@classhelper/shared';
  * 之前就抛 `An object could not be cloned.`。调用方必须传纯数据，见 desktop.d.ts。
  */
 const bridge: DesktopBridge = {
+  downloadCourseware: (id) => ipcRenderer.invoke('courseware:download', id),
+  revealCourseware: (id) => ipcRenderer.invoke('courseware:reveal', id),
+  syncCourseware: () => ipcRenderer.invoke('courseware:sync'),
+  getCoursewareTransfer: () => ipcRenderer.invoke('courseware:get-progress'),
+  onCoursewareTransfer: (handler) => {
+    const listener = (_event: unknown, value: CoursewareTransfer | null) => handler(value);
+    ipcRenderer.on('courseware:progress', listener);
+    return () => ipcRenderer.removeListener('courseware:progress', listener);
+  },
   islandEditLayout: () => ipcRenderer.invoke('island:edit-layout'),
   onIslandEditorOpen: (handler) => {
     const listener = () => handler();

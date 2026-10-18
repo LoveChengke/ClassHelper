@@ -5,13 +5,10 @@
  * 资源路径、Electron 版本、`app.isPackaged` 都可能不同。交付前应实测 `packaged: true`。
  *
  * 用法：
- *   node scripts/verify-packaged.mjs
- *   node scripts/verify-packaged.mjs --exe "D:\class\@classhelperdesktop-client\ClassHelper.exe"
- *   node scripts/verify-packaged.mjs --offline
- *   node scripts/verify-packaged.mjs --code G101 --password 123456
- *
- * 联网用例需要后端在 http://127.0.0.1:4000（默认自动探测；探测不到时退化为离线用例）。
- * 退出码：0 = 两次启动都全绿且 `packaged: true`。
+ *   node scripts/verify-packaged.mjs --exe "releases/client/<版本>/安装包/ClassHelper-<版本>-x64-portable.exe" --offline
+ *   显式 --visual 才进行桌面视觉验收，显式 --online 才探测并启用联网。
+ *   联网前由调用方准备隔离服务、临时教师和班级，并显式传入测试凭据；本脚本不自动创建它们。
+ * 默认后台快速、离线，两次启动均成功且 packaged=true 才返回 0。
  */
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';

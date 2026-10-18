@@ -1,6 +1,6 @@
 {
   "name": "class-helper",
-  "version": "1.3.3",
+  "version": "1.4.0",
   "private": true,
   "description": "ClassHelper - 班级信息管理系统（Web 管理端 + 后端服务 + 桌面客户端）",
   "packageManager": "pnpm@11.8.0",
@@ -29,6 +29,7 @@
     "db:switch:mysql": "node scripts/use-database.mjs mysql",
     "db:switch:sqlite": "node scripts/use-database.mjs sqlite",
     "verify:e2e": "node scripts/verify-e2e-isolated.mjs",
+    "verify:courseware": "node scripts/verify-courseware.mjs",
     "verify:v14": "node scripts/verify-v14.mjs",
     "verify:client-agent": "node scripts/verify-client-agent.mjs",
     "verify:review-client": "node scripts/verify-review-client.mjs",
@@ -37,6 +38,7 @@
     "verify:client-migrations": "node scripts/verify-client-migrations.mjs",
     "verify:desktop": "pnpm --filter @classhelper/desktop-client smoke",
     "verify:web": "node scripts/ui-smoke/run.mjs",
+    "verify:web:isolated": "node scripts/verify-e2e-isolated.mjs --web",
     "verify:packaged": "node scripts/verify-packaged.mjs",
     "icons": "node scripts/generate-icons.mjs",
     "version:check": "node scripts/version.mjs",

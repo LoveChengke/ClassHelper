@@ -69,15 +69,13 @@ DOM 注入与 Vue 组合式函数在两端各自的 `composables/motion.ts` 里
 | 页面内容              | `.page > *` 按块错峰浮现（30ms 一档，封顶 180ms）                                              |
 | 统计数字              | 0 → 实际值滚动（`useCountUp`）                                                                 |
 | 主题切换（两端）      | View Transition API：从点击位置扩散的圆整页换肤                                                |
-| 灵动岛                | **刻意只有单调缓动，不用弹簧**                                                                 |
+| 灵动岛                | 独立 SpringValue 帧积分与过冲钳制，见设计令牌                                                  |
 
-### 灵动岛为什么不用弹簧
+### 灵动岛使用独立弹簧
 
-岛的形变由**主进程**缓动窗口尺寸，而冒烟断言「展开过程不震动」「收回过程不抖动」
-是**逐帧采样岛体几何**并要求单调的 —— 任何带过冲的弹簧都会直接判红。
-
-所以岛用 `--ch-ease-out` 这类单调曲线，壳的物理仍归它自己的 `src/island/spring.ts`（WinIsland 移植）。
-**不要拿 beUI 的 `SPRING_*` 去换**。
+经典与自定义岛的形变使用 `src/island/spring.ts` 的 SpringValue，渲染层驱动岛体几何，主进程管理原生窗口与命中。
+它与 shared/motion.ts 的 CSS 弹簧是不同实现，不能互相替换参数。默认阻尼、换向与过冲钳制见[设计令牌](winisland-design-tokens.md)。
+岛动画由应用开关及可见性控制，主窗口 prefers-reduced-motion 规则不直接替代岛自身设置。
 
 另外岛的 `:hover` 规则必须关在 `@media (hover: hover) and (pointer: fine)` 里 ——
 教室触摸屏的"幽灵 hover"会让点过「知道了」的按钮永远高亮。

@@ -30,7 +30,7 @@ router.post(
  *
  * 归档是**打标记 + 只读**：毕业班级的作业与通知原样留在库里，
  * 通过 `GET /:id/classes/:classId/content` 只读查看。
- * 「未毕业而升级的班级不归档」—— 升级走 `POST /api/classes/promote`，只改年级。
+ * 年度升级走 `POST /api/term/promotion/run`，毕业班归档，其余升一级；本模块读取归档结果。
  */
 
 /** GET /api/archives - 届别列表 */

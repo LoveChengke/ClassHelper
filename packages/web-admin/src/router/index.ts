@@ -14,6 +14,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/layouts/AdminLayout.vue'),
     redirect: '/dashboard',
     children: [
+      { path: 'courseware', name: 'courseware', component: () => import('@/views/CoursewareView.vue'), meta: { title: '课件', icon: 'FolderOpened', roles: ['ADMIN', 'TEACHER'], permission: 'courseware:read' } },
       {
         path: 'plan-editor',
         name: 'plan-editor',

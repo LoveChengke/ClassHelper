@@ -8,7 +8,7 @@
  *
  * 客户端相较 Web 端多一层现实约束：教室机器多为**希沃触摸屏**，
  * 触摸点按会产生粘住的幽灵 hover，因此 `useHoverCapable()` 在客户端是**必需**的，
- * 不是锦上添花（见 AGENTS.md §5 第 30 条）。
+ * 不是锦上添花（见 AGENTS.md 的现行工程约定）。
  */
 import { computed, onUnmounted, ref, watch, type CSSProperties, type Ref } from 'vue';
 import {

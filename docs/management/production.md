@@ -2,12 +2,12 @@
 
 本文档覆盖三种上线形态，按适用场景选择：
 
-| 形态                  | 适用场景                                     | 产物                                                     | 验证状态                                                |
-| --------------------- | -------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------- |
-| **A. Windows 安装包** | 学校机房、教师办公电脑（单机即完整系统）     | `releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe` | ✅ 已验证（静默安装 / 启停 / 卸载 / UI）                |
-| **B. Docker + MySQL** | 云服务器、多终端共享一套数据（推荐长期方案） | `deploy/Dockerfile` + `deploy/docker-compose.yml`        | ⚠️ 文件已提供，尚未实机验证                             |
-| **C. Linux 原生部署** | 已有 Linux 服务器（systemd，SQLite 或 MySQL） | [`deploy/install.sh`](https://github.com/LoveChengke/classhelper/blob/master/deploy/install.sh) + `classhelper` 运维命令             | ⚠️ 实机验收清单见 [linux-deploy.md](linux-deploy.md) §10 |
-| **D. 手动部署**       | 已有 Node 环境的服务器、需要自定义           | 在仓库里构建后直接跑（见第四节）                          | ✅ 已验证（端到端验收通过）                             |
+| 形态                  | 适用场景                                      | 产物                                                                                                                     | 验证状态                                                 |
+| --------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| **A. Windows 安装包** | 学校机房、教师办公电脑（单机即完整系统）      | `releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe`                                                  | ✅ 已验证（静默安装 / 启停 / 卸载 / UI）                 |
+| **B. Docker + MySQL** | 云服务器、多终端共享一套数据（推荐长期方案）  | `deploy/Dockerfile` + `deploy/docker-compose.yml`                                                                        | ⚠️ 文件已提供，尚未实机验证                              |
+| **C. Linux 原生部署** | 已有 Linux 服务器（systemd，SQLite 或 MySQL） | [`deploy/install.sh`](https://github.com/LoveChengke/classhelper/blob/master/deploy/install.sh) + `classhelper` 运维命令 | ⚠️ 实机验收清单见 [linux-deploy.md](linux-deploy.md) §10 |
+| **D. 手动部署**       | 已有 Node 环境的服务器、需要自定义            | 在仓库里构建后直接跑（见第四节）                                                                                         | ✅ 已验证（端到端验收通过）                              |
 
 ---
 
@@ -59,7 +59,7 @@ pnpm dist:server -- --reuse-deps   # 迭代打包：复用已安装依赖，跳�
 ├── server\dist\          后端程序（入口 index.js）
 ├── server\prisma\        迁移 SQL（首启动自动执行）
 ├── web\                  Web 管理端（由后端托管）
-├── data\                 classhelper.db + server.pid（备份只需复制此目录）
+├── data\                 数据库、课件与其他持久化文件（完整备份另含 .env）
 ├── logs\server.log       UTF-8 日志（含请求耗时）
 ├── .env                  全部配置
 ├── start.cmd / stop.cmd / restart.cmd / status.cmd
@@ -206,19 +206,19 @@ printf '%s\n' 'StrongPass!2026' | sudo bash /tmp/install.sh --yes \
 
 日常运维全部走 `classhelper`（`classhelper help` 看全部）：
 
-| 事项   | 命令                                                                                    |
-| ------ | --------------------------------------------------------------------------------------- |
-| 状态   | `classhelper status [--json]`                                                           |
-| 体检   | `classhelper doctor`（权限 / Node / 服务单元 / 探针 / 数据库 / 磁盘 / 备份）            |
-| 改密码 | `classhelper password [用户名]`（交互输入、不回显、不进 shell history）                 |
-| 备份   | `classhelper backup`；每日自动：`classhelper backup schedule daily`                     |
+| 事项   | 命令                                                                                     |
+| ------ | ---------------------------------------------------------------------------------------- |
+| 状态   | `classhelper status [--json]`                                                            |
+| 体检   | `classhelper doctor`（权限 / Node / 服务单元 / 探针 / 数据库 / 磁盘 / 备份）             |
+| 改密码 | `classhelper password [用户名]`（交互输入、不回显、不进 shell history）                  |
+| 备份   | `classhelper backup`；每日自动：`classhelper backup schedule daily`                      |
 | 升级   | `classhelper upgrade [--check]`（下载 + 校验 sha256 + 备份 + 替换 + 探针，失败自动回滚） |
-| 回滚   | `classhelper rollback [--list]`                                                         |
-| 日志   | `classhelper logs -f`                                                                   |
-| 改配置 | `classhelper config set KEY VALUE` / `config show` / `port 8080`                        |
-| 换密钥 | `classhelper key rotate`（所有用户需重新登录）                                          |
-| 卸载   | `classhelper uninstall`（默认保留配置、数据与备份）                                     |
-| 服务   | `classhelper start｜stop｜restart｜reload`                                              |
+| 回滚   | `classhelper rollback [--list]`                                                          |
+| 日志   | `classhelper logs -f`                                                                    |
+| 改配置 | `classhelper config set KEY VALUE` / `config show` / `port 8080`                         |
+| 换密钥 | `classhelper key rotate`（所有用户需重新登录）                                           |
+| 卸载   | `classhelper uninstall`（默认保留配置、数据与备份）                                      |
+| 服务   | `classhelper start｜stop｜restart｜reload`                                               |
 
 ### 3.3 手动部署（不想用安装器 / 没有 systemd）
 
@@ -273,7 +273,6 @@ sudo bash /tmp/verify-linux.sh --full --package /tmp/classhelper-server-linux-x6
 升级与回滚整条链路，末尾打印 `=== 结果：N/N 项通过 ===`。逐条清单见
 [linux-deploy.md](linux-deploy.md) 第 10 节。
 
-
 ---
 
 ## 四、手动部署（形态 D）
@@ -308,26 +307,27 @@ pnpm --filter @classhelper/server start      # 或 node packages/server/dist/ind
 
 ## 五、环境变量清单
 
-| 变量                                                | 默认                   | 说明                                                      |
-| --------------------------------------------------- | ---------------------- | --------------------------------------------------------- |
-| `NODE_ENV`                                          | `development`          | `production` 会启用生产校验、HSTS、更严的限流             |
-| `HOST` / `PORT`                                     | `0.0.0.0` / `4000`     | 监听地址与端口                                            |
-| `DATABASE_PROVIDER`                                 | `sqlite`               | `sqlite` 或 `mysql`                                       |
-| `DATABASE_URL`                                      | `file:./prisma/dev.db` | SQLite 相对路径以 `server` 根为基准；MySQL 用连接串       |
-| `AUTO_MIGRATE`                                      | `false`                | SQLite 空库时自动执行随包迁移并创建管理员                 |
-| `JWT_SECRET`                                        | —                      | **必填**，≥32 位；生产环境仍为示例值会拒绝启动            |
-| `JWT_EXPIRES_IN`                                    | `7d`                   | 令牌有效期                                                |
-| `CORS_ORIGIN`                                       | `*`                    | 允许来源，多个用逗号分隔；生产建议写具体域名              |
-| `TRUST_PROXY`                                       | `false`                | 反向代理层数（Nginx 填 `1`），影响限流与日志中的真实 IP   |
-| `RATE_LIMIT_ENABLED`                                | `true`                 | 通用限流（生产 600 次/5 分钟）+ 登录限流（20 次/10 分钟） |
-| `STARTUP_DB_CHECK`                                  | `true`                 | 启动校验数据库；生产不可用时直接退出                      |
-| `PID_FILE`                                          | —                      | PID 文件路径（安装包启停脚本依赖），相对 `server` 根      |
-| `WEB_DIST_DIR`                                      | 自动探测               | Web 管理端产物目录（`../web-admin/dist` 或 `./web`）      |
-| `LOG_LEVEL`                                         | `info`                 | `debug` / `info` / `warn` / `error`                       |
-| `DEFAULT_CLASS_PASSWORD`                            | `123456`               | 新建班级时班级账号（ClassHelper 班级端登录）的默认密码                |
-| `DEFAULT_TEACHER_PASSWORD`                          | `123456`               | 新增/重置教师账号的默认密码（管理员录入教师用）           |
-| `TERM_START_DATE`                                   | —                      | 第 1 教学周的周一，用于"当前周次"与课表默认视图           |
-| `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` | `admin` / `admin123`   | 空库首启动创建的管理员                                    |
+| 变量                                                | 默认                   | 说明                                                        |
+| --------------------------------------------------- | ---------------------- | ----------------------------------------------------------- |
+| `NODE_ENV`                                          | `development`          | `production` 会启用生产校验、HSTS、更严的限流               |
+| `HOST` / `PORT`                                     | `0.0.0.0` / `4000`     | 监听地址与端口                                              |
+| `DATABASE_PROVIDER`                                 | `sqlite`               | `sqlite` 或 `mysql`                                         |
+| `DATABASE_URL`                                      | `file:./prisma/dev.db` | SQLite 相对路径以 `server` 根为基准；MySQL 用连接串         |
+| `AUTO_MIGRATE`                                      | `false`                | SQLite 启动时补跑随包迁移，空库另创建管理员                 |
+| `JWT_SECRET`                                        | —                      | **必填**，至少 16 位；生产需 ≥32 位且拒绝示例密钥           |
+| `JWT_EXPIRES_IN`                                    | `7d`                   | 令牌有效期                                                  |
+| `CORS_ORIGIN`                                       | `*`                    | 允许来源，多个用逗号分隔；生产建议写具体域名                |
+| `TRUST_PROXY`                                       | `false`                | 反向代理层数（Nginx 填 `1`），影响限流与日志中的真实 IP     |
+| `RATE_LIMIT_ENABLED`                                | `true`                 | 通用限流（生产 600 次/5 分钟）+ 登录限流（20 次/10 分钟）   |
+| `STARTUP_DB_CHECK`                                  | `true`                 | 启动校验数据库；生产不可用时直接退出                        |
+| `PID_FILE`                                          | —                      | PID 文件路径（安装包启停脚本依赖），相对 `server` 根        |
+| `WEB_DIST_DIR`                                      | 自动探测               | Web 管理端产物目录（`../web-admin/dist` 或 `./web`）        |
+| `LOG_LEVEL`                                         | `info`                 | `debug` / `info` / `warn` / `error`                         |
+| `DEFAULT_CLASS_PASSWORD`                            | `123456`               | 新建班级时班级账号（ClassHelper 班级端登录）的默认密码      |
+| `DEFAULT_TEACHER_PASSWORD`                          | `123456`               | 新增/重置教师账号的默认密码（管理员录入教师用）             |
+| `COURSEWARE_DIR`                                    | 默认 data/courseware   | 课件文件实体目录；需纳入完整备份                            |
+| `TERM_START_DATE`                                   | —                      | 开学日环境兜底；界面全校/班级设置与逐周区间优先，见课表帮助 |
+| `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` | `admin` / `admin123`   | 空库首启动创建的管理员                                      |
 
 ---
 
@@ -353,6 +353,8 @@ pnpm --filter @classhelper/server start      # 或 node packages/server/dist/ind
 | ------ | ---------------------------------------------------------------------- | ------------------------ |
 | SQLite | 停止服务后复制 `data/classhelper.db`（Linux：`/opt/classhelper/data`） | 替换该文件后启动         |
 | MySQL  | `mysqldump -u classhelper -p classhelper > backup.sql`                 | `mysql ... < backup.sql` |
+
+课件文件实体不在 JSON/SQL 数据快照里，完整备份还需 `data/courseware` 或 `COURSEWARE_DIR` 指定目录。
 
 建议：每日自动备份 + 保留 7 份；变更 `JWT_SECRET` 会导致所有用户重新登录，请勿在无必要时更换。
 

@@ -593,7 +593,7 @@ const CLIENT_RELEASE_FETCH_TIMEOUT_MS = 10 * 60 * 1000;
  * 客户端安装包缓存管理（服务端 `modules/update/client-releases.service.ts`）。
  *
  * 教室机器常常没有外网，所以安装包由**服务端替教室下载**再缓存：
- * Web 端不直连 GitHub（CSP 的 connect-src 只放行 self 与 WebSocket，见 AGENTS.md §5 第 52 条）。
+ * Web 端不直连 GitHub（CSP 的 connect-src 只放行 self 与 WebSocket，见 AGENTS.md 的现行工程约定）。
  *
  * 权限：`list` 要查看、设备管理或更新任一权限；`fetch` / `register` / `remove` 要 `client:update-push`。
  */

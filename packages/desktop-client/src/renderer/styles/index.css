@@ -784,7 +784,7 @@ textarea {
 /*
  * 卡片抬升。**必须关在 `@media (hover: hover) and (pointer: fine)` 里**：
  * 教室机器的希沃触摸屏点一下会产生"幽灵 hover"并一直粘着，
- * 不加这层的话卡片被点过之后就永远浮着（见 AGENTS.md §5 第 30 条）。
+ * 不加这层的话卡片被点过之后就永远浮着（见 AGENTS.md 的现行工程约定）。
  * 这也正是 `composables/motion.ts` 里 `useHoverCapable()` 的 CSS 版本 ——
  * 纯 CSS 效果用媒体查询就够了，不必为它挂一个 composable。
  */

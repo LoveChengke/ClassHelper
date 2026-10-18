@@ -25,7 +25,7 @@ const { isMobile } = useResponsive();
  * 顶栏的主题切换。整页"从点击位置扩散的圆"由 `useThemeReveal()` 提供
  * （与桌面客户端共用同一份实现，见 composables/motion.ts）。
  *
- * 入口只放在**登录后的主布局**里：登录页是刻意固定的深色渐变底（AGENTS.md §5 第 46 条），
+ * 入口只放在**登录后的主布局**里：登录页是刻意固定的深色渐变底（AGENTS.md 的现行工程约定），
  * 它不随主题走，在那里放一个切换按钮只会让人以为按钮坏了。
  */
 const revealThemeChange = useThemeReveal();
@@ -43,7 +43,7 @@ function handleThemeToggle(event: MouseEvent): void {
  * `styles/index.css` 里 `.ch-nav.is-collapsed …` 那一段（那里有完整推导）——
  * 模板里没有任何 `v-if` 增删菜单项，折叠才是连续的收拢动画而不是"重排一下"。
  *
- * 缓动刻意与桌面客户端同一套参数（`--nav-dur` / `--nav-ease`，AGENTS.md §5 第 49 条）：
+ * 缓动刻意与桌面客户端同一套参数（`--nav-dur` / `--nav-ease`，AGENTS.md 的现行工程约定）：
  * 这里不要换成 EASE_OUT 之类的"起步快"曲线 —— 两端观感要一致，且自动化会量到中间态。
  */
 const collapseLabel = computed(() => (ui.sidebarCollapsed ? '展开菜单' : '收起菜单'));
@@ -523,7 +523,7 @@ const tourSteps = computed(() => [
             注意 `.header-right` 必须是 flex 容器：Element Plus 给 `.el-button` 的是
             `vertical-align: middle`、给 `.el-dropdown` 的是 `vertical-align: top`，
             放在普通 block 里两个 inline-level 子元素会按各自的规则落位、错开几像素
-            （AGENTS.md §5 第 58 条，客户端当初就是这么翻的车）。
+            （AGENTS.md 的现行工程约定，客户端当初就是这么翻的车）。
           -->
           <el-tooltip :content="ui.theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'" placement="bottom">
             <el-button

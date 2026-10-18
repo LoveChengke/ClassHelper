@@ -170,12 +170,11 @@ export const DEFAULT_LETTER_LEVELS: readonly string[] = ['A', 'B', 'C', 'D'];
 /**
  * ClassHelper 班级端在线判定窗口（毫秒）。
  *
- * 插件默认 60 秒打一次心跳，因此「最近 60 秒内有心跳 = 在线」是最贴合的口径；
- * 判定与展示（教师网页的「ClassHelper 在线状态」）共用这一个常量，避免两处各写一个数。
+ * @deprecated 旧联动在线窗口兼容导出，当前设备在线状态使用 CLIENT_ONLINE_WINDOW_MS。
  */
 export const CLASS_HELPER_ONLINE_WINDOW_MS = 60_000;
 
-/** 教师网页「ClassHelper 在线状态」的自动刷新间隔（秒） */
+/** @deprecated 旧联动状态页刷新间隔，现行设备页不使用。 */
 export const CLASS_HELPER_STATUS_REFRESH_SECONDS = 30;
 
 /** 通知优先级 */
@@ -199,8 +198,7 @@ export const PRIORITY_TAG_TYPES: Record<NotificationPriority, 'info' | 'primary'
 /**
  * 优先级权重（越大越重要）。
  *
- * 灵动岛有多条通知时按它排序（"默认按重要程度排列"），插件合并同 id 消息时也用它取更高优先级 ——
- * 两边必须同一份口径，否则会出现"列表里的顺序和合并后的优先级不一致"。
+ * 灵动岛列表排序和同 id 消息合并共用，保证展示顺序与优先级合并一致。
  */
 export const PRIORITY_RANK: Record<NotificationPriority, number> = {
   LOW: 0,
@@ -480,6 +478,7 @@ export const DEFAULT_WEEK_COUNT = 20;
 
 /** WebSocket 事件名（服务端广播 / 客户端监听保持一致） */
 export const SOCKET_EVENTS = {
+  coursewareChanged: 'courseware:changed',
   notificationNew: 'notification:new',
   notificationDeleted: 'notification:deleted',
   homeworkNew: 'homework:new',
@@ -489,7 +488,7 @@ export const SOCKET_EVENTS = {
   scheduleUpdated: 'schedule:updated',
   clientReleaseProgress: 'client:release-progress',
   classUpdated: 'class:updated',
-  /** "叫人"：老师点名让某位同学去找他（定向到 user:{studentId} 房间） */
+  /** "叫人"：老师点名让某位同学去找他（定向到班级会话 session:{classId} 房间） */
   callNew: 'call:new',
   connected: 'connected',
 } as const;
@@ -599,7 +598,7 @@ export const MAX_PAGE_SIZE = 200;
 /* ------------------------------------------------------------------ 更新检查 */
 
 /**
- * 更新来源：本项目用 **GitHub Releases** 分发交付物（服务端 / 客户端安装包、便携版、插件 .cipx），
+ * 更新来源：本项目用 **GitHub Releases** 分发交付物（服务端 / 客户端安装包与便携版），
  * 因此"有没有新版本"就是问 GitHub 上最新的那个 Release。
  *
  * 仓库是**公开**的，匿名调用即可（不需要 token）；但匿名限流是 60 次/小时/IP，

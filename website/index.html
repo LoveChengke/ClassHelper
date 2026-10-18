@@ -44,7 +44,7 @@
         <a class="brand" href="#top" data-press="0.96">
           <img class="brand-mark" src="assets/icon.png" alt="" width="32" height="32" />
           <span class="brand-name">ClassHelper</span>
-          <span class="brand-ver">1.3.3</span>
+          <span class="brand-ver">1.4.0</span>
         </a>
         <nav class="topnav" aria-label="页内导航">
           <span class="nav-pill" aria-hidden="true"></span>
@@ -93,7 +93,7 @@
             </div>
 
             <ul class="hero-badges intro-seq" style="--intro-delay: 300ms">
-              <li>v1.3.3</li>
+              <li>v1.4.0</li>
               <li>Windows 10/11</li>
               <li>Linux · Docker</li>
               <li>触摸屏可用</li>
@@ -177,7 +177,8 @@
           <ul class="facts">
             <li>装着 SQLite 就能跑，需要时一键换到 MySQL —— 数据也跟着搬过去。</li>
             <li>课表由教师在管理端维护，教室客户端实时接收变更。</li>
-            <li>通知实时送达客户端与灵动岛，普通提醒会等待下课再显示。</li>
+            <li>课件按日期与类型归档，教师可向授课班级共享或推送，灵动岛实时显示接收进度。</li>
+            <li>通知实时送达客户端；经典模式课堂暂存普通提醒，自定义模式提示铃铛。</li>
           </ul>
         </div>
       </section>
@@ -233,9 +234,9 @@
         <div class="wrap">
           <h2 class="h2">从按下「发布」到教室屏幕上弹出来</h2>
           <p class="lead narrow">
-            中间只隔着一条 WebSocket 广播。实测从老师提交到教室机器收到，是 30 到 50 毫秒 —— 这个数字由
+            服务端保存内容后通过 WebSocket 广播，客户端刷新对应页面。实际延迟受网络与设备影响， 验收时由
             <code>pnpm verify:e2e</code>
-            每次跑的时候重新量，不是写在文档里的估计值。
+            的本次输出记录。
           </p>
 
           <ol class="pipeline">
@@ -260,8 +261,8 @@
               <p class="pipe-body">课表服务回答「现在上不上课」，当场弹还是先收着，这一步就定下来了。</p>
             </li>
             <li>
-              <p class="pipe-step">两端弹出</p>
-              <p class="pipe-body">灵动岛展开成卡片，客户端同步显示通知。</p>
+              <p class="pipe-step">客户端显示</p>
+              <p class="pipe-body">通知中心同步记录，灵动岛按经典或自定义模式提示。</p>
             </li>
           </ol>
         </div>
@@ -272,7 +273,7 @@
         <div class="wrap">
           <h2 class="h2">上课的时候，通知会先排队</h2>
           <p class="lead narrow">
-            判定来自课表本身，不是按时钟拍脑袋。把下面这条时间轴拨一下，看看同样的通知在课上和课间分别会怎样。
+            以下示例展示经典固定模式。课表决定课堂状态；自定义常驻模式通过铃铛提示消息，由用户主动展开。
           </p>
 
           <div class="policy" id="policy-widget">
@@ -292,7 +293,7 @@
                 max="1030"
                 step="1"
                 value="560"
-                aria-label="拖动选择一天中的时刻，查看通知在两个端上的表现"
+                aria-label="拖动选择一天中的时刻，查看经典模式在课堂和课间的通知表现"
               />
               <div class="day-scale" aria-hidden="true">
                 <span>07:00</span>
@@ -315,7 +316,7 @@
                 <p class="outcome-say" id="o-normal-screen">先收着，下课补弹</p>
               </div>
               <div class="outcome outcome-alert">
-                <p class="outcome-what">紧急通知 / 叫人</p>
+                <p class="outcome-what">紧急通知 / 紧急叫人</p>
                 <p class="outcome-where">教室大屏 · ClassHelper</p>
                 <p class="outcome-say" id="o-urgent-screen">灵动岛立即展开提醒</p>
               </div>
@@ -327,7 +328,7 @@
             </div>
 
             <p class="policy-note">
-              普通叫人（默认级别）上课时只进队列，下课后自动弹出详情；标成紧急的才当场打断课堂 ——
+              经典模式普通叫人上课时保留可点击胶囊，不自动展开；紧急叫人立即展开。自定义模式都先提示铃铛。
               那是老师正在等学生。老师在 Web 端发紧急通知时会先撞上全屏二次确认，确认按钮带 3 秒倒计时，
               防止手滑。这一层拦在服务端，绕过界面直接调接口也一样会被拒。
             </p>
@@ -603,10 +604,10 @@
                 </tr>
                 <tr>
                   <th scope="row">已有 Node 环境</th>
-                  <td>免安装目录，自带 node.exe</td>
+                  <td>从源码构建，使用已安装的 Node</td>
                   <td>
-                    <code>pnpm dist:server</code>
-                    的产物
+                    <code>pnpm build</code>
+                    后启动服务端，详见部署文档
                   </td>
                 </tr>
               </tbody>
@@ -663,7 +664,7 @@
       <!-- ═══════════════════════ 验收 ═══════════════════════ -->
       <section class="band band-board" id="verify">
         <div class="wrap">
-          <h2 class="h2">每个功能都配了一条能复跑的用例</h2>
+          <h2 class="h2">验收脚本可以重复运行</h2>
           <p class="lead narrow">
             仓库里带着这几套脚本，跑到哪儿、过了几条由脚本自己数，不是文档里写死的数字。 交付前它们必须全绿 ——
             包括对
@@ -677,22 +678,22 @@
               <span class="ledger-what">
                 接口、实时推送、权限越权、上课时段、表格导入、班级账号、数据库管理、更新检查
               </span>
-              <span class="ledger-num"><span data-ticker="190">190</span></span>
+              <span class="ledger-num">隔离</span>
             </div>
             <div class="ledger-row">
               <code class="ledger-cmd">pnpm verify:desktop</code>
-              <span class="ledger-what">客户端冒烟：登录、离线回退、灵动岛开合与命中、设置页真实点击</span>
-              <span class="ledger-num"><span data-ticker="105">105</span></span>
+              <span class="ledger-what">默认后台快速检查：启动、桥接、缓存与关闭；视觉验收需 --visual</span>
+              <span class="ledger-num">后台</span>
             </div>
             <div class="ledger-row">
               <code class="ledger-cmd">pnpm verify:packaged</code>
               <span class="ledger-what">对打包后 / 已安装的那份 EXE 复跑同一套冒烟</span>
-              <span class="ledger-num"><span data-ticker="105">105</span></span>
+              <span class="ledger-num">后台</span>
             </div>
           </div>
 
           <p class="ledger-foot">
-            上面是 2026-10-05 那一次的结果。这几套脚本每天都在跑，数字会变；跑到多少条，以脚本自己打印的为准。
+            覆盖范围和数量以本次输出为准；默认后台冒烟不占用桌面，动画和透明度使用显式视觉验收。
           </p>
         </div>
       </section>
@@ -732,7 +733,7 @@
               ClassHelper
               <span>Class Helper</span>
             </p>
-            <p class="foot-ver">版本 1.3.3 · 源码公开 · 装在你自己的机器上</p>
+            <p class="foot-ver">版本 1.4.0 · 源码公开 · 装在你自己的机器上</p>
           </div>
         </div>
         <nav class="foot-nav" aria-label="相关链接">

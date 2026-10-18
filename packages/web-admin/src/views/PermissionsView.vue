@@ -8,7 +8,7 @@ import type { PermissionScope as ContractPermissionScope } from '@classhelper/sh
  * 1. **权限组**：新建 / 编辑 / 删除权限组（一组权限键），内置组只允许改、禁止删；
  * 2. **成员**：把管理员 / 教师账号分配到权限组（不选任何组 = 回到角色默认模板）。
  *
- * 权限规则本身**不在这里实现**（AGENTS.md §5 第 3 条）：本页只是把服务端
+ * 权限规则本身**不在这里实现**（AGENTS.md 的现行工程约定）：本页只是把服务端
  * `GET /permissions/catalog` 给的目录、以及 `lib/permissions.ts` 的生效规则
  * 如实展示出来，真正的判定始终在服务端 —— 页面拿到的 `fromGroups` / `permissionCount`
  * 都是服务端算好的结果。

@@ -1159,7 +1159,7 @@ const deviceEmptyText = computed(() =>
 </template>
 
 <style scoped>
-/* 顶部横幅 / 弹窗内提示：圆角与底都走设计令牌，不写死数值（AGENTS.md §5 第 11 条） */
+/* 顶部横幅 / 弹窗内提示：圆角与底都走设计令牌，不写死数值（AGENTS.md 的现行工程约定） */
 .client-banner {
   margin-bottom: 12px;
   border-radius: var(--ch-radius-sm);

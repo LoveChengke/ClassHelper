@@ -1,3 +1,4 @@
+import { coursewareModule } from './courseware/courseware.module.js';
 import {
   classPlansModule,
   timeLayoutsModule,
@@ -33,6 +34,7 @@ import type { ApiModule } from './module.types.js';
  * 临时下线：把 enabled 置为 false。
  */
 export const apiModules: ApiModule[] = [
+  coursewareModule,
   authModule,
   aiModule,
   classesModule,

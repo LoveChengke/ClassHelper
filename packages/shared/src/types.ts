@@ -1,3 +1,4 @@
+import type { CoursewareTransfer } from './courseware.js';
 import type {
   PermissionScope as ContractPermissionScope,
   ReleaseProgressDto as ContractReleaseProgressDto,
@@ -1156,6 +1157,7 @@ export type IslandStyle = 'black' | 'glass' | 'tinted';
 
 /** 灵动岛当前状态（主进程持有，渲染进程与冒烟测试读取） */
 export interface IslandState {
+  coursewareTransfer?: CoursewareTransfer | null;
   mode: IslandMode;
   lessonReminder?: IslandLessonReminder | null;
   /** 正在展示的通知（展开态或胶囊态） */
@@ -1172,7 +1174,7 @@ export interface IslandState {
    * `closing` 是"用户点了知道了 / 标为已读"之后的**收回动画**阶段：状态在同一帧就已经落地
    * （`active` 清空、`queued` 清空），主进程只是把形态切回胶囊让渲染进程把卡片收回去，
    * 待 `CLOSE_ANIMATION_MS` 之后再淡出隐藏。它不是跨进程握手，渲染进程也不需要任何回执
-   * （见 AGENTS.md §5 第 34 条）。
+   * （见 AGENTS.md 的现行工程约定）。
    */
   reason: 'new' | 'after-class' | 'urgent' | 'call' | 'closing' | null;
   /**
@@ -1208,6 +1210,7 @@ export interface DashboardSummary {
 
 /** 服务端 -> 客户端事件名 */
 export interface ServerToClientEvents {
+  'courseware:changed': (payload: { id: string }) => void;
   'client:release-progress': (payload: ContractReleaseProgressDto) => void;
   'notification:deleted': (payload: { id: string; classId: string }) => void;
   'notification:new': (payload: NotificationDto) => void;
@@ -1515,7 +1518,7 @@ export interface AssignUserGroupsRequest {
 /**
  * `GET /api/permissions/me`：当前账号的生效权限。
  *
- * 两端用它决定"入口显不显示"，而**不是**再写一套权限规则（AGENTS.md §5 第 3 条）：
+ * 两端用它决定"入口显不显示"，而**不是**再写一套权限规则（AGENTS.md 的现行工程约定）：
  * 真正的拦截始终在服务端。
  */
 export interface MyPermissionsDto {

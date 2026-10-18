@@ -3,6 +3,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BrowserWindow, ipcMain, screen } from 'electron';
 import {
+  COURSEWARE_ISLAND_SIZE,
+  type CoursewareTransfer,
   DEFAULT_ISLAND_APPEARANCE,
   CLASSISLAND_ISLAND_METRICS,
   normalizeIslandLayouts,
@@ -629,9 +631,27 @@ class IslandController {
   getState(): IslandState {
     return {
       ...this.state,
+      coursewareTransfer: this.coursewareShowing ? this.state.coursewareTransfer : null,
       lessonReminder: this.lessonShowing ? this.lessonCue : null,
       queued: [...this.state.queued],
     };
+  }
+
+  setCoursewareTransfer(value: CoursewareTransfer | null): void {
+    this.setState({ coursewareTransfer: value });
+  }
+  getCoursewareTransfer(): CoursewareTransfer | null {
+    return this.state.coursewareTransfer ?? null;
+  }
+  private get coursewareShowing(): boolean {
+    return (
+      !!this.state.coursewareTransfer &&
+      !(
+        this.state.mode !== 'hidden' &&
+        this.state.active &&
+        (this.state.active.priority === 'URGENT' || this.state.active.kind === 'call')
+      )
+    );
   }
 
   isReady(): boolean {
@@ -662,7 +682,7 @@ class IslandController {
 
   /**
    * 同一条消息**可能经由两条广播链路到达**：服务端 `createCall` 既发 `notification:new`
-   * （班级房间）又发 `call:new`（学生/班级 user 房间），两条 DTO 的 id 相同、
+   * （班级房间）又发 `call:new`（班级会话 session 房间），两条 DTO 的 id 相同、
    * 只有"是否叫人"的语义不同。后到的那条绝不能把已有的"叫人"降级成普通通知 ——
    * 否则胶囊显示成"新消息"、上课时段还会被当成普通通知隐藏（用户实测截图：
    * 叫人胶囊写着"新消息 / 系统管理员 · 点击查看"）。
@@ -897,8 +917,7 @@ class IslandController {
           if (this.state.active) this.scheduleCollapse(TIMEOUTS.expanded);
           break;
         }
-        // 上课时段：普通通知（含普通叫人）一律不显示；但紧急通知 / 紧急叫人本来就是必须
-        // 立刻看到的，收起（回缩为胶囊）之后必须能再次点开——否则学生会误以为消息消失了。
+        // 经典模式课堂普通通知保持隐藏；普通叫人可主动点开，紧急消息也须支持收起后再次查看。
         const showing = this.state.active;
         // 岛当前可见（胶囊态）时，用户是"对着屏幕上这条岛"点的：
         // 只要队列里有更**新**的消息（例如紧急通知之后又来了作业），就应当打开新那条，
@@ -1055,7 +1074,7 @@ class IslandController {
    * 起因：用户反馈"点「知道了」「已读」时没有收回动画"（其他场景都有）。
    * 状态**在同一帧就已经落地**（调用方 `dismissActive()` / `clearPendingForClose()` 已清空
    * active/queued），这里只是把形态切回胶囊 —— **不引入任何跨进程握手，也没有收回快照**
-   * （见 AGENTS.md §5 第 34 条：早先自研的 `closing` / `closingSnapshot` 已整体删除，
+   * （见 AGENTS.md 的现行工程约定：早先自研的 `closing` / `closingSnapshot` 已整体删除，
    * 它在触摸屏上会露旧帧；这里复用的是已被 `collapse` 用例验收过的那条路径）。
    */
   private beginClose(): void {
@@ -1069,7 +1088,7 @@ class IslandController {
      * 而窗口此刻还是展开/列表态的大包围盒 —— 若这里同步缩窗，卡片会在动画的 360ms 里
      * 被窗口裁掉（冒烟用例「整批关闭过程中卡片不被窗口裁切」实测最大越界 554.9px，
      * 用户看到的是一瞬间的硬裁边）。窗口要变小一律等**隐藏之后**由 `syncWindow()` 做，
-     * 这与触摸模式那条"窗口可见期间只增不减"（AGENTS.md §5 第 30 条）是同一条纪律。
+     * 这与触摸模式那条"窗口可见期间只增不减"（AGENTS.md 的现行工程约定）是同一条纪律。
      */
     this.setState({ mode: 'pill', reason: 'closing' }, { skipWindow: true });
     const speed = clamp(this.appearance.speed, 0.5, 2, 1);
@@ -1368,6 +1387,16 @@ class IslandController {
    */
   private syncWindow(): void {
     if (!this.win || this.win.isDestroyed()) return;
+    if (this.coursewareShowing && !this.editingLayout) {
+      this.cancelFade();
+      if (!this.win.isVisible() || this.customLayout) this.applyWindowLayout();
+      this.syncTouchLayout();
+      this.win.setOpacity(this.appearance.opacity);
+      if (!(process.env.ELECTRON_SMOKE_TEST === '1' && process.env.ELECTRON_SMOKE_MODE !== 'visual'))
+        this.win.showInactive();
+      this.setInteractive(false, '课件传输不遮挡桌面操作');
+      return;
+    }
     if (this.editingLayout) {
       this.setInteractive(true, '布局编辑');
       return;
@@ -1894,6 +1923,7 @@ class IslandController {
 
   /** 当前形态下**岛本身**的尺寸（不是窗口尺寸；响应进程的 `.island-card` 宽高） */
   private formSize(): { width: number; height: number } {
+    if (this.coursewareShowing) return COURSEWARE_ISLAND_SIZE;
     if (this.customLayout) return this.customSize;
     if (this.lessonShowing) return { width: SIZES.expanded.width, height: 40 };
     // 多条通知的列表形态：高度由统一布局算法算出（渲染进程算的是同一个数）
@@ -1964,6 +1994,10 @@ class IslandController {
 
   /** 按光标位置校正命中（不依赖渲染进程是否收到 mousemove） */
   private syncHitFromCursor(cursor?: { x: number; y: number } | null): void {
+    if (this.coursewareShowing) {
+      this.setInteractive(false, '课件传输');
+      return;
+    }
     this.updateResidentPointer(cursor);
     if (!this.win || this.win.isDestroyed() || !this.win.isVisible()) {
       this.setInteractive(false, '窗口不可见');

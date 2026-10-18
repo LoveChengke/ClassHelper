@@ -149,7 +149,7 @@ export async function getHomework(user: TokenPayload, homeworkId: string): Promi
  * - **选了科目** → 必须是该科的任课老师（班主任不教这一科也发不了）；
  * - **没选科目** → 本班班主任或管理员；
  * - **ClassHelper 班级端** → 可以录（老师在教室电脑上顺手记一条是常见需求，
- *   见 AGENTS.md §5 第 20 条），班级端录入的作业归属该班班主任。
+ *   见 AGENTS.md 的现行工程约定），班级端录入的作业归属该班班主任。
  */
 export async function createHomework(user: TokenPayload, input: CreateHomeworkInput): Promise<HomeworkDto> {
   await assertCanManageSubjectContent(user, input.classId, input.courseId ?? null, '布置作业', {

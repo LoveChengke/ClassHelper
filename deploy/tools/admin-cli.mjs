@@ -328,7 +328,7 @@ if (command === 'help' || command === '--help' || command === '-h') {
     } catch (error) {
       fail(error instanceof Error ? error.message : String(error));
     } finally {
-      // 不用 process.exit()：在顶层 await 里硬退会踩 libuv 断言（见 AGENTS.md §7）
+      // 不用 process.exit()：在顶层 await 里硬退会踩 libuv 断言（见 AGENTS.md 的现行工程约定）
       await modules.disconnectPrisma();
     }
   }

@@ -1,3 +1,4 @@
+import { downloadCourseware, getCoursewareTransfer, pollCourseware, revealCourseware } from './courseware.js';
 import { island } from './island.js';
 import { getUpdateProgress } from './auto-update.js';
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
@@ -14,6 +15,10 @@ import type { DesktopAppInfo, DesktopStoredConfig } from '../types/desktop.js';
 export { IPC_CHANNELS };
 
 export function registerIpcHandlers(): void {
+  ipcMain.handle('courseware:download', (_event, id: string) => downloadCourseware(id));
+  ipcMain.handle('courseware:reveal', (_event, id: string) => revealCourseware(id));
+  ipcMain.handle('courseware:sync', () => { void pollCourseware(); });
+  ipcMain.handle('courseware:get-progress', () => getCoursewareTransfer());
   ipcMain.handle('client:get-update-progress', () => getUpdateProgress());
   ipcMain.handle(IPC_CHANNELS.getConfig, (): DesktopStoredConfig => getConfig());
 
@@ -136,7 +141,7 @@ export function registerIpcHandlers(): void {
     return true;
   });
 
-  /** 服务端联动状态（纯数据：跨 contextBridge 只能传普通对象，见 AGENTS.md §5 第 9 条） */
+  /** 服务端连接状态（纯数据：跨 contextBridge 只能传普通对象，见 AGENTS.md 的现行工程约定） */
   ipcMain.handle(IPC_CHANNELS.clientStatus, () => getClientAgentStatus());
 
   /** 立即上报一次（设置页「立即上报」按钮） */

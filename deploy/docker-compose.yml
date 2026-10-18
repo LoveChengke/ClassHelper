@@ -60,7 +60,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
       target: runtime
-    image: classhelper-server:${APP_VERSION:-1.3.3}
+    image: classhelper-server:${APP_VERSION:-1.4.0}
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -83,6 +83,8 @@ services:
       DEFAULT_TEACHER_PASSWORD: ${DEFAULT_TEACHER_PASSWORD:-123456}
     ports:
       - '${SERVER_PORT:-4000}:4000'
+    volumes:
+      - server-data:/app/data
     depends_on:
       db: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
@@ -93,4 +95,5 @@ networks:
     driver: bridge
 
 volumes:
+  server-data:
   db-data:

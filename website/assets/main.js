@@ -929,7 +929,7 @@
         {
           file: 'web-schedules.jpg',
           kind: 'screen',
-          cap: '课表管理 —— 按周排课、单双周标签，也能直接导入 ClassIsland 的档案',
+          cap: '课表管理 —— 周视图与多周轮换，支持完整 ClassIsland 档案离线导入',
         },
         {
           file: 'web-homeworks.jpg',

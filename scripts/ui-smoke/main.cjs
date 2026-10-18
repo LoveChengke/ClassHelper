@@ -39,6 +39,7 @@ const MENU_ITEMS = [
   { label: '课表管理', path: '/schedules' },
   { label: '作业发布', path: '/homeworks' },
   { label: '通知发布', path: '/notifications' },
+  { label: '课件', path: '/courseware' },
   { label: '成绩录入', path: '/grades' },
   // 按 client:read 展示设备状态入口。
   { label: '客户端', path: '/clients' },
@@ -575,6 +576,46 @@ async function main() {
   );
 
   // 5. 上课时段发布紧急通知：全屏警告 + 3 秒倒计时 + 教师确认后才真正发布
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll('.el-menu-item')].find(e=>e.textContent.trim()==='课件')?.click()`,
+  );
+  await waitFor(win, `Boolean(document.querySelector('.courseware-page input[type=file]'))`);
+  const coursewareName = `UI课件验收-${Date.now()}.pptx`;
+  await win.webContents.executeJavaScript(`(() => {
+    const input=document.querySelector('.courseware-page input[type=file]'), transfer=new DataTransfer();
+    transfer.items.add(new File(['ClassHelper UI 课件验收'],${JSON.stringify(coursewareName)},{type:'application/octet-stream'}));
+    input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  await sleep(100);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll('.courseware-page button')].find(b=>b.textContent.trim()==='上传云端')?.click()`,
+  );
+  await waitFor(
+    win,
+    `document.querySelector('.courseware-page .el-table__body')?.textContent.includes(${JSON.stringify(coursewareName)})`,
+  );
+  const coursewareUploaded = await win.webContents.executeJavaScript(
+    `(() => {const row=[...document.querySelectorAll('.courseware-page .el-table__row')].find(e=>e.textContent.includes(${JSON.stringify(coursewareName)}));return Boolean(row&&row.textContent.includes('仅自己')&&row.textContent.includes('演示文稿'));})()`,
+  );
+  record('课件真实上传并按类型归档，未选班级时仅自己可见', coursewareUploaded);
+  if (process.env.UI_SMOKE_SHOTS_DIR)
+    fs.writeFileSync(
+      path.join(process.env.UI_SMOKE_SHOTS_DIR, 'courseware-web.png'),
+      (await win.webContents.capturePage()).toPNG(),
+    );
+  await win.webContents.executeJavaScript(
+    `(() => {const row=[...document.querySelectorAll('.courseware-page .el-table__row')].find(e=>e.textContent.includes(${JSON.stringify(coursewareName)}));[...row.querySelectorAll('button')].find(b=>b.textContent.trim()==='删除')?.click();})()`,
+  );
+  await waitFor(win, `Boolean(document.querySelector('.el-message-box__btns .el-button--primary'))`);
+  await win.webContents.executeJavaScript(
+    `document.querySelector('.el-message-box__btns .el-button--primary')?.click()`,
+  );
+  await waitFor(
+    win,
+    `!document.querySelector('.courseware-page .el-table__body')?.textContent.includes(${JSON.stringify(coursewareName)})`,
+  );
+  record('课件可从原生页面删除并清理测试文件', true);
+
   //    "上课时段"由 run.mjs 的探针提前用 HTTP 建好（今天 00:00-23:59 的课表）
   const urgentTitle = process.env.UI_SMOKE_URGENT_TITLE ?? 'UI 冒烟紧急通知';
   const inClass = process.env.UI_SMOKE_INCLASS === '1';

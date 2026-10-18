@@ -1,235 +1,81 @@
 ---
 title: 版本迭代与发布
-description: 改版本号、跑验收、打安装包、发 GitHub Release、发布文档站——一次完整发布的命令清单。
+description: 版本单一来源、本地与发布文件名、验证和发布同步。
 ---
 
 # 版本迭代与发布
 
-## 一条总原则
+日常文档/代码维护不自动改版本。版本唯一修改入口是 scripts/version.mjs；先执行 pnpm version:check。
+正式新发布执行 pnpm version:bump patch|minor|major，指定固定版本的本地重构建保持版本不变。
+版本落点由脚本清单决定，不另维护“文件数/落点数”。
 
-> **版本号按「发布」迭代，不按「提交」迭代。**
-
-日常的 `feat` / `fix` 提交**不动版本号**。只有当你要产出一批安装包、在 GitHub 上开一个 Release 时，
-更新检查接口全都按版本号对齐；每次提交都动它，等于每天都在发版，用户那边的「检查更新」就废了。
-
-| 算一次发布                              | 不算                         |
-| --------------------------------------- | ---------------------------- |
-| 攒够一批功能 / 修好一个用户能感知的 bug | 改注释、改文档、重构、加测试 |
-| 要给别人一份新安装包                    | 只在自己机器上跑             |
-
-## 每次发版必须一起交付的四样东西
-
-打安装包只是其中一件。**少一样都算「发到一半」**：
-
-| #   | 交付物             | 落在哪                                                     | 怎么做                                                                                       |
-| --- | ------------------ | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| ①   | **更新日志**       | GitHub Release 的正文                                      | 手写，草稿放 `releases/ReleaseNotes-<版本>.md`，用 `--notes-file` 发布。别只挂自动生成的列表 |
-| ②   | **Linux 服务端包** | Release 上的 `classhelper-server-linux-x64-<版本>.tar.gz`  | tag 推上去由 CI 构建；**推完去 Actions 确认没红**（见第 7 步）                               |
-| ③   | **文档**           | `docs/reference.md`（功能说明 + 验收对照表）与相关章节     | 新增功能补对应小节；改交付形态一并改第 2 章 / 第 7 章                                        |
-| ④   | **官网与 README**  | `website/index.html`、`website/download.html`、`README.md` | 新功能补进官网功能块与 README 功能清单；版本号由脚本覆盖                                     |
-
-更新日志的骨架（照 1.2.0 / 1.3.0 那两份写）：
-**一句话定位 → 分节讲功能 → ⚠️ 升级须知（含会自动应用的迁移）→ 验收表 → 产物表**。
-验收表里**只写真跑过的数字**，没跑就直说没跑，不要照抄上一版的。
-
-## 版本号写在哪（12 处 / 12 个文件）
-
-同一个版本号分散在 12 个落点上，**手工改必然漏一处**，而漏掉的那处不会报错：
-
-| 文件                                                             | 内容                               |
-| ---------------------------------------------------------------- | ---------------------------------- |
-| `package.json`                                                   | 单一来源（服务端运行时读它）       |
-| `packages/{shared,server,web-admin,desktop-client}/package.json` | 各包的版本                         |
-| `deploy/package.runtime.json`                                    | 安装包 / 容器里的运行时依赖清单    |
-| `deploy/docker-compose.yml`、`docker-compose.sqlite.yml`         | 镜像 tag 的默认值                  |
-| `website/index.html` × 3                                         | 官网顶栏徽标 / 首屏芯片 / 页脚     |
-| `website/download.html`（`<meta name="ch-version">`）            | 下载页读不到版本清单时的兜底版本号 |
-
-最后两行值得单独说：官网是**纯静态站、没有构建步骤**，没有哪段代码会去读 `package.json`，
-所以那几处只能靠脚本一起改 —— 漏了的话首页会一直挂着旧版本号（而那是别人看到的第一眼），
-下载页则会给离线访客一串指向**不存在版本**的直链。
-
-所以**改版本号的唯一入口是脚本**：
-
-```bash
-pnpm version:check              # 逐处列出并比对，不一致 exit 1
-pnpm version:bump patch         # 1.1.2 → 1.1.3
-pnpm version:bump minor         # 1.1.2 → 1.2.0
-pnpm version:bump major         # 1.1.2 → 2.0.0
-pnpm version:check              # 再确认一次
-```
-
-脚本按表逐个改写，**任何一处没匹配到或匹配到多处就直接失败退出**，不做"尽力而为"的部分改写。
-
-## 一次完整的发布
-
-下面这一串命令就是全部流程，逐条照抄即可。
-
-### 1. 改版本号
+## 构建与验证
 
 ```bash
 pnpm version:check
-pnpm version:bump patch
-```
-
-### 2. 本地体检
-
-```bash
 pnpm lint
 pnpm typecheck
 pnpm check:icons
-pnpm docs:check                 # 文档站构建（警告即失败）
-```
-
-### 3. 跑验收
-
-```bash
-pnpm dev:server                 # 另开一个终端跑着
-
+pnpm docs:check
 pnpm verify:e2e
-
-pnpm build:desktop && pnpm verify:desktop
-pnpm build && pnpm verify:web
+pnpm verify:v14
+pnpm verify:courseware
+pnpm build:desktop
+pnpm verify:desktop
+pnpm --filter @classhelper/web-admin build
+pnpm verify:web:isolated
+pnpm dist:all
+pnpm verify:packaged --exe "releases/client/<版本>/安装包/ClassHelper-<版本>-x64-portable.exe" --offline
 ```
 
-哪一项红了先看[验收与测试](testing.md)的「失败时先别改代码」——
-里面列了几个已知脆弱的用例，它们红不代表代码坏了。
+以上按发布改动范围执行；显式 --visual 才是桌面视觉验收。测试数量和结果必须来自本次输出。
+完整边界见[验收](testing.md)。同号本地重构建先保留可恢复副本，最新包核验完成后按用户要求清理旧归档。
+2026-10-18 工作区清理后，1.4.0 仅保留当前 client/server 目录和当前更新日志/校验清单。
 
-### 4. 打安装包
+## 产物与文件名
+
+| 本地构建产物                                                                | GitHub Release 上传名                      |
+| --------------------------------------------------------------------------- | ------------------------------------------ |
+| releases/client/<版本>/安装包/ClassHelper-<版本>-x64-setup.exe              | ClassHelper-<版本>-x64-client-setup.exe    |
+| releases/client/<版本>/安装包/ClassHelper-<版本>-x64-portable.exe           | ClassHelper-<版本>-x64-client-portable.exe |
+| releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe       | ClassHelper-<版本>-x64-server-setup.exe    |
+| releases/server/<版本>/linux-x64/classhelper-server-linux-x64-<版本>.tar.gz | 同名                                       |
+
+Linux 还需同名 .tar.gz.sha256。正式 Linux 包在 Linux runner 运行 pnpm dist:server:linux；
+Windows 上的交叉构建仅作验证，可能缺目标平台的 Prisma engine。
+构建中间物可再生成，不将 win-unpacked、server staging 或解包副本当交付物保留。
+
+## 更新日志与校验
+
+releases/ReleaseNotes-<版本>.md 维护本批包的功能、升级须知、实际验证范围与文件清单。
+它描述该构建批次，不能把之后的源码功能写成旧包已经包含。
+SHA256SUMS-<版本>.txt 用上传名记录各文件哈希；本地查验必须先按上表映射，不能因为本地文件没带 client/server 后缀就判断丢包。
+可在 PowerShell 对 client/server 安装包运行 Get-FileHash -Algorithm SHA256，将三项实际结果按上传名写入清单。
+不要仅对客户端目录做重定向而漏掉服务端；Linux 行待 CI 完成后同步。
+
+## 发布同步
+
+完成验证和本地更新日志后，检查 diff，按用户授权提交和推送 master；不要把其他未完成改动一并提交。
+将三个 Windows 包复制到独立的 .cache/release-staging/<版本>/，使用上传名，避免通配符混入别的版本。
+先准备当前 Windows SHA256 清单并随 Release 上传。创建 Release 时显式 --target master 或明确提交，说明用 --notes-file。
+ClassIsland 插件已退役，不再上传插件资产。
 
 ```bash
-
+# <版本> 和提交均替换为本次实际值
+gh release create v<版本> --target master --title "ClassHelper v<版本>" --notes-file releases/ReleaseNotes-<版本>.md
+gh release upload v<版本> <三个已按上传名暂存的EXE> releases/SHA256SUMS-<版本>.txt
 ```
 
-产物落在 `releases/<组件>/<版本>/`：`安装包/`（交付物）、`构建中间/`（可重新生成）。
-**没有免安装目录** —— 组装/解包出来的那一份是中间物，打包脚本用完就删（见仓库根 `AGENTS.md` §4
-「交付产物归集」）。
+推送 v* tag 触发 release-linux-server.yml，按 tag 检出，在 Ubuntu 构建并上传 Linux 包、独立 .sha256，合并跨组件清单。
+等待 Actions 成功，再下载 Linux 文件和最终 SHA256SUMS 同步回本地；检查清单的 Windows 行仍与本次文件一致。
+如需重跑，可手动运行该 workflow，指定准确 tag 和 attach=true。master 修复不会自动改变旧 tag 指向。
 
-打完之后**对打包副本再验一次**（开发产物通过 ≠ 用户机器上的副本通过）：
+官网和文档站由 pages.yml 拼装同一个站点：官网根、文档 /docs/。文档版本徽标读根 package.json，
+官网和下载页兜底版本由 version 脚本维护。Linux workflow 与 Pages 是独立流水线，分别确认结果。
+官网行为变化同步 README 与相应帮助章节，功能索引放[源码索引](../reference.md)。
 
-```bash
-# 默认指向装好的客户端；推荐直接拿刚打出来的便携版单文件当被测副本
-pnpm verify:packaged --exe "releases/client/<版本>/安装包/ClassHelper-<版本>-x64-portable.exe"
-```
+## 已发布版本与回滚
 
-> Linux 包**只能在 Linux 上构建**（依赖是平台相关的），所以不在这条命令里 ——
-> 它由 GitHub Actions 出，见第 7 步。
-
-### 5. 生成跨组件哈希清单
-
-`releases/SHA256SUMS-<版本>.txt` 是**人读的**（表头 + 体积 + 说明），由发布流程维护，
-本地只写 Windows那几行：
-
-```bash
-cd releases/client/<版本>/安装包 && sha256sum *.exe > ../../../SHA256SUMS-<版本>.txt  # 按实际文件名整理
-```
-
-（Linux 那一行由 CI 在第 7 步里**合并**进去，不要手工写。）
-
-### 6. 提交并推上去
-
-```bash
-git add -A
-git commit -m "chore(release): 1.1.3"
-git push origin master
-```
-
-提交信息用 Conventional Commits + 模块 scope，描述写中文，可多 scope，例如
-`fix(island): 胶囊"点不动"的根因——窗口必须始终可激活`。
-
-### 7. 开 Release
-
-上传前先把产物改成 ASCII 名 —— 构建产物是中文名，Release 上的名字是给别人看、要贴进脚本的：
-
-```bash
-V=1.1.3
-mkdir -p .cache/release-staging
-cp "releases/client/$V/安装包/"*-x64-setup.exe    ".cache/release-staging/ClassHelper-$V-x64-client-setup.exe"
-cp "releases/client/$V/安装包/"*-x64-portable.exe ".cache/release-staging/ClassHelper-$V-x64-client-portable.exe"
-cp "releases/server/$V/安装包/"*-x64-setup.exe    ".cache/release-staging/ClassHelper-$V-x64-server-setup.exe"
-
-gh release create v$V --title "ClassHelper v$V（<一句话定位>）" --notes-file "releases/ReleaseNotes-$V.md"
-gh release upload v$V .cache/release-staging/* "releases/SHA256SUMS-$V.txt" --clobber
-```
-
-| 构建产物                    | Release 上的名字                             |
-| --------------------------- | -------------------------------------------- |
-| `<客户端>-x64-setup.exe`    | `ClassHelper-<版本>-x64-client-setup.exe`    |
-| `<客户端>-x64-portable.exe` | `ClassHelper-<版本>-x64-client-portable.exe` |
-| `<服务端>-x64-setup.exe`    | `ClassHelper-<版本>-x64-server-setup.exe`    |
-
-这三个名字是**外部契约**：README 的「开始使用」表、官网下载页读不到版本清单时拼的兜底直链，
-都按它们写；改名要三处一起改。
-
-`gh release create` 会**创建 tag 并推送**，这一步会自动触发
-[`release-linux-server.yml`](https://github.com/LoveChengke/classhelper/blob/master/.github/workflows/release-linux-server.yml)
-构建 Linux 包（ubuntu runner）。它跑完之后会：
-
-1. 把 `classhelper-server-linux-x64-<版本>.tar.gz` 与 `.sha256` 挂到 Release 上；
-2. **把 Linux 那一行合并进** `SHA256SUMS-<版本>.txt`（保留 Windows那几行）。
-
-> **顺序很重要**：Linux workflow 是在最后一步才去合并 SHA256SUMS 的，
-> 所以第 5 步那份清单必须**先上传**。万一手速反了（workflow 先跑完、你后上传），
-> 重新跑一次 `gh workflow run release-linux-server.yml -f tag=v1.1.3 -f attach=true` 就能把那一行补回来。
-
-想手动触发（比如只需要重出 Linux 包）：
-
-```bash
-gh workflow run release-linux-server.yml -f tag=v1.1.3 -f attach=true
-```
-
-> **CI 是按 tag 的 ref 检出源码的。** 发完版又发现构建脚本（或任何影响出包的代码）要修时，
-> **光推 master 不够** —— CI 仍会拿旧 tag 的源码跑，得把 tag 挪到修复后的提交：
-> `git tag -f v<版本> <提交> && git push --force origin v<版本>`，tag 一变会自动重跑。
-> 别拿「Windows 侧绿不绿」当判据：`pnpm dist:server` 走的是另一条分支，
-> Linux 那一步红的时候本地完全看不出来。
->
-> 另外，本页第 8 步的「官网与文档站」是**另一条**流水线（master 推送触发）——
-> 它绿不代表 Linux 包出来了，推完 tag 要去 `gh run list --limit 5` 看一眼。
-
-### 8. 官网与文档站
-
-**不用做任何事。** 推送 master 时只要 `website/**`、`docs/**`、`scripts/build-pages.mjs` 或
-`package.json` 变过，
-[`pages.yml`](https://github.com/LoveChengke/classhelper/blob/master/.github/workflows/pages.yml)
-就会把两者构建成**同一个** GitHub Pages 站点发出去：
-
-```
-https://lovechengke.github.io/ClassHelper/          ← 官网
-https://lovechengke.github.io/ClassHelper/docs/     ← 文档站
-```
-
-（一个仓库在 Pages 上只有一个站点，所以是拼在一起发的 —— 官网在根、文档站在 `/docs/` 下。）
-
-文档站顶栏的版本徽标取自根 `package.json`，所以第 1 步改完就跟着变了；
-官网首屏那排芯片、顶栏徽标与页脚里的版本号，以及下载页那个兜底版本号，
-也都是**由 `pnpm version:bump` 一起改的**（它们是那 12 个落点里的四个）。
-
-> 官网的「立即下载」会跳到 `/download.html`，那一页的版本清单是**当场**从 GitHub Releases 读的
-> （读不到才退回上面那个兜底版本号），所以发完 Release 不用重新部署那一页 —— 但**兜底值要跟着发版一起改**，
-> 不然离线访客点到的就是旧版本的直链。
-
-### 9. 检查
-
-- [ ] Release 页面上三个组件都在，`SHA256SUMS-<版本>.txt` 里 Windows / Linux 三种行齐全；
-- [ ] 文档站能打开，顶栏版本号是新版；
-- [ ] 装一台机器试一遍（或至少跑 `pnpm verify:packaged`）。
-
-## 回滚
-
-发布出去之后发现严重问题：
-
-| 情形                        | 做法                                                                                                                    |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| 只是文档 / Release 说明写错 | 直接改 Release 说明或重发文档站（`gh workflow run docs.yml`）                                                           |
-| 二进制有问题                | 删掉 Release 与 tag（`gh release delete v1.1.3 --cleanup-tag`），修完重新发；**不要**拿同一个版本号发第二次内容不同的包 |
-| 用户已经装了                | 发一个**新版本号**（`pnpm version:bump patch`）修复，不要原地改                                                         |
-
-> 已经发出去的版本号**不要复用**：客户端把它记进「忽略此版本」，服务端与 Web 端各有 30 分钟缓存，
-> 同号换内容会让"检查更新"永久失灵。
-
-## 相关
-
-- 文档站本身怎么写的 → [架构总览的目录结构](architecture.md)
-- 验收脚本与脆弱用例 → [验收与测试](testing.md)
-- 各形态升级的**用户侧**步骤 → [更新与升级](../management/upgrade.md)
+已公开且用户安装的版本建议发补丁版本修复，避免同号不同内容使更新缓存/忽略版本与摘要失配。
+用户明确要求固定版本重构建时，按要求保持版本，并清楚区分本地包和远端资产；不自动改远端 tag/Release。
+仅说明或文档错误直接修改说明/文档；线上故障按对应部署形态从完整备份恢复。

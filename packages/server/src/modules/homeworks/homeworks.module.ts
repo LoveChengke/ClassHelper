@@ -77,7 +77,7 @@ router.post(
  * POST /api/homeworks/bulk - 一次给多个班级布置同一份作业（逐班结果）
  *
  * 与 POST / 的区别：批量发布是 Web 管理端的"多班同发"工作流，因此这里挂 `homework:write`；
- * 教室机器的班级账号仍走单班录入（POST /，权限在服务层判，见 AGENTS.md §5 第 20 条）。
+ * 教室机器的班级账号仍走单班录入（POST /，权限在服务层判，见 AGENTS.md 的现行工程约定）。
  * 每个班的科目归属依然由 createHomework 里的 assertCanManageSubjectContent 逐个判定 ——
  * 批量不是绕过科目门的后门（§5 第 5 条）。
  */

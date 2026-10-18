@@ -43,7 +43,7 @@ export async function verifyLayoutSmoke(
           'location.hash.includes("/settings/island/editor") && Boolean(document.querySelector(".aside"))',
         )) &&
         editor.webContents.executeJavaScript(
-          `(() => { const b=[...document.querySelectorAll('button')].find(b=>b.textContent.includes('在下方新建'));b?.click();return Boolean(document.querySelector('.layout-editor')); })()`,
+          `(() => { const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='新增行');b?.click();return Boolean(document.querySelector('.island-editor-page .el-card')) && !document.querySelector('.layout-editor, iframe'); })()`,
         )
       );
     });
@@ -52,11 +52,12 @@ export async function verifyLayoutSmoke(
       const dragGeometry = await editor.webContents.executeJavaScript(`(() => {
         const handle=document.querySelector('.node-handle[data-kind=clock]');
         const row=document.querySelectorAll('[data-row]')[1]; if(!handle||!row)throw Error('缺少拖动目标');
+        document.querySelector('.preview-canvas')?.scrollIntoView({block:'center'});
         const r=row.getBoundingClientRect(); const x=r.left+Math.min(20,r.width/2),y=r.top+r.height/2;
         handle.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:19,pointerType:'touch',clientX:10,clientY:10}));
         handle.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:19,pointerType:'touch',clientX:x,clientY:y}));
         handle.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:19,pointerType:'touch',clientX:x,clientY:y}));
-        return {row:r.toJSON(), point:{x,y}, hit:document.elementFromPoint(x,y)?.outerHTML.slice(0,600), canvas:document.querySelector('.canvas')?.getBoundingClientRect().toJSON(), stage:document.querySelector('.preview-stage')?.getBoundingClientRect().toJSON()};
+        return {row:r.toJSON(), point:{x,y}, hit:document.elementFromPoint(x,y)?.outerHTML.slice(0,600), canvas:document.querySelector('.preview-canvas')?.getBoundingClientRect().toJSON()};
       })()`);
       await pause();
       const moved =
@@ -66,7 +67,11 @@ export async function verifyLayoutSmoke(
     });
     await check('组件可以包裹进容器且设置独立保存', async () => {
       await editor.webContents.executeJavaScript(
-        `(() => { const select=document.querySelector('[data-action=wrap]');if(!select)throw Error('未选中组件');select.value='group';select.dispatchEvent(new Event('change',{bubbles:true})); })()`,
+        `document.querySelector('[data-action=wrap] .el-select__wrapper')?.click()`,
+      );
+      await pause();
+      await editor.webContents.executeJavaScript(
+        `(() => { const option=[...document.querySelectorAll('.el-select-dropdown__item')].find(e=>e.textContent.trim()==='分组'); if(!option)throw Error('容器菜单未出现');option.click(); })()`,
       );
       await pause();
       return (
@@ -77,40 +82,49 @@ export async function verifyLayoutSmoke(
     });
     await check('组件设置按内容外观高级切换，整体外观单独显示', async () => {
       const initial = await editor.webContents.executeJavaScript(`(() => {
-        const panel=document.querySelector('.settings');
-        return panel?.textContent.includes('显示内容') && !panel.textContent.includes('字体大小') && !panel.textContent.includes('背景颜色');
+        const panel=[...document.querySelectorAll('.component-settings .el-tab-pane')].find(e=>getComputedStyle(e).display!=='none');
+        return panel?.textContent.includes('排列方向') && !panel.textContent.includes('背景颜色');
       })()`);
       await editor.webContents.executeJavaScript(
-        `document.querySelectorAll('.panel-tabs button')[1].click()`,
+        `document.querySelectorAll('.component-settings .el-tabs__item')[1].click()`,
       );
       await pause();
       const appearance = await editor.webContents.executeJavaScript(`(() => {
-        const panel=document.querySelector('.settings');
-        return panel?.textContent.includes('字体大小') && !panel.textContent.includes('组件操作');
+        const panel=[...document.querySelectorAll('.component-settings .el-tab-pane')].find(e=>getComputedStyle(e).display!=='none');
+        return panel?.textContent.includes('正文字号') && !panel.textContent.includes('排列方向');
       })()`);
       await editor.webContents.executeJavaScript(
-        `document.querySelectorAll('.panel-tabs button')[2].click()`,
+        `document.querySelectorAll('.component-settings .el-tabs__item')[2].click()`,
       );
       await pause();
       const advanced = await editor.webContents.executeJavaScript(`(() => {
-        const panel=document.querySelector('.settings');
-        return panel?.textContent.includes('隐藏条件') && !panel.textContent.includes('字体大小');
+        const panel=[...document.querySelectorAll('.component-settings .el-tab-pane')].find(e=>getComputedStyle(e).display!=='none');
+        return panel?.textContent.includes('隐藏条件') && !panel.textContent.includes('背景颜色');
       })()`);
       await editor.webContents.executeJavaScript(
-        `document.querySelectorAll('.panel-tabs button')[0].click()`,
+        `document.querySelectorAll('.component-settings .el-tabs__item')[0].click()`,
       );
       await pause();
       return initial && appearance && advanced;
     });
     await check('主窗口编辑器的预览完整适配画布且不遮挡缩放控件', async () => {
       return editor.webContents.executeJavaScript(`(() => {
-        const stage=document.querySelector('.preview-stage')?.getBoundingClientRect();
-        const canvas=document.querySelector('.canvas')?.getBoundingClientRect();
-        const footer=document.querySelector('.canvas-footer')?.getBoundingClientRect();
-        return Boolean(stage&&canvas&&footer&&stage.left>=canvas.left&&stage.right<=canvas.right&&stage.bottom<=footer.top-4);
+        const canvas=document.querySelector('.preview-canvas')?.getBoundingClientRect();
+        const footer=document.querySelector('.preview-toolbar')?.getBoundingClientRect();
+        return Boolean(canvas&&footer&&canvas.bottom<=footer.top+1&&document.documentElement.scrollWidth<=innerWidth);
+      })()`);
+    });
+    await check('原生编辑页使用客户端主题并兼容深色', async () => {
+      return editor.webContents.executeJavaScript(`(() => {
+        const root=document.documentElement, wasDark=root.classList.contains('dark');
+        root.classList.add('dark');
+        const card=document.querySelector('.scheme-card'), style=getComputedStyle(card);
+        const ok=style.getPropertyValue('--ch-text').trim() && !document.querySelector('.layout-editor, iframe') && document.querySelectorAll('.island-editor-page .el-card').length>=4;
+        root.classList.toggle('dark',wasDark);return Boolean(ok);
       })()`);
     });
     if (process.env.ISLAND_SHOTS_DIR) {
+      await editor.webContents.executeJavaScript(`document.querySelector('.main').scrollTop=0`);
       fs.mkdirSync(process.env.ISLAND_SHOTS_DIR, { recursive: true });
       fs.writeFileSync(
         path.join(process.env.ISLAND_SHOTS_DIR, 'custom-editor.png'),
@@ -118,7 +132,9 @@ export async function verifyLayoutSmoke(
       );
     }
     await check('退出编辑后配置可从 getConfig 读回', async () => {
-      await editor.webContents.executeJavaScript('document.querySelector(".done-button")?.click()');
+      await editor.webContents.executeJavaScript(
+        `[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='应用并返回')?.click()`,
+      );
       await pause();
       return (
         !island.getEditingLayout() &&

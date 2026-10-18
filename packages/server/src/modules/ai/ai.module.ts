@@ -22,7 +22,7 @@ router.use(authenticate());
  *
  * 权限分成两把：`ai:manage`（设置，默认只有管理员）与 `ai:use`（用一句话办事，默认教师也有）。
  * **`/interpret` 只解析、绝不落库**：真正发布由前端确认后调既有端点，权限与上课时段保护
- * 都在那条路径上（AGENTS.md §5 第 5/14 条）。
+ * 都在那条路径上（AGENTS.md 的现行工程约定）。
  */
 router.get('/settings', requirePermission('ai:manage'), async (_req, res) => {
   sendOk(res, await aiService.getAiSettings(), '获取大模型设置成功');

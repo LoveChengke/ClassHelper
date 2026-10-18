@@ -1,3 +1,4 @@
+import { verifyCoursewareSmoke } from './smoke-courseware.js';
 import { verifyLayoutSmoke } from './smoke-layout.js';
 import { verifyAgentSmoke } from './smoke-agent.js';
 import fs from 'node:fs';
@@ -84,6 +85,7 @@ export async function runQuickSmoke(win: BrowserWindow): Promise<void> {
   }
   await verifyAgentSmoke(check);
   await verifyLayoutSmoke(check);
+  await verifyCoursewareSmoke(check);
   await check('检查结束时没有可见或聚焦的验证窗口', () =>
     BrowserWindow.getAllWindows().every((item) => !item.isVisible() && !item.isFocused()),
   );

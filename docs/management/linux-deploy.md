@@ -37,11 +37,11 @@ sudo classhelper status
 
 ## 1. 三种形态怎么选
 
-| 形态 | 适合 | 命令 | 说明 |
-| --- | --- | --- | --- |
-| **直接安装（native）** | 有一台 Linux 服务器/Mini 主机，单机跑 | `install.sh` 选 1 | systemd 管理，自带 Node 运行时，SQLite 或 MySQL |
-| **直接安装 + MySQL** | 多终端共享数据、已有 MySQL | `install.sh` 选 2 | 连接串写在配置里；库要先建好 |
-| **Docker** | 机器上已有 Docker、想与其他服务隔离 | `install.sh` 选 3 | 用安装包里随带的 Dockerfile 构建镜像 + compose 起容器 |
+| 形态                   | 适合                                  | 命令              | 说明                                                  |
+| ---------------------- | ------------------------------------- | ----------------- | ----------------------------------------------------- |
+| **直接安装（native）** | 有一台 Linux 服务器/Mini 主机，单机跑 | `install.sh` 选 1 | systemd 管理，自带 Node 运行时，SQLite 或 MySQL       |
+| **直接安装 + MySQL**   | 多终端共享数据、已有 MySQL            | `install.sh` 选 2 | 连接串写在配置里；库要先建好                          |
+| **Docker**             | 机器上已有 Docker、想与其他服务隔离   | `install.sh` 选 3 | 用安装包里随带的 Dockerfile 构建镜像 + compose 起容器 |
 
 > 只想先看看这台机器能不能装：`bash install.sh --check`（**不需要 root**，不改动任何东西）。
 > Windows 机器用服务端安装包（`pnpm dist:server` 的产物），不需要本文。
@@ -60,12 +60,12 @@ classhelper-server-linux-x64-<版本>.tar.gz.sha256   ← 旁边那份校验值
 它发布在 [GitHub Releases](https://github.com/LoveChengke/ClassHelper/releases) 上。
 
 **为什么 Linux 包要单独出一个**：`@libsql/linux-x64-gnu`、`@prisma/adapter-libsql` 这些依赖是平台相关的，
-Windows 开发机上 `npm install` 出来的 `node_modules` 拷到 Linux 跑不起来，因此 Linux 包必须在 Linux 上构建。
+Windows 开发机上 `npm install` 出来的 `node_modules` 拷到 Linux 跑不起来，因此正式 Linux 包在 Linux 上构建，交叉构建限制见下文。
 仓库里的 [`.github/workflows/release-linux-server.yml`](https://github.com/LoveChengke/classhelper/blob/master/.github/workflows/release-linux-server.yml)
 就是干这个的（拿 ubuntu runner 跑 `pnpm dist:server:linux`，再把产物挂到对应 Release 上）：
 
 1. 本地照惯例发 Windows 包的 Release（tag 形如 `v1.1.2`）；
-2. GitHub → Actions → 「发布 Linux 服务端安装包」→ Run workflow → 填 tag → 运行；
+2. 推送 v* tag 会自动触发；也可在 Actions 的「发布 Linux 服务端安装包」中手动指定 tag 运行；
 3. 跑完 Release 里会多出 Linux 包与更新后的 `SHA256SUMS-<版本>.txt`。
 
 内网离线分发也可以：在能上网的机器上 `pnpm dist:server:linux`，把 tar.gz 拷进去，
@@ -77,11 +77,11 @@ Windows 开发机上 `npm install` 出来的 `node_modules` 拷到 Linux 跑不�
 按目标平台解析可选依赖，所以 `@libsql/linux-x64-gnu` 这些"按平台分发"的包会被正确装进来。
 适合本地快速打一个包去验证安装与运维流程。逐项核对过的结论：
 
-| 项 | 结论 |
-| --- | --- |
-| SQLite 驱动 | ✅ 包内是 `@libsql/linux-x64-gnu` + `linux-x64-musl`，**没有任何 win32 残留** |
-| 服务端本体 | ✅ Node + libsql + express + socket.io 都是纯 JS 或已就位的 Linux 原生包 |
-| 运维命令 | ✅ `status` / `doctor` / `password` / `backup` / `upgrade` / `rollback` 都不依赖平台差异 |
+| 项                       | 结论                                                                                                                                                                                               |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQLite 驱动              | ✅ 包内是 `@libsql/linux-x64-gnu` + `linux-x64-musl`，**没有任何 win32 残留**                                                                                                                      |
+| 服务端本体               | ✅ Node + libsql + express + socket.io 都是纯 JS 或已就位的 Linux 原生包                                                                                                                           |
+| 运维命令                 | ✅ `status` / `doctor` / `password` / `backup` / `upgrade` / `rollback` 都不依赖平台差异                                                                                                           |
 | Web 端「一键切换数据库」 | ⚠ **可能失败**：这条链路要调 prisma CLI 的 schema engine，CLI 在运行期按平台扫 `@prisma/engines/schema-engine-debian-openssl-3.0.x` 这类路径，而交叉包里只有宿主平台的 `schema-engine-windows.exe` |
 
 所以交叉包**能装、能跑、能验收**，只是那一个 Web 端功能存疑 —— 它会在包内写入 `.cross-built` 标记，
@@ -126,18 +126,18 @@ sudo bash install.sh --yes --database mysql --mysql-host 10.0.0.5 --mysql-db cla
 
 完整参数见 `bash install.sh --help`。要点：
 
-| 参数 | 作用 |
-| --- | --- |
-| `--package <url｜file://路径>` | 安装包地址（默认从 GitHub Release 取最新版） |
-| `--sha256 <哈希>` | 强制校验安装包哈希 |
-| `--admin-password-stdin` | 从 stdin 读一行作为初始管理员密码 |
-| `--node-source bundled｜system｜tarball` | 内置 Node / 系统 Node / 指定压缩包 |
-| `--node-mirror <url>` | Node 下载镜像（默认 `https://npmmirror.com/mirrors/node`） |
-| `--node-tarball <url｜路径>` | 内网离线时直接用本地 Node 包 |
-| `--with-nginx` / `--open-firewall` | 顺带生成反代配置 / 放行端口 |
-| `--yes` | 全默认、不再交互 |
-| `--check` | 只体检（无需 root） |
-| `--force` | 覆盖已有配置；在无 systemd 的机器上只铺文件不装服务 |
+| 参数                                     | 作用                                                       |
+| ---------------------------------------- | ---------------------------------------------------------- |
+| `--package <url｜file://路径>`           | 安装包地址（默认从 GitHub Release 取最新版）               |
+| `--sha256 <哈希>`                        | 强制校验安装包哈希                                         |
+| `--admin-password-stdin`                 | 从 stdin 读一行作为初始管理员密码                          |
+| `--node-source bundled｜system｜tarball` | 内置 Node / 系统 Node / 指定压缩包                         |
+| `--node-mirror <url>`                    | Node 下载镜像（默认 `https://npmmirror.com/mirrors/node`） |
+| `--node-tarball <url｜路径>`             | 内网离线时直接用本地 Node 包                               |
+| `--with-nginx` / `--open-firewall`       | 顺带生成反代配置 / 放行端口                                |
+| `--yes`                                  | 全默认、不再交互                                           |
+| `--check`                                | 只体检（无需 root）                                        |
+| `--force`                                | 覆盖已有配置；在无 systemd 的机器上只铺文件不装服务        |
 
 **幂等性**：重复执行就是覆盖安装。已有的 `config.env`（含 `JWT_SECRET`）与 `data/` 一律保留，
 用户不会被踢下线；端口与数据库形态也沿用旧配置，不会被改回默认值。
@@ -169,13 +169,13 @@ classhelper backup          # 容器内做一致性快照再取出来
 
 Docker 形态与直接安装的差异：
 
-| | 直接安装 | Docker |
-| --- | --- | --- |
-| 数据位置 | `<安装目录>/data` | Docker 卷 `classhelper-data` |
-| 配置 | `/etc/classhelper/config.env`（systemd 注入） | 同一份文件（compose `env_file`） |
-| 升级 / 回滚 | 替换程序文件后重启服务 | 同一套流程：替换构建上下文 → 重建镜像（`classhelper-server:local`）→ `compose up -d --force-recreate` |
-| 恢复数据 | `classhelper backup restore <目录>` | 需手工 `docker cp` 回容器（命令里有提示） |
-| `backup schedule` | 支持（systemd timer） | 用宿主机 cron 调 `classhelper backup --quiet` |
+|                   | 直接安装                                      | Docker                                                                                                |
+| ----------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 数据位置          | `<安装目录>/data`                             | Docker 卷 `classhelper-data`                                                                          |
+| 配置              | `/etc/classhelper/config.env`（systemd 注入） | 同一份文件（compose `env_file`）                                                                      |
+| 升级 / 回滚       | 替换程序文件后重启服务                        | 同一套流程：替换构建上下文 → 重建镜像（`classhelper-server:local`）→ `compose up -d --force-recreate` |
+| 恢复数据          | `classhelper backup restore <目录>`           | 需手工 `docker cp` 回容器（命令里有提示）                                                             |
+| `backup schedule` | 支持（systemd timer）                         | 用宿主机 cron 调 `classhelper backup --quiet`                                                         |
 
 > Docker 形态的镜像用**稳定标签** `classhelper-server:local`（另打一个 `classhelper-server:<版本>` 便于追溯）。
 > 版本号写在 compose 里的话，升级替换完程序文件后那个标签就过期了，`compose up` 会一直沿用旧镜像 ——
@@ -224,19 +224,19 @@ Web 端「数据库管理 → 一键切换数据库」在运行中改写的是 *
 配置就是一份 `KEY=VALUE` 的 env 文件，systemd / dotenv / `source` 三种读法都兼容
 （含空白或 `#` 的值请加双引号）。最常见的几项：
 
-| KEY | 默认 | 说明 |
-| --- | --- | --- |
-| `PORT` / `HOST` | `4000` / `0.0.0.0` | 监听端口与地址 |
-| `DATABASE_PROVIDER` | `sqlite` | `sqlite` 或 `mysql` |
-| `DATABASE_URL` | `file:../data/classhelper.db` | SQLite 相对 `<安装目录>/server` 解析；MySQL 是连接串 |
-| `JWT_SECRET` | 随机 | 登录令牌签名密钥。**换掉＝所有用户重新登录**（`classhelper key rotate`） |
-| `JWT_EXPIRES_IN` | `7d` | 令牌有效期 |
-| `CORS_ORIGIN` | `*` | 走域名/反代时建议收敛成 `https://你的域名` |
-| `TRUST_PROXY` | `1` | 前面有 Nginx 时保持 1，限流才按真实 IP 统计 |
-| `AUTO_MIGRATE` | `true` | 空库首启动自动建表 + 建管理员 |
-| `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` | `admin` / `admin123` | **只在空库首次初始化时生效**，之后改密码用 `classhelper password` |
-| `DEFAULT_CLASS_PASSWORD` / `DEFAULT_TEACHER_PASSWORD` | `123456` | 新建班级 / 重置教师时的初始密码 |
-| `TERM_START_DATE` | 空 | 第 1 教学周的周一（`YYYY-MM-DD`），影响"当前周次" |
+| KEY                                                   | 默认                          | 说明                                                                     |
+| ----------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------ |
+| `PORT` / `HOST`                                       | `4000` / `0.0.0.0`            | 监听端口与地址                                                           |
+| `DATABASE_PROVIDER`                                   | `sqlite`                      | `sqlite` 或 `mysql`                                                      |
+| `DATABASE_URL`                                        | `file:../data/classhelper.db` | SQLite 相对 `<安装目录>/server` 解析；MySQL 是连接串                     |
+| `JWT_SECRET`                                          | 随机                          | 登录令牌签名密钥。**换掉＝所有用户重新登录**（`classhelper key rotate`） |
+| `JWT_EXPIRES_IN`                                      | `7d`                          | 令牌有效期                                                               |
+| `CORS_ORIGIN`                                         | `*`                           | 走域名/反代时建议收敛成 `https://你的域名`                               |
+| `TRUST_PROXY`                                         | `1`                           | 前面有 Nginx 时保持 1，限流才按真实 IP 统计                              |
+| `AUTO_MIGRATE`                                        | `true`                        | 空库首启动自动建表 + 建管理员                                            |
+| `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD`   | `admin` / `admin123`          | **只在空库首次初始化时生效**，之后改密码用 `classhelper password`        |
+| `DEFAULT_CLASS_PASSWORD` / `DEFAULT_TEACHER_PASSWORD` | `123456`                      | 新建班级 / 重置教师时的初始密码                                          |
+| `TERM_START_DATE`                                     | 空                            | 第 1 教学周的周一（`YYYY-MM-DD`），影响"当前周次"                        |
 
 改配置的三种方式（都会先自动备份、改完问你是否重启）：
 
@@ -422,18 +422,18 @@ sudo cp deploy/nginx.conf /etc/nginx/conf.d/classhelper.conf
 
 ## 8. 故障排查
 
-| 现象 | 先查什么 |
-| --- | --- |
-| 服务起不来 | `classhelper doctor` → `classhelper logs -n 100`。常见：端口被占用、MySQL 连接串错、`data/` 权限 |
-| 装完打不开页面 | `classhelper status` 看探针与监听地址；云服务器还要在**安全组**放行端口 |
-| 页面能打开但是**空白** | 1.1.0 的服务端在 HTTP 直连访问时会下发 CSP `upgrade-insecure-requests`，浏览器把所有子资源改写成 https 加载而服务器没有 TLS，于是整页空白（HTML/接口都正常）。已修复的版本按请求协议条件下发；若暂不能升级，唯一正解是上 HTTPS 反代 |
-| 改了配置没生效 | 是否重启过（`classhelper config set` 会问）；`EnvironmentFile` 的值优先于文件里的同项 |
-| Web 端切库后还是连旧库 | `classhelper doctor` 看 `.env` 软链是否被破坏（`ln -sfn /etc/classhelper/config.env <安装目录>/.env`） |
-| 升级卡住/失败 | 失败会自动回滚；看 `classhelper logs -n 100`，确认磁盘余量 ≥1GB |
-| `classhelper` 命令找不到 | `ls -l /usr/local/bin/classhelper`；被删了就重装或 `ln -sfn <安装目录>/bin/classhelper /usr/local/bin/classhelper` |
-| 忘记管理员密码 | `sudo classhelper password admin`（直连数据库，不需要登录） |
-| ClassHelper 班级端连不上 | 客户端「服务器地址」填 `http://IP:端口` 或域名；确认没有多余路径与斜杠 |
-| CentOS 7 装完立刻退出 | glibc < 2.28，见下面的"已知限制" |
+| 现象                     | 先查什么                                                                                                                                                                                                                            |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 服务起不来               | `classhelper doctor` → `classhelper logs -n 100`。常见：端口被占用、MySQL 连接串错、`data/` 权限                                                                                                                                    |
+| 装完打不开页面           | `classhelper status` 看探针与监听地址；云服务器还要在**安全组**放行端口                                                                                                                                                             |
+| 页面能打开但是**空白**   | 1.1.0 的服务端在 HTTP 直连访问时会下发 CSP `upgrade-insecure-requests`，浏览器把所有子资源改写成 https 加载而服务器没有 TLS，于是整页空白（HTML/接口都正常）。已修复的版本按请求协议条件下发；若暂不能升级，唯一正解是上 HTTPS 反代 |
+| 改了配置没生效           | 是否重启过（`classhelper config set` 会问）；`EnvironmentFile` 的值优先于文件里的同项                                                                                                                                               |
+| Web 端切库后还是连旧库   | `classhelper doctor` 看 `.env` 软链是否被破坏（`ln -sfn /etc/classhelper/config.env <安装目录>/.env`）                                                                                                                              |
+| 升级卡住/失败            | 失败会自动回滚；看 `classhelper logs -n 100`，确认磁盘余量 ≥1GB                                                                                                                                                                     |
+| `classhelper` 命令找不到 | `ls -l /usr/local/bin/classhelper`；被删了就重装或 `ln -sfn <安装目录>/bin/classhelper /usr/local/bin/classhelper`                                                                                                                  |
+| 忘记管理员密码           | `sudo classhelper password admin`（直连数据库，不需要登录）                                                                                                                                                                         |
+| ClassHelper 班级端连不上 | 客户端「服务器地址」填 `http://IP:端口` 或域名；确认没有多余路径与斜杠                                                                                                                                                              |
+| CentOS 7 装完立刻退出    | glibc < 2.28，见下面的"已知限制"                                                                                                                                                                                                    |
 
 ---
 
@@ -502,16 +502,16 @@ sudo bash /tmp/verify-linux.sh --admin-password-stdin <<< 'Verify-Pass-2026!'
 
 覆盖项：
 
-| 分组 | 检查内容 |
-| --- | --- |
-| 安装结果 | 程序文件、`VERSION`、`.installed.json`、`config.env` 600、配置目录 700、`.env` 软链、内置 Node、`/usr/local/bin/classhelper`、安装/审计日志、profile.d 生效 |
-| 服务 | systemd 单元、active、enabled、`/healthz` 200、`status --json` 合法且 healthy |
-| 体检 | `classhelper doctor` 无待处理项、`help` / `completion` 可用 |
-| API | 用初始密码登录拿 token、带 token 读 `/api/classes` 与 `/api/auth/me` |
-| 改密 | 改密成功 → 新密码可登录 → **旧密码被拒** → 原哈希已备份且 600 → 审计有记录且**不含密码明文** → 弱密码被拒 → stdin 结束不卡死 → `restore-hash` 把原密码回滚回来 |
-| 备份 | 备份目录/文件/权限、SQLite 快照是合法库文件、`backup list` |
-| 配置 | `config get/show`、敏感值打码、读写往返 |
-| key rotate | 密钥确实变了且 ≥32 位、服务仍可用、**旧 token 变 401**、重新登录成功 |
+| 分组       | 检查内容                                                                                                                                                       |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 安装结果   | 程序文件、`VERSION`、`.installed.json`、`config.env` 600、配置目录 700、`.env` 软链、内置 Node、`/usr/local/bin/classhelper`、安装/审计日志、profile.d 生效    |
+| 服务       | systemd 单元、active、enabled、`/healthz` 200、`status --json` 合法且 healthy                                                                                  |
+| 体检       | `classhelper doctor` 无待处理项、`help` / `completion` 可用                                                                                                    |
+| API        | 用初始密码登录拿 token、带 token 读 `/api/classes` 与 `/api/auth/me`                                                                                           |
+| 改密       | 改密成功 → 新密码可登录 → **旧密码被拒** → 原哈希已备份且 600 → 审计有记录且**不含密码明文** → 弱密码被拒 → stdin 结束不卡死 → `restore-hash` 把原密码回滚回来 |
+| 备份       | 备份目录/文件/权限、SQLite 快照是合法库文件、`backup list`                                                                                                     |
+| 配置       | `config get/show`、敏感值打码、读写往返                                                                                                                        |
+| key rotate | 密钥确实变了且 ≥32 位、服务仍可用、**旧 token 变 401**、重新登录成功                                                                                           |
 
 追加升级/回滚链路（会真的替换一次程序文件）：
 
@@ -527,7 +527,7 @@ sudo bash /tmp/verify-linux.sh --full --package /tmp/classhelper-server-linux-x6
 
 ```bash
 # ① 浏览器打开 http://<IP>:4000/ ，用 admin 登录，改一次密码再登录
-# ② ClassHelper 班级端客户端填 http://<IP>:4000 用班级码 G101/123456 登录，收到一条老师发的通知
+# ② 在隔离测试服务创建临时教师和班级，用其班级凭据登录客户端，验证提醒后清理临时数据
 # ③ 重跑安装器（幂等性）：sudo bash /tmp/install.sh --yes --package <同一个包>
 #    期望：配置与数据保留、JWT_SECRET 不变（已登录用户不被踢下线）
 # ④ 卸载：sudo classhelper uninstall --yes

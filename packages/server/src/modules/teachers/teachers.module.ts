@@ -18,11 +18,7 @@ import * as teacherService from './teachers.service.js';
 const router = Router();
 router.use(authenticate());
 
-/**
- * 教师账号管理：**全部接口仅管理员**。
- * ClassHelper 班级端主体是班级，但教师账号决定谁是哪班班主任、谁能录课表/成绩，属于系统级配置，
- * 因此录入/修改/重置密码/删除都只开放给 ADMIN（路由层 + 前端菜单双重收敛）。
- */
+/** 教师列表使用 teacher:read/teacher:manage，写入统一要求 teacher:manage；额外业务约束见 service。 */
 
 /** GET /api/teachers?keyword= - 教师列表（教师管理页 + 分配协作教师时使用） */
 router.get(
@@ -35,7 +31,7 @@ router.get(
   },
 );
 
-/** POST /api/teachers - 录入教师账号（仅管理员） */
+/** POST /api/teachers - 录入教师账号（需 teacher:manage） */
 router.post(
   '/',
   requirePermission('teacher:manage'),

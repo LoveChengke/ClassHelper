@@ -78,6 +78,7 @@ async function resetDatabase(): Promise<void> {
   await prisma.clientCommand.deleteMany();
   await prisma.clientDevice.deleteMany();
   await prisma.clientRelease.deleteMany();
+  await prisma.courseware.deleteMany();
   await prisma.aiAudit.deleteMany();
   await prisma.userPermissionGroup.deleteMany();
   await prisma.permissionGroupItem.deleteMany();

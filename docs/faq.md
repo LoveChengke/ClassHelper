@@ -48,8 +48,8 @@ description: 装不上、连不上、改了不生效——最常被问到的那�
 
 ### 上课时段发的通知学生看不到
 
-**这是设计行为。** 上课时段普通通知只进队列、不打断课堂，**下课自动补弹**。
-紧急通知与叫人则立刻弹。规则见[通知与提醒](app/notifications.md)。
+**经典模式的设计行为如此。** 上课时段普通通知暂存，下课补弹；自定义常驻模式先提示铃铛。
+经典模式紧急消息立即展开，普通叫人保留可点击胶囊；自定义常驻模式先提示铃铛，主动查看。规则见[通知与提醒](app/notifications.md)。
 
 ### 老师说发了通知，教室机器上什么都没弹
 
@@ -62,8 +62,8 @@ description: 装不上、连不上、改了不生效——最常被问到的那�
 
 ### 屏幕上出现了第二个灵动岛，点它反应不对
 
-那是**自动化验证实例**的岛 —— `pnpm verify:desktop` / `verify:packaged` 会真的在屏幕上放一个，
-而且它归脚本控制，会自己展开 / 收起 / 消失。验证实例的岛是**洋红主题色**，一眼可辨。
+先确认是否有人显式运行了 `verify:desktop:visual` 或 `verify:packaged --visual`；视觉实例由脚本控制，会自行开合。
+默认 `verify:desktop` / `verify:packaged` 是后台快速检查，不创建可见岛或托盘。
 
 ### 灵动岛上的文字往右跳一下再缩回
 
@@ -87,7 +87,7 @@ description: 装不上、连不上、改了不生效——最常被问到的那�
 ### 学生登录不了
 
 **学生没有个人账号。** ClassHelper 班级端统一用**班级码 + 班级密码**登录（见[装 ClassHelper 班级端](get-started/client.md)）。
-用学生用户名去登录一定会失败，这是设计。
+用学生学号去登录会失败，这是设计。
 
 ### 客户端里找不到"修改密码"
 
@@ -130,7 +130,7 @@ Linux 上跑 `sudo classhelper doctor` 有专门一条断言盯着这个软链�
 
 ## 还没解决？
 
-- **开发与构建环境**的问题（命令、代理与 TLS、ClassIsland 路径与日志编码……）
+- **开发与构建环境**的问题（命令、代理、TLS 与日志编码等）
   记在仓库的 [`AGENTS.md`](https://github.com/LoveChengke/classhelper/blob/master/AGENTS.md) 里；
 - 功能行为的权威说明在[完整参考](reference.md)；
 - 都不是的话，去 [Issues](https://github.com/LoveChengke/classhelper/issues) 提一个，

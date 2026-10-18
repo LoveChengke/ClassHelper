@@ -16,10 +16,8 @@
   href: winisland-design-tokens.md
 - name: 验收与测试
   href: testing.md
-- name: 2026-10-17 审查修复记录
-  href: review-2026-10-17.md
 - name: 版本迭代与发布
   href: release.md
 
-- name: 2026-10-17 实施与验收
-  href: 20261017-implementation.md
+- name: 当前实现约定
+  href: implementation.md

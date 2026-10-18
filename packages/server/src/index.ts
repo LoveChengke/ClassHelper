@@ -1,3 +1,4 @@
+import { COURSEWARE_TRANSFER_TIMEOUT_MS } from '@classhelper/shared';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createServer } from 'node:http';
@@ -61,6 +62,8 @@ await refreshDeveloperMode();
 
 const app = createApp();
 const httpServer = createServer(app);
+// 大课件允许较慢的内网上传；请求头仍沿用 Node 的独立超时限制。
+httpServer.requestTimeout = COURSEWARE_TRANSFER_TIMEOUT_MS;
 const io = initRealtime(httpServer);
 
 /** 写入 PID 文件（安装包的 start.cmd / stop.cmd 依赖它精确控制进程） */

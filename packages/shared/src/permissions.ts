@@ -106,7 +106,7 @@ export function canManageSubjectContent(input: {
   isSubjectTeacherOfCourse: boolean;
   /**
    * 是否允许 ClassHelper 班级端代写。
-   * 教室机器可以录**作业**（老师在教室随手录一条很常见，见 AGENTS.md §5 第 20 条），
+   * 教室机器可以录**作业**（老师在教室随手录一条很常见，见 AGENTS.md 的现行工程约定），
    * 但**成绩**不给 —— 成绩是面向家长/学生的评价数据，仍由教师在 Web 端录入。
    */
   allowClassDevice?: boolean;
@@ -160,9 +160,11 @@ export function canImport(role: UserRole, classRole: ClassRole, kind: ImportKind
  * - 桌面客户端：功能入口显隐。
  *
  * 键名用 `领域:动作` 的形式，新增功能要**先在这里加键**，再去两端用。
- * **不要**在页面或服务里硬编码角色判断来代替它（AGENTS.md §5 第 3 条）。
+ * **不要**在页面或服务里硬编码角色判断来代替它（AGENTS.md 的现行工程约定）。
  */
 export const PERMISSION_KEYS = [
+  'courseware:read',
+  'courseware:write',
   // 班级与人员
   'class:read',
   'class:manage',
@@ -189,7 +191,7 @@ export const PERMISSION_KEYS = [
   'import:teachers',
   'import:schedule',
   'import:class-teachers',
-  // 设备与联动
+  // 客户端设备维护
   'client:read',
   'client:manage',
   'client:update',
@@ -214,6 +216,8 @@ export type PermissionKey = (typeof PERMISSION_KEYS)[number];
 
 /** 默认角色组之外的教师岗位组；空年级范围必须由管理员配置，不能自动授权全校。 */
 const TEACHING_KEYS: PermissionKey[] = [
+  'courseware:read',
+  'courseware:write',
   'homework:write',
   'grade:write',
   'notification:publish',
@@ -249,6 +253,8 @@ export const BUILTIN_TEACHER_GROUPS = [
 
 /** 权限键的中文名（权限组管理页与文档展示，别再各写一份） */
 export const PERMISSION_LABELS: Record<PermissionKey, string> = {
+  'courseware:read': '查看与下载课件',
+  'courseware:write': '上传、设置可见范围与推送自己的课件',
   'class:read': '查看班级与班级列表',
   'class:manage': '创建 / 修改 / 删除班级（含班级账号密码）',
   'roster:read': '查看学生名单',
@@ -309,6 +315,8 @@ export const PERMISSION_CATEGORIES: readonly { title: string; keys: readonly Per
   {
     title: '内容发布',
     keys: [
+      'courseware:read',
+      'courseware:write',
       'homework:read',
       'homework:write',
       'notification:read',
@@ -359,6 +367,8 @@ export const PERMISSION_CATEGORIES: readonly { title: string; keys: readonly Per
  * （`canManageSubjectContent(..., { allowClassDevice })` 等）决定，不受权限组影响。
  */
 export const PERMISSION_DEFAULT_ROLES: Record<PermissionKey, readonly UserRole[]> = {
+  'courseware:read': ['ADMIN', 'TEACHER'],
+  'courseware:write': ['ADMIN', 'TEACHER'],
   'class:read': ['ADMIN', 'TEACHER'],
   'class:manage': ['ADMIN'],
   'roster:read': ['ADMIN', 'TEACHER'],

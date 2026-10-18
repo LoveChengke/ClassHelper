@@ -1,3 +1,4 @@
+import { pollCourseware } from './courseware.js';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -206,6 +207,7 @@ async function beat(): Promise<void> {
     if (!envelope.success || !envelope.data?.deviceId) throw new Error('心跳响应格式不正确');
     if (epoch !== connectionEpoch) return;
     const payload = envelope.data;
+    void pollCourseware();
     state.lastHeartbeatAt = new Date().toISOString();
     state.lastError = '';
     state.updateTargetVersion = payload.updateTargetVersion?.trim() ?? '';

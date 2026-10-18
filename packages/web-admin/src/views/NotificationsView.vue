@@ -291,7 +291,7 @@ interface PublishFailure {
  * 服务端逐班做权限断言与上课保护，并把每个班的结果回给我们。
  *
  * 为什么不再由前端对每个班各发一次请求：N 个班就是 N 次往返，权限/上课保护
- * 分散在 N 个响应里，前端还得自己合并；服务端批量端点把这些收敛成一份逐班结果（见 AGENTS.md §5）。
+ * 分散在 N 个响应里，前端还得自己合并；服务端批量端点把这些收敛成一份逐班结果（见 AGENTS.md 的现行工程约定）。
  * confirmDuringClass 为 true 表示教师已在上课警告里确认。
  */
 const doPublishSaving = ref(false);

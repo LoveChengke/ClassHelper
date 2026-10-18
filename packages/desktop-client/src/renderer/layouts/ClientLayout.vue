@@ -40,6 +40,7 @@ const primaryItems = [
   { path: '/schedule', title: '课表', icon: 'Calendar' },
   { path: '/homeworks', title: '作业', icon: 'Notebook' },
   { path: '/notifications', title: '通知', icon: 'Bell' },
+  { path: '/courseware', title: '课件', icon: 'FolderOpened' },
   { path: '/grades', title: '成绩', icon: 'Trophy' },
 ];
 

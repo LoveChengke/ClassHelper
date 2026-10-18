@@ -39,7 +39,7 @@ eslint-report.json
 .DS_Store
 Thumbs.db
 
-# ²Î¿¼ÓÃµÄµÚÈı·½Ô´Âë°ü£¨Éè¼Æ token ÒÑÌáÈ¡µ½ docs/winisland-design-tokens.md£©
+# è®¾è®¡å‚è€ƒå‹ç¼©åŒ…ï¼ˆä»¤ç‰Œè§ docs/dev/winisland-design-tokens.mdï¼‰
 WinIsland-master.zip
 releases/
 
@@ -51,3 +51,5 @@ packages/server/prisma/database-settings.json
 
 # æ–‡æ¡£ç«™æ„å»ºäº§ç‰©ï¼ˆpnpm docs:build ç”Ÿæˆï¼Œç”± GitHub Pages å‘å¸ƒï¼›è§ docs/ï¼‰
 docs/_site/
+
+packages/data/courseware/

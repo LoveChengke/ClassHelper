@@ -102,7 +102,12 @@ try {
     namespace(fs.readFileSync(path.join(root, 'packages/server/scripts/verify-e2e.mjs'), 'utf8')),
     { flag: 'wx' },
   );
-  await run([testFile], 'e2e.log');
+  if (process.argv.includes('--web')) {
+    env.UI_SMOKE_URL = env.VERIFY_BASE_URL;
+    env.UI_SMOKE_ADMIN = `${prefix}admin`;
+    env.UI_SMOKE_ADMIN_PASS = 'admin123';
+    await run(['scripts/ui-smoke/run.mjs'], 'web.log');
+  } else await run([testFile], 'e2e.log');
 } finally {
   if (server && server.exitCode === null) {
     server.kill();
