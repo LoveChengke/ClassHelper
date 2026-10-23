@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
+import {
+  authenticate,
+  getAuthUser,
+  requireStaffPermission,
+  requirePermission,
+} from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -17,11 +22,16 @@ const router = Router();
 router.use(authenticate());
 
 /** GET /api/courses?classId= - 课程列表 */
-router.get('/', validate({ query: listCoursesQuerySchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { classId } = validatedQuery<{ classId?: string }>(req);
-  sendOk(res, await courseService.listCourses(user, classId), '获取课程列表成功');
-});
+router.get(
+  '/',
+  requireStaffPermission('schedule:read'),
+  validate({ query: listCoursesQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { classId } = validatedQuery<{ classId?: string }>(req);
+    sendOk(res, await courseService.listCourses(user, classId), '获取课程列表成功');
+  },
+);
 
 /** POST /api/courses - 新增课程 */
 router.post(

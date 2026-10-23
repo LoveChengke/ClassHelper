@@ -36,6 +36,9 @@ const RESULT_FILE = process.env.UI_SMOKE_RESULT ?? '';
  */
 const MENU_ITEMS = [
   { label: '仪表盘', path: '/dashboard' },
+  { label: '班级管理', path: '/classes' },
+  { label: '学生管理', path: '/students' },
+  { label: '学期周次', path: '/term-weeks' },
   { label: '课表档案', path: '/plan-editor' },
   { label: '作业发布', path: '/homeworks' },
   { label: '通知发布', path: '/notifications' },
@@ -46,7 +49,7 @@ const MENU_ITEMS = [
 ];
 
 /** 教师端必须隐藏的入口（前端隐藏 + 后端 403，双重保障） */
-const HIDDEN_MENU_LABELS = ['班级管理', '学生管理', '教师管理', '数据库管理'];
+const HIDDEN_MENU_LABELS = ['教师管理', '数据库管理'];
 
 /** 管理员账号（教师录入用例）：与种子/安装初始化账号一致 */
 const ADMIN_USERNAME = process.env.UI_SMOKE_ADMIN ?? 'admin';
@@ -558,10 +561,10 @@ async function main() {
       // 等视图渲染
       const viewDeadline = Date.now() + 3000;
       while (Date.now() < viewDeadline) {
-        if (document.querySelector('.page-title')) break;
+        if (document.querySelector('.page-title, .archive-titlebar > span')) break;
         await new Promise((resolve) => setTimeout(resolve, 60));
       }
-      const title = (document.querySelector('.page-title')?.textContent ?? '').trim();
+      const title = (document.querySelector('.page-title, .archive-titlebar > span')?.textContent ?? '').trim();
       return { ok: location.pathname === expected && Boolean(title), path: location.pathname, title, expected };
     })()`);
 
@@ -796,7 +799,7 @@ async function main() {
     return { labels, leaked };
   })()`);
   record(
-    '教师端隐藏无权入口（班级管理/学生管理/教师管理）',
+    '教师端隐藏未授权教师管理与数据库入口',
     (hiddenCheck?.leaked ?? ['?']).length === 0,
     `可见菜单=[${(hiddenCheck?.labels ?? []).join(',')}] 越权入口=[${(hiddenCheck?.leaked ?? []).join(',')}]`,
   );
@@ -1013,7 +1016,10 @@ async function main() {
     await sleep(600);
 
     const buttons = Array.from(document.querySelectorAll('button'));
-    const openButton = buttons.find((node) => (node.textContent ?? '').trim() === '导入档案');
+    const transfer = buttons.find((node) => (node.textContent ?? '').trim() === '导入/导出');
+    transfer?.click();
+    await sleep(200);
+    const openButton = Array.from(document.querySelectorAll('button')).find((node) => (node.textContent ?? '').trim() === '导入 ClassIsland 档案');
     if (!openButton) return { ok: false, reason: '课表页没有"导入 ClassIsland 课程表"按钮（班主任权限未生效？）' };
     // 旧入口必须已经下线（需求 ⑩）
     const legacy = buttons.some((node) => (node.textContent ?? '').trim() === '导入时间配置');
@@ -1357,57 +1363,107 @@ async function runPlanEditorChecks(win) {
   await win.loadURL(new URL('/plan-editor', TARGET_URL).href);
   const ready = await waitFor(
     win,
-    `document.body.innerText.includes('课表编辑') && Boolean(document.querySelector('.course-row'))`,
-  );
-  record('统一课表档案工作区与课程时段编辑可用', ready);
-  const save = await win.webContents.executeJavaScript(
-    `(() => {const b=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='保存课表');b?.click();return Boolean(b&&!b.disabled);})()`,
-  );
-  const saved = save && (await waitFor(win, `document.body.innerText.includes('整张日课表已保存')`));
-  record('日课表整表保存可以从页面提交', saved);
-  await win.webContents.executeJavaScript(
-    `(() => {[...document.querySelectorAll('.editor-nav button')].find(e=>e.textContent.trim()==='时间表')?.click();})()`,
+    `Boolean(document.querySelector('.schedule-grid thead')) && document.querySelectorAll('.schedule-grid thead th').length === 8`,
   );
   record(
-    '时间表页四种时间点与管理员保存入口可见',
+    'ClassIsland 风格档案工作区默认展示周课表和选科侧栏',
+    ready &&
+      (await win.webContents.executeJavaScript(
+        `Boolean(document.querySelector('.subject-palette')) && document.querySelectorAll('.archive-tabs button').length === 4`,
+      )),
+  );
+  const assignment = await win.webContents.executeJavaScript(`(() => {
+    const cell = document.querySelector('.lesson-cell');
+    if (!cell) return null;
+    const original = cell.querySelector('strong')?.textContent.trim();
+    cell.click();
+    const button = [...document.querySelectorAll('.subject-palette button')].find(b => !b.disabled && b.title !== original);
+    button?.click();
+    return { original, editable: Boolean(button) };
+  })()`);
+  const dirty =
+    assignment?.editable && (await waitFor(win, `document.body.innerText.includes('有未保存的修改')`));
+  record('点击周课表并从右侧选科生成可保存的课程草稿', dirty);
+  await win.webContents.executeJavaScript(
+    `(() => {[...document.querySelectorAll('.archive-commands button')].find(b => b.textContent.trim() === '保存')?.click();})()`,
+  );
+  record(
+    '课表草稿可通过现有接口保存',
+    dirty &&
+      (await waitFor(
+        win,
+        `document.body.innerText.includes('档案已保存') && !document.querySelector('.draft-label')`,
+      )),
+  );
+  // 恢复隔离验收班级的原科目。
+  if (assignment?.original) {
+    await win.webContents.executeJavaScript(`(() => {
+      document.querySelector('.lesson-cell')?.click();
+      const original = ${JSON.stringify(assignment.original)};
+      [...document.querySelectorAll('.subject-palette button')].find(b => b.title === original)?.click();
+    })()`);
+    await sleep(150);
+    await win.webContents.executeJavaScript(
+      `(() => {[...document.querySelectorAll('.archive-commands button')].find(b => b.textContent.trim() === '保存')?.click();})()`,
+    );
+    await waitFor(win, `!document.querySelector('.draft-label')`);
+  }
+  await win.webContents.executeJavaScript(`document.querySelector('[aria-label="列表视图"]').click()`);
+  record(
+    '列表视图保留课时编辑和批量操作',
     await waitFor(
       win,
-      `document.body.innerText.includes('新建课时') && document.body.innerText.includes('保存时间表')`,
+      `Boolean(document.querySelector('.course-row')) && document.body.innerText.includes('批量排课')`,
+    ),
+  );
+  await win.webContents.executeJavaScript(
+    `document.querySelector('.archive-tabs button:nth-child(2)').click()`,
+  );
+  record(
+    '时间表页四种时间点与保存入口可见',
+    await waitFor(
+      win,
+      `document.body.innerText.includes('新建课时') && document.body.innerText.includes('保存时间表') && document.body.innerText.includes('分割线') && document.body.innerText.includes('行动')`,
     ),
   );
   const quickAdd = await win.webContents.executeJavaScript(`(async () => {
-    const rows = () => document.querySelectorAll('.time-row');
-    const before = rows().length;
-    [...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='＋ 新建课时')?.click();
-    await new Promise((resolve) => setTimeout(resolve, 180));
-    const after = rows().length;
-    const last = rows()[after - 1];
-    const values = last ? [...last.querySelectorAll('.el-date-editor input')].map((input) => input.value) : [];
-    const [start, end] = values;
-    const diff = (() => {
-      if (!/^\\d{2}:\\d{2}$/.test(start ?? '') || !/^\\d{2}:\\d{2}$/.test(end ?? '')) return -1;
-      const [h1, m1] = start.split(':').map(Number), [h2, m2] = end.split(':').map(Number);
-      return h2 * 60 + m2 - (h1 * 60 + m1);
-    })();
-    return { before, after, start, end, diff };
+    const before = document.querySelectorAll('.time-row').length;
+    [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '＋ 新建课时')?.click();
+    await new Promise(resolve => setTimeout(resolve, 180));
+    const rows = document.querySelectorAll('.time-row');
+    const values = [...(rows[rows.length - 1]?.querySelectorAll('.el-date-editor input') || [])].map(input => input.value);
+    const minutes = (value) => { const [h, m] = (value || '').split(':').map(Number); return h * 60 + m; };
+    return { before, after: rows.length, diff: minutes(values[1]) - minutes(values[0]) };
   })()`);
   record(
     '时间表新建课时按快速时长生成起止时间',
     quickAdd.after === quickAdd.before + 1 && quickAdd.diff === 45,
-    `行数 ${quickAdd.before}→${quickAdd.after} 时间=${quickAdd.start ?? '-'}–${quickAdd.end ?? '-'} 分钟=${quickAdd.diff}`,
   );
   await win.webContents.executeJavaScript(
-    `document.querySelector('.editor-nav button:nth-child(5)').click()`,
+    `(() => {[...document.querySelectorAll('.archive-toolbar button')].find(b => b.textContent.trim() === '刷新')?.click();})()`,
   );
+  await waitFor(win, `Boolean(document.querySelector('.el-message-box'))`);
+  await win.webContents.executeJavaScript(
+    `(() => {[...document.querySelectorAll('.el-message-box button')].find(b => b.textContent.trim() === '放弃修改')?.click();})()`,
+  );
+  await waitFor(win, `!document.querySelector('.draft-label')`);
+  await win.webContents.executeJavaScript(
+    `document.querySelector('.archive-tabs button:first-child').click()`,
+  );
+  await win.webContents.executeJavaScript(`document.querySelector('[aria-label="月视图"]').click()`);
   record(
-    '整周预览与当前生效课表保持一致',
-    await waitFor(
-      win,
-      `document.body.innerText.includes('整周课表预览') && document.querySelector('.week-grid .el-table__body')`,
-    ),
+    '月视图提供日期导航',
+    await waitFor(win, `document.querySelectorAll('.calendar-grid button').length === 42`),
   );
-  await win.webContents.executeJavaScript(`document.querySelector('.editor-nav button:first-child').click()`);
-  await sleep(300);
+  await win.webContents.executeJavaScript(`document.querySelector('[aria-label="周视图"]').click()`);
+  record('底部视图切换可返回周课表', await waitFor(win, `Boolean(document.querySelector('.schedule-grid'))`));
+  fs.mkdirSync(path.join(__dirname, '../../docs/screenshots'), { recursive: true });
+  fs.writeFileSync(
+    path.join(__dirname, '../../docs/screenshots/plan-editor-live-api.png'),
+    (await win.webContents.capturePage()).toPNG(),
+  );
+  await win.webContents.executeJavaScript(`document.querySelector('.return-button').click()`);
+  await waitFor(win, `location.pathname === '/dashboard'`);
   const collapsedBefore = await win.webContents.executeJavaScript(
     `Boolean(document.querySelector('.layout-aside.is-collapsed'))`,
   );
@@ -1425,7 +1481,7 @@ async function runPlanEditorChecks(win) {
   await sleep(700);
   fs.mkdirSync(path.join(__dirname, '../../docs/screenshots'), { recursive: true });
   fs.writeFileSync(
-    path.join(__dirname, '../../docs/screenshots/plan-editor-workspace.png'),
+    path.join(__dirname, '../../docs/screenshots/plan-editor-shell.png'),
     (await win.webContents.capturePage()).toPNG(),
   );
   await win.loadURL(new URL('/system-settings', TARGET_URL).href);
@@ -1441,7 +1497,7 @@ async function runPlanEditorChecks(win) {
     '学年升级设置与待补跑提示可见且不执行升级',
     await waitFor(
       win,
-      `document.body.innerText.includes('每年自动学年升级') && document.body.innerText.includes('总周数')`,
+      `document.body.innerText.includes('学年升级计划') && document.body.innerText.includes('总周数')`,
     ),
   );
   await win.loadURL(new URL('/archives', TARGET_URL).href);

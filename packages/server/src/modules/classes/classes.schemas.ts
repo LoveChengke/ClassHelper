@@ -18,7 +18,7 @@ export const createClassSchema = z.object({
   enrollmentYear: enrollmentYearSchema,
   /** 班号（同一届内的序号） */
   classIndex: classIndexSchema,
-  /** 仅管理员可指定班主任，教师创建时固定为自己 */
+  /** 班主任可空；具备班级管理权限的员工显式指定 */
   teacherId: z.string().min(1).optional(),
   /** 可选：自定义班级码（ClassHelper 班级端登录用），留空自动生成 */
   code: z
@@ -37,11 +37,10 @@ export const createClassSchema = z.object({
 /**
  * 编辑班级。
  *
- * `grade` 是**学年升级**用的：高一 → 高二 只改它，班级记录与学生数据全部沿用，**不归档**。
+ * 年级只能通过升级计划修改，本接口维护届别、班号和作息覆盖。
  * `enrollmentYear` / `classIndex` 是给"有名无实的旧数据"补届别用的，改了会重算班级称呼。
  */
-export const updateClassSchema = z.object({
-  grade: z.string().trim().min(1).max(32).optional(),
+export const updateClassSchema = z.strictObject({
   /** 本班学期开始日期（第 1 教学周的周一）；空串 = 回落到全局配置 */
   termStartDate: z
     .union([z.string().trim().refine(isDayKey, { message: '日期格式应为 YYYY-MM-DD' }), z.literal('')])
@@ -52,9 +51,8 @@ export const updateClassSchema = z.object({
 });
 
 /** 学年升级（批量改年级，不归档） */
-export const promoteClassesSchema = z.object({
+export const promoteClassesSchema = z.strictObject({
   classIds: z.array(z.string().min(1)).min(1, '请至少选择一个班级').max(200),
-  grade: z.string().trim().min(1, '请输入升级后的年级').max(32),
 });
 
 /** 设置 / 重置班级账号（班级码 + 班级密码）：仅管理员 */

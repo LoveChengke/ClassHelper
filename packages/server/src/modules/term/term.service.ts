@@ -4,7 +4,8 @@ import {
   type HolidaySuggestionDto,
   type TermWeeksDto,
 } from '@classhelper/shared';
-import { assertCanManageClasses, assertClassAccess } from '../../lib/access.js';
+import { assertClassAccess } from '../../lib/access.js';
+import { assertPermission } from '../../lib/permissions.js';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
@@ -17,7 +18,7 @@ import { SOCKET_EVENTS } from '@classhelper/shared';
 import type { AutoTermWeeksInput, UpdateTermWeeksInput } from './term.schemas.js';
 
 /**
- * 学期周次（仅管理员可写）。
+ * 学期周次（具有 term:write 的员工可写）。
  *
  * 为什么需要逐周配置：`TERM_START_DATE + 每周七天`的线性推算遇到法定节假日调休、
  * 周末补课、错峰开学就会**整体错位**——而课表、作业、成绩都按周次组织，错一周就全错。
@@ -65,7 +66,7 @@ export async function getTermWeeks(user: TokenPayload, classId?: string | null):
 }
 
 /**
- * 保存逐周配置（整表覆盖）。仅管理员。
+ * 保存逐周配置（整表覆盖）。需要 term:write。
  *
  * 校验：日期格式、起止顺序、**区间不重叠**（重叠会让"当前第几周"出现歧义）。
  * 保存后把新的周次口径下发给该班所有在线设备。
@@ -74,7 +75,7 @@ export async function updateTermWeeks(
   user: TokenPayload,
   input: UpdateTermWeeksInput,
 ): Promise<TermWeeksDto> {
-  assertCanManageClasses(user);
+  await assertPermission(user, 'term:write');
   const scope = scopeOf(input.classId);
 
   const maximum = input.maxTermWeeks ?? (await getMaxTermWeeks());
@@ -135,13 +136,13 @@ export async function updateTermWeeks(
 }
 
 /**
- * 按学期开始日期**一键生成**逐周区间（管理员再逐周微调）。仅管理员。
+ * 按学期开始日期**一键生成**逐周区间（管理员再逐周微调）。需要 term:write。
  *
  * 这是配置的起点：先生成一份"标准学期"，再把调休那几周改掉，
  * 比从空白开始一周周填要快得多。
  */
 export async function autoTermWeeks(user: TokenPayload, input: AutoTermWeeksInput): Promise<TermWeeksDto> {
-  assertCanManageClasses(user);
+  await assertPermission(user, 'term:write');
   const scope = scopeOf(input.classId);
   const context = await loadTermContext(scope || null);
   const termStartDate = input.termStartDate || context.termStartDate || env.termStartDate;

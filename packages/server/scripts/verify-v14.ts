@@ -476,6 +476,8 @@ try {
     assert.equal(value.supported, false);
     assert(value.detail.length > 10);
   });
+  // 范围测试的初中班不属于默认高中计划，结束该测试夹具后再升级高中；未知年级阻断另由 lifecycle 验收。
+  await prisma.class.delete({ where: { id: third.id } });
   // 此文件开头已强制临时库，实际升级不会触及演示或业务数据。
   await prisma.class.create({
     data: {

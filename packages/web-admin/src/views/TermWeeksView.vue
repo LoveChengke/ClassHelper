@@ -12,6 +12,7 @@
  *
  * `classId` 留空 = 全校默认；某个班有自己的配置时优先用它。
  */
+import { useAuthStore } from '@/stores/auth';
 import PromotionSettings from '@/components/PromotionSettings.vue';
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
@@ -26,6 +27,7 @@ import {
 } from '@classhelper/shared';
 import { classApi, termApi } from '@/api';
 
+const auth = useAuthStore();
 const loading = ref(false);
 const saving = ref(false);
 const classes = ref<ClassDto[]>([]);
@@ -176,7 +178,7 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <PromotionSettings />
+    <PromotionSettings v-if="auth.can('promotion:manage')" />
     <el-form-item v-if="!scope" label="全校学期总周数">
       <el-input-number v-model="maxTermWeeks" :min="1" :max="60" />
     </el-form-item>
@@ -201,10 +203,24 @@ onMounted(async () => {
           <el-option v-for="item in classes" :key="item.id" :label="item.name" :value="item.id" />
         </el-select>
         <el-button :icon="'Refresh'" :loading="loading" @click="load">刷新</el-button>
-        <el-button type="warning" :icon="'Calendar'" :loading="holidayLoading" @click="fetchHolidays">
+        <el-button
+          v-if="auth.can('term:write')"
+          type="warning"
+          :icon="'Calendar'"
+          :loading="holidayLoading"
+          @click="fetchHolidays"
+        >
           拉取放假安排
         </el-button>
-        <el-button type="primary" :loading="saving" :disabled="!dirty" @click="save">保存</el-button>
+        <el-button
+          v-if="auth.can('term:write')"
+          type="primary"
+          :loading="saving"
+          :disabled="!dirty"
+          @click="save"
+        >
+          保存
+        </el-button>
       </div>
     </div>
 
@@ -229,7 +245,9 @@ onMounted(async () => {
           placeholder="第 1 教学周的周一"
           style="width: 200px"
         />
-        <el-button type="primary" plain :loading="saving" @click="autoGenerate">按开学日期生成</el-button>
+        <el-button v-if="auth.can('term:write')" type="primary" plain :loading="saving" @click="autoGenerate">
+          按开学日期生成
+        </el-button>
         <span class="hint">先生成一份标准学期，再把调休那几周改掉 —— 比一周周填快得多</span>
       </div>
     </el-card>
@@ -254,7 +272,9 @@ onMounted(async () => {
       <template #header>
         <div class="card-header">
           <span>逐周日期区间（{{ weeks.length }} 周）</span>
-          <el-button size="small" :icon="'Plus'" @click="addWeek">添加一周</el-button>
+          <el-button v-if="auth.can('term:write')" size="small" :icon="'Plus'" @click="addWeek">
+            添加一周
+          </el-button>
         </div>
       </template>
 
@@ -304,7 +324,9 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column label="操作" width="90">
           <template #default="{ $index }">
-            <el-button link type="danger" @click="removeWeek($index)">删除</el-button>
+            <el-button v-if="auth.can('term:write')" link type="danger" @click="removeWeek($index)">
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>

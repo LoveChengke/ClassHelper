@@ -10,23 +10,24 @@ description: 隔离 API、隐藏 UI、后台客户端与显式视觉验收。
 
 ## 命令与前置条件
 
-| 命令                                             | 覆盖/前置条件                                                     |
-| ------------------------------------------------ | ----------------------------------------------------------------- |
-| pnpm lint / pnpm typecheck / pnpm check:icons    | 静态检查；typecheck 会先构建 shared                               |
-| pnpm docs:check                                  | docfx 严格构建，需 .NET SDK 与 docfx                              |
-| pnpm verify:e2e                                  | 自动临时 SQLite、种子和带前缀账号，启动随机端口服务；无需真实服务 |
-| pnpm verify:web:isolated                         | 同上隔离服务，隐藏 Electron UI 回归；先构建 Web 产物              |
-| pnpm verify:web                                  | 连接已准备测试服务，需 Web 产物和测试管理员；不应指向业务服务     |
-| pnpm verify:v14                                  | 临时库验证关系课表、周次、范围、隐私与升级等                      |
-| pnpm verify:courseware                           | 临时库和文件目录的课件专项，不向真实班级推送                      |
-| pnpm verify:client-agent                         | 假系统适配器验证命令、回执和更新策略                              |
-| pnpm verify:client-migrations                    | 临时旧库验证迁移、联动退役与默认组持久化                          |
-| pnpm verify:review-client                        | 无窗口逻辑回归                                                    |
-| pnpm verify:review-api / pnpm verify:clients-api | 需明确准备的隔离测试服务，使用 VERIFY_BASE_URL 等脚本参数         |
-| pnpm verify:desktop                              | 先 pnpm build:desktop；隐藏快速检查，独立 userData                |
-| pnpm verify:desktop:online                       | 显式联网，需要测试管理员并创建临时教师/班级                       |
-| pnpm verify:desktop:visual                       | 显式使用桌面，完整岛几何/动画/透明度/截图检查                     |
-| pnpm verify:packaged --exe <客户端EXE>           | 默认快速离线，两次启动、packaged=true；--visual 才使用桌面        |
+| 命令                                             | 覆盖/前置条件                                                                |
+| ------------------------------------------------ | ---------------------------------------------------------------------------- |
+| pnpm lint / pnpm typecheck / pnpm check:icons    | 静态检查；typecheck 会先构建 shared                                          |
+| pnpm docs:check                                  | docfx 严格构建，需 .NET SDK 与 docfx                                         |
+| pnpm verify:e2e                                  | 自动临时 SQLite、种子和带前缀账号，启动随机端口服务；无需真实服务            |
+| pnpm verify:web:isolated                         | 同上隔离服务，隐藏 Electron UI 回归；先构建 Web 产物                         |
+| pnpm verify:web                                  | 连接已准备测试服务，需 Web 产物和测试管理员；不应指向业务服务                |
+| pnpm verify:lifecycle                            | 临时 SQLite 验证权限治理、事务故障回滚、状态机、历史、多轨道、计划哈希和快照 |
+| pnpm verify:v14                                  | 临时库验证关系课表、周次、范围、隐私与升级等                                 |
+| pnpm verify:courseware                           | 临时库和文件目录的课件专项，不向真实班级推送                                 |
+| pnpm verify:client-agent                         | 假系统适配器验证命令、回执和更新策略                                         |
+| pnpm verify:client-migrations                    | 临时旧库验证迁移、联动退役与默认组持久化                                     |
+| pnpm verify:review-client                        | 无窗口逻辑回归                                                               |
+| pnpm verify:review-api / pnpm verify:clients-api | 需明确准备的隔离测试服务，使用 VERIFY_BASE_URL 等脚本参数                    |
+| pnpm verify:desktop                              | 先 pnpm build:desktop；隐藏快速检查，独立 userData                           |
+| pnpm verify:desktop:online                       | 显式联网，需要测试管理员并创建临时教师/班级                                  |
+| pnpm verify:desktop:visual                       | 显式使用桌面，完整岛几何/动画/透明度/截图检查                                |
+| pnpm verify:packaged --exe <客户端EXE>           | 默认快速离线，两次启动、packaged=true；--visual 才使用桌面                   |
 
 联网 packaged 使用 --online；调用方须预先准备隔离服务、临时教师和班级并显式注入凭据，该启动器不会自动创建它们。
 开发版 verify:desktop:online 则通过 provisionSmokeClass 创建和清理临时身份。--offline 保持离线。
@@ -42,6 +43,8 @@ pnpm check:icons
 pnpm docs:check
 pnpm verify:e2e
 pnpm verify:v14
+pnpm verify:lifecycle
+pnpm verify:client-migrations
 pnpm verify:courseware
 pnpm build:desktop
 pnpm verify:desktop
@@ -67,3 +70,7 @@ docs/images 为 README/文档展示图；docs/screenshots 为回归留档；webs
 Web 采集入口 `website/tools/capture-shots.mjs`，先准备隔离测试服务和数据。
 岛/客户端采集使用 smoke.mjs --visual，并按需 --online；ISLAND_SHOTS_DIR 与 ELECTRON_CLIENT_SHOTS_DIR 指向临时目录。
 日常 quick 模式不会生成完整视觉截图，不能把 quick 通过表述为动画/透明度已验证。
+
+权限与年度流程回归入口为 `scripts/verify-lifecycle.mjs`，为子进程指定临时库与测试密钥，不使用业务 .env 的登录凭据。
+旧库升级脚本动态读取最新迁移，另建重构前夹具校验 ADMIN 默认组补键、历史 kind 映射、空组保留及重复启动。
+事务回滚用 SQLite 触发器模拟历史写入失败，不能通过删除断言或放宽状态规则通过测试。

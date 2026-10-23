@@ -1,3 +1,4 @@
+import { assertStaffPermission } from '../../lib/permissions.js';
 import {
   SOCKET_EVENTS,
   dayKeyLocal,
@@ -55,6 +56,7 @@ export async function listHomeworks(
   user: TokenPayload,
   options: ListHomeworkOptions,
 ): Promise<HomeworkDto[]> {
+  await assertStaffPermission(user, 'homework:read');
   const scope = await resolveClassScope(user, options.classId);
   const device = isClassDevice(user);
   // ClassHelper 班级端以全班学生为范围；教师/管理员没有"自己的完成状态"
@@ -95,6 +97,7 @@ export async function listHomeworkDays(
   user: TokenPayload,
   options: { classId?: string; from?: string; to?: string; days?: number },
 ): Promise<HomeworkDaysDto> {
+  await assertStaffPermission(user, 'homework:read');
   const scope = await resolveClassScope(user, options.classId);
   const today = dayKeyLocal(new Date());
   const to = options.to ?? today;
@@ -119,6 +122,7 @@ export async function listHomeworkDays(
 }
 
 export async function getHomework(user: TokenPayload, homeworkId: string): Promise<HomeworkDto> {
+  await assertStaffPermission(user, 'homework:read');
   const device = isClassDevice(user);
   const personalIds = device ? await resolvePersonalIds(user) : [];
   const homework = await prisma.homework.findUnique({
@@ -152,6 +156,7 @@ export async function getHomework(user: TokenPayload, homeworkId: string): Promi
  *   见 AGENTS.md 的现行工程约定），班级端录入的作业归属该班班主任。
  */
 export async function createHomework(user: TokenPayload, input: CreateHomeworkInput): Promise<HomeworkDto> {
+  await assertStaffPermission(user, 'homework:write');
   await assertCanManageSubjectContent(user, input.classId, input.courseId ?? null, '布置作业', {
     allowClassDevice: true,
   });
@@ -207,6 +212,7 @@ export async function bulkCreateHomeworks(
   user: TokenPayload,
   input: BulkCreateHomeworkRequest,
 ): Promise<BulkPublishResult> {
+  await assertStaffPermission(user, 'homework:write');
   const classIds = normalizeBulkClassIds(input.classIds);
   const results: BulkPublishClassResult[] = [];
 
@@ -255,6 +261,7 @@ export async function updateHomework(
   homeworkId: string,
   input: UpdateHomeworkInput,
 ): Promise<HomeworkDto> {
+  await assertStaffPermission(user, 'homework:write');
   const current = await prisma.homework.findUnique({ where: { id: homeworkId } });
   if (!current) throw ApiError.notFound('作业不存在');
 
@@ -287,6 +294,7 @@ export async function updateHomework(
 }
 
 export async function deleteHomework(user: TokenPayload, homeworkId: string): Promise<void> {
+  await assertStaffPermission(user, 'homework:write');
   const current = await prisma.homework.findUnique({
     where: { id: homeworkId },
     include: { course: courseSelect, creator: creatorSelect },
@@ -315,6 +323,7 @@ export async function updateHomeworkStatus(
   homeworkId: string,
   input: UpdateHomeworkStatusInput,
 ): Promise<HomeworkStatusDto> {
+  await assertStaffPermission(user, 'homework:write');
   const homework = await prisma.homework.findUnique({ where: { id: homeworkId } });
   if (!homework) throw ApiError.notFound('作业不存在');
 
@@ -373,7 +382,7 @@ export async function updateHomeworkStatus(
 async function buildSubmissions(classId: string, homeworkId: string): Promise<HomeworkSubmissionsDto> {
   const [students, statuses] = await Promise.all([
     prisma.student.findMany({
-      where: { classId, archivedYearId: null, ...activeStudentWhere() },
+      where: { classId, ...activeStudentWhere() },
       select: { id: true, name: true, studentNo: true },
       orderBy: { studentNo: 'asc' },
     }),
@@ -408,6 +417,7 @@ export async function listHomeworkSubmissions(
   user: TokenPayload,
   homeworkId: string,
 ): Promise<HomeworkSubmissionsDto> {
+  await assertStaffPermission(user, 'homework:read');
   const homework = await prisma.homework.findUnique({
     where: { id: homeworkId },
     select: { id: true, classId: true },
@@ -427,6 +437,7 @@ export async function updateHomeworkSubmissions(
   homeworkId: string,
   input: UpdateHomeworkSubmissionsInput,
 ): Promise<HomeworkSubmissionsDto> {
+  await assertStaffPermission(user, 'homework:write');
   const homework = await prisma.homework.findUnique({
     where: { id: homeworkId },
     select: { id: true, classId: true },
@@ -436,7 +447,7 @@ export async function updateHomeworkSubmissions(
   assertCanManageSubmissions(user);
 
   const students = await prisma.student.findMany({
-    where: { classId: homework.classId, archivedYearId: null, ...activeStudentWhere() },
+    where: { classId: homework.classId, ...activeStudentWhere() },
     select: { id: true },
   });
   if (students.length === 0) throw ApiError.badRequest('当前班级还没有学生，请先在名单里添加学生');

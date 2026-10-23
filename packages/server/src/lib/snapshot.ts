@@ -34,6 +34,7 @@ export const SNAPSHOT_VERSION = 1;
  */
 export const SNAPSHOT_TABLES = [
   'User',
+  'PermissionAudit',
   'PermissionGroup',
   'PermissionGroupItem',
   'UserPermissionGroup',
@@ -138,7 +139,7 @@ export function assertValidSnapshot(value: unknown): asserts value is DatabaseSn
   for (const table of SNAPSHOT_TABLES) {
     const rows = (snapshot.data as Record<string, unknown>)[table];
     // 旧版本快照没有课件表；允许恢复，文件实体仍需单独备份。
-    if (rows === undefined && table.startsWith('Courseware')) continue;
+    if (rows === undefined && (table.startsWith('Courseware') || table === 'PermissionAudit')) continue;
     if (!Array.isArray(rows)) {
       throw new Error(`快照缺少表 ${table} 的数据`);
     }
@@ -182,6 +183,19 @@ export async function restoreSnapshot(
     }
     for (const table of SNAPSHOT_TABLES) {
       const rows = (snapshot.data[table] ?? []).map((row) => {
+        if (table === 'StudentClassTransfer') {
+          const { mode, ...rest } = row;
+          return {
+            ...rest,
+            kind:
+              rest.kind ??
+              (mode === 'transfer-out'
+                ? 'transfer-out'
+                : mode === 'restore-transfer'
+                  ? 'restore'
+                  : 'class-change'),
+          };
+        }
         if (table !== 'Class' || typeof row !== 'object' || row === null) return row;
         const copy = { ...(row as Record<string, unknown>) };
         delete copy.notificationChannel;

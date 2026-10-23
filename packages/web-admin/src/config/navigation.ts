@@ -11,7 +11,7 @@ export const MANAGEMENT_GROUPS = [
     id: 'school',
     title: '班级与人员',
     icon: 'School',
-    paths: ['/classes', '/students', '/teachers', '/roster', '/term-weeks', '/archives'],
+    paths: ['/classes', '/students', '/teachers', '/roster', '/term-weeks', '/promotion', '/archives'],
   },
   { id: 'devices', title: '设备运维', icon: 'Monitor', paths: ['/clients'] },
   {

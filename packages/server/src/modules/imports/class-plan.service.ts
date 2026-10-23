@@ -1,7 +1,7 @@
 import { importProfile } from '../class-plans/profile-import.service.js';
 import { prisma } from '../../lib/db.js';
 import type { TokenPayload } from '../../lib/jwt.js';
-import { assertCanManageSchedule } from '../../lib/access.js';
+import { assertCanImportSchedule } from '../../lib/access.js';
 import { weekParityFromDiv } from '@classhelper/shared';
 import type { ClassPlanImportInput } from './imports.schemas.js';
 
@@ -243,7 +243,7 @@ export async function previewClassPlan(
   user: TokenPayload,
   input: ClassPlanImportInput,
 ): Promise<ClassPlanParseResult & { entries: (ParsedClassPlanEntry & { weekdayLabel: string })[] }> {
-  await assertCanManageSchedule(user, input.classId);
+  await assertCanImportSchedule(user, input.classId);
   const parsed = parseClassIslandClassPlan(input.payload);
   const courses = await prisma.course.findMany({
     where: { classId: input.classId },

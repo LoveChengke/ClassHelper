@@ -10,7 +10,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
 fs.mkdirSync(dir, { recursive: true });
 const env = {
   ...process.env,
+  NODE_ENV: 'test',
   DATABASE_PROVIDER: 'sqlite',
+  JWT_SECRET: 'e2e-isolated-verification-secret-2026',
   DATABASE_URL: `file:${path.join(dir, 'test.db').replaceAll('\\', '/')}`,
   TZ: 'Asia/Shanghai',
   RATE_LIMIT_ENABLED: 'false',

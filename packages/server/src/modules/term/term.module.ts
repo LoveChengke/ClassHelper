@@ -1,12 +1,14 @@
+import { assertGlobalPermission } from '../../lib/access.js';
 import { z } from 'zod';
 import {
   promotionStatus,
+  previewPromotion,
   promotionConfigSchema,
   configurePromotion,
   runPromotion,
 } from './promotion.service.js';
 import { Router } from 'express';
-import { sendOk } from '../../lib/http.js';
+import { ApiError, sendOk } from '../../lib/http.js';
 import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
@@ -22,22 +24,47 @@ import * as termService from './term.service.js';
 
 const router = Router();
 router.use(authenticate());
-router.get('/promotion', requirePermission('system:manage'), async (_req, res) =>
+router.use('/promotion', async (req, _res, next) => {
+  await assertGlobalPermission(getAuthUser(req), 'promotion:manage');
+  next();
+});
+router.get('/promotion', requirePermission('promotion:manage'), async (_req, res) =>
   sendOk(res, await promotionStatus()),
 );
 router.put(
   '/promotion',
-  requirePermission('system:manage'),
+  requirePermission('promotion:manage'),
   validate({ body: promotionConfigSchema }),
-  async (req, res) => sendOk(res, await configurePromotion(req.body)),
+  async (req, res) => sendOk(res, await configurePromotion(req.body, getAuthUser(req))),
+);
+router.post(
+  '/promotion/preview',
+  requirePermission('promotion:manage'),
+  validate({ body: z.object({ year: z.number().int().min(2000).max(2100) }) }),
+  async (req, res) => sendOk(res, await previewPromotion(req.body.year)),
 );
 router.post(
   '/promotion/run',
-  requirePermission('system:manage'),
+  requirePermission('promotion:manage'),
+  (req, _res, next) => {
+    if (req.body && 'dryRun' in req.body)
+      return next(
+        ApiError.badRequest('请更新页面：预览使用 /term/promotion/preview，执行需提供计划哈希并确认学年'),
+      );
+    next();
+  },
   validate({
-    body: z.object({ year: z.number().int().min(2000).max(2100), dryRun: z.boolean().default(true) }),
+    body: z
+      .object({
+        year: z.number().int().min(2000).max(2100),
+        planHash: z.string().length(64),
+        confirm: z.literal(true),
+        catchUp: z.boolean().optional(),
+      })
+      .strict(),
   }),
-  async (req, res) => sendOk(res, await runPromotion(req.body.year, req.body.dryRun)),
+  async (req, res) =>
+    sendOk(res, await runPromotion(req.body.year, { ...req.body, actor: getAuthUser(req) })),
 );
 
 /**

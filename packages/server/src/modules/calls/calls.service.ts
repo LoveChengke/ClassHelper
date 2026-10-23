@@ -1,3 +1,5 @@
+import { assertStaffPermission } from '../../lib/permissions.js';
+import { resolveContentCreator } from '../../lib/access.js';
 import { SOCKET_EVENTS, buildCallTitle, dayKeyLocal, type NotificationDto } from '@classhelper/shared';
 import { assertCanPublishNotification } from '../../lib/access.js';
 import { isActiveStudent } from '../../lib/students.js';
@@ -27,6 +29,7 @@ const creatorSelect = { select: { id: true, name: true, username: true } } as co
  * 全班都看得到在叫谁，这与需求「教室机器代全班」一致。
  */
 export async function createCall(user: TokenPayload, input: CreateCallInput): Promise<NotificationDto> {
+  await assertStaffPermission(user, 'call:create');
   await assertCanPublishNotification(user, input.classId);
 
   const student = await prisma.student.findUnique({
@@ -54,7 +57,7 @@ export async function createCall(user: TokenPayload, input: CreateCallInput): Pr
       // 紧急叫人 → URGENT（客户端无视上课时段立即展开）；普通叫人 → HIGH
       // （不会触发上课时段 409 拦截，但客户端按普通通知排队处理）
       priority: input.urgent ? 'URGENT' : 'HIGH',
-      createdBy: user.sub,
+      createdBy: await resolveContentCreator(user, input.classId),
       assignDate: dayKeyLocal(new Date()),
     },
     include: { creator: creatorSelect, reads: true },

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { useRoute } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
+import { api } from '@/api/http';
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
@@ -18,13 +19,17 @@ import {
 import { callApi, classApi, studentApi } from '@/api';
 import TableImportDialog from '@/components/TableImportDialog.vue';
 
-const readOnly = computed(() => useRouteName.value === 'roster');
-const useRouteName = computed(() => route.name);
-const route = useRoute();
+const auth = useAuthStore();
+const readOnly = computed(() => !auth.can('roster:manage'));
 const loading = ref(false);
 const students = ref<StudentDto[]>([]);
 const classes = ref<ClassDto[]>([]);
-const filter = reactive({ classId: '', keyword: '', status: '' as '' | StudentStatus });
+const filter = reactive({
+  classId: '',
+  keyword: '',
+  status: 'active' as '' | StudentStatus,
+  includeArchived: false,
+});
 /** 表格勾选（批量调班 / 批量转出用） */
 const selection = ref<StudentDto[]>([]);
 
@@ -51,7 +56,7 @@ function exportRoster() {
 const classOptions = computed(() => classes.value);
 
 async function loadClasses(): Promise<void> {
-  classes.value = await classApi.list();
+  classes.value = auth.can('class:read') ? await classApi.list() : [];
 }
 
 let studentRequest = 0;
@@ -59,7 +64,8 @@ async function loadStudents(): Promise<void> {
   const request = ++studentRequest;
   loading.value = true;
   try {
-    const params: { classId?: string; keyword?: string; status?: StudentStatus } = {};
+    const params: { classId?: string; keyword?: string; status?: StudentStatus; includeArchived?: boolean } =
+      { includeArchived: filter.includeArchived };
     if (filter.classId) params.classId = filter.classId;
     if (filter.keyword.trim()) params.keyword = filter.keyword.trim();
     if (filter.status) params.status = filter.status;
@@ -125,7 +131,7 @@ async function submitForm(): Promise<void> {
   const payload = {
     studentNo: form.studentNo.trim(),
     name: form.name.trim(),
-    classId: form.classId || null,
+    ...(!editingId.value ? { classId: form.classId || null } : {}),
     gender: form.gender,
     guardianPhone: form.guardianPhone.trim(),
   };
@@ -142,12 +148,27 @@ async function submitForm(): Promise<void> {
 }
 
 async function removeStudent(row: StudentDto): Promise<void> {
-  await ElMessageBox.confirm(`删除学生「${row.name}（${row.studentNo}）」及其成绩、作业记录？`, '危险操作', {
-    type: 'warning',
-    confirmButtonText: '确认删除',
-  });
+  await ElMessageBox.confirm(
+    `停用学生「${row.name}（${row.studentNo}）」？成绩、作业、已读与历史全部保留；停用后可复学。`,
+    '危险操作',
+    {
+      type: 'warning',
+      confirmButtonText: '确认停用',
+    },
+  );
   await studentApi.remove(row.id);
-  ElMessage.success('学生已删除');
+  ElMessage.success('学生已停用');
+  await loadStudents();
+}
+
+async function hardDeleteStudent(row: StudentDto): Promise<void> {
+  await ElMessageBox.prompt(
+    `仅能删除没有成绩、作业、已读或历史的学生记录。请输入学号 ${row.studentNo} 确认永久删除。`,
+    '删除空记录',
+    { inputValidator: (value) => value === row.studentNo || '学号不一致', type: 'warning' },
+  );
+  await api.delete(`/students/${row.id}?hard=true&confirm=true`);
+  ElMessage.success('空学生记录已删除');
   await loadStudents();
 }
 
@@ -158,7 +179,7 @@ async function removeStudent(row: StudentDto): Promise<void> {
 const transferVisible = ref(false);
 const transferSaving = ref(false);
 const transferTargets = ref<StudentDto[]>([]);
-const transferForm = reactive({ toClassId: '', note: '' });
+const transferForm = reactive({ toClassId: '', note: '', allowGradeChange: false });
 
 function openTransfer(rows: StudentDto[]): void {
   if (rows.length === 0) {
@@ -178,6 +199,7 @@ async function submitTransfer(): Promise<void> {
       transferTargets.value.map((item) => item.id),
       transferForm.toClassId || null,
       transferForm.note.trim() || undefined,
+      transferForm.allowGradeChange,
     );
     ElMessage.success(`已调动 ${result.moved} 名学生（学号不变，历史可查）`);
     transferVisible.value = false;
@@ -192,19 +214,64 @@ async function transferOut(rows: StudentDto[]): Promise<void> {
     ElMessage.warning('请先勾选要办理转出的学生');
     return;
   }
-  const names = rows.map((item) => item.name).join('、');
-  const { value } = await ElMessageBox.prompt(
-    `将 ${rows.length} 名学生（${names}）标记为「已转出」。\n` +
-      '转出表示学籍离开本校：班级归属与历史成绩、作业都会保留，只是不再计入在读名单。',
-    '办理学生转出',
-    { inputPlaceholder: '转出去向 / 原因（可选）', inputValue: '', confirmButtonText: '确认转出' },
-  );
-  const result = await studentApi.transferOut(
-    rows.map((item) => item.id),
-    (value ?? '').trim() || undefined,
-  );
-  ElMessage.success(`已办理 ${result.transferred} 名学生转出`);
-  await loadStudents();
+  outTargets.value = rows;
+  outForm.note = '';
+  outForm.toSchool = '';
+  outVisible.value = true;
+}
+const outTargets = ref<StudentDto[]>([]),
+  outVisible = ref(false),
+  outSaving = ref(false);
+const outForm = reactive({ toSchool: '', note: '' });
+async function submitOut() {
+  outSaving.value = true;
+  try {
+    await studentApi.transferOut(
+      outTargets.value.map((row) => row.id),
+      outForm.note,
+      outForm.toSchool,
+    );
+    outVisible.value = false;
+    await loadStudents();
+  } finally {
+    outSaving.value = false;
+  }
+}
+const inVisible = ref(false),
+  inSaving = ref(false);
+const inForm = reactive({ studentId: '', studentNo: '', name: '', toClassId: '', fromSchool: '', note: '' });
+function openIn(row?: StudentDto) {
+  Object.assign(inForm, {
+    studentId: row?.id ?? '',
+    studentNo: row?.studentNo ?? '',
+    name: row?.name ?? '',
+    toClassId: filter.classId,
+    fromSchool: '',
+    note: '',
+  });
+  inVisible.value = true;
+}
+async function submitIn() {
+  if (!inForm.toClassId || !inForm.studentNo || !inForm.name) {
+    ElMessage.warning('请填写学号、姓名和目标班级');
+    return;
+  }
+  inSaving.value = true;
+  try {
+    await api.post('/students/transfer-in', {
+      ...(inForm.studentId
+        ? { studentId: inForm.studentId }
+        : { studentNo: inForm.studentNo, name: inForm.name }),
+      toClassId: inForm.toClassId,
+      fromSchool: inForm.fromSchool,
+      note: inForm.note,
+    });
+    inVisible.value = false;
+    await loadStudents();
+    ElMessage.success('转入或复学已完成');
+  } finally {
+    inSaving.value = false;
+  }
 }
 
 /* ------------------------------------------------------------ 调班历史 */
@@ -227,6 +294,11 @@ async function openHistory(row: StudentDto): Promise<void> {
 }
 
 const TRANSFER_MODE_LABELS: Record<string, string> = {
+  'class-change': '调班 / 建档',
+  restore: '撤回 / 复学',
+  unassign: '移出班级',
+  deactivate: '停用',
+  'transfer-in': '转入',
   single: '单个调班',
   batch: '批量调班',
   'transfer-out': '转出',
@@ -303,15 +375,14 @@ async function submitCall(): Promise<void> {
           style="width: 170px"
           @change="loadStudents"
         >
-          <el-option v-for="item in classOptions" :key="item.id" :label="item.name" :value="item.id" />
+          <el-option
+            v-for="item in classOptions"
+            :key="item.id"
+            :label="`${item.name} / ${item.grade}`"
+            :value="item.id"
+          />
         </el-select>
-        <el-select
-          v-model="filter.status"
-          placeholder="全部状态"
-          clearable
-          style="width: 130px"
-          @change="loadStudents"
-        >
+        <el-select v-model="filter.status" placeholder="在读" style="width: 130px" @change="loadStudents">
           <el-option
             v-for="status in STUDENT_STATUSES"
             :key="status"
@@ -329,8 +400,17 @@ async function submitCall(): Promise<void> {
         />
         <el-button :icon="'Search'" @click="loadStudents">查询</el-button>
         <el-button @click="exportRoster">导出名单</el-button>
+        <el-switch v-model="filter.includeArchived" active-text="包含归档" @change="loadStudents" />
+        <el-button v-if="!readOnly" @click="openIn()">转入学生</el-button>
         <el-button v-if="!readOnly" type="primary" :icon="'Plus'" @click="openCreate">新建学生</el-button>
-        <el-button v-if="!readOnly" type="warning" :icon="'Document'" @click="openImport">导入名单</el-button>
+        <el-button
+          v-if="!readOnly && auth.can('import:students')"
+          type="warning"
+          :icon="'Document'"
+          @click="openImport"
+        >
+          导入名单
+        </el-button>
       </div>
     </div>
 
@@ -395,13 +475,59 @@ async function submitCall(): Promise<void> {
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ formatDate(row.createdAt, true) }}</template>
         </el-table-column>
-        <el-table-column v-if="!readOnly" label="操作" width="330" fixed="right">
+        <el-table-column label="操作" width="370" fixed="right">
           <template #default="{ row }">
-            <el-button link type="success" @click="openCall(row)">叫人</el-button>
-            <el-button link type="primary" @click="openTransfer([row])">调班</el-button>
-            <el-button link @click="openHistory(row)">调班历史</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="removeStudent(row)">删除</el-button>
+            <el-button
+              v-if="auth.can('call:create') && row.status === 'active'"
+              link
+              type="success"
+              @click="openCall(row)"
+            >
+              叫人
+            </el-button>
+            <el-button
+              v-if="!readOnly && row.status === 'active' && !row.archivedYearId"
+              link
+              type="primary"
+              @click="openTransfer([row])"
+            >
+              调班
+            </el-button>
+            <el-button link @click="openHistory(row)">生命周期历史</el-button>
+            <el-button
+              v-if="!readOnly && ['active', 'inactive'].includes(row.status) && !row.archivedYearId"
+              link
+              type="primary"
+              @click="openEdit(row)"
+            >
+              编辑
+            </el-button>
+            <el-button
+              v-if="!readOnly && row.status === 'active' && !row.archivedYearId"
+              link
+              type="danger"
+              @click="removeStudent(row)"
+            >
+              停用
+            </el-button>
+            <el-button
+              v-if="
+                auth.role === 'ADMIN' && ['active', 'inactive'].includes(row.status) && !row.archivedYearId
+              "
+              link
+              type="danger"
+              @click="hardDeleteStudent(row)"
+            >
+              删除空记录
+            </el-button>
+            <el-button
+              v-if="!readOnly && ['transferred', 'inactive'].includes(row.status) && !row.archivedYearId"
+              link
+              type="primary"
+              @click="openIn(row)"
+            >
+              转入 / 复学
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -417,6 +543,11 @@ async function submitCall(): Promise<void> {
         <el-form-item label="学生">
           <span>{{ transferTargets.length }} 名（{{ transferTargets.map((s) => s.name).join('、') }}）</span>
         </el-form-item>
+        <el-form-item label="原班 / 年级">
+          <span>
+            {{ transferTargets.map((s) => `${s.className || '未分班'} / ${s.grade || ''}`).join('、') }}
+          </span>
+        </el-form-item>
         <el-form-item label="调入班级">
           <el-select
             v-model="transferForm.toClassId"
@@ -424,8 +555,16 @@ async function submitCall(): Promise<void> {
             clearable
             style="width: 100%"
           >
-            <el-option v-for="item in classOptions" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option
+              v-for="item in classOptions"
+              :key="item.id"
+              :label="`${item.name} / ${item.grade}`"
+              :value="item.id"
+            />
           </el-select>
+        </el-form-item>
+        <el-form-item v-if="auth.role === 'ADMIN'" label="跨年级">
+          <el-checkbox v-model="transferForm.allowGradeChange">允许跨年级（必须填写备注）</el-checkbox>
         </el-form-item>
         <el-form-item label="备注">
           <el-input
@@ -441,6 +580,45 @@ async function submitCall(): Promise<void> {
       </template>
     </el-dialog>
 
+    <el-dialog v-model="outVisible" title="办理转出" width="min(92%, 520px)">
+      <p>将 {{ outTargets.length }} 名学生转出，原班级和全部业务历史保留。</p>
+      <el-form label-position="top">
+        <el-form-item label="去向学校"><el-input v-model="outForm.toSchool" maxlength="200" /></el-form-item>
+        <el-form-item label="原因 / 备注">
+          <el-input v-model="outForm.note" type="textarea" maxlength="200" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="outVisible = false">取消</el-button>
+        <el-button type="danger" :loading="outSaving" @click="submitOut">确认转出</el-button>
+      </template>
+    </el-dialog>
+    <el-dialog v-model="inVisible" title="转入 / 复学" width="min(92%, 520px)">
+      <el-form label-position="top">
+        <el-form-item label="学号" required>
+          <el-input v-model="inForm.studentNo" :disabled="!!inForm.studentId" />
+        </el-form-item>
+        <el-form-item label="姓名" required>
+          <el-input v-model="inForm.name" :disabled="!!inForm.studentId" />
+        </el-form-item>
+        <el-form-item label="目标在读班级" required>
+          <el-select v-model="inForm.toClassId">
+            <el-option
+              v-for="item in classOptions"
+              :key="item.id"
+              :label="`${item.name} / ${item.grade}`"
+              :value="item.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="来源学校"><el-input v-model="inForm.fromSchool" maxlength="200" /></el-form-item>
+        <el-form-item label="备注"><el-input v-model="inForm.note" maxlength="200" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="inVisible = false">取消</el-button>
+        <el-button type="primary" :loading="inSaving" @click="submitIn">确认办理</el-button>
+      </template>
+    </el-dialog>
     <!-- 调班历史 -->
     <el-drawer v-model="historyVisible" :title="`调班历史 — ${historyTarget?.name ?? ''}`" size="640px">
       <el-table v-loading="historyLoading" :data="historyRows" empty-text="该生还没有调班记录">
@@ -448,7 +626,7 @@ async function submitCall(): Promise<void> {
           <template #default="{ row }">{{ formatDate(row.createdAt, true) }}</template>
         </el-table-column>
         <el-table-column label="方式" width="100">
-          <template #default="{ row }">{{ TRANSFER_MODE_LABELS[row.mode] ?? row.mode }}</template>
+          <template #default="{ row }">{{ TRANSFER_MODE_LABELS[row.kind] ?? row.kind }}</template>
         </el-table-column>
         <el-table-column label="原班级" width="130">
           <template #default="{ row }">{{ row.fromClassName || '未分班' }}</template>
@@ -456,6 +634,12 @@ async function submitCall(): Promise<void> {
         <el-table-column label="新班级" width="130">
           <template #default="{ row }">{{ row.toClassName || '未分班' }}</template>
         </el-table-column>
+        <el-table-column prop="batchId" label="批次" min-width="200" />
+        <el-table-column prop="academicYear" label="学年" width="90" />
+        <el-table-column prop="fromGrade" label="原年级" width="100" />
+        <el-table-column prop="toGrade" label="新年级" width="100" />
+        <el-table-column prop="fromSchool" label="来源学校" min-width="120" />
+        <el-table-column prop="toSchool" label="去向学校" min-width="120" />
         <el-table-column prop="operatorName" label="操作人" width="100" />
         <el-table-column prop="note" label="备注" show-overflow-tooltip />
       </el-table>
@@ -542,9 +726,14 @@ async function submitCall(): Promise<void> {
         <el-form-item label="家长手机号">
           <el-input v-model="form.guardianPhone" placeholder="可选" />
         </el-form-item>
-        <el-form-item label="班级">
+        <el-form-item v-if="!editingId" label="班级">
           <el-select v-model="form.classId" placeholder="暂不分班" clearable style="width: 100%">
-            <el-option v-for="item in classOptions" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option
+              v-for="item in classOptions"
+              :key="item.id"
+              :label="`${item.name} / ${item.grade}`"
+              :value="item.id"
+            />
           </el-select>
         </el-form-item>
       </el-form>

@@ -30,6 +30,7 @@ export const SETTING_KEYS = {
   termStartDate: 'term.startDate',
   termMaxWeeks: 'term.maxWeeks',
   promotionAt: 'term.promotionAt',
+  promotionPlan: 'term.promotionPlan',
 } as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS];

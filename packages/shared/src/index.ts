@@ -10,3 +10,4 @@ export * from './class-plan.js';
 export * from './island-layout.js';
 export type * from './types.js';
 export * from './courseware.js';
+export * from './lifecycle.js';

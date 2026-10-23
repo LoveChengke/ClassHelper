@@ -24,6 +24,7 @@ import {
   type UserRole,
 } from '@classhelper/shared';
 import { permissionApi } from '@/api';
+import { api } from '@/api/http';
 import { useAuthStore } from '@/stores/auth';
 import { useResponsive } from '@/composables/useResponsive';
 
@@ -31,7 +32,7 @@ const { isMobile } = useResponsive();
 const auth = useAuthStore();
 
 /** 当前 Tab：权限组 / 成员 */
-const activeTab = ref<'groups' | 'members'>('groups');
+const activeTab = ref<'groups' | 'members' | 'audit'>('groups');
 
 const loading = ref(false);
 /** 加载失败的中文提示（非空 = 页面顶部显示错误态 + 重试按钮） */
@@ -95,11 +96,13 @@ async function loadAll(): Promise<void> {
     const [groupList, memberList, catalogData] = await Promise.all([
       permissionApi.listGroups(),
       permissionApi.listMembers(),
-      catalog.value ? Promise.resolve(catalog.value) : permissionApi.catalog(),
+      permissionApi.catalog(),
     ]);
     groups.value = groupList;
     members.value = memberList;
     catalog.value = catalogData;
+    scopes.value = await api.get('/permissions/scopes');
+    await loadAudits();
     await auth.ensurePermissions(true);
   } catch (error) {
     loadError.value = errorMessage(error);
@@ -171,7 +174,10 @@ function defaultRoleHint(key: PermissionKey): string {
  * 这里只打一个「高权限」标记提醒配置的人。
  */
 function isHighPrivilege(key: PermissionKey): boolean {
-  return catalog.value?.unremovable.includes(key) ?? false;
+  return (
+    (catalog.value?.defaultRoles[key]?.length === 1 && catalog.value.defaultRoles[key][0] === 'ADMIN') ||
+    (catalog.value?.unremovable.includes(key) ?? false)
+  );
 }
 
 /** 分类勾选状态：全选 / 全不选 / 选了一部分（决定"全选-清空"按钮的文案） */
@@ -203,6 +209,10 @@ async function submitGroup(): Promise<void> {
     ElMessage.warning(`已存在名为「${name}」的权限组`);
     return;
   }
+  await ElMessageBox.confirm(groupImpact.value, '权限变更影响预览', {
+    type: 'warning',
+    confirmButtonText: '确认保存',
+  });
   groupDialog.saving = true;
   try {
     const payload = {
@@ -264,9 +274,10 @@ const assignDialog = reactive({
 });
 
 function openAssign(member: PermissionMemberDto): void {
-  if (member.fixed) return;
   assignDialog.member = member;
-  assignDialog.groupIds = [...member.groupIds];
+  assignDialog.groupIds = member.groupIds.length
+    ? [...member.groupIds]
+    : groups.value.filter((g) => g.defaultRole === member.role).map((g) => g.id);
   assignDialog.visible = true;
 }
 
@@ -280,6 +291,10 @@ const roleDefaultCount = computed(() => {
 async function submitAssign(): Promise<void> {
   const member = assignDialog.member;
   if (!member) return;
+  await ElMessageBox.confirm(assignmentImpact.value, '分组生效差异', {
+    type: 'warning',
+    confirmButtonText: '确认分配',
+  });
   assignDialog.saving = true;
   try {
     // 空数组 = 回到角色默认模板（服务端契约）
@@ -293,15 +308,102 @@ async function submitAssign(): Promise<void> {
     assignDialog.saving = false;
   }
 }
+const scopes = ref<{ grades: string[]; divisions: { name: string; grades: string[] }[] }>({
+  grades: [],
+  divisions: [],
+});
+const selectedGrades = computed({
+  get: () => groupDialog.scopeValue.split(',').filter(Boolean),
+  set: (value: string[]) => {
+    groupDialog.scopeValue = value.join(',');
+  },
+});
+const memberSearch = ref(''),
+  memberRole = ref('');
+const filteredMembers = computed(() =>
+  members.value.filter(
+    (member) =>
+      (!memberRole.value || member.role === memberRole.value) &&
+      `${member.name} ${member.username}`.includes(memberSearch.value.trim()),
+  ),
+);
+type Audit = {
+  id: string;
+  actorName: string;
+  action: string;
+  targetId: string;
+  beforeJson: string;
+  afterJson: string;
+  createdAt: string;
+};
+const auditPage = ref(1),
+  audit = ref<{ items: Audit[]; total: number }>({ items: [], total: 0 });
+async function loadAudits() {
+  audit.value = await api.get('/permissions/audit', { page: auditPage.value, pageSize: 30 });
+}
+const groupMembersVisible = ref(false),
+  selectedGroupMembers = ref<PermissionMemberDto[]>([]);
+async function showMembers(group: PermissionGroupDto) {
+  selectedGroupMembers.value = await api.get(`/permissions/groups/${group.id}/members`);
+  groupMembersVisible.value = true;
+}
+function copyGroup(group: PermissionGroupDto) {
+  openEditGroup(group);
+  groupDialog.id = '';
+  groupDialog.name = `${group.name}副本`;
+}
+function effectiveKeys(
+  member: PermissionMemberDto,
+  groupIds: string[],
+  override?: { id: string; keys: PermissionKey[] },
+) {
+  const selected = groups.value.filter((group) =>
+    groupIds.length ? groupIds.includes(group.id) : group.defaultRole === member.role,
+  );
+  return [
+    ...new Set([
+      ...selected.flatMap((group) => (group.id === override?.id ? override.keys : group.keys)),
+      ...(member.role === 'ADMIN' ? (catalog.value?.unremovable ?? []) : []),
+    ]),
+  ];
+}
+function keyChanges(before: PermissionKey[], after: PermissionKey[]) {
+  const labels = (keys: PermissionKey[]) =>
+    keys.map((key) => catalog.value?.labels[key] ?? key).join('、') || '无';
+  return `新增：${labels(after.filter((key) => !before.includes(key)))}；移除：${labels(before.filter((key) => !after.includes(key)))}`;
+}
+const groupImpact = computed(() => {
+  const group = groups.value.find((group) => group.id === groupDialog.id);
+  const affected = members.value.filter((member) =>
+    member.groupIds.length ? member.groupIds.includes(groupDialog.id) : group?.defaultRole === member.role,
+  );
+  const added = new Set<PermissionKey>(),
+    removed = new Set<PermissionKey>();
+  for (const member of affected) {
+    const next = effectiveKeys(member, member.groupIds, { id: groupDialog.id, keys: groupDialog.keys });
+    next.filter((key) => !member.permissions.includes(key)).forEach((key) => added.add(key));
+    member.permissions.filter((key) => !next.includes(key)).forEach((key) => removed.add(key));
+  }
+  const label = (keys: Set<PermissionKey>) =>
+    [...keys].map((key) => catalog.value?.labels[key] ?? key).join('、') || '无';
+  return `将影响 ${affected.length} 名成员。新增：${label(added)}；移除：${label(removed)}。范围按当前选择保存，可能改变成员可访问的班级。`;
+});
+const assignmentImpact = computed(() => {
+  const member = assignDialog.member;
+  if (!member) return '';
+  const next = effectiveKeys(member, assignDialog.groupIds);
+  const defaults = catalog.value?.roleDefaults[member.role] ?? [];
+  return `对当前权限：${keyChanges(member.permissions, next)}。对角色默认模板：${keyChanges(defaults, next)}。所选组替代默认模板，如需保留请同时选择同角色默认组。`;
+});
 </script>
 
 <template>
-  <div class="page">
+  <div v-if="auth.can('permission:manage')" class="page">
     <div class="page-header">
       <div>
         <h2 class="page-title">权限组管理</h2>
         <p class="page-subtitle">
-          创建权限组并把账号分配进去，用来给老师额外开通某项能力（也可以反过来收回权限）。
+          分配的权限组会替代角色默认模板；如需保留默认权限，请同时选择同角色默认组。
         </p>
       </div>
     </div>
@@ -346,6 +448,8 @@ async function submitAssign(): Promise<void> {
                 <span v-else class="text-muted">（无描述）</span>
               </template>
             </el-table-column>
+            <el-table-column prop="scopeLabel" label="范围" min-width="170" />
+            <el-table-column prop="updatedAt" label="更新时间" min-width="190" />
             <el-table-column label="权限数" width="90">
               <template #default="{ row }">{{ row.keys.length }}</template>
             </el-table-column>
@@ -361,9 +465,11 @@ async function submitAssign(): Promise<void> {
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="140">
+            <el-table-column label="操作" width="230">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openEditGroup(row)">编辑</el-button>
+                <el-button link @click="copyGroup(row)">复制</el-button>
+                <el-button link @click="showMembers(row)">成员</el-button>
                 <!-- 内置组禁止删除：按钮 disabled + tooltip 说明（disabled 元素不发光标事件，外面套一层 span） -->
                 <el-tooltip :disabled="!row.builtin" content="内置权限组不能删除" placement="top">
                   <span>
@@ -380,6 +486,13 @@ async function submitAssign(): Promise<void> {
 
       <!-- ------------------------------------------------ Tab 2：成员 -->
       <el-tab-pane label="成员" name="members">
+        <div class="toolbar">
+          <el-input v-model="memberSearch" placeholder="搜索姓名或工号" clearable style="width: 220px" />
+          <el-select v-model="memberRole" clearable placeholder="全部角色">
+            <el-option value="ADMIN" label="管理员" />
+            <el-option value="TEACHER" label="教师" />
+          </el-select>
+        </div>
         <div class="toolbar tab-toolbar">
           <span class="text-muted">
             只列出管理员与教师账号；管理员始终保留权限与系统管理入口，可调整默认组或分配其他权限组。
@@ -387,7 +500,7 @@ async function submitAssign(): Promise<void> {
         </div>
 
         <el-card shadow="never" class="table-card">
-          <el-table v-loading="loading" :data="members" empty-text="暂无成员">
+          <el-table v-loading="loading" :data="filteredMembers" empty-text="暂无成员">
             <el-table-column prop="name" label="姓名" min-width="120" show-overflow-tooltip />
             <el-table-column prop="username" label="用户名" min-width="120" show-overflow-tooltip />
             <el-table-column label="角色" width="130">
@@ -409,14 +522,17 @@ async function submitAssign(): Promise<void> {
                 <span v-else class="text-muted">角色默认模板</span>
               </template>
             </el-table-column>
+            <el-table-column label="数据范围" min-width="180">
+              <template #default="{ row }">{{ row.scopeLabels.join('；') }}</template>
+            </el-table-column>
             <el-table-column label="生效权限数" width="110">
               <template #default="{ row }">{{ row.permissionCount }}</template>
             </el-table-column>
             <el-table-column label="操作" width="130">
               <template #default="{ row }">
-                <el-tooltip :disabled="!row.fixed" content="管理员始终保留权限与系统管理入口" placement="top">
+                <el-tooltip :disabled="true" content="管理员始终保留权限与系统管理入口" placement="top">
                   <span>
-                    <el-button link type="primary" :disabled="row.fixed" @click="openAssign(row)">
+                    <el-button link type="primary" :disabled="false" @click="openAssign(row)">
                       分配权限组
                     </el-button>
                   </span>
@@ -426,7 +542,38 @@ async function submitAssign(): Promise<void> {
           </el-table>
         </el-card>
       </el-tab-pane>
+      <el-tab-pane label="变更记录" name="audit">
+        <el-table :data="audit.items">
+          <el-table-column prop="createdAt" label="时间" min-width="190" />
+          <el-table-column prop="actorName" label="操作人" min-width="120" />
+          <el-table-column prop="action" label="操作" min-width="120" />
+          <el-table-column prop="targetId" label="目标" min-width="180" />
+          <el-table-column label="变更前后" min-width="300">
+            <template #default="{ row }">
+              <details>
+                <summary>查看差异</summary>
+                <pre>{{ row.beforeJson }}</pre>
+                <pre>{{ row.afterJson }}</pre>
+              </details>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-pagination
+          v-model:current-page="auditPage"
+          :page-size="30"
+          :total="audit.total"
+          layout="prev, pager, next"
+          @current-change="loadAudits"
+        />
+      </el-tab-pane>
     </el-tabs>
+    <el-drawer v-model="groupMembersVisible" title="生效成员" :size="isMobile ? '92%' : '560px'">
+      <el-table :data="selectedGroupMembers">
+        <el-table-column prop="name" label="姓名" />
+        <el-table-column prop="username" label="工号" />
+        <el-table-column prop="permissionCount" label="生效权限数" />
+      </el-table>
+    </el-drawer>
 
     <!-- ------------------------------------------------ 新建 / 编辑权限组 -->
     <el-dialog
@@ -445,15 +592,36 @@ async function submitAssign(): Promise<void> {
           />
         </el-form-item>
         <el-form-item label="数据范围">
-          <el-select v-model="groupDialog.scope">
+          <el-select v-model="groupDialog.scope" @change="groupDialog.scopeValue = ''">
             <el-option label="关联班级" value="SELF_CLASS" />
             <el-option label="年级" value="GRADE" />
             <el-option label="部（多个年级）" value="DIVISION" />
             <el-option label="全校" value="ALL" />
           </el-select>
         </el-form-item>
-        <el-form-item label="范围值">
-          <el-input v-model="groupDialog.scopeValue" placeholder="高一 或 高一,高二,高三；空年级范围不授权" />
+        <el-form-item v-if="groupDialog.scope === 'SELF_CLASS'" label="关联班级规则">
+          <el-select v-model="groupDialog.scopeValue">
+            <el-option label="班主任与任课班级" value="" />
+            <el-option label="仅班主任班" value="HEAD" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-else-if="groupDialog.scope === 'GRADE'" label="年级" required>
+          <el-select v-model="groupDialog.scopeValue">
+            <el-option v-for="grade in scopes.grades" :key="grade" :label="grade" :value="grade" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-else-if="groupDialog.scope === 'DIVISION'" label="部范围（选择多个年级）" required>
+          <el-select v-model="selectedGrades" multiple>
+            <el-option v-for="grade in scopes.grades" :key="grade" :label="grade" :value="grade" />
+          </el-select>
+          <el-button
+            v-for="division in scopes.divisions"
+            :key="division.name"
+            link
+            @click="selectedGrades = division.grades"
+          >
+            {{ division.name }}
+          </el-button>
         </el-form-item>
         <el-form-item label="描述">
           <el-input
@@ -497,6 +665,7 @@ async function submitAssign(): Promise<void> {
           </p>
         </el-form-item>
       </el-form>
+      <el-alert :title="groupImpact" type="warning" :closable="false" />
       <template #footer>
         <el-button @click="groupDialog.visible = false">取消</el-button>
         <el-button type="primary" :loading="groupDialog.saving" @click="submitGroup">保存</el-button>
@@ -523,11 +692,18 @@ async function submitAssign(): Promise<void> {
           filterable
           placeholder="不选任何组 = 使用角色默认模板"
         >
-          <el-option v-for="group in groups" :key="group.id" :label="group.name" :value="group.id">
+          <el-option
+            v-for="group in groups"
+            :key="group.id"
+            :label="group.name"
+            :value="group.id"
+            :disabled="!!group.defaultRole && group.defaultRole !== assignDialog.member.role"
+          >
             <span>{{ group.name }}</span>
             <span class="text-muted">（{{ group.keys.length }} 项权限）</span>
           </el-option>
         </el-select>
+        <el-alert :title="assignmentImpact" type="warning" :closable="false" />
         <p class="assign-hint text-muted">
           不选任何组 = 使用角色默认模板（{{ roleLabel(assignDialog.member.role) }} 默认
           {{ roleDefaultCount }} 项权限）；选了组就取各组权限的并集。

@@ -3,7 +3,7 @@ import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
-import { assertCanManageSchedule } from '../../lib/access.js';
+import { assertCanManageSchedule, assertCanImportSchedule } from '../../lib/access.js';
 import type { TimeLayoutImportInput } from './imports.schemas.js';
 
 /**
@@ -324,7 +324,7 @@ export async function importTimeLayout(
   user: TokenPayload,
   input: TimeLayoutImportInput,
 ): Promise<{ layout: TimeLayoutDto; mode: string; warnings: string[]; replaced: number; merged: number }> {
-  await assertCanManageSchedule(user, input.classId);
+  await assertCanImportSchedule(user, input.classId, 'timetable:manage');
 
   const parsed = parseClassIslandTimeLayout(input.payload);
   if (parsed.errors.length > 0) {

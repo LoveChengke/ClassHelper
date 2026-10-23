@@ -17,8 +17,10 @@ import {
   type SubjectTeacherDto,
   type UpdateClassAccountRequest,
   type UserDto,
+  type PromotionPlan,
 } from '@classhelper/shared';
 import { classApi, courseApi, teacherApi, termApi } from '@/api';
+import { api } from '@/api/http';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useResponsive } from '@/composables/useResponsive';
@@ -30,7 +32,7 @@ const realtime = useRealtimeStore();
 const { isMobile } = useResponsive();
 
 /** 仅管理员可管理班级（增删改）与人员分配 —— 与后端权限矩阵一致 */
-const isAdmin = computed(() => auth.role === 'ADMIN');
+const canManageClass = computed(() => auth.can('class:manage'));
 
 /** 小屏下详情描述改为单列，避免文字被压成竖排 */
 const detailColumns = computed(() => (isMobile.value ? 1 : 3));
@@ -39,7 +41,9 @@ const loading = ref(false);
 const classes = ref<ClassDto[]>([]);
 const maxTermWeeks = ref(getMaxTermWeeks());
 onMounted(async () => {
-  maxTermWeeks.value = getMaxTermWeeks((await termApi.get()).maxTermWeeks);
+  if (auth.can('term:read')) maxTermWeeks.value = getMaxTermWeeks((await termApi.get()).maxTermWeeks);
+  if (auth.can('promotion:manage'))
+    promotionPlan.value = (await api.get<{ plan: PromotionPlan }>('/term/promotion')).plan;
 });
 const keyword = ref('');
 
@@ -81,7 +85,7 @@ const previewName = computed(() => formatClassName(form.enrollmentYear, form.cla
 const staffOptions = ref<UserDto[]>([]);
 
 async function loadStaffOptions(): Promise<void> {
-  if (!isAdmin.value) return;
+  if (!canManageClass.value) return;
   if (staffOptions.value.length > 0) return;
   staffOptions.value = await teacherApi.list().catch(() => []);
 }
@@ -125,13 +129,12 @@ async function submitForm(): Promise<void> {
 
     if (editingId.value) {
       await classApi.update(editingId.value, {
-        grade: form.grade,
         enrollmentYear: form.enrollmentYear,
         classIndex: form.classIndex,
         termWeeks: form.termWeeks,
       });
       // 编辑弹窗里也能直接换班主任（仅管理员；班主任决定谁能管这个班的课表与成绩）
-      if (isAdmin.value && form.headTeacherId) {
+      if (canManageClass.value && form.headTeacherId) {
         const target = classes.value.find((item) => item.id === editingId.value);
         if (target && target.teacher?.id !== form.headTeacherId) {
           await classApi.assignHeadTeacher(editingId.value, form.headTeacherId);
@@ -147,7 +150,7 @@ async function submitForm(): Promise<void> {
         // 服务端落库恒为默认 20，用户看到的是"设置了没生效"且没有任何提示。
         termWeeks: form.termWeeks,
         ...(form.code.trim() ? { code: form.code.trim().toUpperCase() } : {}),
-        ...(isAdmin.value && form.headTeacherId ? { teacherId: form.headTeacherId } : {}),
+        ...(canManageClass.value && form.headTeacherId ? { teacherId: form.headTeacherId } : {}),
       });
       ElMessage.success(`班级 ${previewName.value} 创建成功`);
     }
@@ -417,28 +420,32 @@ async function toggleGradeQuery(enabled: boolean): Promise<void> {
   }
 }
 
-const promoteForm = reactive({ grade: '', saving: false });
-
-/** 学年升级：只改年级，**不归档**，班级记录/学生名单/学号/作业成绩全部沿用 */
+const promotionPlan = ref<PromotionPlan>();
+const promoteForm = reactive({ saving: false });
+const nextStage = computed(() => {
+  const track = promotionPlan.value?.tracks.find((track) =>
+    track.stages.some((stage) => stage.grade === detail.value?.grade),
+  );
+  const index = track?.stages.findIndex((stage) => stage.grade === detail.value?.grade) ?? -1;
+  return track && index >= 0
+    ? track.stages[index].terminal
+      ? '毕业归档（请到学年升级页）'
+      : track.stages[index + 1].grade
+    : '请先配置升级计划';
+});
 async function promote(): Promise<void> {
-  if (!detail.value || !promoteForm.grade.trim()) {
-    ElMessage.warning('请填写升级后的年级，例如「高二」');
-    return;
-  }
-  const target = promoteForm.grade.trim();
+  if (!detail.value) return;
   await ElMessageBox.confirm(
-    `把「${detail.value.name}」的年级改为「${target}」？升级只改年级，不归档：` +
-      '班级记录、学生名单、学号、作业与成绩全部沿用。',
-    '学年升级',
-    { type: 'info', confirmButtonText: '确认升级' },
+    `将「${detail.value.name}」从 ${detail.value.grade} 升至 ${nextStage.value}，保留班级业务数据。`,
+    '确认升级',
+    { type: 'warning' },
   );
   promoteForm.saving = true;
   try {
-    await classApi.promote([detail.value.id], target);
-    ElMessage.success('已升级，数据继续沿用');
-    promoteForm.grade = '';
+    await classApi.promote([detail.value.id]);
     await refreshDetail();
     await loadClasses();
+    ElMessage.success('班级已升至下一学段');
   } finally {
     promoteForm.saving = false;
   }
@@ -470,7 +477,7 @@ onUnmounted(() => {
     <div class="page-header">
       <div>
         <h2 class="page-title">班级管理</h2>
-        <p class="page-subtitle">教师只能看到并管理自己创建或被分配的班级</p>
+        <p class="page-subtitle">按授权范围查看班级，管理操作需要相应权限。</p>
       </div>
       <div class="toolbar">
         <el-input
@@ -489,7 +496,9 @@ onUnmounted(() => {
         >
           导入任课关系
         </el-button>
-        <el-button v-if="isAdmin" type="primary" :icon="'Plus'" @click="openCreate">新建班级</el-button>
+        <el-button v-if="canManageClass" type="primary" :icon="'Plus'" @click="openCreate">
+          新建班级
+        </el-button>
       </div>
     </div>
 
@@ -537,9 +546,11 @@ onUnmounted(() => {
         <el-table-column label="操作" width="310" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-            <el-button v-if="isAdmin" link type="warning" @click="openAccount(row)">班级账号</el-button>
-            <el-button v-if="isAdmin" link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-if="isAdmin" link type="danger" @click="removeClass(row)">删除</el-button>
+            <el-button v-if="canManageClass" link type="warning" @click="openAccount(row)">
+              班级账号
+            </el-button>
+            <el-button v-if="canManageClass" link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="canManageClass" link type="danger" @click="removeClass(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -596,12 +607,12 @@ onUnmounted(() => {
           </span>
         </el-form-item>
         <el-form-item label="年级" prop="grade">
-          <el-input v-model="form.grade" placeholder="例如 高一" />
+          <el-input :disabled="!!editingId" v-model="form.grade" placeholder="例如 高一" />
         </el-form-item>
         <el-form-item v-if="!editingId" label="班级码">
           <el-input v-model="form.code" placeholder="留空自动生成（4~16 位字母数字）" />
         </el-form-item>
-        <el-form-item v-if="isAdmin" label="班主任">
+        <el-form-item v-if="canManageClass" label="班主任">
           <el-select v-model="form.headTeacherId" placeholder="选择班主任" style="width: 100%" filterable>
             <el-option
               v-for="item in staffOptions"
@@ -645,7 +656,7 @@ onUnmounted(() => {
         </el-descriptions>
 
         <!-- 更换班主任（仅管理员）：班主任决定谁能管这个班的课表与成绩 -->
-        <div v-if="isAdmin && detail" class="toolbar mt-12">
+        <div v-if="canManageClass && detail" class="toolbar mt-12">
           <span class="text-muted">更换班主任</span>
           <el-select
             :model-value="detail.teacher?.id ?? ''"
@@ -668,7 +679,13 @@ onUnmounted(() => {
         <el-tabs v-model="activeTab" class="mt-12">
           <el-tab-pane label="学生名单" name="students">
             <div class="toolbar mt-12">
-              <el-button type="primary" size="small" :icon="'Plus'" @click="studentFormVisible = true">
+              <el-button
+                v-if="auth.can('roster:manage')"
+                type="primary"
+                size="small"
+                :icon="'Plus'"
+                @click="studentFormVisible = true"
+              >
                 添加学生
               </el-button>
               <span class="text-muted">共 {{ detail?.students.length ?? 0 }} 人</span>
@@ -688,7 +705,9 @@ onUnmounted(() => {
               </el-table-column>
               <el-table-column label="操作" width="90">
                 <template #default="{ row }">
-                  <el-button link type="danger" @click="removeStudent(row)">移出</el-button>
+                  <el-button v-if="auth.can('roster:manage')" link type="danger" @click="removeStudent(row)">
+                    移出
+                  </el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -702,7 +721,9 @@ onUnmounted(() => {
               </el-table-column>
               <el-table-column label="操作" width="90">
                 <template #default="{ row }">
-                  <el-button link type="danger" @click="removeCourse(row)">删除</el-button>
+                  <el-button v-if="auth.can('schedule:write')" link type="danger" @click="removeCourse(row)">
+                    删除
+                  </el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -731,7 +752,7 @@ onUnmounted(() => {
               <el-table-column label="任课老师" width="260">
                 <template #default="{ row }">
                   <el-select
-                    v-if="isAdmin"
+                    v-if="canManageClass"
                     :model-value="row.teacherId"
                     placeholder="选择老师"
                     style="width: 220px"
@@ -748,14 +769,14 @@ onUnmounted(() => {
                   <span v-else>{{ row.teacherName || '-' }}</span>
                 </template>
               </el-table-column>
-              <el-table-column v-if="isAdmin" label="操作" width="110">
+              <el-table-column v-if="canManageClass" label="操作" width="110">
                 <template #default="{ row }">
                   <el-button link type="danger" @click="clearSubjectTeacher(row)">解除</el-button>
                 </template>
               </el-table-column>
             </el-table>
 
-            <div v-if="isAdmin" class="toolbar mt-12">
+            <div v-if="canManageClass" class="toolbar mt-12">
               <el-select
                 v-model="subjectDraft.subjectName"
                 placeholder="选择科目"
@@ -796,14 +817,14 @@ onUnmounted(() => {
               <el-switch
                 :model-value="detail?.studentGradeQueryEnabled ?? true"
                 :loading="gradeQuerySaving"
-                :disabled="!isAdmin && auth.role !== 'TEACHER'"
+                :disabled="!auth.can('grade:write')"
                 @change="(value: boolean) => toggleGradeQuery(value)"
               />
             </div>
 
             <el-divider />
 
-            <div v-if="isAdmin" class="setting-row">
+            <div v-if="auth.can('promotion:manage')" class="setting-row">
               <div>
                 <div class="setting-title">学年升级</div>
                 <div class="text-muted">
@@ -813,12 +834,15 @@ onUnmounted(() => {
                 </div>
               </div>
               <div class="toolbar">
-                <el-input
-                  v-model="promoteForm.grade"
-                  placeholder="升级后的年级，如 高二"
-                  style="width: 200px"
-                />
-                <el-button type="primary" :loading="promoteForm.saving" @click="promote">升级</el-button>
+                <span>下一学段：{{ nextStage }}</span>
+                <el-button
+                  type="primary"
+                  :loading="promoteForm.saving"
+                  :disabled="nextStage.includes('毕业') || nextStage.includes('配置')"
+                  @click="promote"
+                >
+                  升级
+                </el-button>
               </div>
             </div>
           </el-tab-pane>

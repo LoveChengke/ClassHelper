@@ -6,7 +6,12 @@ import { prisma } from '../../lib/db.js';
 import { assertCanManageSchedule, assertClassAccess } from '../../lib/access.js';
 import { sendOk, sendCreated, ApiError } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
+import {
+  authenticate,
+  getAuthUser,
+  requireStaffPermission,
+  requirePermission,
+} from '../../middleware/auth.js';
 import { validate, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import * as schemas from './class-plans.schemas.js';
@@ -14,8 +19,15 @@ import * as service from './class-plans.service.js';
 
 const layouts = Router();
 layouts.use(authenticate());
-layouts.get('/', validate({ query: schemas.scopeQuery }), async (req, res) =>
-  sendOk(res, await service.listLayouts(getAuthUser(req), validatedQuery<{ classId?: string }>(req).classId)),
+layouts.get(
+  '/',
+  requireStaffPermission('schedule:read'),
+  validate({ query: schemas.scopeQuery }),
+  async (req, res) =>
+    sendOk(
+      res,
+      await service.listLayouts(getAuthUser(req), validatedQuery<{ classId?: string }>(req).classId),
+    ),
 );
 layouts.post(
   '/',
@@ -83,12 +95,16 @@ layouts.delete(
 
 const plans = Router();
 plans.use(authenticate());
-plans.get('/profile', validate({ query: z.object({ classId: z.string().min(1) }) }), async (req, res) =>
-  sendOk(res, await exportProfile(getAuthUser(req), validatedQuery<{ classId: string }>(req).classId)),
+plans.get(
+  '/profile',
+  requireStaffPermission('schedule:read'),
+  validate({ query: z.object({ classId: z.string().min(1) }) }),
+  async (req, res) =>
+    sendOk(res, await exportProfile(getAuthUser(req), validatedQuery<{ classId: string }>(req).classId)),
 );
 plans.post(
   '/import/profile',
-  requirePermission('schedule:write'),
+  requirePermission('schedule:write', 'import:schedule'),
   validate({
     body: z.object({
       classId: z.string().min(1),
@@ -102,10 +118,15 @@ plans.post(
       await importProfile(getAuthUser(req), req.body.classId, req.body.payload, req.body.mode),
     ),
 );
-plans.get('/', validate({ query: schemas.scopeQuery }), async (req, res) => {
-  const q = validatedQuery<{ classId?: string; week?: number }>(req);
-  sendOk(res, await service.listPlans(getAuthUser(req), q.classId, q.week));
-});
+plans.get(
+  '/',
+  requireStaffPermission('schedule:read'),
+  validate({ query: schemas.scopeQuery }),
+  async (req, res) => {
+    const q = validatedQuery<{ classId?: string; week?: number }>(req);
+    sendOk(res, await service.listPlans(getAuthUser(req), q.classId, q.week));
+  },
+);
 plans.post(
   '/',
   requirePermission('schedule:write'),
@@ -145,13 +166,18 @@ plans.post(
   async (req, res) =>
     sendCreated(res, await service.clonePlan(getAuthUser(req), String(req.params.id), req.body.name)),
 );
-plans.get('/:id/export', validate({ params: idParamSchema }), async (req, res) => {
-  const p = await service.requirePlan(getAuthUser(req), String(req.params.id), false);
-  sendOk(res, { format: 'classhelper-class-plan', plan: p, timeLayout: p.layout });
-});
+plans.get(
+  '/:id/export',
+  requireStaffPermission('schedule:read'),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const p = await service.requirePlan(getAuthUser(req), String(req.params.id), false);
+    sendOk(res, { format: 'classhelper-class-plan', plan: p, timeLayout: p.layout });
+  },
+);
 plans.post(
   '/import',
-  requirePermission('schedule:write'),
+  requirePermission('schedule:write', 'import:schedule'),
   validate({ body: z.object({ plan: schemas.planSchema, entries: schemas.entriesSchema.shape.entries }) }),
   async (req, res) => {
     const p = await service.savePlan(getAuthUser(req), req.body.plan);
@@ -172,17 +198,27 @@ plans.delete(
 
 const groups = Router();
 groups.use(authenticate());
-groups.get('/selection', validate({ query: z.object({ classId: z.string().min(1) }) }), async (req, res) => {
-  const { classId } = validatedQuery<{ classId: string }>(req);
-  await assertClassAccess(getAuthUser(req), classId);
-  const value = await prisma.appSetting.findUnique({ where: { key: `schedule.group.${classId}` } });
-  sendOk(res, value ? JSON.parse(value.value) : {});
-});
-groups.get('/', validate({ query: z.object({ classId: z.string().min(1) }) }), async (req, res) => {
-  const { classId } = validatedQuery<{ classId: string }>(req);
-  await assertClassAccess(getAuthUser(req), classId);
-  sendOk(res, await prisma.classPlanGroup.findMany({ where: { classId } }));
-});
+groups.get(
+  '/selection',
+  requireStaffPermission('schedule:read'),
+  validate({ query: z.object({ classId: z.string().min(1) }) }),
+  async (req, res) => {
+    const { classId } = validatedQuery<{ classId: string }>(req);
+    await assertClassAccess(getAuthUser(req), classId);
+    const value = await prisma.appSetting.findUnique({ where: { key: `schedule.group.${classId}` } });
+    sendOk(res, value ? JSON.parse(value.value) : {});
+  },
+);
+groups.get(
+  '/',
+  requireStaffPermission('schedule:read'),
+  validate({ query: z.object({ classId: z.string().min(1) }) }),
+  async (req, res) => {
+    const { classId } = validatedQuery<{ classId: string }>(req);
+    await assertClassAccess(getAuthUser(req), classId);
+    sendOk(res, await prisma.classPlanGroup.findMany({ where: { classId } }));
+  },
+);
 groups.post(
   '/',
   requirePermission('schedule:write'),

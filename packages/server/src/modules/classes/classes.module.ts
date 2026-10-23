@@ -1,7 +1,12 @@
 import { Router } from 'express';
-import { sendCreated, sendOk } from '../../lib/http.js';
+import { ApiError, sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
+import {
+  authenticate,
+  getAuthUser,
+  requireStaffPermission,
+  requirePermission,
+} from '../../middleware/auth.js';
 import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -35,35 +40,45 @@ router.use(authenticate());
  * 只列**在读**班级（毕业归档的班级属于「归档管理」页）；
  * 教师/管理员看自己可访问的班级（班主任 ∪ 任课），ClassHelper 班级端看自己绑定的那个。
  */
-router.get('/', validate({ query: listClassesQuerySchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { keyword } = validatedQuery<{ keyword?: string }>(req);
-  sendOk(res, await classService.listClasses(user, keyword), '获取班级列表成功');
-});
+router.get(
+  '/',
+  requireStaffPermission('class:read'),
+  validate({ query: listClassesQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { keyword } = validatedQuery<{ keyword?: string }>(req);
+    sendOk(res, await classService.listClasses(user, keyword), '获取班级列表成功');
+  },
+);
 
 /**
- * POST /api/classes/promote - 学年升级（批量改年级，仅管理员）
+ * POST /api/classes/promote - 学年升级（批量改年级，按功能权限及范围校验）
  *
  * **升级不归档、数据沿用**：只改 `grade`（高一 → 高二），班级记录、学生名单、学号、
- * 作业与成绩全部原样。归档只在毕业时由「归档管理」页显式执行。
+ * 作业与成绩全部原样。毕业归档只由年度升级执行。
  */
 router.post(
   '/promote',
-  requirePermission('class:manage'),
+  requirePermission('promotion:manage'),
   validate({ body: promoteClassesSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
-    const body = validatedBody<{ classIds: string[]; grade: string }>(req);
+    const body = validatedBody<{ classIds: string[] }>(req);
     sendOk(res, await classService.promoteClasses(user, body), '班级已升级，数据继续沿用');
   },
 );
 
 /** GET /api/classes/:id - 班级详情（学生名单 + 课程 + 班主任 + 各科任课老师） */
-router.get('/:id', validate({ params: idParamSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { id } = validatedParams<{ id: string }>(req);
-  sendOk(res, await classService.getClassDetail(user, id), '获取班级详情成功');
-});
+router.get(
+  '/:id',
+  requireStaffPermission('class:read'),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { id } = validatedParams<{ id: string }>(req);
+    sendOk(res, await classService.getClassDetail(user, id), '获取班级详情成功');
+  },
+);
 
 /** POST /api/classes - 创建班级（称呼由入学年份 + 班号生成，如「2026级1班」） */
 router.post(
@@ -76,10 +91,14 @@ router.post(
   },
 );
 
-/** PATCH /api/classes/:id - 编辑班级（年级 / 届别 / 教学周数），仅管理员 */
+/** PATCH /api/classes/:id - 编辑班级（年级 / 届别 / 教学周数），按功能权限及范围校验 */
 router.patch(
   '/:id',
   requirePermission('class:manage'),
+  (req, _res, next) => {
+    if (req.body && 'grade' in req.body) return next(ApiError.badRequest('年级请通过学年升级入口修改'));
+    next();
+  },
   validate({ params: idParamSchema, body: updateClassSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -103,7 +122,7 @@ router.delete(
 
 /**
  * PATCH /api/classes/:id/class-account - 设置 / 重置班级账号（班级码 + 班级密码）
- * 仅管理员：教室机器「ClassHelper 班级端」登录用的就是这个班级码
+ * 按功能权限及范围校验：教室机器「ClassHelper 班级端」登录用的就是这个班级码
  */
 router.patch(
   '/:id/class-account',
@@ -122,7 +141,7 @@ router.patch(
 
 /**
  * PATCH /api/classes/:id/head-teacher - 设置 / 更改班主任（每班 1 人）
- * 仅管理员：班主任决定谁能管这个班的学生名单与课表，属于人员分配权限
+ * 按功能权限及范围校验：班主任决定谁能管这个班的学生名单与课表，属于人员分配权限
  */
 router.patch(
   '/:id/head-teacher',
@@ -139,7 +158,7 @@ router.patch(
 /**
  * PUT /api/classes/:id/subject-teachers - 设置各科任课老师（班级 + 科目 + 教师）
  *
- * 仅管理员。这是「科任老师」这条关系的唯一写入口 —— 作业与成绩能不能被某位老师改动，
+ * 按功能权限及范围校验。这是「科任老师」这条关系的唯一写入口 —— 作业与成绩能不能被某位老师改动，
  * 查的就是这里写下的 `Course.teacherId`。
  * 班主任同时是某科科任老师时，两条记录指向同一个账号：不重复建号、权限自动合并。
  */
@@ -162,14 +181,20 @@ router.put(
  * GET /api/classes/:id/student-grade-query - 本班是否允许班级端按学号查成绩明细
  * PATCH 同路径 - 教师/管理员按班级管理权限设置，班级端只读
  */
-router.get('/:id/student-grade-query', validate({ params: idParamSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { id } = validatedParams<{ id: string }>(req);
-  sendOk(res, await classService.getStudentGradeQuery(user, id), '获取成绩查询开关成功');
-});
+router.get(
+  '/:id/student-grade-query',
+  requireStaffPermission('class:read'),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { id } = validatedParams<{ id: string }>(req);
+    sendOk(res, await classService.getStudentGradeQuery(user, id), '获取成绩查询开关成功');
+  },
+);
 
 router.patch(
   '/:id/student-grade-query',
+  requirePermission('grade:write'),
   validate({ params: idParamSchema, body: updateStudentGradeQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -183,11 +208,16 @@ router.patch(
 );
 
 /** GET /api/classes/:id/students - 班级学生名单 */
-router.get('/:id/students', validate({ params: idParamSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { id } = validatedParams<{ id: string }>(req);
-  sendOk(res, await classService.listClassStudents(user, id), '获取学生名单成功');
-});
+router.get(
+  '/:id/students',
+  requireStaffPermission('roster:read'),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { id } = validatedParams<{ id: string }>(req);
+    sendOk(res, await classService.listClassStudents(user, id), '获取学生名单成功');
+  },
+);
 
 /** POST /api/classes/:id/students - 把学生加入班级（按学号，已存在则转入并留调班痕迹） */
 router.post(

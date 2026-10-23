@@ -1,3 +1,5 @@
+import { assertStaffPermission, assertPermission } from '../../lib/permissions.js';
+import { resolveContentCreator } from '../../lib/access.js';
 import {
   SOCKET_EVENTS,
   dayKeyLocal,
@@ -71,6 +73,7 @@ export async function listNotifications(
   user: TokenPayload,
   options: ListNotificationOptions,
 ): Promise<NotificationDto[]> {
+  await assertStaffPermission(user, 'notification:read');
   const scope = await resolveClassScope(user, options.classId);
   const isStaff = user.role === 'ADMIN' || user.role === 'TEACHER';
   // 班级账号（班级设备）以全班学生为"个人范围"，普通学生就是自己
@@ -109,6 +112,7 @@ export async function listNotificationDays(
   user: TokenPayload,
   options: { classId?: string; priority?: string; createdBy?: string; from?: string; to?: string },
 ): Promise<NotificationDaysDto> {
+  await assertStaffPermission(user, 'notification:read');
   const scope = await resolveClassScope(user, options.classId);
   const grouped = await prisma.notification.groupBy({
     by: ['assignDate'],
@@ -129,6 +133,7 @@ export async function listNotificationCreators(
   user: TokenPayload,
   options: { classId?: string; priority?: string; date?: string; from?: string; to?: string },
 ): Promise<NotificationCreatorsDto> {
+  await assertStaffPermission(user, 'notification:read');
   const scope = await resolveClassScope(user, options.classId);
   const grouped = await prisma.notification.groupBy({
     by: ['createdBy'],
@@ -166,6 +171,7 @@ export async function bulkCreateNotifications(
   user: TokenPayload,
   input: BulkCreateNotificationRequest,
 ): Promise<BulkPublishResult> {
+  await assertStaffPermission(user, 'notification:publish');
   const classIds = normalizeBulkClassIds(input.classIds);
   const results: BulkPublishClassResult[] = [];
 
@@ -202,6 +208,7 @@ export async function createNotification(
   user: TokenPayload,
   input: CreateNotificationInput,
 ): Promise<NotificationDto> {
+  await assertStaffPermission(user, 'notification:publish');
   await assertCanPublishNotification(user, input.classId);
 
   const priority = input.priority ?? 'NORMAL';
@@ -227,7 +234,7 @@ export async function createNotification(
       title: input.title,
       content: input.content,
       priority,
-      createdBy: user.sub,
+      createdBy: await resolveContentCreator(user, input.classId),
       // 按天归档用「本地日期」：晚间发布的通知不会被 UTC 切片算到第二天（与作业同口径）
       assignDate: dayKeyLocal(new Date()),
     },
@@ -241,6 +248,7 @@ export async function createNotification(
 }
 
 export async function deleteNotification(user: TokenPayload, notificationId: string): Promise<void> {
+  await assertPermission(user, 'notification:delete');
   const current = await prisma.notification.findUnique({ where: { id: notificationId } });
   if (!current) throw ApiError.notFound('通知不存在');
   await assertCanPublishNotification(user, current.classId);
@@ -259,6 +267,7 @@ export async function markAsRead(
   user: TokenPayload,
   notificationId: string,
 ): Promise<{ notificationId: string; readAt: string; marked: number }> {
+  await assertStaffPermission(user, 'notification:read');
   const notification = await prisma.notification.findUnique({ where: { id: notificationId } });
   if (!notification) throw ApiError.notFound('通知不存在');
   await assertClassAccess(user, notification.classId);
@@ -284,6 +293,7 @@ export async function markAsRead(
 
 /** 全部标为已读（可按班级限定） */
 export async function markAllAsRead(user: TokenPayload, classId?: string): Promise<{ marked: number }> {
+  await assertStaffPermission(user, 'notification:read');
   const scope = await resolveClassScope(user, classId);
   const personalIds = await resolvePersonalIds(user);
   const personalWhere = personalIdWhere(personalIds);
@@ -314,6 +324,7 @@ export async function markAllAsRead(user: TokenPayload, classId?: string): Promi
 
 /** 未读数量（客户端红点） */
 export async function unreadCount(user: TokenPayload, classId?: string): Promise<number> {
+  await assertStaffPermission(user, 'notification:read');
   const scope = await resolveClassScope(user, classId);
   const personalIds = await resolvePersonalIds(user);
   return prisma.notification.count({

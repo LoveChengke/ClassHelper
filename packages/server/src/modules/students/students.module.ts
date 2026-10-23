@@ -1,11 +1,14 @@
 import { Router } from 'express';
-import { sendCreated, sendOk } from '../../lib/http.js';
+import { ApiError, sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requirePermission, requireAnyPermission } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
   createStudentSchema,
+  transferInSchema,
+  restoreStudentSchema,
+  deleteStudentQuerySchema,
   listStudentsQuerySchema,
   listTransfersQuerySchema,
   transferOutStudentsSchema,
@@ -29,11 +32,11 @@ router.use(authenticate());
  * - 学生**没有账号**：这里是"名单记录"的增删改，没有任何密码/角色字段；
  * - 读：教师/管理员按自己可访问的班级过滤（服务层 `resolveClassScope`）；
  *   教室机器读本班名单请用 `GET /api/classes/:id/students`；
- * - 写：管理员或**本班班主任**（服务层逐班判权限），调班与转出仅管理员。
+ * - 写：管理员或**本班班主任**（服务层逐班判权限），调班与转出还需覆盖源班和目标班。
  */
 router.get(
   '/',
-  requireAnyPermission('roster:read', 'roster:manage'),
+  requirePermission('roster:read'),
   validate({ query: listStudentsQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -45,7 +48,7 @@ router.get(
 /** GET /api/students/transfers - 调班 / 转出历史（管理员看全部，也可按学生或班级过滤） */
 router.get(
   '/transfers',
-  requireAnyPermission('roster:read', 'roster:manage'),
+  requirePermission('roster:read'),
   validate({ query: listTransfersQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -62,7 +65,7 @@ router.get(
  */
 router.post(
   '/transfer',
-  requirePermission('class:manage'),
+  requirePermission('roster:manage'),
   validate({ body: transferStudentsSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -74,7 +77,7 @@ router.post(
 /** POST /api/students/transfer-out - 学生转出（学籍离开本校，不是调班） */
 router.post(
   '/transfer-out',
-  requirePermission('class:manage'),
+  requirePermission('roster:manage'),
   validate({ body: transferOutStudentsSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -83,10 +86,24 @@ router.post(
   },
 );
 
+router.post(
+  '/transfer-in',
+  requirePermission('roster:manage'),
+  validate({ body: transferInSchema }),
+  async (req, res) => sendCreated(res, await studentService.transferInStudent(getAuthUser(req), req.body)),
+);
+router.post(
+  '/:id/restore',
+  requirePermission('roster:manage'),
+  validate({ params: idParamSchema, body: restoreStudentSchema }),
+  async (req, res) =>
+    sendOk(res, await studentService.restoreStudent(getAuthUser(req), String(req.params.id), req.body)),
+);
+
 /** GET /api/students/:id/transfers - 单个学生的调班 / 转出历史 */
 router.get(
   '/:id/transfers',
-  requirePermission('roster:manage'),
+  requirePermission('roster:read'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -115,6 +132,11 @@ router.post(
 router.patch(
   '/:id',
   requirePermission('roster:manage'),
+  (req, _res, next) => {
+    if (req.body && ('classId' in req.body || 'status' in req.body))
+      return next(ApiError.badRequest('班级和状态请使用调班、转出或复学接口修改'));
+    next();
+  },
   validate({ params: idParamSchema, body: updateStudentSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -131,12 +153,16 @@ router.patch(
 router.delete(
   '/:id',
   requirePermission('roster:manage'),
-  validate({ params: idParamSchema }),
+  validate({ params: idParamSchema, query: deleteStudentQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
     const { id } = validatedParams<{ id: string }>(req);
-    await studentService.deleteStudent(user, id);
-    sendOk(res, { id }, '学生记录已删除');
+    const query = validatedQuery<{ hard?: string; confirm?: string }>(req);
+    await studentService.deleteStudent(user, id, {
+      hard: query.hard === 'true',
+      confirm: query.confirm === 'true',
+    });
+    sendOk(res, { id }, '学生名单操作已完成');
   },
 );
 

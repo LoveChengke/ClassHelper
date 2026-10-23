@@ -18,7 +18,6 @@ import {
   type ClientPushResult,
   type ClientReleaseDto,
   type CourseDto,
-  type CreateArchiveRequest,
   type CreateCallRequest,
   type CreateClassRequest,
   type CreateClientCommandRequest,
@@ -131,8 +130,8 @@ export const classApi = {
   setGradeQuery: (id: string, enabled: boolean): Promise<{ studentGradeQueryEnabled: boolean }> =>
     api.patch(`${API_PATHS.classes}/${id}/student-grade-query`, { enabled }),
   /** 学年升级：只改年级，不归档、数据沿用 */
-  promote: (classIds: string[], grade: string): Promise<{ promoted: number }> =>
-    api.post(`${API_PATHS.classes}/promote`, { classIds, grade }),
+  promote: (classIds: string[]): Promise<{ promoted: number }> =>
+    api.post(`${API_PATHS.classes}/promote`, { classIds }),
 };
 
 /* ------------------------------------------------------------------ 课程 */
@@ -317,11 +316,16 @@ export const studentApi = {
     api.patch(`${API_PATHS.students}/${id}`, payload),
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.students}/${id}`),
   /** 调班：单个与批量同一接口（studentIds 长度 1 即单个）；学号不变、历史可查 */
-  transfer: (studentIds: string[], toClassId: string | null, note?: string): Promise<{ moved: number }> =>
-    api.post(`${API_PATHS.students}/transfer`, { studentIds, toClassId, note }),
+  transfer: (
+    studentIds: string[],
+    toClassId: string | null,
+    note?: string,
+    allowGradeChange?: boolean,
+  ): Promise<{ moved: number }> =>
+    api.post(`${API_PATHS.students}/transfer`, { studentIds, toClassId, note, allowGradeChange }),
   /** 转出（学籍离开本校，不是调班） */
-  transferOut: (studentIds: string[], note?: string): Promise<{ transferred: number }> =>
-    api.post(`${API_PATHS.students}/transfer-out`, { studentIds, note }),
+  transferOut: (studentIds: string[], note?: string, toSchool?: string): Promise<{ transferred: number }> =>
+    api.post(`${API_PATHS.students}/transfer-out`, { studentIds, note, toSchool }),
   /** 某个学生的调班 / 转出历史 */
   transfersOf: (id: string): Promise<PaginatedResult<StudentTransferDto>> =>
     api.get(`${API_PATHS.students}/${id}/transfers`),
@@ -380,8 +384,6 @@ export const archiveApi = {
   /** 归档班级的作业与通知（只读） */
   classContent: (id: string, classId: string, limit = 200): Promise<ArchivedClassContentDto> =>
     api.get(`${API_PATHS.archives}/${id}/classes/${classId}/content`, { limit }),
-  create: (payload: CreateArchiveRequest): Promise<ArchivedYearDetailDto> =>
-    api.post(API_PATHS.archives, payload),
   /** 撤销归档（误操作的退路，不删任何数据） */
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.archives}/${id}`),
 };

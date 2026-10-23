@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { isDayKey, dayKeyLocal } from '@classhelper/shared';
 import { prisma } from '../../lib/db.js';
-import { assertCanManageSchedule } from '../../lib/access.js';
+import { assertCanImportSchedule } from '../../lib/access.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { notifyScheduleChanged } from './class-plans.service.js';
@@ -21,7 +21,7 @@ function time(value: unknown) {
 }
 /** 直接保留上游三元组/四种时间点/显式课程位置，绝不经过单双周的有损中间格式。 */
 export async function importProfile(user: TokenPayload, classId: string, payload: unknown, mode = 'merge') {
-  await assertCanManageSchedule(user, classId);
+  await assertCanImportSchedule(user, classId);
   let parsed = payload;
   if (typeof payload === 'string') {
     try {

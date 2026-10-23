@@ -1,7 +1,15 @@
+import { assertPermission } from '../../lib/permissions.js';
+import type { TokenPayload } from '../../lib/jwt.js';
 import { Router } from 'express';
 import { ApiError, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requirePermission, requireAnyPermission } from '../../middleware/auth.js';
+import {
+  authenticate,
+  getAuthUser,
+  requireStaffPermission,
+  requirePermission,
+  requireAnyPermission,
+} from '../../middleware/auth.js';
 import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -28,13 +36,21 @@ import {
 const router = Router();
 router.use(authenticate());
 
-/** 名单类导入（学生/教师账号）只有管理员能做；成绩类按班级权限判定 */
-function assertImportKindAllowed(kind: (typeof IMPORT_KINDS)[number], role: string): void {
-  if ((kind === 'students' || kind === 'teachers') && role !== 'ADMIN') {
-    throw ApiError.forbidden(
-      kind === 'teachers' ? '只有管理员可以录入或导入教师账号' : '只有管理员可以导入学生名单',
-    );
-  }
+/** 导入类型分别校验对应导入键，名单还校验管理键。 */
+async function assertImportKindAllowed(
+  kind: (typeof IMPORT_KINDS)[number],
+  user: TokenPayload,
+): Promise<void> {
+  const key = {
+    students: 'import:students',
+    teachers: 'import:teachers',
+    grades: 'grade:import',
+    classTeachers: 'import:class-teachers',
+    scheduleTimes: 'import:schedule',
+  } as const;
+  await assertPermission(user, key[kind]);
+  if (kind === 'students') await assertPermission(user, 'roster:manage');
+  if (kind === 'teachers') await assertPermission(user, 'teacher:manage');
 }
 
 /** 查询参数里的 kind 收敛为合法值（默认 grades，避免非法值被当成成绩悄悄写入） */
@@ -46,20 +62,14 @@ function resolveImportKind(value: unknown): (typeof IMPORT_KINDS)[number] {
 
 /**
  * GET /api/imports/template?kind=grades|students|teachers&format=csv|xlsx - 下载导入模板
- * 成绩模板：管理员或班主任（空白模板，不含任何业务数据）；学生/教师名单模板：仅管理员
+ * 成绩模板：管理员或班主任（空白模板，不含任何业务数据）；学生/教师名单模板：对应导入与管理键
  */
 router.get(
   '/template',
-  requireAnyPermission(
-    'import:students',
-    'grade:import',
-    'import:teachers',
-    'import:schedule',
-    'import:class-teachers',
-  ),
-  (req, res) => {
+  requireAnyPermission('import:students', 'grade:import', 'import:teachers', 'import:class-teachers'),
+  async (req, res) => {
     const kind = resolveImportKind(req.query.kind);
-    assertImportKindAllowed(kind, getAuthUser(req).role);
+    await assertImportKindAllowed(kind, getAuthUser(req));
     const format = req.query.format === 'xlsx' ? 'xlsx' : 'csv';
     if (format === 'xlsx') {
       const base64 = buildTemplateXlsx(kind);
@@ -78,21 +88,15 @@ router.get(
 
 /**
  * POST /api/imports/table/preview - 上传表格并预览（解析 + 必填列校验 + 建议字段映射）
- * 成绩：管理员或班主任；学生/教师名单：仅管理员（与写入权限保持一致）
+ * 成绩：管理员或班主任；学生/教师名单按对应导入与管理键校验
  */
 router.post(
   '/table/preview',
-  requireAnyPermission(
-    'import:students',
-    'grade:import',
-    'import:teachers',
-    'import:schedule',
-    'import:class-teachers',
-  ),
+  requireAnyPermission('import:students', 'grade:import', 'import:teachers', 'import:class-teachers'),
   validate({ body: tableFileSchema }),
-  (req, res) => {
+  async (req, res) => {
     const input = validatedBody<TableFileInput>(req);
-    assertImportKindAllowed(input.kind, getAuthUser(req).role);
+    await assertImportKindAllowed(input.kind, getAuthUser(req));
     sendOk(res, previewTable(input), '表格解析成功');
   },
 );
@@ -101,21 +105,15 @@ router.post(
  * POST /api/imports/table/commit - 执行导入（字段映射 + 写入模式 + 结果统计）
  *
  * 路由放行 ADMIN|TEACHER，真正的权限在 service 内按 kind + 班级二次校验：
- * 成绩 → 管理员或本班班主任；学生名单 → 仅管理员；科任老师一律 403（需求 7）。
+ * 成绩按班级与科目收口；学生名单按管理键、导入键与班主任/全校范围校验。
  */
 router.post(
   '/table/commit',
-  requireAnyPermission(
-    'import:students',
-    'grade:import',
-    'import:teachers',
-    'import:schedule',
-    'import:class-teachers',
-  ),
+  requireAnyPermission('import:students', 'grade:import', 'import:teachers', 'import:class-teachers'),
   validate({ body: tableCommitSchema }),
   async (req, res) => {
     const input = validatedBody<TableCommitInput>(req);
-    assertImportKindAllowed(input.kind, getAuthUser(req).role);
+    await assertImportKindAllowed(input.kind, getAuthUser(req));
     // 教师名单与班级无关；成绩/学生名单必须带班级，否则拒绝（避免写到"全局"）
     if (input.kind !== 'teachers' && input.kind !== 'classTeachers' && !input.classId) {
       throw ApiError.badRequest('请先选择要导入的班级');
@@ -133,19 +131,29 @@ router.post(
  * POST /api/imports/time-layout/preview - 预览 ClassIsland 课表时间 JSON（只解析不写库）
  * 权限与"课表管理"一致：管理员或本班班主任
  */
-router.post('/time-layout/preview', validate({ body: timeLayoutImportSchema }), async (req, res) => {
-  const input = validatedBody<TimeLayoutImportInput>(req);
-  // 预览也要校验班级权限（与导入一致），避免越权探测
-  const { assertCanManageSchedule } = await import('../../lib/access.js');
-  await assertCanManageSchedule(getAuthUser(req), input.classId);
-  sendOk(res, previewClassIslandTimeLayout(input.payload), '解析完成');
-});
+router.post(
+  '/time-layout/preview',
+  requirePermission('import:schedule', 'schedule:write'),
+  validate({ body: timeLayoutImportSchema }),
+  async (req, res) => {
+    const input = validatedBody<TimeLayoutImportInput>(req);
+    // 预览也要校验班级权限（与导入一致），避免越权探测
+    const { assertCanImportSchedule } = await import('../../lib/access.js');
+    await assertCanImportSchedule(getAuthUser(req), input.classId);
+    sendOk(res, previewClassIslandTimeLayout(input.payload), '解析完成');
+  },
+);
 
 /** GET /api/imports/time-layout?classId= - 查看该班已导入的时间配置 */
-router.get('/time-layout', validate({ query: timeLayoutQuerySchema }), async (req, res) => {
-  const { classId } = validatedQuery<{ classId: string }>(req);
-  sendOk(res, await listTimeLayouts(getAuthUser(req), classId), '获取时间配置成功');
-});
+router.get(
+  '/time-layout',
+  requireStaffPermission('schedule:read'),
+  validate({ query: timeLayoutQuerySchema }),
+  async (req, res) => {
+    const { classId } = validatedQuery<{ classId: string }>(req);
+    sendOk(res, await listTimeLayouts(getAuthUser(req), classId), '获取时间配置成功');
+  },
+);
 
 /**
  * POST /api/imports/time-layout - 导入 ClassIsland 时间配置
@@ -153,7 +161,7 @@ router.get('/time-layout', validate({ query: timeLayoutQuerySchema }), async (re
  */
 router.post(
   '/time-layout',
-  requirePermission('timetable:manage'),
+  requirePermission('timetable:manage', 'import:schedule'),
   validate({ body: timeLayoutImportSchema }),
   async (req, res) => {
     const result = await importTimeLayout(getAuthUser(req), validatedBody<TimeLayoutImportInput>(req));
@@ -183,28 +191,38 @@ router.delete(
  * POST /api/imports/class-plan/preview - 预览 ClassIsland 课程表 JSON（只解析不写库）
  * 真实档案里单双周由 ClassPlan.TimeRule.WeekCountDiv / WeekCountDivTotal 表达。
  */
-router.post('/class-plan/preview', validate({ body: classPlanImportSchema }), async (req, res) => {
-  const result = await previewClassPlan(getAuthUser(req), validatedBody<ClassPlanImportInput>(req));
-  sendOk(
-    res,
-    result,
-    `解析出 ${result.entries.length} 节课（${result.subjects.length} 个科目，缺 ${result.missingSubjects.length} 个待建课程）`,
-  );
-});
+router.post(
+  '/class-plan/preview',
+  requirePermission('import:schedule', 'schedule:write'),
+  validate({ body: classPlanImportSchema }),
+  async (req, res) => {
+    const result = await previewClassPlan(getAuthUser(req), validatedBody<ClassPlanImportInput>(req));
+    sendOk(
+      res,
+      result,
+      `解析出 ${result.entries.length} 节课（${result.subjects.length} 个科目，缺 ${result.missingSubjects.length} 个待建课程）`,
+    );
+  },
+);
 
 /**
  * POST /api/imports/class-plan - 导入 ClassIsland 课程表（支持单双周）
  * replace 清空后写入 / merge 按 星期+开始时间+单双周 去重；解析失败返回 400 且不改动现有课表。
  */
-router.post('/class-plan', validate({ body: classPlanImportSchema }), async (req, res) => {
-  const result = await importClassPlan(getAuthUser(req), validatedBody<ClassPlanImportInput>(req));
-  sendOk(
-    res,
-    result,
-    `导入成功：新增 ${result.created} 节 / 更新 ${result.updated} 节` +
-      `${result.createdCourses.length > 0 ? `（自动补建课程：${result.createdCourses.join('、')}）` : ''}`,
-  );
-});
+router.post(
+  '/class-plan',
+  requirePermission('import:schedule', 'schedule:write'),
+  validate({ body: classPlanImportSchema }),
+  async (req, res) => {
+    const result = await importClassPlan(getAuthUser(req), validatedBody<ClassPlanImportInput>(req));
+    sendOk(
+      res,
+      result,
+      `导入成功：新增 ${result.created} 节 / 更新 ${result.updated} 节` +
+        `${result.createdCourses.length > 0 ? `（自动补建课程：${result.createdCourses.join('、')}）` : ''}`,
+    );
+  },
+);
 
 export const importsModule = defineModule({
   name: 'imports',

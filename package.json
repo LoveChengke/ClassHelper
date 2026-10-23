@@ -1,6 +1,6 @@
 {
   "name": "class-helper",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "private": true,
   "description": "ClassHelper - 班级信息管理系统（Web 管理端 + 后端服务 + 桌面客户端）",
   "packageManager": "pnpm@11.8.0",
@@ -31,6 +31,7 @@
     "verify:e2e": "node scripts/verify-e2e-isolated.mjs",
     "verify:courseware": "node scripts/verify-courseware.mjs",
     "verify:v14": "node scripts/verify-v14.mjs",
+    "verify:lifecycle": "node scripts/verify-lifecycle.mjs",
     "verify:client-agent": "node scripts/verify-client-agent.mjs",
     "verify:review-client": "node scripts/verify-review-client.mjs",
     "verify:review-api": "node scripts/verify-review-api.mjs",

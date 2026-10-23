@@ -5,15 +5,17 @@ import {
   assertClassAccess,
   classScopeWhere,
   isAdmin,
+  getAccessibleClassIds,
   resolveClassScope,
 } from '../../lib/access.js';
-import { activeStudentWhere, isActiveStudent } from '../../lib/students.js';
+import { assertStaffPermission, assertPermission } from '../../lib/permissions.js';
+import { changeStudentLifecycle, notifyStudentClasses } from '../../lib/student-lifecycle.js';
+import { activeStudentWhere } from '../../lib/students.js';
 import { prisma } from '../../lib/db.js';
+import { hasAllScope } from '../../lib/permission-scope.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { toStudentDto, toStudentTransferDto } from '../../lib/mappers.js';
-import { SOCKET_EVENTS } from '@classhelper/shared';
-import { emitToClass } from '../../realtime/bus.js';
 import type {
   CreateStudentInput,
   ListStudentsQuery,
@@ -36,13 +38,13 @@ const withClass = { class: { select: { name: true, grade: true } } } as const;
 
 /** 学生名单（按班级权限过滤） */
 export async function listStudents(user: TokenPayload, options: ListStudentsQuery): Promise<StudentDto[]> {
-  const scope = await resolveClassScope(user, options.classId);
+  await assertStaffPermission(user, 'roster:read');
+  const scope = await resolveClassScope(user, options.classId, 'roster:read');
 
   const students = await prisma.student.findMany({
     where: {
       ...classScopeWhere(scope),
-      ...activeStudentWhere(),
-      ...(options.status ? { AND: [{ status: options.status }, activeStudentWhere()] } : {}),
+      status: options.status ?? 'active',
       // 默认不显示已归档（毕业 / 转出）的学生：他们属于归档页，不该混在在读名单里
       ...(options.includeArchived ? {} : { archivedYearId: null }),
       ...(options.keyword
@@ -74,181 +76,141 @@ export async function findStudentByNo(studentNo: string, classId?: string): Prom
 export async function createStudent(user: TokenPayload, input: CreateStudentInput): Promise<StudentDto> {
   await assertCanManageRoster(user, input.classId ?? undefined);
   await assertStudentNoFree(input.studentNo);
-  if (input.classId) await assertClassExists(input.classId);
 
-  const created = await prisma.student.create({
-    data: {
+  const result = await changeStudentLifecycle(user, {
+    studentIds: [],
+    kind: 'class-change',
+    toClassId: input.classId,
+    newStudent: {
       studentNo: input.studentNo,
       name: input.name,
-      classId: input.classId ?? null,
-      gender: input.gender ?? '',
-      guardianPhone: input.guardianPhone ?? '',
-      status: input.status ?? 'active',
+      gender: input.gender,
+      guardianPhone: input.guardianPhone,
+      status: input.status,
     },
+  });
+  const created = await prisma.student.findUniqueOrThrow({
+    where: { id: result.studentId },
     include: withClass,
   });
-
-  if (created.classId) {
-    emitToClass(created.classId, SOCKET_EVENTS.classUpdated, {
-      classId: created.classId,
-      action: 'updated',
-    });
-  }
   return toStudentDto(created);
 }
 
-/** 修改学生信息（含调班；走本接口的单个调班同样会记入调班历史） */
+/** 资料修改不承担状态或班级迁移；旧请求明确报错。 */
 export async function updateStudent(
   user: TokenPayload,
   studentId: string,
   input: UpdateStudentInput,
 ): Promise<StudentDto> {
+  if ('classId' in input || 'status' in input)
+    throw ApiError.badRequest('班级和状态请使用调班、转出或复学接口修改');
   const student = await prisma.student.findUnique({ where: { id: studentId } });
-  if (!student || !isActiveStudent(student)) throw ApiError.notFound('学生不存在');
-
+  if (!student) throw ApiError.notFound('学生不存在');
+  if (student.archivedYearId || !['active', 'inactive'].includes(student.status))
+    throw ApiError.conflict('历史学生资料只读，请先办理转入或撤销归档');
   await assertCanManageRoster(user, student.classId ?? undefined);
-  if (input.studentNo && input.studentNo !== student.studentNo) {
-    await assertStudentNoFree(input.studentNo, studentId);
-  }
-
-  const nextClassId = input.classId === undefined ? student.classId : (input.classId ?? null);
-  const classChanged = nextClassId !== student.classId;
-  if (classChanged) await assertCanManageRoster(user, nextClassId ?? undefined);
-
-  const updated = await prisma.student.update({
-    where: { id: studentId },
-    data: {
-      ...(input.studentNo ? { studentNo: input.studentNo } : {}),
-      ...(input.name ? { name: input.name } : {}),
-      ...(input.gender !== undefined ? { gender: input.gender } : {}),
-      ...(input.guardianPhone !== undefined ? { guardianPhone: input.guardianPhone } : {}),
-      ...(input.status !== undefined ? { status: input.status } : {}),
-      classId: nextClassId,
-    },
-    include: withClass,
-  });
-
-  // 换班要留痕（单个调班与批量调班都写同一种历史）
-  if (classChanged) {
-    await recordTransfer(user, [updated], student.classId, nextClassId, 'single', '');
-  }
-
+  if (input.studentNo) await assertStudentNoFree(input.studentNo, studentId);
+  const updated = await prisma.student.update({ where: { id: studentId }, data: input, include: withClass });
+  notifyStudentClasses([student.classId]);
   return toStudentDto(updated);
 }
 
-/** 删除学生记录（级联删除其作业状态、成绩、已读记录与调班历史） */
-export async function deleteStudent(user: TokenPayload, studentId: string): Promise<void> {
+/** 默认停用且保留业务；硬删除须管理员确认并证明没有任何历史。 */
+export async function deleteStudent(
+  user: TokenPayload,
+  studentId: string,
+  options: { hard?: boolean; confirm?: boolean } = {},
+): Promise<void> {
   const student = await prisma.student.findUnique({ where: { id: studentId } });
   if (!student) throw ApiError.notFound('学生不存在');
   await assertCanManageRoster(user, student.classId ?? undefined);
-
-  await prisma.student.delete({ where: { id: studentId } });
+  if (!options.hard) {
+    await changeStudentLifecycle(user, {
+      studentIds: [studentId],
+      kind: 'deactivate',
+      note: '名单停用，保留全部业务历史',
+    });
+    return;
+  }
+  if (!isAdmin(user) || !options.confirm) throw ApiError.forbidden('硬删除需要管理员二次确认');
+  await prisma.$transaction(async (tx) => {
+    const current = await tx.student.findUniqueOrThrow({
+      where: { id: studentId },
+      include: {
+        _count: {
+          select: { grades: true, homeworkStatuses: true, notificationReads: true, transfers: true },
+        },
+      },
+    });
+    if (
+      current.archivedYearId ||
+      !['active', 'inactive'].includes(current.status) ||
+      Object.values(current._count).some(Boolean)
+    )
+      throw ApiError.conflict('该生有成绩、作业、已读或生命周期历史，不能硬删除；请停用保留记录');
+    await tx.student.delete({ where: { id: studentId } });
+  });
+  notifyStudentClasses([student.classId]);
 }
 
-/* ---------------------------------------------------------------- 调班 / 转出 */
-
-/**
- * 调班：单个与批量共用（传一个 id 就是单个）。
- *
- * 规则（需求「管理员调班」）：
- * - 只改学生**当前班级**，学号不变、不创建任何账号；
- * - 原班级、新班级、操作人、时间写入 `StudentClassTransfer`，历史可查；
- * - 历史作业与成绩保留原归属（它们挂在各自的 `classId` 上，不随学生走）。
- */
-export async function transferStudents(
-  user: TokenPayload,
-  input: TransferStudentsInput,
-): Promise<{ moved: number; transfers: StudentTransferDto[] }> {
-  if (!isAdmin(user)) throw ApiError.forbidden('只有管理员可以调班');
-
-  const students = await prisma.student.findMany({
-    where: { id: { in: input.studentIds }, ...activeStudentWhere() },
+export async function transferStudents(user: TokenPayload, input: TransferStudentsInput) {
+  const result = await changeStudentLifecycle(user, {
+    ...input,
+    kind: input.toClassId ? 'class-change' : 'unassign',
   });
-  if (students.length !== input.studentIds.length) {
-    throw ApiError.badRequest('部分学生不存在，请刷新后重试');
-  }
-  if (input.toClassId) await assertClassExists(input.toClassId);
-
-  const movable = students.filter((item) => item.classId !== input.toClassId);
-  if (movable.length === 0) {
-    throw ApiError.badRequest('所选学生已经全部在这个班级里');
-  }
-
-  await prisma.$transaction(
-    movable.map((item) =>
-      prisma.student.update({ where: { id: item.id }, data: { classId: input.toClassId } }),
-    ),
-  );
-
-  const mode = movable.length > 1 ? 'batch' : 'single';
-  // 注意传的是**调班前**的 movable（classId 还是原班级）：历史里的"原班级"要按每条自己的来
-  const transfers = await recordTransfer(user, movable, null, input.toClassId, mode, input.note ?? '');
-
-  notifyClassChange(
-    movable.map((item) => item.classId),
-    input.toClassId,
-  );
-  return { moved: movable.length, transfers };
+  return { ...result, moved: result.count };
 }
-
-/**
- * 学生转出：学籍离开本校（**不是调班**）。
- *
- * 班级归属保留作历史（成绩/作业/已读都还在），状态置为 `transferred`，
- * 并写一条 `mode = 'transfer-out'` 的历史，归档页据此统计"当年转出的学生"。
- */
-export async function transferOutStudents(
+export async function transferOutStudents(user: TokenPayload, input: TransferOutStudentsInput) {
+  const result = await changeStudentLifecycle(user, { ...input, kind: 'transfer-out' });
+  return { ...result, transferred: result.count };
+}
+export async function transferInStudent(
   user: TokenPayload,
-  input: TransferOutStudentsInput,
-): Promise<{ transferred: number; transfers: StudentTransferDto[] }> {
-  if (!isAdmin(user)) throw ApiError.forbidden('只有管理员可以办理学生转出');
-
-  const students = await prisma.student.findMany({ where: { id: { in: input.studentIds } } });
-  if (students.length !== input.studentIds.length) {
-    throw ApiError.badRequest('部分学生不存在，请刷新后重试');
-  }
-  const pending = students.filter((item) => item.status !== 'transferred');
-  if (pending.length === 0) throw ApiError.badRequest('所选学生都已经转出');
-
-  const now = new Date();
-  await prisma.$transaction(
-    pending.map((item) =>
-      prisma.student.update({
-        where: { id: item.id },
-        data: { status: 'transferred', transferredAt: now, transferNote: input.note ?? '' },
-      }),
-    ),
-  );
-
-  // 班级名快照：转出时把学生"离开的那个班"记下来，之后班级改名也不影响历史
-  const classNames = await loadClassNames(pending.map((item) => item.classId));
-  await prisma.studentClassTransfer.createMany({
-    data: pending.map((item) => ({
-      studentId: item.id,
-      studentNo: item.studentNo,
-      studentName: item.name,
-      fromClassId: item.classId,
-      fromClassName: item.classId ? (classNames.get(item.classId) ?? '') : '',
-      toClassId: null,
-      toClassName: '转出本校',
-      operatorId: user.sub,
-      operatorName: user.name,
-      mode: 'transfer-out',
-      note: input.note ?? '',
-    })),
+  input: {
+    studentId?: string;
+    studentNo?: string;
+    name?: string;
+    toClassId: string;
+    gender?: string;
+    guardianPhone?: string;
+    fromSchool?: string;
+    note?: string;
+  },
+) {
+  if (!input.studentId && (!input.studentNo || !input.name))
+    throw ApiError.badRequest('新转入学生必须填写学号与姓名');
+  const result = await changeStudentLifecycle(user, {
+    ...input,
+    kind: 'transfer-in',
+    studentIds: input.studentId ? [input.studentId] : [],
+    ...(!input.studentId
+      ? {
+          newStudent: {
+            studentNo: input.studentNo!,
+            name: input.name!,
+            gender: input.gender,
+            guardianPhone: input.guardianPhone,
+          },
+        }
+      : {}),
   });
-
-  notifyClassChange(
-    pending.map((item) => item.classId),
-    null,
+  return toStudentDto(
+    await prisma.student.findUniqueOrThrow({ where: { id: result.studentId }, include: withClass }),
   );
-
-  const created = await prisma.studentClassTransfer.findMany({
-    where: { studentId: { in: pending.map((item) => item.id) }, mode: 'transfer-out' },
-    orderBy: { createdAt: 'desc' },
-    take: pending.length,
+}
+export async function restoreStudent(
+  user: TokenPayload,
+  id: string,
+  input: { toClassId?: string; note?: string } = {},
+) {
+  const student = await prisma.student.findUnique({ where: { id } });
+  if (!student) throw ApiError.notFound('学生不存在');
+  return changeStudentLifecycle(user, {
+    studentIds: [id],
+    kind: 'restore',
+    toClassId: input.toClassId ?? student.classId,
+    note: input.note ?? '撤回转出或复学，保留原历史',
   });
-  return { transferred: pending.length, transfers: created.map(toStudentTransferDto) };
 }
 
 /** 调班 / 转出历史（单个学生或某个班级，管理员看全部） */
@@ -256,9 +218,8 @@ export async function listTransfers(
   user: TokenPayload,
   options: ListTransfersQuery,
 ): Promise<PaginatedResult<StudentTransferDto>> {
-  if (!isAdmin(user) && !options.classId && !options.studentId) {
-    throw ApiError.forbidden('查看全部调班历史需要管理员权限');
-  }
+  await assertPermission(user, 'roster:read');
+  const hasGlobalRosterScope = isAdmin(user) || (await hasAllScope(user, 'roster:read'));
 
   if (options.classId) await assertClassAccess(user, options.classId);
   if (options.studentId) {
@@ -268,11 +229,16 @@ export async function listTransfers(
     });
     if (!student) throw ApiError.notFound('学生不存在');
     if (student.classId) await assertClassAccess(user, student.classId);
-    else if (!isAdmin(user)) throw ApiError.forbidden('无权查看未分班学生的调班历史');
+    else if (!hasGlobalRosterScope) throw ApiError.forbidden('无权查看未分班学生的调班历史');
   }
 
+  const accessible = hasGlobalRosterScope ? null : await getAccessibleClassIds(user, 'roster:read');
   const where = {
-    student: activeStudentWhere(),
+    ...(options.batchId ? { batchId: options.batchId } : {}),
+    ...(options.academicYear ? { academicYear: options.academicYear } : {}),
+    ...(accessible
+      ? { AND: [{ OR: [{ fromClassId: { in: accessible } }, { toClassId: { in: accessible } }] }] }
+      : {}),
     ...(options.studentId ? { studentId: options.studentId } : {}),
     ...(options.classId ? { OR: [{ fromClassId: options.classId }, { toClassId: options.classId }] } : {}),
   };
@@ -290,76 +256,6 @@ export async function listTransfers(
   ]);
 
   return { items: items.map(toStudentTransferDto), total, page, pageSize };
-}
-
-/* ---------------------------------------------------------------- 内部工具 */
-
-/**
- * 写入调班历史。
- *
- * - `fromOverride` 非空时，所有条目都用它作为"原班级"（单个调班场景）；
- * - 为空时逐条取**该学生自己的 classId** 作为"原班级"（批量调班场景，
- *   各人的来源班可能不同）。
- */
-async function recordTransfer(
-  user: TokenPayload,
-  students: { id: string; studentNo: string; name: string; classId: string | null }[],
-  fromOverride: string | null,
-  toClassId: string | null,
-  mode: 'single' | 'batch',
-  note: string,
-): Promise<StudentTransferDto[]> {
-  const fromIds = students.map((item) => fromOverride ?? item.classId);
-  const classNames = await loadClassNames([...fromIds, toClassId]);
-
-  await prisma.studentClassTransfer.createMany({
-    data: students.map((item, index) => {
-      const fromClassId = fromIds[index] ?? null;
-      return {
-        studentId: item.id,
-        studentNo: item.studentNo,
-        studentName: item.name,
-        fromClassId,
-        fromClassName: fromClassId ? (classNames.get(fromClassId) ?? '') : '',
-        toClassId,
-        toClassName: toClassId ? (classNames.get(toClassId) ?? '') : '未分班',
-        operatorId: user.sub,
-        operatorName: user.name,
-        mode,
-        note,
-      };
-    }),
-  });
-
-  const created = await prisma.studentClassTransfer.findMany({
-    where: { studentId: { in: students.map((item) => item.id) } },
-    orderBy: { createdAt: 'desc' },
-    take: students.length,
-  });
-  return created.map(toStudentTransferDto);
-}
-
-async function loadClassNames(classIds: (string | null)[]): Promise<Map<string, string>> {
-  const ids = [...new Set(classIds.filter((id): id is string => Boolean(id)))];
-  if (ids.length === 0) return new Map();
-  const classes = await prisma.class.findMany({
-    where: { id: { in: ids } },
-    select: { id: true, name: true },
-  });
-  return new Map(classes.map((item) => [item.id, item.name]));
-}
-
-/** 调班后让相关班级的前端刷新名单（旧班与新班都要收到） */
-function notifyClassChange(fromClassIds: (string | null)[], toClassId: string | null): void {
-  const targets = new Set([...fromClassIds, toClassId].filter((id): id is string => Boolean(id)));
-  for (const classId of targets) {
-    emitToClass(classId, SOCKET_EVENTS.classUpdated, { classId, action: 'updated' });
-  }
-}
-
-async function assertClassExists(classId: string): Promise<void> {
-  const record = await prisma.class.findUnique({ where: { id: classId }, select: { id: true } });
-  if (!record) throw ApiError.badRequest('班级不存在');
 }
 
 /** 学号唯一：`Student.studentNo` 上已有唯一约束，这里给出一句人话的 409 */

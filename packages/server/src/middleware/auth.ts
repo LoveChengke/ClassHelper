@@ -3,7 +3,11 @@ import type { PermissionKey, UserRole } from '@classhelper/shared';
 import { PERMISSION_LABELS } from '@classhelper/shared';
 import { prisma } from '../lib/db.js';
 import { ApiError } from '../lib/http.js';
-import { loadEffectivePermissions } from '../lib/permissions.js';
+import {
+  bindRequestPermission,
+  bindRequestPermissions,
+  loadEffectivePermissions,
+} from '../lib/permissions.js';
 import { extractBearerToken, verifyToken, type TokenPayload } from '../lib/jwt.js';
 
 /**
@@ -58,6 +62,7 @@ export function authenticate(): RequestHandler {
         classId: null,
       };
       req.auth = { token, user: authUser, permissions: await loadEffectivePermissions(authUser) };
+      bindRequestPermissions(authUser, req.auth.permissions!);
       next();
     } catch (error) {
       next(error);
@@ -100,6 +105,7 @@ export function requirePermission(...keys: PermissionKey[]): RequestHandler {
       next(ApiError.forbidden(`当前账号缺少${labels}权限，请联系管理员在「权限组」里分配`));
       return;
     }
+    if (keys[0]) bindRequestPermission(req.auth.user, keys[0]);
     next();
   };
 }
@@ -133,6 +139,8 @@ export function requireAnyPermission(...keys: PermissionKey[]): RequestHandler {
       );
       return;
     }
+    const matched = keys.find((key) => permissions.has(key));
+    if (matched) bindRequestPermission(req.auth.user, matched);
     next();
   };
 }

@@ -1,12 +1,10 @@
 import {
   SOCKET_EVENTS,
-  formatYearLabel,
-  graduationYearOf,
   type ArchivedClassContentDto,
   type ArchivedYearDetailDto,
   type ArchivedYearDto,
 } from '@classhelper/shared';
-import { assertCanManageClasses } from '../../lib/access.js';
+import { assertGlobalPermission } from '../../lib/access.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -19,10 +17,6 @@ import {
 } from '../../lib/mappers.js';
 import { emitToClass } from '../../realtime/bus.js';
 import { logger } from '../../lib/logger.js';
-import type { createArchiveSchema } from './archives.schemas.js';
-import type { z } from 'zod';
-
-type CreateArchiveInput = z.infer<typeof createArchiveSchema>;
 
 /**
  * 毕业归档。
@@ -36,12 +30,12 @@ type CreateArchiveInput = z.infer<typeof createArchiveSchema>;
  * **未毕业而升级的班级不归档**：升级只改 `Class.grade`（高一 → 高二），
  * 班级记录、学生名单、学号、作业成绩全部沿用（见 `classes.service.promoteClasses`）。
  *
- * 全部接口**仅管理员**。
+ * 全部接口受 archive:manage 与全校范围保护。
  */
 
 /** 届别列表（按入学年份倒序） */
 export async function listArchivedYears(user: TokenPayload): Promise<ArchivedYearDto[]> {
-  assertCanManageClasses(user);
+  await assertGlobalPermission(user, 'archive:manage');
   const records = await prisma.archivedYear.findMany({ orderBy: { enrollmentYear: 'desc' } });
   return records.map(toArchivedYearDto);
 }
@@ -51,7 +45,7 @@ export async function getArchivedYearDetail(
   user: TokenPayload,
   archiveId: string,
 ): Promise<ArchivedYearDetailDto> {
-  assertCanManageClasses(user);
+  await assertGlobalPermission(user, 'archive:manage');
   const record = await prisma.archivedYear.findUnique({ where: { id: archiveId } });
   if (!record) throw ApiError.notFound('该届别档案不存在');
 
@@ -72,11 +66,18 @@ export async function getArchivedYearDetail(
   ]);
 
   const dtos = students.map(toStudentDto);
+  const transferredIn = await prisma.studentClassTransfer.findMany({
+    where: { kind: 'transfer-in', student: { archivedYearId: archiveId } },
+    distinct: ['studentId'],
+    select: { studentId: true },
+  });
   return {
     ...toArchivedYearDto(record),
+    transferInCount: transferredIn.length,
     classes: classes.map(toArchivedClassDto),
     graduates: dtos.filter((item) => item.status === 'graduated'),
     transferred: dtos.filter((item) => item.status === 'transferred'),
+    inactive: dtos.filter((item) => item.status === 'inactive'),
   };
 }
 
@@ -92,7 +93,7 @@ export async function getArchivedClassContent(
   classId: string,
   limit = 200,
 ): Promise<ArchivedClassContentDto> {
-  assertCanManageClasses(user);
+  await assertGlobalPermission(user, 'archive:manage');
   const record = await prisma.class.findUnique({
     where: { id: classId },
     select: { id: true, name: true, archivedYearId: true },
@@ -133,106 +134,13 @@ export async function getArchivedClassContent(
 }
 
 /**
- * 执行归档：把某一届的全部班级与学生标记为已归档。
- *
- * 步骤：
- * 1. 找到该届**尚未归档**的班级（`enrollmentYear` 匹配且 `archivedYearId` 为空）；
- * 2. 把这些班的学生标记为 `graduated`；把其中已经 `transferred` 的保持原状态；
- * 3. 统计班级数 / 学生数 / 转出数 / 作业数 / 通知数写进档案快照；
- * 4. 全部在**一个事务**里完成，中途失败不会留下"班归档了、学生没归档"的半截状态。
- */
-export async function createArchive(
-  user: TokenPayload,
-  input: CreateArchiveInput,
-): Promise<ArchivedYearDetailDto> {
-  assertCanManageClasses(user);
-
-  const existing = await prisma.archivedYear.findUnique({
-    where: { enrollmentYear: input.enrollmentYear },
-    select: { id: true },
-  });
-  if (existing) throw ApiError.conflict(`${formatYearLabel(input.enrollmentYear)} 已经归档过了`);
-
-  const classes = await prisma.class.findMany({
-    where: { enrollmentYear: input.enrollmentYear, archivedYearId: null },
-    select: { id: true },
-  });
-  if (classes.length === 0) {
-    throw ApiError.badRequest(
-      `没有找到 ${formatYearLabel(input.enrollmentYear)} 的在读班级（可能已归档，或入学年份没填对）`,
-    );
-  }
-
-  const classIds = classes.map((item) => item.id);
-  const [students, homeworkCount, notificationCount] = await Promise.all([
-    prisma.student.findMany({
-      where: { classId: { in: classIds }, archivedYearId: null },
-      select: { id: true, status: true },
-    }),
-    prisma.homework.count({ where: { classId: { in: classIds } } }),
-    prisma.notification.count({ where: { classId: { in: classIds } } }),
-  ]);
-
-  const transferredCount = students.filter((item) => item.status === 'transferred').length;
-  const graduateCount = students.length - transferredCount;
-
-  const created = await prisma.$transaction(async (tx) => {
-    const archive = await tx.archivedYear.create({
-      data: {
-        enrollmentYear: input.enrollmentYear,
-        graduationYear: input.graduationYear ?? graduationYearOf(input.enrollmentYear),
-        name: formatYearLabel(input.enrollmentYear),
-        note: input.note ?? '',
-        operatorId: user.sub,
-        operatorName: user.name,
-        classCount: classes.length,
-        studentCount: graduateCount,
-        transferredCount,
-        homeworkCount,
-        notificationCount,
-      },
-      select: { id: true },
-    });
-
-    const now = new Date();
-    await tx.class.updateMany({
-      where: { id: { in: classIds } },
-      data: { archivedYearId: archive.id, archivedAt: now },
-    });
-
-    // 在读的 → 已毕业；已经转出的保持 transferred（他们的归档记录也一并挂到这一届）
-    if (students.length > 0) {
-      await tx.student.updateMany({
-        where: { id: { in: students.filter((s) => s.status !== 'transferred').map((s) => s.id) } },
-        data: { status: 'graduated', archivedYearId: archive.id, archivedAt: now },
-      });
-      await tx.student.updateMany({
-        where: { id: { in: students.filter((s) => s.status === 'transferred').map((s) => s.id) } },
-        data: { archivedYearId: archive.id, archivedAt: now },
-      });
-    }
-
-    return archive;
-  });
-
-  for (const classId of classIds) {
-    emitToClass(classId, SOCKET_EVENTS.classUpdated, { classId, action: 'deleted' });
-  }
-  logger.info(
-    `毕业归档：${formatYearLabel(input.enrollmentYear)} 班级=${classes.length} 毕业生=${graduateCount} 转出=${transferredCount} 由 ${user.name} 执行`,
-  );
-
-  return getArchivedYearDetail(user, created.id);
-}
-
-/**
  * 撤销归档（管理员误操作的退路）。
  *
  * 把该届的班级与学生的归档标记清掉：班级回到在读列表，学生状态 `graduated → active`。
  * **不会删除任何作业或通知** —— 它们本来就没被删过。
  */
 export async function deleteArchive(user: TokenPayload, archiveId: string): Promise<void> {
-  assertCanManageClasses(user);
+  await assertGlobalPermission(user, 'archive:manage');
   const record = await prisma.archivedYear.findUnique({ where: { id: archiveId } });
   if (!record) throw ApiError.notFound('该届别档案不存在');
 
@@ -265,12 +173,13 @@ export async function deleteArchive(user: TokenPayload, archiveId: string): Prom
 }
 
 /** 归档页顶部的汇总（一届一行之外的全局数字） */
-export async function getArchiveSummary(): Promise<{
+export async function getArchiveSummary(user: TokenPayload): Promise<{
   archiveCount: number;
   classCount: number;
   graduateCount: number;
   transferredCount: number;
 }> {
+  await assertGlobalPermission(user, 'archive:manage');
   const [archiveCount, classCount, graduateCount, transferredCount] = await Promise.all([
     prisma.archivedYear.count(),
     prisma.class.count({ where: { NOT: { archivedYearId: null } } }),

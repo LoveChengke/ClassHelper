@@ -20,7 +20,7 @@ try {
     .readdirSync(migrationRoot)
     .filter((name) => fs.existsSync(path.join(migrationRoot, name, 'migration.sql')))
     .sort();
-  assert.equal(names.at(-1), '20261017090000_permission_read_keys');
+  assert.ok(names.length > 0, '必须存在可回放的迁移');
   const baseline = names.indexOf('20261016090000_retire_integration_and_schedule_updates');
   await client.execute(
     'CREATE TABLE "_prisma_migrations" (migration_name TEXT, finished_at DATETIME, rolled_back_at DATETIME)',
@@ -46,7 +46,7 @@ try {
   await client.execute(
     `INSERT INTO "PermissionGroup" (id,name,updatedAt) VALUES ('custom','教师默认权限',CURRENT_TIMESTAMP)`,
   );
-  const run = (expected) => {
+  const run = (expected, targetUrl = databaseUrl) => {
     const script = `const {ensureSchema}=await import('./packages/server/src/lib/db-bootstrap.ts');
       const result=await ensureSchema(); if(result.applied!==${expected})throw new Error(JSON.stringify(result));
       const {ensureDefaultGroups}=await import('./packages/server/src/lib/permissions.ts');
@@ -56,7 +56,13 @@ try {
       ['--import', './packages/server/node_modules/tsx/dist/loader.mjs', '--input-type=module', '-e', script],
       {
         cwd: root,
-        env: { ...process.env, DATABASE_URL: databaseUrl, DATABASE_PROVIDER: 'sqlite' },
+        env: {
+          ...process.env,
+          NODE_ENV: 'test',
+          JWT_SECRET: 'migrations-isolated-verification-secret-2026',
+          DATABASE_URL: targetUrl,
+          DATABASE_PROVIDER: 'sqlite',
+        },
         encoding: 'utf8',
         timeout: 30_000,
       },
@@ -85,11 +91,82 @@ try {
     ).rows[0].n,
     0,
   );
+  // 第二个夹具模拟本次重构前已初始化的默认组和旧 mode 历史。
+  const legacyUrl = `file:${path.join(dir, 'lifecycle-legacy.db').replaceAll('\\', '/')}`;
+  const legacy = createClient({ url: legacyUrl });
+  try {
+    const split = names.indexOf('20261023000000_promotion_permission');
+    assert(split > 0);
+    await legacy.execute(
+      'CREATE TABLE "_prisma_migrations" (migration_name TEXT, finished_at DATETIME, rolled_back_at DATETIME)',
+    );
+    for (const name of names.slice(0, split)) {
+      await legacy.executeMultiple(fs.readFileSync(path.join(migrationRoot, name, 'migration.sql'), 'utf8'));
+      await legacy.execute({
+        sql: 'INSERT INTO "_prisma_migrations" VALUES (?, CURRENT_TIMESTAMP, NULL)',
+        args: [name],
+      });
+    }
+    await legacy.execute(
+      `INSERT INTO "PermissionGroup" (id,name,defaultRole,scope,updatedAt) VALUES ('legacy-admin','旧管理员默认组','ADMIN','ALL',CURRENT_TIMESTAMP)`,
+    );
+    await legacy.execute(
+      `INSERT INTO "PermissionGroupItem" (id,groupId,key) VALUES ('legacy-key','legacy-admin','roster:read')`,
+    );
+    await legacy.execute(
+      `INSERT INTO "Student" (id,studentNo,name,updatedAt) VALUES ('legacy-student','LEGACY','旧学生',CURRENT_TIMESTAMP)`,
+    );
+    for (const [id, mode] of [
+      ['old-single', 'single'],
+      ['old-out', 'transfer-out'],
+      ['old-restore', 'restore-transfer'],
+    ])
+      await legacy.execute({
+        sql: "INSERT INTO \"StudentClassTransfer\" (id,studentId,studentNo,studentName,mode) VALUES (?,'legacy-student','LEGACY','旧学生',?)",
+        args: [id, mode],
+      });
+    legacy.close();
+    run(names.length - split, legacyUrl);
+    const upgraded = createClient({ url: legacyUrl });
+    try {
+      const keys = (
+        await upgraded.execute(`SELECT key FROM "PermissionGroupItem" WHERE groupId='legacy-admin'`)
+      ).rows.map((row) => row.key);
+      assert(keys.includes('roster:read') && keys.includes('promotion:manage'));
+      const kinds = (await upgraded.execute('SELECT id,kind,batchId FROM "StudentClassTransfer" ORDER BY id'))
+        .rows;
+      assert.deepEqual(
+        kinds.map((row) => row.kind),
+        ['transfer-out', 'restore', 'class-change'],
+      );
+      assert(kinds.every((row) => row.batchId === ''));
+      assert(
+        !(await upgraded.execute('PRAGMA table_info("StudentClassTransfer")')).rows.some(
+          (row) => row.name === 'mode',
+        ),
+      );
+      assert(
+        (await upgraded.execute('PRAGMA table_info("ArchivedYear")')).rows.some(
+          (row) => row.name === 'inactiveCount',
+        ),
+      );
+    } finally {
+      upgraded.close();
+    }
+    run(0, legacyUrl);
+  } finally {
+    legacy.close();
+  }
   console.log(
-    '数据库升级回归通过：接纳 Prisma 迁移记录、保留业务课表、移除联动、避开默认组重名、重启保留空权限组。',
+    '数据库升级回归通过：保留业务课表与空权限组、默认组补升级键、旧 mode 映射 kind、旧行默认值与重启幂等。',
   );
 } finally {
   client.close();
+  if (
+    path.dirname(path.resolve(dir)) !== path.resolve(os.tmpdir()) ||
+    !path.basename(dir).startsWith('classhelper-upgrade-')
+  )
+    throw new Error('拒绝清理临时目录以外的路径');
   await fsp
     .rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     .catch((error) => console.error('清理临时测试库失败：', error.message));

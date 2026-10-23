@@ -1,8 +1,9 @@
+import { z } from 'zod';
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
 import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
-import { validate, validatedBody, validatedParams } from '../../middleware/validate.js';
+import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
   assignUserGroupsSchema,
@@ -38,6 +39,30 @@ router.get('/groups', requirePermission('permission:manage'), async (_req, res) 
   sendOk(res, await permissionService.listGroups(), '获取权限组成功');
 });
 
+router.get('/scopes', requirePermission('permission:manage'), async (_req, res) =>
+  sendOk(res, await permissionService.scopeOptions()),
+);
+router.get(
+  '/audit',
+  requirePermission('permission:manage'),
+  validate({
+    query: z.object({
+      page: z.coerce.number().int().min(1).default(1),
+      pageSize: z.coerce.number().int().min(1).max(100).default(30),
+    }),
+  }),
+  async (req, res) => {
+    const { page, pageSize } = validatedQuery<{ page: number; pageSize: number }>(req);
+    sendOk(res, await permissionService.listAudits(page, pageSize));
+  },
+);
+router.get(
+  '/groups/:id/members',
+  requirePermission('permission:manage'),
+  validate({ params: idParamSchema }),
+  async (req, res) => sendOk(res, await permissionService.groupMembers(String(req.params.id))),
+);
+
 /** POST /api/permissions/groups - 新建权限组 */
 router.post(
   '/groups',
@@ -45,7 +70,7 @@ router.post(
   validate({ body: createPermissionGroupSchema }),
   async (req, res) => {
     const input = validatedBody<CreatePermissionGroupInput>(req);
-    sendCreated(res, await permissionService.createGroup(input), '权限组已创建');
+    sendCreated(res, await permissionService.createGroup(getAuthUser(req), input), '权限组已创建');
   },
 );
 
@@ -57,7 +82,7 @@ router.patch(
   async (req, res) => {
     const { id } = validatedParams<{ id: string }>(req);
     const input = validatedBody<UpdatePermissionGroupInput>(req);
-    sendOk(res, await permissionService.updateGroup(id, input), '权限组已更新');
+    sendOk(res, await permissionService.updateGroup(getAuthUser(req), id, input), '权限组已更新');
   },
 );
 
@@ -68,7 +93,7 @@ router.delete(
   validate({ params: idParamSchema }),
   async (req, res) => {
     const { id } = validatedParams<{ id: string }>(req);
-    await permissionService.deleteGroup(id);
+    await permissionService.deleteGroup(getAuthUser(req), id);
     sendOk(res, { id }, '权限组已删除，原成员回到角色默认权限');
   },
 );
@@ -86,7 +111,7 @@ router.put(
   async (req, res) => {
     const { id } = validatedParams<{ id: string }>(req);
     const input = validatedBody<AssignUserGroupsInput>(req);
-    sendOk(res, await permissionService.assignUserGroups(id, input), '权限组分配已保存');
+    sendOk(res, await permissionService.assignUserGroups(getAuthUser(req), id, input), '权限组分配已保存');
   },
 );
 

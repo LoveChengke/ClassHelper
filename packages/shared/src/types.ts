@@ -186,16 +186,14 @@ export interface CreateStudentRequest {
   classId?: string | null;
   gender?: StudentGender;
   guardianPhone?: string;
-  status?: StudentStatus;
+  status?: 'active' | 'inactive';
 }
 
 export interface UpdateStudentRequest {
   studentNo?: string;
   name?: string;
-  classId?: string | null;
   gender?: StudentGender;
   guardianPhone?: string;
-  status?: StudentStatus;
 }
 
 /** 学生是否属于某个班的判定范围（列表查询用） */
@@ -207,10 +205,19 @@ export interface StudentQueryParams {
 /* ------------------------------------------------------------------ 调班 */
 
 /** 调班 / 转出的方式 */
-export type StudentTransferMode = 'single' | 'batch' | 'transfer-out';
+export type StudentTransferMode = 'single' | 'batch' | 'transfer-out' | 'restore-transfer';
+export type StudentLifecycleKind =
+  'class-change' | 'transfer-in' | 'transfer-out' | 'restore' | 'unassign' | 'deactivate';
 
 /** 一次调班 / 转出的历史记录（原班级 / 新班级 / 操作人 / 时间） */
 export interface StudentTransferDto {
+  kind: StudentLifecycleKind;
+  batchId: string;
+  academicYear: number | null;
+  fromGrade: string;
+  toGrade: string;
+  fromSchool: string;
+  toSchool: string;
   id: string;
   studentId: string;
   /** 学号快照：学生被删除后历史仍可读 */
@@ -234,6 +241,7 @@ export interface StudentTransferDto {
  * **学号不变**，只改学生当前的班级归属；历史作业与成绩保留原归属。
  */
 export interface TransferStudentsRequest {
+  allowGradeChange?: boolean;
   studentIds: string[];
   toClassId: string | null;
   note?: string;
@@ -244,6 +252,7 @@ export interface TransferStudentsRequest {
  * 单个与批量共用 —— 传一个 id 就是单个。
  */
 export interface TransferOutStudentsRequest {
+  toSchool?: string;
   studentIds: string[];
   /** 转出去向 / 原因备注 */
   note?: string;
@@ -272,6 +281,7 @@ export interface ArchivedYearDto {
   classCount: number;
   studentCount: number;
   transferredCount: number;
+  inactiveCount: number;
   homeworkCount: number;
   notificationCount: number;
   archivedAt: string;
@@ -292,11 +302,14 @@ export interface ArchivedClassDto {
 }
 
 export interface ArchivedYearDetailDto extends ArchivedYearDto {
+  /** 本届保留名单中有转入记录的学生数，按学生去重 */
+  transferInCount: number;
   classes: ArchivedClassDto[];
   /** 本届毕业生 */
   graduates: StudentDto[];
   /** 本届在读期间转出的学生 */
   transferred: StudentDto[];
+  inactive: StudentDto[];
 }
 
 /** 归档班级的作业与通知（只读） */
@@ -488,8 +501,6 @@ export interface UpdateClassRequest {
   enrollmentYear?: number;
   /** 班号（同上） */
   classIndex?: number;
-  /** 当前年级（高一 / 高二 / 高三；学年升级时改它，**不归档**） */
-  grade?: string;
   /** 本学期教学周数（1~30，仅管理员可调） */
   termWeeks?: number;
 }
@@ -1456,6 +1467,7 @@ export interface UpdateInfo {
 export interface PermissionGroupDto {
   scope?: ContractPermissionScope;
   scopeValue?: string;
+  scopeLabel: string;
   id: string;
   name: string;
   description: string;
@@ -1476,10 +1488,10 @@ export interface PermissionMemberDto {
   role: UserRole;
   /** 所属权限组；空数组 = 走角色默认模板 */
   groupIds: string[];
-  /** 生效权限数量（ADMIN 恒为全集；班级端账号恒为 0，见权限页的说明） */
+  /** 生效权限数量；管理员在分组并集之外始终保留两个管理入口 */
   permissionCount: number;
-  /** 该账号固定拥有全部权限，不接受分配（管理员） */
-  fixed: boolean;
+  permissions: PermissionKey[];
+  scopeLabels: string[];
 }
 
 /** `GET /api/permissions/catalog`：权限键目录（与 shared 的常量一一对应，供权限页渲染） */

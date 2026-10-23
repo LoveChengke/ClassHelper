@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
+import {
+  authenticate,
+  getAuthUser,
+  requireStaffPermission,
+  requirePermission,
+} from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -25,16 +30,21 @@ const router = Router();
 router.use(authenticate());
 
 /** GET /api/homeworks?classId=&courseId=&pendingOnly=&keyword= - 作业列表 */
-router.get('/', validate({ query: listHomeworksQuerySchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const query = validatedQuery<{
-    classId?: string;
-    courseId?: string;
-    pendingOnly: boolean;
-    keyword?: string;
-  }>(req);
-  sendOk(res, await homeworkService.listHomeworks(user, query), '获取作业列表成功');
-});
+router.get(
+  '/',
+  requireStaffPermission('homework:read'),
+  validate({ query: listHomeworksQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const query = validatedQuery<{
+      classId?: string;
+      courseId?: string;
+      pendingOnly: boolean;
+      keyword?: string;
+    }>(req);
+    sendOk(res, await homeworkService.listHomeworks(user, query), '获取作业列表成功');
+  },
+);
 
 /** GET /api/homeworks/:id - 作业详情 */
 /**
@@ -42,17 +52,27 @@ router.get('/', validate({ query: listHomeworksQuerySchema }), async (req, res) 
  *
  * 必须注册在 /:id 之前，否则 "days" 会被当成作业 id 命中 /:id 路由。
  */
-router.get('/days', validate({ query: listHomeworkDaysQuerySchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const query = validatedQuery<ListHomeworkDaysInput>(req);
-  sendOk(res, await homeworkService.listHomeworkDays(user, query), '获取作业日历成功');
-});
+router.get(
+  '/days',
+  requireStaffPermission('homework:read'),
+  validate({ query: listHomeworkDaysQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const query = validatedQuery<ListHomeworkDaysInput>(req);
+    sendOk(res, await homeworkService.listHomeworkDays(user, query), '获取作业日历成功');
+  },
+);
 
-router.get('/:id', validate({ params: idParamSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { id } = validatedParams<{ id: string }>(req);
-  sendOk(res, await homeworkService.getHomework(user, id), '获取作业详情成功');
-});
+router.get(
+  '/:id',
+  requireStaffPermission('homework:read'),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { id } = validatedParams<{ id: string }>(req);
+    sendOk(res, await homeworkService.getHomework(user, id), '获取作业详情成功');
+  },
+);
 
 /**
  * POST /api/homeworks - 发布作业（发布后广播 homework:new）
@@ -62,6 +82,7 @@ router.get('/:id', validate({ params: idParamSchema }), async (req, res) => {
  */
 router.post(
   '/',
+  requireStaffPermission('homework:write'),
   validate({ body: createHomeworkSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -87,10 +108,7 @@ router.post(
   validate({ body: bulkCreateHomeworkSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
-    const result = await homeworkService.bulkCreateHomeworks(
-      user,
-      req.body as BulkCreateHomeworkInput,
-    );
+    const result = await homeworkService.bulkCreateHomeworks(user, req.body as BulkCreateHomeworkInput);
     sendCreated(res, result, `批量发布完成：成功 ${result.succeeded} 个班，失败 ${result.failed} 个班`);
   },
 );
@@ -127,6 +145,7 @@ router.delete(
 /** PATCH /api/homeworks/:id/status - 标记完成 / 取消完成 */
 router.patch(
   '/:id/status',
+  requireStaffPermission('homework:write'),
   validate({ params: idParamSchema, body: updateHomeworkStatusSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -141,16 +160,22 @@ router.patch(
 );
 
 /** GET /api/homeworks/:id/submissions - 提交名单（未交名单功能） */
-router.get('/:id/submissions', validate({ params: idParamSchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { id } = validatedParams<{ id: string }>(req);
-  const result = await homeworkService.listHomeworkSubmissions(user, id);
-  sendOk(res, result, `未交 ${result.notSubmitted.length} / ${result.total} 人`);
-});
+router.get(
+  '/:id/submissions',
+  requireStaffPermission('homework:read'),
+  validate({ params: idParamSchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { id } = validatedParams<{ id: string }>(req);
+    const result = await homeworkService.listHomeworkSubmissions(user, id);
+    sendOk(res, result, `未交 ${result.notSubmitted.length} / ${result.total} 人`);
+  },
+);
 
 /** PATCH /api/homeworks/:id/submissions - 勾选未交名单（其余学生一律视为已交） */
 router.patch(
   '/:id/submissions',
+  requireStaffPermission('homework:write'),
   validate({ params: idParamSchema, body: updateHomeworkSubmissionsSchema }),
   async (req, res) => {
     const user = getAuthUser(req);

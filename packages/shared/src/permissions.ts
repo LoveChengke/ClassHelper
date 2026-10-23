@@ -200,6 +200,7 @@ export const PERMISSION_KEYS = [
   // 学期与归档
   'term:read',
   'term:write',
+  'promotion:manage',
   'archive:manage',
   'dashboard:read',
   // 系统与安全
@@ -258,7 +259,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   'class:read': '查看班级与班级列表',
   'class:manage': '创建 / 修改 / 删除班级（含班级账号密码）',
   'roster:read': '查看学生名单',
-  'roster:manage': '学生名单管理（增删 / 调班 / 导入）',
+  'roster:manage': '学生名单管理（资料 / 调班 / 转入转出 / 停用）',
   'teacher:read': '查看教师名单',
   'teacher:manage': '教师账号管理（新建 / 导入 / 重置密码 / 删除）',
   'schedule:read': '查看课表',
@@ -285,6 +286,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   'remote:control': '远控客户端电脑（关机 / 重启 / 注销 / 锁屏）',
   'term:read': '查看学期周次',
   'term:write': '修改学期周次与开学日期',
+  'promotion:manage': '配置、预览与执行学年升级',
   'archive:manage': '毕业归档',
   'dashboard:read': '查看统计看板',
   'database:manage': '数据库快照 / 导出 / 切库',
@@ -342,7 +344,10 @@ export const PERMISSION_CATEGORIES: readonly { title: string; keys: readonly Per
     title: '客户端设备',
     keys: ['client:read', 'client:manage', 'client:update', 'client:update-push', 'remote:control'],
   },
-  { title: '学期与统计', keys: ['term:read', 'term:write', 'archive:manage', 'dashboard:read'] },
+  {
+    title: '学期与统计',
+    keys: ['term:read', 'term:write', 'promotion:manage', 'archive:manage', 'dashboard:read'],
+  },
   {
     title: '系统与安全',
     keys: [
@@ -399,6 +404,7 @@ export const PERMISSION_DEFAULT_ROLES: Record<PermissionKey, readonly UserRole[]
   'remote:control': ['ADMIN'],
   'term:read': ['ADMIN', 'TEACHER'],
   'term:write': ['ADMIN'],
+  'promotion:manage': ['ADMIN'],
   'archive:manage': ['ADMIN'],
   'dashboard:read': ['ADMIN', 'TEACHER'],
   'database:manage': ['ADMIN'],
@@ -454,6 +460,7 @@ export const PERMISSION_MATRIX: readonly {
   subject: boolean;
   classDevice?: boolean;
 }[] = [
+  { action: '学年升级（默认管理员，可按权限组授权）', admin: true, head: false, subject: false },
   { action: '班级创建 / 修改 / 删除', admin: true, head: false, subject: false },
   { action: '分配班主任与各科科任老师', admin: true, head: false, subject: false },
   { action: '学生名单管理（增删 / 导入 / 调班）', admin: true, head: true, subject: false },

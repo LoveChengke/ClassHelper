@@ -8,6 +8,37 @@ import {
 } from '@classhelper/shared';
 import { prisma } from './db.js';
 import type { TokenPayload } from './jwt.js';
+import { ApiError } from './http.js';
+
+// 仅复用当前请求对象上的权限，绝不跨请求缓存。
+const requestPermissions = new WeakMap<TokenPayload, ReadonlySet<PermissionKey>>();
+const requestPermission = new WeakMap<TokenPayload, PermissionKey>();
+export function bindRequestPermission(user: TokenPayload, key: PermissionKey) {
+  requestPermission.set(user, key);
+}
+export function currentRequestPermission(user: TokenPayload) {
+  return requestPermission.get(user);
+}
+export function bindRequestPermissions(user: TokenPayload, permissions: ReadonlySet<PermissionKey>) {
+  requestPermissions.set(user, permissions);
+}
+export async function hasEffectivePermission(user: TokenPayload, key: PermissionKey) {
+  return (requestPermissions.get(user) ?? (await loadEffectivePermissions(user))).has(key);
+}
+export async function assertPermission(user: TokenPayload, key: PermissionKey): Promise<void> {
+  if (!(await hasEffectivePermission(user, key)))
+    throw ApiError.forbidden(`缺少「${PERMISSION_LABELS[key]}」权限`);
+  bindRequestPermission(user, key);
+}
+export async function assertAnyPermission(user: TokenPayload, keys: PermissionKey[]): Promise<void> {
+  const permissions = requestPermissions.get(user) ?? (await loadEffectivePermissions(user));
+  if (!keys.some((key) => permissions.has(key))) throw ApiError.forbidden('缺少该操作所需权限');
+  const matched = keys.find((key) => permissions.has(key));
+  if (matched) bindRequestPermission(user, matched);
+}
+export async function assertStaffPermission(user: TokenPayload, key: PermissionKey): Promise<void> {
+  if (user.role !== 'CLASS_DEVICE') await assertPermission(user, key);
+}
 
 /**
  * 生效权限集合的**唯一加载入口**（权限组功能的全部运行时逻辑都收在这里）。

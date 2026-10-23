@@ -1,3 +1,4 @@
+import { restoreStudentSchema } from '../students/students.schemas.js';
 import { listTransferred, restoreTransferred } from './transferred.service.js';
 import { Router } from 'express';
 import { sendOk } from '../../lib/http.js';
@@ -20,13 +21,14 @@ router.get('/transferred', requirePermission('archive:manage'), async (req, res)
 );
 router.post(
   '/transferred/:id/restore',
-  requirePermission('archive:manage'),
-  validate({ params: idParamSchema }),
-  async (req, res) => sendOk(res, await restoreTransferred(getAuthUser(req), String(req.params.id))),
+  requirePermission('roster:manage'),
+  validate({ params: idParamSchema, body: restoreStudentSchema }),
+  async (req, res) =>
+    sendOk(res, await restoreTransferred(getAuthUser(req), String(req.params.id), req.body)),
 );
 
 /**
- * 毕业归档（**全部接口仅管理员**）。
+ * 毕业归档（**归档操作按 archive:manage 与全校范围校验**）。
  *
  * 归档是**打标记 + 只读**：毕业班级的作业与通知原样留在库里，
  * 通过 `GET /:id/classes/:classId/content` 只读查看。
@@ -49,7 +51,7 @@ router.get('/summary', requirePermission('archive:manage'), async (req, res) => 
   sendOk(
     res,
     {
-      ...(await archiveService.getArchiveSummary()),
+      ...(await archiveService.getArchiveSummary(getAuthUser(req))),
       suggestedEnrollmentYears: suggestedEnrollmentYears(),
     },
     '获取归档汇总成功',

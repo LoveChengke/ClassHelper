@@ -16,7 +16,14 @@ import {
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
-import { logger } from '../../lib/logger.js';
+import {
+  parsePermissionScope,
+  defaultPromotionPlan,
+  type PermissionScope,
+  type PromotionPlan,
+} from '@classhelper/shared';
+import { assertPermission } from '../../lib/permissions.js';
+import { getSetting } from '../../lib/settings.js';
 import {
   ADMIN_UNREMOVABLE_PERMISSIONS,
   ensureDefaultGroups,
@@ -66,14 +73,6 @@ const MEMBER_SELECT = {
   permissionGroups: { select: { groupId: true } },
 } as const;
 
-type MemberRow = {
-  id: string;
-  username: string;
-  name: string;
-  role: string;
-  permissionGroups: { groupId: string }[];
-};
-
 /** 目录顺序（key → 序号）：组的键与"我的权限"都按它排序，前端渲染才稳定 */
 const KEY_ORDER = new Map<string, number>(PERMISSION_KEYS.map((key, index) => [key, index]));
 
@@ -97,6 +96,7 @@ function toGroupDto(row: GroupRow): PermissionGroupDto {
     id: row.id,
     scope: row.scope as PermissionGroupDto['scope'],
     scopeValue: row.scopeValue,
+    scopeLabel: scopeLabel(row),
     name: row.name,
     description: row.description,
     builtin: row.builtin,
@@ -109,6 +109,252 @@ function toGroupDto(row: GroupRow): PermissionGroupDto {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function scopeLabel(group: { scope: string; scopeValue: string }) {
+  try {
+    return parsePermissionScope(group.scope as PermissionScope, group.scopeValue).scopeLabel;
+  } catch {
+    return '未配置范围（无班级访问权）';
+  }
+}
+
+export async function scopeOptions() {
+  const classes = await prisma.class.findMany({ distinct: ['grade'], select: { grade: true } });
+  const raw = await getSetting('term.promotionPlan');
+  const plan: PromotionPlan = raw ? JSON.parse(raw) : defaultPromotionPlan();
+  const planGrades = plan.tracks.flatMap((track) => track.stages.map((stage) => stage.grade));
+  return {
+    grades: [...new Set([...classes.map((cls) => cls.grade), ...planGrades])].sort(),
+    planGrades,
+    divisions: plan.tracks.map((track) => ({
+      name: track.name,
+      grades: track.stages.map((stage) => stage.grade),
+    })),
+  };
+}
+
+async function validateScope(input: { scope?: PermissionScope; scopeValue?: string }) {
+  try {
+    return parsePermissionScope(
+      input.scope ?? 'SELF_CLASS',
+      input.scopeValue ?? '',
+      (await scopeOptions()).grades,
+    );
+  } catch (error) {
+    throw ApiError.badRequest(String(error instanceof Error ? error.message : error));
+  }
+}
+
+async function assertGrant(
+  actor: TokenPayload,
+  group: { scope: string; defaultRole?: string | null; keys: readonly string[] },
+) {
+  await assertPermission(actor, 'permission:manage');
+  if (actor.role === 'ADMIN') return;
+  if (group.defaultRole) throw ApiError.forbidden('只有管理员可以管理角色默认组');
+  if (group.scope !== 'SELF_CLASS') throw ApiError.forbidden('只有管理员可以管理年级、部或全校范围组');
+  const own = await loadEffectivePermissions(actor);
+  if (group.keys.some((key) => !own.has(key as PermissionKey)))
+    throw ApiError.forbidden('不能授予或管理超出自己生效权限的组');
+}
+
+function auditData(
+  actor: TokenPayload,
+  action: string,
+  targetType: string,
+  targetId: string,
+  before: unknown,
+  after: unknown,
+) {
+  return {
+    actorId: actor.sub,
+    actorName: actor.name,
+    action,
+    targetType,
+    targetId,
+    beforeJson: JSON.stringify(before),
+    afterJson: JSON.stringify(after),
+  };
+}
+
+export async function createGroup(
+  actor: TokenPayload,
+  input: CreatePermissionGroupRequest,
+): Promise<PermissionGroupDto> {
+  const scope = await validateScope(input);
+  const keys = normalizeKeys(input.keys);
+  await assertGrant(actor, { ...scope, keys });
+  if (await prisma.permissionGroup.findUnique({ where: { name: input.name.trim() } }))
+    throw ApiError.conflict('权限组名称已存在');
+  const created = await prisma.$transaction(async (tx) => {
+    const row = await tx.permissionGroup.create({
+      data: {
+        name: input.name.trim(),
+        description: input.description?.trim() ?? '',
+        scope: scope.scope,
+        scopeValue: scope.scopeValue,
+        items: { create: keys.map((key) => ({ key })) },
+      },
+      select: GROUP_SELECT,
+    });
+    await tx.permissionAudit.create({
+      data: auditData(actor, 'create', 'group', row.id, null, toGroupDto(row)),
+    });
+    return row;
+  });
+  return toGroupDto(created);
+}
+
+export async function updateGroup(
+  actor: TokenPayload,
+  groupId: string,
+  input: UpdatePermissionGroupRequest,
+): Promise<PermissionGroupDto> {
+  const current = await prisma.permissionGroup.findUnique({ where: { id: groupId }, select: GROUP_SELECT });
+  if (!current) throw ApiError.notFound('权限组不存在');
+  const before = toGroupDto(current);
+  await assertGrant(actor, { ...current, keys: before.keys });
+  const scope = await validateScope({
+    scope: input.scope ?? before.scope,
+    scopeValue: input.scopeValue ?? before.scopeValue,
+  });
+  const keys = normalizeKeys(input.keys ?? before.keys);
+  await assertGrant(actor, { ...scope, defaultRole: current.defaultRole, keys });
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.permissionGroupItem.deleteMany({ where: { groupId } });
+    const row = await tx.permissionGroup.update({
+      where: { id: groupId },
+      data: {
+        name: input.name?.trim(),
+        description: input.description?.trim(),
+        scope: scope.scope,
+        scopeValue: scope.scopeValue,
+        items: { create: keys.map((key) => ({ key })) },
+      },
+      select: GROUP_SELECT,
+    });
+    await tx.permissionAudit.create({
+      data: auditData(
+        actor,
+        current.defaultRole ? 'update-default' : 'update',
+        'group',
+        groupId,
+        before,
+        toGroupDto(row),
+      ),
+    });
+    return row;
+  });
+  return toGroupDto(updated);
+}
+
+export async function deleteGroup(actor: TokenPayload, groupId: string) {
+  const current = await prisma.permissionGroup.findUnique({ where: { id: groupId }, select: GROUP_SELECT });
+  if (!current) throw ApiError.notFound('权限组不存在');
+  await assertGrant(actor, { ...current, keys: current.items.map((item) => item.key) });
+  if (current.builtin) throw ApiError.badRequest('内置权限组不可删除');
+  // 删除最后一组会回落默认组；非管理员不能借删除制造额外授权。
+  if (actor.role !== 'ADMIN') throw ApiError.forbidden('删除组会改变成员默认权限，仅管理员可执行');
+  await prisma.$transaction(async (tx) => {
+    await tx.permissionGroup.delete({ where: { id: groupId } });
+    await tx.permissionAudit.create({
+      data: auditData(actor, 'delete', 'group', groupId, toGroupDto(current), null),
+    });
+  });
+  return { id: groupId };
+}
+
+/** 组和成员各预取一次，账号数增长不会增加权限查询次数。 */
+export async function listMembers(): Promise<PermissionMemberDto[]> {
+  await ensureDefaultGroups();
+  const [rows, groups] = await Promise.all([
+    prisma.user.findMany({
+      where: { role: { in: ['ADMIN', 'TEACHER'] } },
+      select: MEMBER_SELECT,
+      orderBy: [{ role: 'asc' }, { name: 'asc' }],
+    }),
+    prisma.permissionGroup.findMany({ include: { items: true } }),
+  ]);
+  return rows.map((row) => {
+    const groupIds = row.permissionGroups.map((link) => link.groupId);
+    const effective = groups.filter((group) =>
+      groupIds.length ? groupIds.includes(group.id) : group.defaultRole === row.role,
+    );
+    const permissions = normalizeKeys([
+      ...effective.flatMap((group) => group.items.map((item) => item.key)),
+      ...(row.role === 'ADMIN' ? ADMIN_UNREMOVABLE_PERMISSIONS : []),
+    ]);
+    return {
+      id: row.id,
+      username: row.username,
+      name: row.name,
+      role: row.role as UserRole,
+      groupIds,
+      permissions,
+      permissionCount: permissions.length,
+      scopeLabels: [...new Set(effective.map(scopeLabel))],
+    };
+  });
+}
+
+export async function groupMembers(groupId: string) {
+  const group = await prisma.permissionGroup.findUnique({ where: { id: groupId } });
+  if (!group) throw ApiError.notFound('权限组不存在');
+  return (await listMembers()).filter((member) =>
+    member.groupIds.length ? member.groupIds.includes(groupId) : member.role === group.defaultRole,
+  );
+}
+
+export async function assignUserGroups(
+  actor: TokenPayload,
+  userId: string,
+  input: AssignUserGroupsRequest,
+): Promise<PermissionMemberDto> {
+  await assertPermission(actor, 'permission:manage');
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: MEMBER_SELECT });
+  if (!user || !['ADMIN', 'TEACHER'].includes(user.role)) throw ApiError.notFound('员工账号不存在');
+  const ids = [...new Set(input.groupIds)];
+  const groups = await prisma.permissionGroup.findMany({
+    where: ids.length ? { id: { in: ids } } : { defaultRole: user.role },
+    include: { items: true },
+  });
+  if (ids.length && groups.length !== ids.length) throw ApiError.badRequest('部分权限组不存在');
+  for (const group of groups) {
+    if (group.defaultRole && group.defaultRole !== user.role)
+      throw ApiError.forbidden('默认组只能分配给同角色账号');
+    // 同角色默认组可显式选中，但仍检查范围与键的授权能力。
+    await assertGrant(actor, { ...group, defaultRole: null, keys: group.items.map((item) => item.key) });
+  }
+  if (actor.role !== 'ADMIN' && user.role === 'ADMIN') throw ApiError.forbidden('非管理员不能更改管理员分组');
+  const before = (await listMembers()).find((member) => member.id === userId)!;
+  await prisma.$transaction(async (tx) => {
+    await tx.userPermissionGroup.deleteMany({ where: { userId } });
+    if (ids.length)
+      await tx.userPermissionGroup.createMany({ data: ids.map((groupId) => ({ userId, groupId })) });
+    await tx.permissionAudit.create({
+      data: auditData(actor, 'assign', 'user', userId, before, {
+        groupIds: ids,
+        permissions: normalizeKeys([
+          ...groups.flatMap((group) => group.items.map((item) => item.key)),
+          ...(user.role === 'ADMIN' ? ADMIN_UNREMOVABLE_PERMISSIONS : []),
+        ]),
+      }),
+    });
+  });
+  return (await listMembers()).find((member) => member.id === userId)!;
+}
+
+export async function listAudits(page = 1, pageSize = 30) {
+  const [items, total] = await Promise.all([
+    prisma.permissionAudit.findMany({
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.permissionAudit.count(),
+  ]);
+  return { items, total, page, pageSize };
 }
 
 /** GET /api/permissions/catalog - 权限键目录（权限页整棵勾选树都按它渲染） */
@@ -150,213 +396,13 @@ export async function listGroups(): Promise<PermissionGroupDto[]> {
     select: GROUP_SELECT,
     orderBy: [{ builtin: 'desc' }, { createdAt: 'asc' }],
   });
-  return (rows as GroupRow[]).map(toGroupDto);
-}
-
-export async function createGroup(input: CreatePermissionGroupRequest): Promise<PermissionGroupDto> {
-  const name = input.name.trim();
-  const sameName = await prisma.permissionGroup.findUnique({ where: { name }, select: { id: true } });
-  if (sameName) throw ApiError.conflict(`已存在名为「${name}」的权限组`);
-
-  const keys = normalizeKeys(input.keys);
-  const created = await prisma.permissionGroup.create({
-    data: {
-      name,
-      scope: input.scope ?? 'SELF_CLASS',
-      scopeValue: input.scopeValue ?? '',
-      description: input.description?.trim() ?? '',
-      items: { create: keys.map((key) => ({ key })) },
-    },
-    select: GROUP_SELECT,
-  });
-  logger.info(`新建权限组「${name}」（${keys.length} 个权限键）`);
-  return toGroupDto(created as GroupRow);
-}
-
-export async function updateGroup(
-  groupId: string,
-  input: UpdatePermissionGroupRequest,
-): Promise<PermissionGroupDto> {
-  const current = await prisma.permissionGroup.findUnique({
-    where: { id: groupId },
-    select: { id: true, name: true },
-  });
-  if (!current) throw ApiError.notFound('权限组不存在');
-
-  const name = input.name?.trim();
-  if (name && name !== current.name) {
-    const sameName = await prisma.permissionGroup.findUnique({ where: { name }, select: { id: true } });
-    if (sameName) throw ApiError.conflict(`已存在名为「${name}」的权限组`);
-  }
-
-  const keys = input.keys ? normalizeKeys(input.keys) : null;
-
-  await prisma.$transaction(async (tx) => {
-    await tx.permissionGroup.update({
-      where: { id: groupId },
-      data: {
-        ...(name ? { name } : {}),
-        ...(input.scope ? { scope: input.scope } : {}),
-        ...(input.scopeValue !== undefined ? { scopeValue: input.scopeValue } : {}),
-        ...(input.description !== undefined ? { description: input.description.trim() } : {}),
-      },
-    });
-    // 键是整体替换：先清后建。漏传某个键就等于"取消勾选"，不会留下幽灵权限。
-    if (keys) {
-      await tx.permissionGroupItem.deleteMany({ where: { groupId } });
-      if (keys.length > 0) {
-        await tx.permissionGroupItem.createMany({ data: keys.map((key) => ({ groupId, key })) });
-      }
-    }
-  });
-
-  const updated = await prisma.permissionGroup.findUniqueOrThrow({
-    where: { id: groupId },
-    select: GROUP_SELECT,
-  });
-  logger.info(
-    `更新权限组「${(updated as GroupRow).name}」（${keys ? `权限键 ${keys.length} 个` : '未改权限键'}）`,
-  );
-  return toGroupDto(updated as GroupRow);
-}
-
-export async function deleteGroup(groupId: string): Promise<{ id: string }> {
-  const current = await prisma.permissionGroup.findUnique({
-    where: { id: groupId },
-    select: { id: true, name: true, builtin: true, _count: { select: { users: true } } },
-  });
-  if (!current) throw ApiError.notFound('权限组不存在');
-  if (current.builtin) {
-    throw ApiError.badRequest(`「${current.name}」是内置权限组，不能删除（可以改名或调整里面的权限）`);
-  }
-
-  // 键与成员关系都是 onDelete: Cascade，直接删组即可；
-  // 组内成员随后"没有任何分组"，会回落角色默认模板（不会变成空权限）。
-  await prisma.permissionGroup.delete({ where: { id: groupId } });
-  logger.info(`删除权限组「${current.name}」（原成员 ${current._count.users} 个，已回到角色默认权限）`);
-  return { id: groupId };
-}
-
-/** 把一行 User（含分组关联）转成权限页用的成员 DTO */
-function toMemberDto(row: MemberRow, keysOfGroup: Map<string, PermissionKey[]>): PermissionMemberDto {
-  const groupIds = row.permissionGroups.map((link) => link.groupId);
-  const union = new Set<PermissionKey>();
-  for (const groupId of groupIds) for (const key of keysOfGroup.get(groupId) ?? []) union.add(key);
-
-  const role = row.role as UserRole;
-  const permissionCount =
-    role === 'ADMIN'
-      ? PERMISSION_KEYS.length
-      : groupIds.length === 0
-        ? ROLE_DEFAULT_PERMISSIONS[role].length
-        : union.size;
-
-  return {
-    id: row.id,
-    username: row.username,
-    name: row.name,
-    role,
-    groupIds,
-    permissionCount,
-    fixed: false,
-  };
-}
-
-/** GET /api/permissions/users - 成员列表（管理员/教师账号；班级端账号不参与权限组） */
-export async function listMembers(): Promise<PermissionMemberDto[]> {
-  const [rows, groups] = await Promise.all([
-    prisma.user.findMany({
-      where: { role: { in: ['ADMIN', 'TEACHER'] } },
-      select: MEMBER_SELECT,
-      orderBy: [{ role: 'asc' }, { name: 'asc' }],
-    }),
-    prisma.permissionGroup.findMany({ select: { id: true, items: { select: { key: true } } } }),
-  ]);
-
-  const keysOfGroup = new Map<string, PermissionKey[]>(
-    groups.map((group) => [
-      group.id,
-      group.items
-        .map((item) => item.key)
-        .filter(knownKey)
-        .sort(byCatalogOrder),
-    ]),
-  );
-
-  return Promise.all(
-    (rows as MemberRow[]).map(async (row) => ({
-      ...toMemberDto(row, keysOfGroup),
-      permissionCount: (
-        await loadEffectivePermissions({
-          sub: row.id,
-          role: row.role as UserRole,
-          username: row.username,
-          name: row.name,
-          classId: null,
-        })
-      ).size,
-    })),
-  );
-}
-
-/** PUT /api/permissions/users/:id/groups - 整体替换某账号的权限组 */
-export async function assignUserGroups(
-  userId: string,
-  input: AssignUserGroupsRequest,
-): Promise<PermissionMemberDto> {
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: MEMBER_SELECT });
-  if (!user) throw ApiError.notFound('账号不存在');
-
-  const row = user as MemberRow;
-  if (row.role === 'CLASS_DEVICE') {
-    throw ApiError.badRequest(
-      'ClassHelper 班级端账号的能力由"班级内角色"决定（见权限矩阵），不参与权限组分配',
-    );
-  }
-
-  const groupIds = [...new Set(input.groupIds)];
-  if (groupIds.length > 0) {
-    const found = await prisma.permissionGroup.count({ where: { id: { in: groupIds } } });
-    if (found !== groupIds.length) throw ApiError.badRequest('有权限组不存在，请刷新后重试');
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.userPermissionGroup.deleteMany({ where: { userId } });
-    if (groupIds.length > 0) {
-      await tx.userPermissionGroup.createMany({
-        data: groupIds.map((groupId) => ({ userId, groupId })),
-      });
-    }
-  });
-
-  logger.info(
-    `分配权限组：${row.username} → ${groupIds.length > 0 ? `${groupIds.length} 个组` : '角色默认模板'}`,
-  );
-
-  const groups = await prisma.permissionGroup.findMany({
-    select: { id: true, items: { select: { key: true } } },
-  });
-  const keysOfGroup = new Map<string, PermissionKey[]>(
-    groups.map((group) => [
-      group.id,
-      group.items
-        .map((item) => item.key)
-        .filter(knownKey)
-        .sort(byCatalogOrder),
-    ]),
-  );
-  return {
-    ...toMemberDto({ ...row, permissionGroups: groupIds.map((groupId) => ({ groupId })) }, keysOfGroup),
-    permissionCount: (
-      await loadEffectivePermissions({
-        sub: row.id,
-        role: row.role as UserRole,
-        username: row.username,
-        name: row.name,
-        classId: null,
-      })
-    ).size,
-  };
+  const members = await listMembers();
+  return (rows as GroupRow[]).map((row) => ({
+    ...toGroupDto(row),
+    memberCount: members.filter((m) =>
+      m.groupIds.length ? m.groupIds.includes(row.id) : row.defaultRole === m.role,
+    ).length,
+  }));
 }
 
 /**

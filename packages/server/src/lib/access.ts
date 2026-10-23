@@ -1,7 +1,5 @@
 import type { PermissionKey as ContractPermissionKey } from '@classhelper/shared';
 import {
-  canAssignTeachers,
-  canManageClasses,
   canManageGrades,
   canManageRoster,
   canManageSchedule,
@@ -13,6 +11,8 @@ import {
 import { teacherScopeWhere } from './permission-scope.js';
 import { prisma } from './db.js';
 import { ApiError } from './http.js';
+import { assertPermission, currentRequestPermission } from './permissions.js';
+import { hasAllScope } from './permission-scope.js';
 import type { TokenPayload } from './jwt.js';
 
 /**
@@ -55,6 +55,14 @@ export function isClassDevice(user: TokenPayload): boolean {
   return user.role === 'CLASS_DEVICE';
 }
 
+/** 班级端代录内容归属班主任账号，班级主体不能写入 User 外键。 */
+export async function resolveContentCreator(user: TokenPayload, classId: string) {
+  if (!isClassDevice(user)) return user.sub;
+  const record = await prisma.class.findUnique({ where: { id: classId }, select: { teacherId: true } });
+  if (!record?.teacherId) throw ApiError.conflict('请先为班级配置班主任，再在班级端发布内容');
+  return record.teacherId;
+}
+
 /** ClassHelper 班级端绑定的班级 id；不是班级端会话时返回 null */
 export function classDeviceClassId(user: TokenPayload): string | null {
   return isClassDevice(user) ? (user.classId ?? user.sub) : null;
@@ -88,11 +96,15 @@ export async function getAccessibleClassIds(
   return classId ? [classId] : [];
 }
 
-export async function canAccessClass(user: TokenPayload, classId: string): Promise<boolean> {
+export async function canAccessClass(
+  user: TokenPayload,
+  classId: string,
+  permission?: ContractPermissionKey,
+): Promise<boolean> {
   if (isAdmin(user)) return true;
   if (isTeacher(user)) {
     const count = await prisma.class.count({
-      where: { AND: [{ id: classId }, await teacherScopeWhere(user)] },
+      where: { AND: [{ id: classId }, await teacherScopeWhere(user, permission)] },
     });
     return count > 0;
   }
@@ -100,10 +112,14 @@ export async function canAccessClass(user: TokenPayload, classId: string): Promi
 }
 
 /** 读权限断言 */
-export async function assertClassAccess(user: TokenPayload, classId: string): Promise<void> {
+export async function assertClassAccess(
+  user: TokenPayload,
+  classId: string,
+  permission?: ContractPermissionKey,
+): Promise<void> {
   const exists = await prisma.class.findUnique({ where: { id: classId }, select: { id: true } });
   if (!exists) throw ApiError.notFound('班级不存在');
-  if (!(await canAccessClass(user, classId))) throw ApiError.forbidden('无权访问该班级的数据');
+  if (!(await canAccessClass(user, classId, permission))) throw ApiError.forbidden('无权访问该班级的数据');
 }
 
 /** 写权限断言：无账号的学生不在会话里，因此这里只放行 staff 与 ClassHelper 班级端 */
@@ -135,17 +151,38 @@ export async function resolveUserClassRole(user: TokenPayload, classId: string):
 }
 
 /** 班级本身（增删改）与人员分配：仅管理员 */
-export function assertCanManageClasses(user: TokenPayload): void {
-  if (!canManageClasses(user.role)) {
-    throw ApiError.forbidden('只有管理员可以创建、修改或删除班级');
-  }
+export async function assertCanManageClasses(user: TokenPayload, classId?: string): Promise<void> {
+  await assertPermission(user, 'class:manage');
+  if (classId) await assertClassInScope(user, classId, 'class:manage');
+  else if (!(await hasAllScope(user, 'class:manage'))) throw ApiError.forbidden('创建或删除班级需要全校范围');
+  if (
+    classId &&
+    (await prisma.class.findUnique({ where: { id: classId }, select: { archivedYearId: true } }))
+      ?.archivedYearId
+  )
+    throw ApiError.conflict('该班级已归档，请先撤销归档');
+}
+
+export async function assertGlobalPermission(user: TokenPayload, key: ContractPermissionKey) {
+  await assertPermission(user, key);
+  if (!(await hasAllScope(user, key))) throw ApiError.forbidden('此操作影响全校，需要对应功能的全校范围');
 }
 
 /** 班主任 / 各科科任老师的分配：仅管理员 */
-export function assertCanAssignTeachers(user: TokenPayload): void {
-  if (!canAssignTeachers(user.role)) {
-    throw ApiError.forbidden('只有管理员可以分配班主任与各科科任老师');
-  }
+export async function assertCanAssignTeachers(user: TokenPayload, classId?: string): Promise<void> {
+  await assertCanManageClasses(user, classId);
+}
+
+export async function assertClassInScope(user: TokenPayload, classId: string, key: ContractPermissionKey) {
+  await assertPermission(user, key);
+  if (isAdmin(user)) return;
+  const count = await prisma.class.count({
+    where: { AND: [{ id: classId }, await teacherScopeWhere(user, key)] },
+  });
+  if (!count) throw ApiError.forbidden('目标班级不在此功能的授权范围内');
+}
+export async function assertClassesInScope(user: TokenPayload, ids: string[], key: ContractPermissionKey) {
+  for (const id of new Set(ids)) await assertClassInScope(user, id, key);
 }
 
 /**
@@ -154,11 +191,14 @@ export function assertCanAssignTeachers(user: TokenPayload): void {
  * @param classId 目标班级；不传表示"全局名单操作"（例如未分班的学生），此时仅管理员
  */
 export async function assertCanManageRoster(user: TokenPayload, classId?: string): Promise<void> {
+  await assertPermission(user, 'roster:manage');
   if (!classId) {
-    if (!isAdmin(user)) throw ApiError.forbidden('该操作需要指定班级，只有管理员可以全局执行');
+    if (!(await hasAllScope(user, 'roster:manage')))
+      throw ApiError.forbidden('未分班学生操作需要全校名单范围');
     return;
   }
-  await assertClassAccess(user, classId);
+  await assertClassInScope(user, classId, 'roster:manage');
+  if (await hasAllScope(user, 'roster:manage')) return;
   const classRole = await resolveUserClassRole(user, classId);
   if (!canManageRoster(classRole)) {
     throw ApiError.forbidden(
@@ -180,6 +220,17 @@ export async function assertCanManageSchedule(user: TokenPayload, classId: strin
         : '无权管理该班级的课表',
     );
   }
+}
+
+/** 导入需同时覆盖导入能力和对应写能力，范围不能从另一项能力借用。 */
+export async function assertCanImportSchedule(
+  user: TokenPayload,
+  classId: string,
+  writeKey: ContractPermissionKey = 'schedule:write',
+): Promise<void> {
+  await assertClassInScope(user, classId, 'import:schedule');
+  await assertClassInScope(user, classId, writeKey);
+  await assertCanManageSchedule(user, classId);
 }
 
 /** 通知 / 叫人：管理员、班主任、科任老师、ClassHelper 班级端（面向全班，不分科目） */
@@ -298,10 +349,13 @@ export async function resolveClassScope(
   permission?: ContractPermissionKey,
 ): Promise<ClassScope> {
   if (requestedClassId) {
-    await assertClassAccess(user, requestedClassId);
+    await assertClassAccess(user, requestedClassId, permission);
     return { mode: 'in', classIds: [requestedClassId] };
   }
   if (isAdmin(user)) return { mode: 'all' };
+  const scopePermission = permission ?? currentRequestPermission(user);
+  if (isTeacher(user) && scopePermission && (await hasAllScope(user, scopePermission)))
+    return { mode: 'all' };
 
   const classIds = await getAccessibleClassIds(user, permission);
   // 没有任何班级时不抛错，返回空集合让列表接口给出空数组，避免新教师首次登录报错

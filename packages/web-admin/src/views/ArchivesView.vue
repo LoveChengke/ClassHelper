@@ -85,7 +85,7 @@ async function openContent(row: ArchivedClassDto): Promise<void> {
 async function undo(row: ArchivedYearDto): Promise<void> {
   await ElMessageBox.confirm(
     `撤销「${row.name}」的毕业归档？\n` +
-      '该届班级会回到在读列表、毕业学生会恢复为在读；作业、通知与成绩一条都不会被删除。',
+      '仅撤销归档标记：毕业学生恢复在读，转出和停用状态保留。不回滚年级、不删除新班、不恢复已清空周次；完整回滚需手工恢复快照。',
     '撤销归档',
     { type: 'warning', confirmButtonText: '确认撤销' },
   );
@@ -154,6 +154,7 @@ onMounted(loadYears);
         <el-table-column label="毕业生" width="90">
           <template #default="{ row }">{{ row.studentCount }}</template>
         </el-table-column>
+        <el-table-column prop="inactiveCount" label="停用学生" width="100" />
         <el-table-column label="转出学生" width="100">
           <template #default="{ row }">{{ row.transferredCount }}</template>
         </el-table-column>
@@ -187,6 +188,10 @@ onMounted(loadYears);
           :title="detail.note"
         />
 
+        <p v-if="detail">
+          有转入记录 {{ detail.transferInCount }} 人 · 转出 {{ detail.transferred.length }} 人 · 停用
+          {{ detail.inactive.length }} 人
+        </p>
         <el-tabs v-model="activeTab">
           <el-tab-pane label="班级" name="classes">
             <el-table :data="detail?.classes ?? []" size="small" class="mt-12" empty-text="该届没有班级">
@@ -245,6 +250,13 @@ onMounted(loadYears);
                 <template #default="{ row }">{{ formatDate(row.transferredAt, true) }}</template>
               </el-table-column>
               <el-table-column prop="transferNote" label="去向 / 备注" show-overflow-tooltip />
+            </el-table>
+          </el-tab-pane>
+          <el-tab-pane :label="`停用学生（${detail?.inactive.length ?? 0}）`" name="inactive">
+            <el-table :data="detail?.inactive ?? []">
+              <el-table-column prop="studentNo" label="学号" />
+              <el-table-column prop="name" label="姓名" />
+              <el-table-column prop="className" label="原班级" />
             </el-table>
           </el-tab-pane>
         </el-tabs>

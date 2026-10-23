@@ -121,14 +121,21 @@ model StudentClassTransfer {
   /// 操作人（User.id）；账号被删后留空，姓名快照保留
   operatorId    String?
   operatorName  String   @default("")
-  /// single = 单个调班 / batch = 批量调班 / transfer-out = 转出（离开本校）
-  mode          String   @default("single")
+  /// 生命周期类型；旧 mode 仅在 DTO 中派生兼容
+  kind          String   @default("class-change")
+  batchId       String   @default("")
+  academicYear  Int?
+  fromGrade     String   @default("")
+  toGrade       String   @default("")
+  fromSchool    String   @default("")
+  toSchool      String   @default("")
   note          String   @default("")
   createdAt     DateTime @default(now())
 
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@index([studentId, createdAt])
+  @@index([batchId])
   @@index([createdAt])
 }
 
@@ -157,6 +164,7 @@ model ArchivedYear {
   classCount        Int @default(0)
   studentCount      Int @default(0)
   transferredCount  Int @default(0)
+  inactiveCount     Int @default(0)
   homeworkCount     Int @default(0)
   notificationCount Int @default(0)
   archivedAt     DateTime @default(now())
@@ -717,11 +725,31 @@ model PromotionRun {
   year Int @id
   status String
   snapshotPath String @default("")
+  operatorId String?
+  operatorName String @default("")
+  detailsJson String @default("{}")
+  snapshotSha256 String @default("")
+  error String @default("")
   message String @default("")
   classCount Int @default(0)
   studentCount Int @default(0)
   createdAt DateTime @default(now())
   finishedAt DateTime?
+}
+
+/// 权限变更与人工升级审计；不建账号外键，删除账号后仍保留操作人快照。
+model PermissionAudit {
+  id String @id @default(cuid())
+  actorId String
+  actorName String
+  action String
+  targetType String
+  targetId String
+  beforeJson String @default("{}")
+  afterJson String @default("{}")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }
 /// 课件只在完整接收并计算摘要后入库；存储路径不对客户端暴露。
 model Courseware {

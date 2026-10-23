@@ -58,13 +58,13 @@ const routes: RouteRecordRaw[] = [
         path: 'classes',
         name: 'classes',
         component: () => import('@/views/ClassesView.vue'),
-        meta: { title: '班级管理', icon: 'School', roles: ['ADMIN'] },
+        meta: { title: '班级管理', icon: 'School', permission: 'class:read' },
       },
       {
         path: 'students',
         name: 'students',
         component: () => import('@/views/StudentsView.vue'),
-        meta: { title: '学生管理', icon: 'User', roles: ['ADMIN'] },
+        meta: { title: '学生管理', icon: 'User', permission: 'roster:read' },
       },
       {
         path: 'teachers',
@@ -77,14 +77,20 @@ const routes: RouteRecordRaw[] = [
         name: 'term-weeks',
         component: () => import('@/views/TermWeeksView.vue'),
         // 改周次会让全校/某班的课表口径整体变化，与「班级管理」同一档权限
-        meta: { title: '学期周次', icon: 'Calendar', roles: ['ADMIN'] },
+        meta: { title: '学期周次', icon: 'Calendar', permission: 'term:read' },
+      },
+      {
+        path: 'promotion',
+        name: 'promotion',
+        component: () => import('@/components/PromotionSettings.vue'),
+        meta: { title: '学年升级', icon: 'Calendar', permission: 'promotion:manage' },
       },
       {
         path: 'archives',
         name: 'archives',
         component: () => import('@/views/ArchivesView.vue'),
         // 毕业归档会改动整届班级与学生的状态，与「班级管理」同一档权限
-        meta: { title: '毕业归档', icon: 'FolderOpened', roles: ['ADMIN'] },
+        meta: { title: '毕业归档', icon: 'FolderOpened', permission: 'archive:manage' },
       },
       {
         path: 'schedules',

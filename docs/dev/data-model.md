@@ -10,42 +10,43 @@ description: 现行模型职责、迁移与快照边界。
 
 ## 模型职责
 
-| 模型                   | 职责                                               |
-| ---------------------- | -------------------------------------------------- |
-| `User`                 | 教师与管理员账号；学生不在此表，班级凭据在 Class   |
-| `Student`              | 学生名单、学号、在读/转出/毕业状态，无密码和角色   |
-| `StudentClassTransfer` | 调班与转出历史，保留班级/姓名快照                  |
-| `ArchivedYear`         | 毕业届别与统计快照                                 |
-| `TermWeek`             | 逐周日期区间，classId 空串为全校默认               |
-| `Class`                | 班级、班级码/密码、班主任、周数与成绩查询开关      |
-| `Course`               | 班级+科目+教师任课关系，含简称和室外标记           |
-| `Schedule`             | 旧课表迁移审计来源，现行接口不再以它为业务真值     |
-| `Homework`             | 作业与本地 assignDate；dueAt 为遗留列              |
-| `HomeworkStatus`       | 按 studentId 记录作业完成状态                      |
-| `Notification`         | 通知/叫人记录、优先级与本地 assignDate             |
-| `NotificationRead`     | 按 studentId 记录已读                              |
-| `TimeLayout`           | 共享或班级自有时间表；旧 items JSON 保留迁移审计   |
-| `Grade`                | studentId、课程、考试、分数和等级                  |
-| `PermissionGroup`      | 默认/自定义/岗位组及 scope/scopeValue              |
-| `PermissionGroupItem`  | 组内权限键                                         |
-| `UserPermissionGroup`  | 账号与组的多对多分配                               |
-| `AppSetting`           | 周次、升级、AI 和系统设置                          |
-| `ClientDevice`         | deviceKey、心跳、更新目标与状态                    |
-| `ClientCommand`        | 白名单远控、有效期与执行回执                       |
-| `ClientRelease`        | 服务端缓存安装包、SHA256 与大小                    |
-| `AiAudit`              | 助手解析审计，不保存 API Key                       |
-| `Exam`                 | 考试名称与是否计入总分                             |
-| `TimeLayoutItem`       | 有序时间点及类型，被课程显式引用                   |
-| `ClassPlanGroup`       | 班级课表群组、全局/默认标记                        |
-| `ClassPlan`            | 日课表、时间表、轮换、启用与临时层规则             |
-| `ClassPlanEntry`       | 日课表与时间点、课程的外键关联、空课/停用/换课标记 |
-| `ScheduledClassPlan`   | 按本地日期预定日课表                               |
-| `PromotionRun`         | 年度升级幂等与审计                                 |
-| `Courseware`           | 文件元数据、上传教师、存储路径与 SHA256            |
-| `CoursewareFolder`     | 教师自建分类目录，按上传者隔离                     |
-| `CoursewareVisibility` | 课件可见班级                                       |
-| `CoursewarePush`       | 按班级的推送任务                                   |
-| `CoursewareReceipt`    | 按设备的课件接收回执                               |
+| 模型                   | 职责                                                |
+| ---------------------- | --------------------------------------------------- |
+| `User`                 | 教师与管理员账号；学生不在此表，班级凭据在 Class    |
+| `Student`              | 学生名单、学号、在读/转出/毕业状态，无密码和角色    |
+| `StudentClassTransfer` | 生命周期历史，kind/batchId/学年/班级年级及学校快照  |
+| `ArchivedYear`         | 毕业届别与统计快照                                  |
+| `TermWeek`             | 逐周日期区间，classId 空串为全校默认                |
+| `Class`                | 班级、班级码/密码、班主任、周数与成绩查询开关       |
+| `Course`               | 班级+科目+教师任课关系，含简称和室外标记            |
+| `Schedule`             | 旧课表迁移审计来源，现行接口不再以它为业务真值      |
+| `Homework`             | 作业与本地 assignDate；dueAt 为遗留列               |
+| `HomeworkStatus`       | 按 studentId 记录作业完成状态                       |
+| `Notification`         | 通知/叫人记录、优先级与本地 assignDate              |
+| `NotificationRead`     | 按 studentId 记录已读                               |
+| `TimeLayout`           | 共享或班级自有时间表；旧 items JSON 保留迁移审计    |
+| `Grade`                | studentId、课程、考试、分数和等级                   |
+| `PermissionAudit`      | 权限与人工升级审计，操作人和前后 JSON，不建账号外键 |
+| `PermissionGroup`      | 默认/自定义/岗位组及 scope/scopeValue               |
+| `PermissionGroupItem`  | 组内权限键                                          |
+| `UserPermissionGroup`  | 账号与组的多对多分配                                |
+| `AppSetting`           | 周次、升级、AI 和系统设置                           |
+| `ClientDevice`         | deviceKey、心跳、更新目标与状态                     |
+| `ClientCommand`        | 白名单远控、有效期与执行回执                        |
+| `ClientRelease`        | 服务端缓存安装包、SHA256 与大小                     |
+| `AiAudit`              | 助手解析审计，不保存 API Key                        |
+| `Exam`                 | 考试名称与是否计入总分                              |
+| `TimeLayoutItem`       | 有序时间点及类型，被课程显式引用                    |
+| `ClassPlanGroup`       | 班级课表群组、全局/默认标记                         |
+| `ClassPlan`            | 日课表、时间表、轮换、启用与临时层规则              |
+| `ClassPlanEntry`       | 日课表与时间点、课程的外键关联、空课/停用/换课标记  |
+| `ScheduledClassPlan`   | 按本地日期预定日课表                                |
+| `PromotionRun`         | 年度升级幂等与审计                                  |
+| `Courseware`           | 文件元数据、上传教师、存储路径与 SHA256             |
+| `CoursewareFolder`     | 教师自建分类目录，按上传者隔离                      |
+| `CoursewareVisibility` | 课件可见班级                                        |
+| `CoursewarePush`       | 按班级的推送任务                                    |
+| `CoursewareReceipt`    | 按设备的课件接收回执                                |
 
 学生和账号分离：Student 没有密码/角色；教师/管理员存 User，CLASS_DEVICE 只是 Class 登录形成的会话。
 任课关系只在 Course；班主任关系在 Class.teacherId，可以与任课关系指向同一账号。
@@ -73,3 +74,14 @@ User.careMode 是预留列；当前 Web 偏好在 localStorage，客户端偏好
 2. 核对外键级联与删除护栏，特别是教师的班级、课程、作业、通知和课件。
 3. 在临时库验证新建和旧库升级；不对真实业务库运行 seed/reset。
 4. 重新生成 Prisma Client，并按修改范围执行[验收](testing.md)。
+
+## 权限与生命周期迁移
+
+`20261023000000_promotion_permission` 为已初始化的 ADMIN 默认组补 promotion:manage；默认组尚未创建时允许不插入，由运行时模板创建。
+`20261023010000_student_lifecycle_audit` 增加 PermissionAudit、StudentClassTransfer 的批次/学年/班级年级/学校快照、ArchivedYear.inactiveCount、PromotionRun 的操作人/明细/摘要/错误。
+旧 mode 按 single/batch → class-change、transfer-out → transfer-out、restore-transfer → restore 迁移后删除该列，避免双事实源。
+旧行的新字符串为空，学年为空，统计默认零；不臆造无法恢复的历史年级或批次。
+
+SNAPSHOT_TABLES 已加入 PermissionAudit，新增字段随模型导出。旧快照没有审计表可恢复为空，旧历史 mode 在恢复时转为 kind；
+没有新增列的旧行使用 schema 默认值。执行记录与升级快照不自动清理。
+升级计划存 AppSetting.term.promotionPlan，时间存 term.promotionAt，无需新增学校或学生账号模型。

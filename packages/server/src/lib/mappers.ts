@@ -458,7 +458,13 @@ export interface StudentTransferLike {
   toClassName: string;
   operatorId: string | null;
   operatorName: string;
-  mode: string;
+  kind: string;
+  batchId: string;
+  academicYear: number | null;
+  fromGrade: string;
+  toGrade: string;
+  fromSchool: string;
+  toSchool: string;
   note?: string | null;
   createdAt: Date;
 }
@@ -475,7 +481,15 @@ export function toStudentTransferDto(item: StudentTransferLike): StudentTransfer
     toClassName: item.toClassName,
     operatorId: item.operatorId,
     operatorName: item.operatorName,
-    mode: item.mode as StudentTransferDto['mode'],
+    kind: item.kind as StudentTransferDto['kind'],
+    batchId: item.batchId,
+    academicYear: item.academicYear,
+    fromGrade: item.fromGrade,
+    toGrade: item.toGrade,
+    fromSchool: item.fromSchool,
+    toSchool: item.toSchool,
+    mode:
+      item.kind === 'transfer-out' ? 'transfer-out' : item.kind === 'restore' ? 'restore-transfer' : 'single',
     note: item.note ?? '',
     createdAt: toIso(item.createdAt),
   };
@@ -492,6 +506,7 @@ export interface ArchivedYearLike {
   classCount: number;
   studentCount: number;
   transferredCount: number;
+  inactiveCount: number;
   homeworkCount: number;
   notificationCount: number;
   archivedAt: Date;
@@ -509,6 +524,7 @@ export function toArchivedYearDto(item: ArchivedYearLike): ArchivedYearDto {
     classCount: item.classCount,
     studentCount: item.studentCount,
     transferredCount: item.transferredCount,
+    inactiveCount: item.inactiveCount,
     homeworkCount: item.homeworkCount,
     notificationCount: item.notificationCount,
     archivedAt: toIso(item.archivedAt),

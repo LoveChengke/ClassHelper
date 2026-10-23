@@ -8,7 +8,9 @@ const dir = path.join(root, '.cache', 'v14-verification', `run-${process.pid}-${
 fs.mkdirSync(dir, { recursive: true });
 const env = {
   ...process.env,
+  NODE_ENV: 'test',
   DATABASE_PROVIDER: 'sqlite',
+  JWT_SECRET: 'v14-isolated-verification-secret-2026',
   DATABASE_URL: `file:${path.join(dir, 'test.db').replaceAll('\\', '/')}`,
   TZ: 'Asia/Shanghai',
   RATE_LIMIT_ENABLED: 'false',

@@ -1,3 +1,7 @@
+import { assertPermission } from '../../lib/permissions.js';
+import { assertCanManageRoster, assertCanAssignTeachers, assertClassAccess } from '../../lib/access.js';
+import { addStudent } from '../classes/classes.service.js';
+import { updateStudent } from '../students/students.service.js';
 import * as XLSX from 'xlsx';
 import { formatClassName, normalizeStudentNo, type TableImportKind } from '@classhelper/shared';
 import { activeStudentWhere, isActiveStudent } from '../../lib/students.js';
@@ -566,7 +570,7 @@ export async function commitStudents(user: TokenPayload, input: TableCommitInput
 
     const existing = await prisma.student.findUnique({
       where: { studentNo },
-      select: { id: true, classId: true, status: true },
+      select: { id: true, classId: true, status: true, archivedYearId: true },
     });
 
     if (existing && !isActiveStudent(existing))
@@ -576,40 +580,16 @@ export async function commitStudents(user: TokenPayload, input: TableCommitInput
         skipped += 1;
         continue;
       }
-      if (existing.classId !== classId) {
-        // 换班要留痕，与手动调班同一种历史
-        const [from, to] = await Promise.all([classNameOf(existing.classId), classNameOf(classId)]);
-        await prisma.studentClassTransfer.create({
-          data: {
-            studentId: existing.id,
-            studentNo,
-            studentName: name,
-            fromClassId: existing.classId,
-            fromClassName: from,
-            toClassId: classId,
-            toClassName: to,
-            operatorId: user.sub,
-            operatorName: user.name,
-            mode: 'batch',
-            note: '学生名单导入',
-          },
-        });
-      }
-      await prisma.student.update({
-        where: { id: existing.id },
-        data: {
-          name,
-          classId,
-          status: 'active',
-          ...(gender ? { gender } : {}),
-          ...(guardianPhone ? { guardianPhone } : {}),
-        },
+      if (existing.classId !== classId)
+        await addStudent(user, classId, { studentNo, name, gender, guardianPhone });
+      await updateStudent(user, existing.id, {
+        name,
+        ...(gender ? { gender } : {}),
+        ...(guardianPhone ? { guardianPhone } : {}),
       });
       updated += 1;
     } else {
-      await prisma.student.create({
-        data: { studentNo, name, classId, gender, guardianPhone },
-      });
+      await addStudent(user, classId, { studentNo, name, gender, guardianPhone });
       inserted += 1;
     }
   }
@@ -769,6 +749,7 @@ export async function commitClassTeachers(
       continue;
     }
 
+    await assertImportAllowed(user, targetClass.id, 'classTeachers');
     const role = parseClassTeacherRole(roleCell);
     if (!role) {
       errors.push({ row: rowNumber, message: `角色「${roleCell}」无法识别，请填「班主任」或「科任」` });
@@ -816,6 +797,8 @@ export async function commitClassTeachers(
         });
         continue;
       }
+      await assertPermission(user, 'teacher:manage');
+      await assertPermission(user, 'import:teachers');
       const created = await prisma.user.create({
         data: {
           username: teacherNo,
@@ -898,9 +881,21 @@ async function assertImportAllowed(
   classId: string | undefined,
   kind: 'grades' | 'students' | 'teachers' | 'classTeachers' | 'scheduleTimes',
 ): Promise<void> {
+  const key = {
+    students: 'import:students',
+    teachers: 'import:teachers',
+    grades: 'grade:import',
+    classTeachers: 'import:class-teachers',
+    scheduleTimes: 'import:schedule',
+  } as const;
+  await assertPermission(user, key[kind]);
+  if (classId) await assertClassAccess(user, classId, key[kind]);
+  if (kind === 'students') return assertCanManageRoster(user, classId);
+  if (kind === 'teachers') return assertPermission(user, 'teacher:manage');
+  if (kind === 'classTeachers') return assertCanAssignTeachers(user, classId);
   const classRole = classId ? await resolveUserClassRole(user, classId) : 'NONE';
   if (canImport(user.role, classRole, kind)) return;
-  if (kind === 'students' || kind === 'grades') {
+  if (kind === 'grades') {
     throw ApiError.forbidden(
       classRole === 'SUBJECT' || classRole === 'CLASS_DEVICE'
         ? '科任老师与 ClassHelper 班级端不能导入名单或成绩，请联系班主任或管理员'
@@ -908,12 +903,6 @@ async function assertImportAllowed(
     );
   }
   throw ApiError.forbidden('该导入仅限管理员使用');
-}
-
-async function classNameOf(classId: string | null): Promise<string> {
-  if (!classId) return '';
-  const record = await prisma.class.findUnique({ where: { id: classId }, select: { name: true } });
-  return record?.name ?? '';
 }
 
 /** 只接受明确的角色值；空值或未识别值保留原角色，避免意外降级。 */

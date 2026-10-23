@@ -1,6 +1,6 @@
 {
   "name": "classhelper-server-runtime",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "private": true,
   "type": "module",
   "description": "ClassHelper 服务端运行时（安装包 / 容器内置）",

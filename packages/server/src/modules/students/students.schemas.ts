@@ -23,22 +23,44 @@ export const listStudentsQuerySchema = z.object({
 
 // 学生只有「名单」没有「账号」：没有密码字段、没有角色字段，也不能登录。
 // 学号是学生的唯一标识与查询键，`studentNoSchema` 负责归一化与格式校验。
-export const createStudentSchema = z.object({
-  studentNo: studentNoSchema,
-  name: studentNameSchema,
-  classId: z.string().min(1).nullish(),
-  gender: studentGenderSchema,
-  guardianPhone: guardianPhoneSchema,
-  status: studentStatusSchema,
-});
+export const createStudentSchema = z
+  .object({
+    studentNo: studentNoSchema,
+    name: studentNameSchema,
+    classId: z.string().min(1).nullish(),
+    gender: studentGenderSchema,
+    guardianPhone: guardianPhoneSchema,
+    status: z.enum(['active', 'inactive']).optional(),
+  })
+  .strict();
 
-export const updateStudentSchema = z.object({
-  studentNo: studentNoSchema.optional(),
-  name: studentNameSchema.optional(),
-  classId: z.string().min(1).nullish(),
-  gender: studentGenderSchema,
-  guardianPhone: guardianPhoneSchema,
-  status: studentStatusSchema,
+export const updateStudentSchema = z
+  .object({
+    studentNo: studentNoSchema.optional(),
+    name: studentNameSchema.optional(),
+    gender: studentGenderSchema,
+    guardianPhone: guardianPhoneSchema,
+  })
+  .strict();
+
+export const transferInSchema = z
+  .object({
+    studentId: z.string().min(1).optional(),
+    studentNo: studentNoSchema.optional(),
+    name: studentNameSchema.optional(),
+    toClassId: z.string().min(1),
+    gender: studentGenderSchema,
+    guardianPhone: guardianPhoneSchema,
+    fromSchool: z.string().trim().max(200).optional(),
+    note: z.string().trim().max(200).optional(),
+  })
+  .strict();
+export const restoreStudentSchema = z
+  .object({ toClassId: z.string().min(1).optional(), note: z.string().trim().max(200).optional() })
+  .strict();
+export const deleteStudentQuerySchema = z.object({
+  hard: z.enum(['true', 'false']).optional(),
+  confirm: z.enum(['true', 'false']).optional(),
 });
 
 /**
@@ -49,17 +71,21 @@ export const updateStudentSchema = z.object({
 export const transferStudentsSchema = z.object({
   studentIds: z.array(z.string().min(1)).min(1, '请至少选择一名学生').max(500),
   toClassId: z.string().min(1).nullable(),
+  allowGradeChange: z.boolean().optional(),
   note: z.string().trim().max(200).optional(),
 });
 
 /** 转出（学籍离开本校，不是调班）：班级归属保留作历史 */
 export const transferOutStudentsSchema = z.object({
+  toSchool: z.string().trim().max(200).optional(),
   studentIds: z.array(z.string().min(1)).min(1, '请至少选择一名学生').max(500),
   note: z.string().trim().max(200).optional(),
 });
 
 /** 调班历史查询 */
 export const listTransfersQuerySchema = z.object({
+  batchId: z.string().optional(),
+  academicYear: z.coerce.number().int().optional(),
   studentId: z.string().min(1).optional(),
   classId: z.string().min(1).optional(),
   page: z.coerce.number().int().min(1).optional(),

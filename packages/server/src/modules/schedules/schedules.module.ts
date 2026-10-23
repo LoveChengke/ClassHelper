@@ -7,7 +7,12 @@ import { ApiError } from '../../lib/http.js';
 import { Router } from 'express';
 import { sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
+import {
+  authenticate,
+  getAuthUser,
+  requireStaffPermission,
+  requirePermission,
+} from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -23,21 +28,30 @@ import * as scheduleService from './schedules.service.js';
 
 const router = Router();
 router.use(authenticate());
-router.get('/active-week', validate({ query: gridQuerySchema }), async (req, res) =>
-  sendOk(res, await scheduleService.getActiveScheduleWeek(getAuthUser(req), validatedQuery(req))),
+router.get(
+  '/active-week',
+  requireStaffPermission('schedule:read'),
+  validate({ query: gridQuerySchema }),
+  async (req, res) =>
+    sendOk(res, await scheduleService.getActiveScheduleWeek(getAuthUser(req), validatedQuery(req))),
 );
-router.get('/scheduled', validate({ query: z.object({ classId: z.string().min(1) }) }), async (req, res) => {
-  const { classId } = validatedQuery<{ classId: string }>(req);
-  await assertClassAccess(getAuthUser(req), classId);
-  sendOk(
-    res,
-    await prisma.scheduledClassPlan.findMany({
-      where: { classId },
-      include: { plan: { select: { name: true, isOverlay: true } } },
-      orderBy: { date: 'asc' },
-    }),
-  );
-});
+router.get(
+  '/scheduled',
+  requireStaffPermission('schedule:read'),
+  validate({ query: z.object({ classId: z.string().min(1) }) }),
+  async (req, res) => {
+    const { classId } = validatedQuery<{ classId: string }>(req);
+    await assertClassAccess(getAuthUser(req), classId);
+    sendOk(
+      res,
+      await prisma.scheduledClassPlan.findMany({
+        where: { classId },
+        include: { plan: { select: { name: true, isOverlay: true } } },
+        orderBy: { date: 'asc' },
+      }),
+    );
+  },
+);
 router.delete(
   '/scheduled/:id',
   requirePermission('schedule:write'),
@@ -93,41 +107,56 @@ router.post(
 );
 
 /** GET /api/schedules?classId=&week=&dayOfWeek= - 课表列表 */
-router.get('/', validate({ query: listSchedulesQuerySchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const query = validatedQuery<{ classId?: string; week?: number; dayOfWeek?: number }>(req);
-  sendOk(res, await scheduleService.listSchedules(user, query), '获取课表成功');
-});
+router.get(
+  '/',
+  requireStaffPermission('schedule:read'),
+  validate({ query: listSchedulesQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const query = validatedQuery<{ classId?: string; week?: number; dayOfWeek?: number }>(req);
+    sendOk(res, await scheduleService.listSchedules(user, query), '获取课表成功');
+  },
+);
 
 /** GET /api/schedules/grid?classId=&week= - 周视图（7 列结构） */
-router.get('/grid', validate({ query: gridQuerySchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { classId, week } = validatedQuery<{ classId?: string; week?: number }>(req);
-  sendOk(
-    res,
-    await scheduleService.getScheduleGrid(user, {
-      classId,
-      // 不传 week 就取「本班口径」的当前周次（由 service 内按班级配置解析）
-      week,
-    }),
-    '获取周视图成功',
-  );
-});
+router.get(
+  '/grid',
+  requireStaffPermission('schedule:read'),
+  validate({ query: gridQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { classId, week } = validatedQuery<{ classId?: string; week?: number }>(req);
+    sendOk(
+      res,
+      await scheduleService.getScheduleGrid(user, {
+        classId,
+        // 不传 week 就取「本班口径」的当前周次（由 service 内按班级配置解析）
+        week,
+      }),
+      '获取周视图成功',
+    );
+  },
+);
 
 /**
  * GET /api/schedules/current?classId=&at= - 班级当前上课状态。
  * 客户端灵动岛（上课期间隐藏、下课后弹出）与 Web 端"上课时段发布紧急通知"
  * 的全屏二次确认都基于它；`at` 为诊断/联调用时间覆盖。
  */
-router.get('/current', validate({ query: classStatusQuerySchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { classId, at } = validatedQuery<{ classId?: string; at?: string }>(req);
-  const status = await scheduleService.getClassStatus(user, {
-    classId,
-    at: at ? new Date(at) : undefined,
-  });
-  sendOk(res, status, status.inClass ? '当前处于上课时间段' : '当前不在上课时间段');
-});
+router.get(
+  '/current',
+  requireStaffPermission('schedule:read'),
+  validate({ query: classStatusQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { classId, at } = validatedQuery<{ classId?: string; at?: string }>(req);
+    const status = await scheduleService.getClassStatus(user, {
+      classId,
+      at: at ? new Date(at) : undefined,
+    });
+    sendOk(res, status, status.inClass ? '当前处于上课时间段' : '当前不在上课时间段');
+  },
+);
 
 /** POST /api/schedules - 新增课表 */
 router.post(

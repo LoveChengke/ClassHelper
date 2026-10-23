@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs';
 /**
  * 端到端联调验证（对应验收标准）：
  *   1. 教师发布通知 -> ClassHelper 班级端 Socket.IO 5 秒内收到
@@ -1056,9 +1057,13 @@ async function main() {
     const studentCalls = await api('/calls', {
       method: 'POST',
       token: studentToken,
-      body: { classId, studentId: targetStudent?.id, quickPhrase: '学生不能叫人' },
+      body: { classId, studentId: targetStudent?.id, quickPhrase: '班级端代叫人' },
     });
-    record('学生调用叫人接口被拒绝（403）', studentCalls.status === 403, `status=${studentCalls.status}`);
+    record(
+      '班级端可为本班叫人（201）',
+      studentCalls.status === 201 && Boolean(studentCalls.payload?.data?.id),
+      `status=${studentCalls.status}`,
+    );
 
     const studentListAfterCall = await api('/notifications', { token: studentToken });
     const receivedCall = (studentListAfterCall.payload?.data ?? []).find(
@@ -1566,7 +1571,11 @@ async function main() {
     });
     record(
       '管理员可以分配权限组（PUT /users/:id/groups → 200）',
-      Boolean(adminMember) && assignAdmin.status === 200 && assignAdmin.payload?.data?.fixed === false,
+      Boolean(adminMember) &&
+        assignAdmin.status === 200 &&
+        Array.isArray(assignAdmin.payload?.data?.permissions) &&
+        assignAdmin.payload.data.permissions.includes('permission:manage') &&
+        assignAdmin.payload.data.permissions.includes('system:manage'),
       `status=${assignAdmin.status} 响应=${assignAdmin.payload?.message ?? ''}`,
     );
 
@@ -2035,9 +2044,13 @@ async function main() {
   const studentPublish = await api('/notifications', {
     method: 'POST',
     token: studentToken,
-    body: { classId, title: '学生越权发布', content: '不应成功' },
+    body: { classId, title: '班级端本班通知', content: '允许本班发布' },
   });
-  record('学生调用教师接口被拒绝（403）', studentPublish.status === 403, `status=${studentPublish.status}`);
+  record(
+    '班级端可发布本班通知（201）',
+    studentPublish.status === 201 && Boolean(studentPublish.payload?.data?.id),
+    `status=${studentPublish.status}`,
+  );
 
   const anonymous = await api('/classes');
   record('未登录访问被拒绝（401）', anonymous.status === 401, `status=${anonymous.status}`);
@@ -2098,8 +2111,8 @@ async function main() {
     token: teacherToken,
   });
   record(
-    '班主任下载名单模板被拒绝（403，名单仅管理员）',
-    teacherRosterTemplate.status === 403,
+    '有导入键的班主任可下载名单模板（200）',
+    teacherRosterTemplate.status === 200 && Boolean(teacherRosterTemplate.payload?.data?.content),
     `status=${teacherRosterTemplate.status}`,
   );
 
@@ -2581,11 +2594,12 @@ async function main() {
     },
   });
   record(
-    '班主任预览学生名单模板被拒绝（403，名单仅管理员）',
-    teacherRosterPreview.status === 403,
+    '有导入键的班主任可预览名单模板（200）',
+    teacherRosterPreview.status === 200 && Boolean(teacherRosterPreview.payload?.data),
     `status=${teacherRosterPreview.status}`,
   );
 
+  const teacherImportedNo = `T${Date.now()}`;
   const studentsByTeacher = await api('/imports/table/commit', {
     method: 'POST',
     token: teacherToken,
@@ -2593,15 +2607,41 @@ async function main() {
       kind: 'students',
       classId,
       fileName: 'students.csv',
-      contentBase64: Buffer.from(`\ufeff${studentsCsv}${NL}`, 'utf8').toString('base64'),
+      contentBase64: Buffer.from(
+        `\ufeff学号,姓名${NL}${teacherImportedNo},班主任导入学生${NL}`,
+        'utf8',
+      ).toString('base64'),
       mapping: { studentNo: '学号', name: '姓名' },
       mode: 'append',
     },
   });
   record(
-    '教师导入学生名单被拒绝（403）',
-    studentsByTeacher.status === 403,
+    '有导入键的班主任按范围导入本班名单（200）',
+    studentsByTeacher.status === 200 &&
+      studentsByTeacher.payload?.data?.failed === 0 &&
+      studentsByTeacher.payload?.data?.inserted === 1,
     `status=${studentsByTeacher.status}`,
+  );
+
+  const teacherImportedStudents = await api(`/students?classId=${classId}&keyword=${teacherImportedNo}`, {
+    token: adminToken,
+  });
+  const teacherImportedStudent = teacherImportedStudents.payload?.data?.find(
+    (item) => item.studentNo === teacherImportedNo,
+  );
+  if (teacherImportedStudent)
+    await api(`/students/${teacherImportedStudent.id}`, { method: 'DELETE', token: adminToken });
+  const teacherImportAfter = await api(
+    `/students?classId=${classId}&status=inactive&keyword=${teacherImportedNo}`,
+    { token: adminToken },
+  );
+  record(
+    '班主任导入夹具收尾：停用并保留历史，恢复原在读名单',
+    Boolean(
+      teacherImportAfter.payload?.data?.some(
+        (item) => item.studentNo === teacherImportedNo && item.status === 'inactive',
+      ),
+    ),
   );
 
   // 清理：删除导入产生的成绩、时间配置与学生，保持环境可重复验证
@@ -2725,9 +2765,13 @@ async function main() {
   const classPublish = await api('/notifications', {
     method: 'POST',
     token: classToken,
-    body: { classId, title: '班级账号越权发布', content: '不应成功' },
+    body: { classId, title: '班级账号本班发布', content: '允许本班发布' },
   });
-  record('班级账号发布通知被拒绝（403）', classPublish.status === 403, `status=${classPublish.status}`);
+  record(
+    '班级账号发布本班通知成功（201）',
+    classPublish.status === 201 && Boolean(classPublish.payload?.data?.id),
+    `status=${classPublish.status}`,
+  );
 
   const classGradesWrite = await api('/grades', {
     method: 'POST',
@@ -3201,44 +3245,11 @@ async function main() {
   // ---------------------------------------------------------------- 数据库管理（仅管理员）
   // 覆盖：状态 / 越权 403 / 连接测试 / 备份→导入导出→恢复 roundtrip / 定时配置校验 / 切换校验分支。
   // 注意：**不真跑切换**（会改写 .env 与 schema.prisma），只验证拒绝分支；真实切换需人工复验。
-  // 数据表清单随模型演进增长（2026-10-10 加了权限组 / 客户端管理 8 张表后共 23 张）。
-  // **不写死总数**：断言"服务端快照枚举 == 这份清单"，加模型时只改这一处。
-  const REQUIRED_DB_TABLES = [
-    'User',
-    'ArchivedYear',
-    'Class',
-    'Student',
-    'Course',
-    'StudentClassTransfer',
-    'Schedule',
-    'TimeLayout',
-    'Homework',
-    'HomeworkStatus',
-    'Notification',
-    'NotificationRead',
-    'Grade',
-    'PermissionGroup',
-    'PermissionGroupItem',
-    'UserPermissionGroup',
-    'AppSetting',
-    'ClientDevice',
-    'Courseware',
-    'CoursewareFolder',
-    'CoursewareVisibility',
-    'CoursewarePush',
-    'CoursewareReceipt',
-    'ClientCommand',
-    'ClientRelease',
-    'AiAudit',
-    'TimeLayoutItem',
-    'ClassPlanGroup',
-    'ClassPlan',
-    'ClassPlanEntry',
-    'ScheduledClassPlan',
-    'PromotionRun',
-    'TermWeek',
-    'Exam',
-  ];
+  // 直接读取快照注册表，避免新增模型后测试清单遗漏。
+  const snapshotSource = readFileSync(new URL('../src/lib/snapshot.ts', import.meta.url), 'utf8');
+  const registry = snapshotSource.match(/export const SNAPSHOT_TABLES = \[([\s\S]*?)\] as const/);
+  if (!registry) throw new Error('无法解析快照表注册表');
+  const REQUIRED_DB_TABLES = [...registry[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
   const dbStatus = await api('/database/status', { token: adminToken });
   const dbStatusData = dbStatus.payload?.data ?? {};
   const dbStatusTableNames = Array.isArray(dbStatusData.tables)
@@ -3278,14 +3289,14 @@ async function main() {
     `status=${dbStatusTeacher.status} 备份=${dbBackupTeacher.status} 定时=${dbScheduleTeacher.status} 切换=${dbSwitchTeacher.status}`,
   );
 
-  // 连接测试：当前库必须可达（SQLite 用相对路径，MySQL 用一个不可达地址测失败分支）
+  // 连接测试：当前库必须可达（SQLite 取服务端当前临时库地址，MySQL 用一个不可达地址测失败分支）
   let testOkResult;
   let testOkName;
   if (dbStatusData.provider === 'sqlite') {
     testOkResult = await api('/database/test-connection', {
       method: 'POST',
       token: adminToken,
-      body: { provider: 'sqlite', url: 'file:./prisma/dev.db' },
+      body: { provider: 'sqlite', url: dbStatusData.databaseUrlMasked },
     });
     testOkName = '连接测试（当前 SQLite 库可达）';
   } else {
