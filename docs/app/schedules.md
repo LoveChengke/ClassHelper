@@ -8,7 +8,7 @@ description: 日课表、共享作息、轮换、临时换课和教学周。
 Web 管理端统一从「教学事务 → 课表档案」查看周课表并编辑时间表与日课表，客户端提供“今天”时间轴和“本周”视图。
 上课状态、灵动岛课程提醒和紧急通知确认共用服务端的课表判定。
 
-编辑工作区参照 [ClassIsland 档案编辑器](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/Views/ProfileSettingsWindow.axaml) 的布局与交互实现，使用独立的深色全屏工作区。顶部切换课表、时间表、科目和调课；默认以周网格展示课程，右侧提供科目简称面板，底部可切换列表、周和月视图。旧管理页地址 `/schedules` 自动进入同一工作区，点击「返回管理」回到管理端。
+编辑工作区参照 [ClassIsland 档案编辑器](https://github.com/ClassIsland/ClassIsland/blob/master/ClassIsland/Views/ProfileSettingsWindow.axaml) 的课表交互实现，作为管理端内的普通页面展示，沿用全站的导航、间距、控件及浅色/深色主题。顶部切换课表、时间表、科目和调课；默认以周网格展示课程，右侧提供科目简称面板，底部可切换列表、周和月视图。旧管理页地址 `/schedules` 自动进入同一页面，侧栏和顶部导航始终可用。
 
 点击每天列头的「新课表」选择时间表并创建日课表。点击网格中的课时后可用右侧科目按钮快速填充，支持选择是否自动移动到下一节；方向键可移动焦点，Delete 可清空选中课程。课表名称、时间表、启用星期、轮换规则、生效周次与群组在「详细信息」中维护。
 
