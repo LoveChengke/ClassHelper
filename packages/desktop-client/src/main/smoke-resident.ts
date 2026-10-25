@@ -5,6 +5,7 @@ import {
   islandNode,
   normalizeIslandLayouts,
   ISLAND_SHADOW_PAD,
+  type IslandTimePointDto,
   type ScheduleDto,
 } from '@classhelper/shared';
 import { getConfig, saveConfig } from './config.js';
@@ -607,7 +608,9 @@ export async function verifyResidentSmoke(
         await pause(1100);
         const half = await win.webContents.executeJavaScript(`(() => {
           const root=document.querySelector('${layout === 'custom' ? '.resident-compact' : '.ci-fixed-lesson'}');
-          return Boolean(root&&root.textContent.includes('数学')&&root.textContent.includes('距下课')&&Number(root.querySelector('[role=progressbar]')?.getAttribute('aria-valuenow'))===50);
+          const text=root?.textContent??'';
+          const progress=Number(root?.querySelector('[role=progressbar]')?.getAttribute('aria-valuenow'));
+          return Boolean(root&&text.includes('数学')&&progress===50&&(${layout === 'custom' ? "text.includes('09:00–09:45')&&!text.includes('距下课')" : "text.includes('距下课')"}));
         })()`);
         if (!half)
           throw new Error(
@@ -679,6 +682,87 @@ export async function verifyResidentSmoke(
       await pause(800);
     }
   });
+  await check('自定义岛课程表按时间点折叠：课间折叠隐藏、当前项展开显示时间段', async () => {
+    const scheduleLayout = JSON.parse(JSON.stringify(fixture));
+    const node = islandNode('schedule', 'time-point-schedule');
+    node.settings.display = 'today';
+    node.settings.count = 10;
+    scheduleLayout.schemes[0].rows[0].nodes = [node];
+    saveConfig({ islandLayout: { ...scheduleLayout, layout: 'custom' } });
+    island.syncCustomLayout();
+    const timePoints: IslandTimePointDto[] = [
+      {
+        id: 'p-math',
+        timeType: 'LESSON',
+        name: '第 1 节',
+        courseName: '数学',
+        startTime: '09:00',
+        endTime: '09:45',
+        isHideDefault: false,
+      },
+      {
+        id: 'p-break',
+        timeType: 'BREAK',
+        name: '课间休息',
+        courseName: null,
+        startTime: '09:45',
+        endTime: '09:55',
+        isHideDefault: false,
+      },
+      {
+        id: 'p-chinese',
+        timeType: 'LESSON',
+        name: '第 2 节',
+        courseName: '语文',
+        startTime: '09:55',
+        endTime: '10:40',
+        isHideDefault: false,
+      },
+    ];
+    const setTime = async (hour: number, minute: number) => {
+      const at = dateAt(hour, minute).getTime();
+      await win.webContents.executeJavaScript(`window.__lessonSmokeTime=${at}`);
+      island.setLessonReminderTestTime(at);
+    };
+    try {
+      await win.webContents.executeJavaScript(
+        `window.__lessonRealNow=Date.now;Date.now=()=>window.__lessonSmokeTime??window.__lessonRealNow();true`,
+      );
+      island.setClassState({ inClass: false, schedules: lessonFixtures, timePoints });
+      await setTime(9, 20);
+      await pause(900);
+      const duringClass = await win.webContents.executeJavaScript(`(() => {
+        const text=document.querySelector('.resident-compact')?.textContent??'';
+        return { math: text.includes('数学'), chinese: text.includes('语文'), rest: text.includes('课间休息'), period: text.includes('09:00–09:45'), otherPeriod: text.includes('09:55–10:40') };
+      })()`);
+      await setTime(9, 50);
+      await pause(900);
+      const duringBreak = await win.webContents.executeJavaScript(`(() => {
+        const text=document.querySelector('.resident-compact')?.textContent??'';
+        return { math: text.includes('数学'), chinese: text.includes('语文'), rest: text.includes('课间休息'), period: text.includes('09:45–09:55') };
+      })()`);
+      if (!(
+        duringClass.math &&
+        duringClass.chinese &&
+        !duringClass.rest &&
+        duringClass.period &&
+        !duringClass.otherPeriod
+      ))
+        throw new Error('课中时间点折叠错误：' + JSON.stringify(duringClass));
+      if (!(duringBreak.math && duringBreak.chinese && duringBreak.rest && duringBreak.period))
+        throw new Error('课间展开错误：' + JSON.stringify(duringBreak));
+      return true;
+    } finally {
+      await win.webContents.executeJavaScript(
+        `Date.now=window.__lessonRealNow;delete window.__lessonRealNow;delete window.__lessonSmokeTime`,
+      );
+      island.setLessonReminderTestTime(null);
+      island.setClassState({ inClass: false, schedules: [], timePoints: [] });
+      saveConfig({ islandLayout: fixture });
+      island.syncCustomLayout();
+      await pause(800);
+    }
+  });
   await check('长文本多行与2.5倍字号自动适配，变窄窗口和底部右侧停靠均不溢出', async () => {
     const appearance = island.getAppearance();
     const dense = JSON.parse(JSON.stringify(fixture));
@@ -743,15 +827,26 @@ export async function verifyResidentSmoke(
       island.handleAction({ action: 'expand' });
       await pause(1000);
       island.handleAction({ action: 'collapse' });
-      await pause(1000);
+      // 收起后渲染进程要重新量宽并走 750ms 的触摸形状延时；尺寸稳定前不要断言。
+      let settled = false;
+      const deadline = Date.now() + 3500;
+      while (Date.now() < deadline) {
+        await pause(100);
+        const current = island.getHitRect();
+        if (
+          current &&
+          shape.length === 1 &&
+          shape[0]!.width <= current.width + 18 &&
+          shape[0]!.height <= current.height + 18
+        ) {
+          settled = true;
+          break;
+        }
+      }
       const hit = island.getHitRect();
-      return Boolean(
-        hit &&
-        shape.length === 1 &&
-        shape[0]!.width <= hit.width + 18 &&
-        shape[0]!.height <= hit.height + 18 &&
-        JSON.stringify(box) === JSON.stringify(win.getBounds()),
-      );
+      const ok = Boolean(settled && hit && JSON.stringify(box) === JSON.stringify(win.getBounds()));
+      if (!ok) throw new Error(JSON.stringify({ hit, shape, bounds: win.getBounds(), box, settled }));
+      return true;
     } finally {
       win.setShape = original;
       island.setTouchMode(false);

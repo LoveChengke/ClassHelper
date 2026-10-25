@@ -1,5 +1,7 @@
 import type {
   IslandLayoutSettings as ContractIslandLayoutSettings,
+  IslandTimePointDto as ContractIslandTimePointDto,
+  IslandWeather,
   ScheduleDto as ContractScheduleDto,
 } from '@classhelper/shared';
 import { contextBridge, ipcRenderer } from 'electron';
@@ -10,6 +12,7 @@ import type { IslandAppearance, IslandState } from '@classhelper/shared';
  * 只暴露「订阅状态/外观」与「发送用户操作」两件事，渲染进程不接触任何 Node 能力。
  */
 export interface IslandBridge {
+  getIslandWeather(coordinates: { latitude: number; longitude: number }): Promise<IslandWeather>;
   getLayout(): Promise<ContractIslandLayoutSettings>;
   saveLayout(value: ContractIslandLayoutSettings): Promise<ContractIslandLayoutSettings>;
   onLayout(handler: (value: ContractIslandLayoutSettings) => void): void;
@@ -24,6 +27,8 @@ export interface IslandBridge {
   onViewport(handler: (value: { width: number; height: number }) => void): () => void;
   getSchedules(): Promise<ContractScheduleDto[]>;
   onSchedules(handler: (value: ContractScheduleDto[]) => void): void;
+  getTimePoints(): Promise<ContractIslandTimePointDto[]>;
+  onTimePoints(handler: (value: ContractIslandTimePointDto[]) => void): void;
 
   onState(handler: (state: IslandState) => void): void;
   sendAction(
@@ -57,6 +62,7 @@ export interface IslandBridge {
 }
 
 const bridge: IslandBridge = {
+  getIslandWeather: (coordinates) => ipcRenderer.invoke('island:weather', coordinates),
   getLayout: () => ipcRenderer.invoke('island:get-layout'),
   saveLayout: (value) => ipcRenderer.invoke('island:save-layout', value),
   onLayout: (handler) => {
@@ -83,6 +89,10 @@ const bridge: IslandBridge = {
   getSchedules: () => ipcRenderer.invoke('island:get-schedules'),
   onSchedules: (handler) => {
     ipcRenderer.on('island:schedules', (_event, value) => handler(value));
+  },
+  getTimePoints: () => ipcRenderer.invoke('island:get-time-points'),
+  onTimePoints: (handler) => {
+    ipcRenderer.on('island:time-points', (_event, value) => handler(value));
   },
 
   onState: (handler) => {

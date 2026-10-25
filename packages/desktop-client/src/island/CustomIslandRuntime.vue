@@ -6,6 +6,7 @@ import {
   type IslandAppearance,
   type IslandLayoutSettings,
   type IslandState,
+  type IslandTimePointDto,
   type ScheduleDto,
   type IslandLessonReminder,
 } from '@classhelper/shared';
@@ -20,6 +21,7 @@ const props = defineProps<{
   settings: IslandLayoutSettings;
   state: IslandState;
   schedules: ScheduleDto[];
+  timePoints: IslandTimePointDto[];
   appearance: IslandAppearance;
   nativeVisible: boolean;
 }>();
@@ -267,10 +269,19 @@ function visibility() {
   void nextTick(reportHit);
 }
 // 不深度监听整份状态；只在目标内容/几何变化时测量，时钟每秒只改文本。
-watch([expanded, scheme, lesson, () => props.state.listExpanded, messages], measure, {
-  deep: true,
-  flush: 'post',
-});
+watch(
+  [
+    expanded,
+    scheme,
+    lesson,
+    () => props.state.listExpanded,
+    messages,
+    () => props.timePoints,
+    () => Math.floor(now.value / 60_000),
+  ],
+  measure,
+  { deep: true, flush: 'post' },
+);
 watch(
   [fit, motion, expanded, lesson, () => props.appearance.radius, () => props.appearance.speed],
   () => {
@@ -388,6 +399,7 @@ onUnmounted(() => {
                   :state="state"
                   :now="now"
                   :schedules="schedules"
+                  :time-points="timePoints"
                   :editing="false"
                   selected-id=""
                   alert-node-id=""
@@ -469,6 +481,7 @@ onUnmounted(() => {
                   :state="state"
                   :now="now"
                   :schedules="schedules"
+                  :time-points="timePoints"
                   :editing="false"
                   selected-id=""
                   alert-node-id=""

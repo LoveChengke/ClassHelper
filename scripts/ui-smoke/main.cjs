@@ -1363,15 +1363,40 @@ async function runPlanEditorChecks(win) {
   await win.loadURL(new URL('/plan-editor', TARGET_URL).href);
   const ready = await waitFor(
     win,
-    `Boolean(document.querySelector('.schedule-grid thead')) && document.querySelectorAll('.schedule-grid thead th').length === 8`,
+    `Boolean(document.querySelector('.course-table')) && Boolean(document.querySelector('.plan-explorer')) && Boolean(document.querySelector('.subject-palette'))`,
   );
   record(
-    '课表档案在管理端页面内展示周课表和选科侧栏',
+    '课表档案默认进入单表编辑并展示选科侧栏',
     ready &&
       (await win.webContents.executeJavaScript(
-        `Boolean(document.querySelector('.subject-palette')) && document.querySelectorAll('.archive-tabs button').length === 4 && getComputedStyle(document.querySelector('.archive-editor')).position !== 'fixed' && Boolean(document.querySelector('.archive-page .page-title'))`,
+        `Boolean(document.querySelector('.subject-palette')) && document.querySelectorAll('.archive-tabs button').length === 4 && getComputedStyle(document.querySelector('.archive-editor')).position !== 'fixed' && Boolean(document.querySelector('.archive-page .page-title')) && Boolean(document.querySelector('.course-table-head'))`,
       )),
   );
+  await waitFor(win, `!document.body.innerText.includes('正在加载')`);
+  fs.mkdirSync(path.join(__dirname, '../../docs/screenshots'), { recursive: true });
+  fs.writeFileSync(
+    path.join(__dirname, '../../docs/screenshots/plan-editor-list.png'),
+    (await win.webContents.capturePage()).toPNG(),
+  );
+  await win.webContents.executeJavaScript(
+    `document.querySelector('.inspector-tabs button:nth-child(2)').click()`,
+  );
+  record(
+    '课表信息面板可编辑触发规则',
+    await waitFor(
+      win,
+      `Boolean(document.querySelector('.plan-details')) && document.body.innerText.includes('启用星期') && document.body.innerText.includes('轮周设定') && document.body.innerText.includes('生效周次')`,
+    ),
+  );
+  await win.webContents.executeJavaScript(
+    `document.querySelector('.inspector-tabs button:first-child').click()`,
+  );
+  await win.webContents.executeJavaScript(`document.querySelector('[aria-label="周视图"]').click()`);
+  const weekReady = await waitFor(
+    win,
+    `Boolean(document.querySelector('.schedule-grid thead')) && document.querySelectorAll('.schedule-grid thead th').length === 8`,
+  );
+  record('底部视图切换可进入周课表', weekReady);
   const assignment = await win.webContents.executeJavaScript(`(() => {
     const cell = document.querySelector('.lesson-cell');
     if (!cell) return null;
@@ -1416,6 +1441,7 @@ async function runPlanEditorChecks(win) {
       `Boolean(document.querySelector('.course-row')) && document.body.innerText.includes('批量排课')`,
     ),
   );
+  await waitFor(win, `!document.querySelector('.archive-tabs button:nth-child(2)')?.disabled`);
   await win.webContents.executeJavaScript(
     `document.querySelector('.archive-tabs button:nth-child(2)').click()`,
   );
@@ -1423,22 +1449,77 @@ async function runPlanEditorChecks(win) {
     '时间表页四种时间点与保存入口可见',
     await waitFor(
       win,
-      `document.body.innerText.includes('新建课时') && document.body.innerText.includes('保存时间表') && document.body.innerText.includes('分割线') && document.body.innerText.includes('行动')`,
+      `document.body.innerText.includes('课间休息') && document.body.innerText.includes('保存时间表') && document.body.innerText.includes('分割线') && document.body.innerText.includes('行动') && Boolean(document.querySelector('.layout-toolbar'))`,
     ),
   );
   const quickAdd = await win.webContents.executeJavaScript(`(async () => {
-    const before = document.querySelectorAll('.time-row').length;
-    [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '＋ 新建课时')?.click();
-    await new Promise(resolve => setTimeout(resolve, 180));
-    const rows = document.querySelectorAll('.time-row');
-    const values = [...(rows[rows.length - 1]?.querySelectorAll('.el-date-editor input') || [])].map(input => input.value);
-    const minutes = (value) => { const [h, m] = (value || '').split(':').map(Number); return h * 60 + m; };
-    return { before, after: rows.length, diff: minutes(values[1]) - minutes(values[0]) };
+    const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    const token = localStorage.getItem('classhelper.token');
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+    };
+    const classes = await fetch('/api/classes', { headers }).then(r => r.json()).catch(() => null);
+    const pickedName = document.querySelector('.class-picker input')?.value ?? '';
+    const klass = (classes?.data ?? []).find(c => c.name === pickedName) ?? classes?.data?.[0];
+    let created = null;
+    if (klass) {
+      // 探针课表可能占满全天；用接口建一张空时间表作为可逆验收数据，随后由 UI 刷新选中。
+      created = await fetch('/api/time-layouts', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name: 'UI 冒烟时间表', classId: klass.id, points: [] }),
+      }).then(r => r.json()).catch(() => null);
+    }
+    [...document.querySelectorAll('.archive-toolbar button')].find(b => b.textContent.trim() === '刷新')?.click();
+    await wait(200);
+    if (document.querySelector('.el-message-box'))
+      document.querySelector('.el-message-box__btns .el-button--primary')?.click();
+    for (let i = 0; i < 30; i++) {
+      await wait(100);
+      if ([...document.querySelectorAll('.layout-explorer .plan-item')].some(b => b.textContent.includes('UI 冒烟时间表'))) break;
+    }
+    [...document.querySelectorAll('.layout-explorer .plan-item')].find(b => b.textContent.includes('UI 冒烟时间表'))?.click();
+    await wait(250);
+    const before = document.querySelectorAll('.time-point-row').length;
+    const addButton = [...document.querySelectorAll('.layout-toolbar button')].find(b => b.textContent.trim() === '上课');
+    addButton?.click();
+    await wait(200);
+    const rows = document.querySelectorAll('.time-point-row');
+    const timeText = document.querySelector('.time-point-row.selected .point-time')?.textContent?.trim() ?? '';
+    const match = timeText.match(/(\\d{2}:\\d{2})\\s*[–-]\\s*(\\d{2}:\\d{2})/);
+    const minutes = (value) => { const [h, m] = value.split(':').map(Number); return h * 60 + m; };
+    return {
+      before,
+      after: rows.length,
+      diff: match ? minutes(match[2]) - minutes(match[1]) : -1,
+      timeText,
+      klass: klass?.name ?? '',
+      created: created?.data?.id ?? null,
+      addDisabled: addButton ? addButton.disabled : null,
+      activeLayout: document.querySelector('.layout-explorer .plan-item.active strong')?.textContent?.trim() ?? '',
+    };
   })()`);
   record(
-    '时间表新建课时按快速时长生成起止时间',
-    quickAdd.after === quickAdd.before + 1 && quickAdd.diff === 45,
+    '时间表新建上课点按默认 40 分钟生成起止时间',
+    quickAdd.after === quickAdd.before + 1 && quickAdd.diff === 40,
+    JSON.stringify(quickAdd),
   );
+  await win.webContents.executeJavaScript(`document.querySelector('[aria-label="时间轴视图"]').click()`);
+  record(
+    '时间表时间轴视图与右侧时间点详情可用',
+    await waitFor(
+      win,
+      `Boolean(document.querySelector('.time-block')) && Boolean(document.querySelector('.point-inspector')) && Boolean(document.querySelector('.timeline-ruler'))`,
+    ),
+  );
+  await sleep(400);
+  fs.mkdirSync(path.join(__dirname, '../../docs/screenshots'), { recursive: true });
+  fs.writeFileSync(
+    path.join(__dirname, '../../docs/screenshots/plan-editor-timeline.png'),
+    (await win.webContents.capturePage()).toPNG(),
+  );
+  await win.webContents.executeJavaScript(`document.querySelector('[aria-label="列表视图"]').click()`);
   await win.webContents.executeJavaScript(
     `(() => {[...document.querySelectorAll('.archive-toolbar button')].find(b => b.textContent.trim() === '刷新')?.click();})()`,
   );
@@ -1457,11 +1538,28 @@ async function runPlanEditorChecks(win) {
   );
   await win.webContents.executeJavaScript(`document.querySelector('[aria-label="周视图"]').click()`);
   record('底部视图切换可返回周课表', await waitFor(win, `Boolean(document.querySelector('.schedule-grid'))`));
+  await win.webContents.executeJavaScript(`document.querySelector('[aria-label="列表视图"]').click()`);
+  await waitFor(win, `Boolean(document.querySelector('.course-table'))`);
+  await sleep(300);
   fs.mkdirSync(path.join(__dirname, '../../docs/screenshots'), { recursive: true });
   fs.writeFileSync(
     path.join(__dirname, '../../docs/screenshots/plan-editor-live-api.png'),
     (await win.webContents.capturePage()).toPNG(),
   );
+  if (quickAdd.created) {
+    // 清理本次新建的临时时间表，避免开发库留下验收数据。
+    await win.webContents.executeJavaScript(`(async () => {
+      const token = localStorage.getItem('classhelper.token');
+      try {
+        await fetch('/api/time-layouts/' + ${JSON.stringify(quickAdd.created)}, {
+          method: 'DELETE',
+          headers: token ? { Authorization: 'Bearer ' + token } : {},
+        });
+      } catch {
+        // 清理失败不阻断验收（隔离库会整体丢弃）。
+      }
+    })()`);
+  }
   await win.webContents.executeJavaScript(
     `document.querySelector('.management-menu [data-path="/dashboard"]').click()`,
   );

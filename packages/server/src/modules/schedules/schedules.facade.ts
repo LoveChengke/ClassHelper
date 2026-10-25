@@ -17,6 +17,7 @@ import {
   requireClassDeviceClassId,
 } from '../../lib/access.js';
 import {
+  loadDefaultCourseMap,
   loadPlans,
   planInclude,
   projectPlan,
@@ -52,9 +53,11 @@ export async function listSchedules(
         result.push(...(await resolveActiveClassPlan(classId, date)).schedules);
       }
     } else {
-      for (const plan of await loadPlans(classId))
+      const plans = await loadPlans(classId);
+      const defaults = await loadDefaultCourseMap(plans.flatMap((plan) => plan.layout.points));
+      for (const plan of plans)
         if (!plan.isOverlay && (!options.dayOfWeek || plan.weekday === options.dayOfWeek))
-          result.push(...projectPlan(plan));
+          result.push(...projectPlan(plan, defaults));
     }
   }
   const byId = new Map<string, ScheduleDto>();

@@ -5,6 +5,7 @@ import {
   resolveClassStatus,
   type ClassPeriod,
   type HomeworkDto,
+  type IslandTimePointDto,
   type NotificationDto,
   type ScheduleDto,
 } from '@classhelper/shared';
@@ -30,6 +31,8 @@ const TICK_INTERVAL_MS = 1_000;
 const REFRESH_INTERVAL_MS = 30_000;
 
 let schedules: ScheduleDto[] = [];
+/** 今天的完整时间点（含课间/分割线/默认隐藏），自定义岛的课程表组件使用。 */
+let dayTimePoints: IslandTimePointDto[] = [];
 let currentPeriod: ClassPeriod | null = null;
 let inClass = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -47,6 +50,51 @@ export function getIslandSchedules(): ScheduleDto[] {
   return schedules;
 }
 
+export function getIslandTimePoints(): IslandTimePointDto[] {
+  return dayTimePoints;
+}
+
+/** 从 active-week 的今天取完整时间点；课程名优先条目、没有条目才回退默认课程。 */
+function buildDayTimePoints(days: ContractActiveClassPlanWeekDto['days']): IslandTimePointDto[] {
+  const weekday = new Date().getDay() || 7;
+  const day = days.find((item) => item.weekday === weekday);
+  const points = day?.timeLayout?.points ?? [];
+  if (!points.length) return [];
+  const entries = day?.classPlan?.entries ?? [];
+  return points.map((point) => {
+    const entry = entries.find((item) => item.timeLayoutItemId === point.id);
+    return {
+      id: point.id,
+      timeType: point.timeType,
+      name: point.breakName || point.name || '',
+      courseName: entry
+        ? entry.isEnabled
+          ? (entry.course?.name ?? null)
+          : null
+        : (point.defaultCourse?.name ?? null),
+      startTime: point.startTime,
+      endTime: point.endTime,
+      isHideDefault: point.isHideDefault,
+    };
+  });
+}
+
+/** 离线/旧服务端只有课表条目时退化成只有上课时间点。 */
+function timePointsFromSchedules(list: ScheduleDto[]): IslandTimePointDto[] {
+  const weekday = new Date().getDay() || 7;
+  return list
+    .filter((item) => item.dayOfWeek === weekday)
+    .map((item) => ({
+      id: item.id,
+      timeType: 'LESSON' as const,
+      name: '',
+      courseName: item.course?.name ?? null,
+      startTime: item.startTime,
+      endTime: item.endTime,
+      isHideDefault: false,
+    }));
+}
+
 /** 主动刷新课表（课表变更事件触发） */
 export async function refreshIslandSchedules(): Promise<void> {
   const appStore = useAppStore();
@@ -61,13 +109,16 @@ export async function refreshIslandSchedules(): Promise<void> {
     'schedules',
     `week:${week}`,
     async () => {
-      const data = (
-        await api.get<ContractActiveClassPlanWeekDto>('/schedules/active-week', { classId, week })
-      ).days.flatMap((day) => day.schedules);
+      const payload = await api.get<ContractActiveClassPlanWeekDto>('/schedules/active-week', {
+        classId,
+        week,
+      });
+      const data = payload.days.flatMap((day) => day.schedules);
       // 网络结果先上岛，IndexedDB 写入不再挡住可见内容；旧请求与切换账号的结果不得回写。
       if (scope !== getCacheScope() || request !== scheduleRequest || !auth.token)
         throw new Error('课表刷新已被新请求替代');
       schedules = data;
+      dayTimePoints = buildDayTimePoints(payload.days);
       scheduleWeek = week;
       recomputeClassState(true);
       return data;
@@ -78,12 +129,22 @@ export async function refreshIslandSchedules(): Promise<void> {
   if (result.error && !result.updatedAt) return;
   if (result.fromCache) {
     schedules = result.data;
+    dayTimePoints = timePointsFromSchedules(result.data);
     scheduleWeek = week;
     recomputeClassState(true);
   }
 }
 
 let sentDay = '';
+let sentTimePoints = '';
+function timePointsKey(): string {
+  return dayTimePoints
+    .map(
+      (point) =>
+        `${point.id}|${point.timeType}|${point.startTime}|${point.endTime}|${point.name}|${point.courseName ?? ''}|${point.isHideDefault ? 1 : 0}`,
+    )
+    .join(',');
+}
 function recomputeClassState(force = false): void {
   const day = new Date().toDateString();
   const appStore = useAppStore();
@@ -94,15 +155,19 @@ function recomputeClassState(force = false): void {
     currentPeriod?.endTime === status.current?.endTime;
   currentPeriod = status.current;
 
-  if (!force && day === sentDay && nextInClass === inClass && samePeriod) return;
+  const pointsKey = timePointsKey();
+  if (!force && day === sentDay && nextInClass === inClass && samePeriod && pointsKey === sentTimePoints)
+    return;
   sentDay = day;
   inClass = nextInClass;
+  sentTimePoints = pointsKey;
 
   window.desktop?.islandSetClassState({
     inClass,
     currentPeriodEnd: currentPeriod?.endTime ?? null,
     week: appStore.currentWeek,
     schedules: schedules.filter((s) => s.dayOfWeek === (new Date().getDay() || 7)),
+    timePoints: dayTimePoints,
   });
 }
 
@@ -389,7 +454,9 @@ export function stopIslandBridge(): void {
   useRealtimeStore().off(SOCKET_EVENTS.scheduleUpdated, onScheduleUpdated);
   useRealtimeStore().off('__connected__', onScheduleUpdated);
   sentDay = '';
+  sentTimePoints = '';
   schedules = [];
+  dayTimePoints = [];
   currentPeriod = null;
   inClass = false;
 
@@ -401,5 +468,6 @@ export function stopIslandBridge(): void {
     currentPeriodEnd: null,
     week: useAppStore().currentWeek,
     schedules: [],
+    timePoints: [],
   });
 }

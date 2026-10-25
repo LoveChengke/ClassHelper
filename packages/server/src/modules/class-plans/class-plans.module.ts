@@ -79,6 +79,13 @@ layouts.post(
     );
   },
 );
+layouts.post(
+  '/:id/points/:pointId/apply-default',
+  requirePermission('timetable:manage'),
+  validate({ params: z.object({ id: z.string().min(1), pointId: z.string().min(1) }) }),
+  async (req, res) =>
+    sendOk(res, await service.applyDefaultCourse(String(req.params.id), String(req.params.pointId))),
+);
 layouts.delete(
   '/:id',
   requirePermission('timetable:manage'),

@@ -23,6 +23,14 @@ const paths: Record<string, string> = {
   shield: 'M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6z M8 12l3 3 5-6',
   back: 'M11 5l-7 7 7 7 M4 12h13a3 3 0 0 1 3 3v3',
   chevron: 'M6 9l6 6 6-6',
+  lesson: 'M4 5h16v12H4z M8 21h8 M12 17v4 M7 9h6 M7 12h4',
+  break: 'M6 8h9v4a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4V8z M15 9h2a2 2 0 0 1 0 4h-2 M4 20h13',
+  divider: 'M4 12h16',
+  action: 'M13 3 6 13h5l-1 8 8-11h-5l1-7z',
+  timeline: 'M7 3v18 M4 6h6 M4 12h6 M4 18h6 M14 8h6v4h-6z M14 15h4v4h-4z',
+  trash: 'M4 7h16 M9 7V4h6v3 M6 7l1 14h10l1-14 M10 11v6 M14 11v6',
+  'zoom-in': 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M20 20l-4-4 M8 11h6 M11 8v6',
+  'zoom-out': 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M20 20l-4-4 M8 11h6',
 };
 </script>
 

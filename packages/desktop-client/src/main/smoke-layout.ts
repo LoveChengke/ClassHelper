@@ -3,7 +3,13 @@ import { BrowserWindow } from 'electron';
 import path from 'node:path';
 import { island } from './island.js';
 import { getConfig, saveConfig } from './config.js';
-import { defaultIslandLayouts, ISLAND_SHADOW_PAD } from '@classhelper/shared';
+import {
+  defaultIslandLayouts,
+  islandNode,
+  normalizeIslandLayouts,
+  ISLAND_SHADOW_PAD,
+} from '@classhelper/shared';
+import { getIslandWeather } from './island-weather.js';
 import { verifyResidentSmoke } from './smoke-resident.js';
 export async function verifyLayoutSmoke(
   check: (name: string, action: () => Promise<boolean | string> | boolean) => Promise<void>,
@@ -38,12 +44,30 @@ export async function verifyLayoutSmoke(
       editingBounds = win.getBounds();
       await editor.webContents.executeJavaScript('window.__classhelperSmoke__.islandEditorSmoke(true)');
       await pause();
+      if (process.env.ISLAND_SHOTS_DIR) {
+        fs.mkdirSync(process.env.ISLAND_SHOTS_DIR, { recursive: true });
+        const bounds = editor.getContentBounds();
+        editor.setContentSize(1600, 1000);
+        for (const theme of ['light', 'dark']) {
+          await editor.webContents.executeJavaScript(
+            `document.documentElement.classList.toggle('dark', ${theme === 'dark'})`,
+          );
+          await pause();
+          fs.writeFileSync(
+            path.join(process.env.ISLAND_SHOTS_DIR, `component-editor-${theme}.png`),
+            (await editor.webContents.capturePage()).toPNG(),
+          );
+        }
+        await editor.webContents.executeJavaScript(`document.documentElement.classList.remove('dark')`);
+        editor.setContentSize(bounds.width, bounds.height);
+        await pause();
+      }
       return (
         (await editor.webContents.executeJavaScript(
           'location.hash.includes("/settings/island/editor") && Boolean(document.querySelector(".aside"))',
         )) &&
         editor.webContents.executeJavaScript(
-          `(() => { const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='新增行');b?.click();return Boolean(document.querySelector('.island-editor-page .el-card')) && !document.querySelector('.layout-editor, iframe'); })()`,
+          `(() => { const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='新增行');b?.click();return document.querySelectorAll('.component-library > .component-options:first-of-type .library-item').length===11 && !document.querySelector('.layout-editor, iframe'); })()`,
         )
       );
     });
@@ -67,11 +91,15 @@ export async function verifyLayoutSmoke(
     });
     await check('组件可以包裹进容器且设置独立保存', async () => {
       await editor.webContents.executeJavaScript(
+        `document.querySelector('.node-handle[data-kind=clock]')?.click()`,
+      );
+      await pause();
+      await editor.webContents.executeJavaScript(
         `document.querySelector('[data-action=wrap] .el-select__wrapper')?.click()`,
       );
       await pause();
       await editor.webContents.executeJavaScript(
-        `(() => { const option=[...document.querySelectorAll('.el-select-dropdown__item')].find(e=>e.textContent.trim()==='分组'); if(!option)throw Error('容器菜单未出现');option.click(); })()`,
+        `(() => { const option=[...document.querySelectorAll('.el-select-dropdown__item')].find(e=>e.textContent.trim()==='分组容器'); if(!option)throw Error('容器菜单未出现');option.click(); })()`,
       );
       await pause();
       return (
@@ -108,6 +136,10 @@ export async function verifyLayoutSmoke(
       return initial && appearance && advanced;
     });
     await check('主窗口编辑器的预览完整适配画布且不遮挡缩放控件', async () => {
+      await editor.webContents.executeJavaScript(
+        `document.querySelector('.el-drawer__close-btn')?.click();document.querySelector('.surface-actions button:last-child')?.click()`,
+      );
+      await pause();
       return editor.webContents.executeJavaScript(`(() => {
         const canvas=document.querySelector('.preview-canvas')?.getBoundingClientRect();
         const footer=document.querySelector('.preview-toolbar')?.getBoundingClientRect();
@@ -118,10 +150,189 @@ export async function verifyLayoutSmoke(
       return editor.webContents.executeJavaScript(`(() => {
         const root=document.documentElement, wasDark=root.classList.contains('dark');
         root.classList.add('dark');
-        const card=document.querySelector('.scheme-card'), style=getComputedStyle(card);
-        const ok=style.getPropertyValue('--ch-text').trim() && !document.querySelector('.layout-editor, iframe') && document.querySelectorAll('.island-editor-page .el-card').length>=4;
+        const page=document.querySelector('.island-editor-page'), style=getComputedStyle(page);
+        const ok=style.getPropertyValue('--ch-text').trim() && !document.querySelector('.layout-editor, iframe') && document.querySelector('.component-library .library-title') && document.querySelector('.scheme-controls');
         root.classList.toggle('dark',wasDark);return Boolean(ok);
       })()`);
+    });
+    await check('从常驻组件库拖入容器，阻止将父组件放进自己的后代', async () => {
+      await editor.webContents.executeJavaScript(
+        `document.querySelector('.surface-actions button:last-child')?.click()`,
+      );
+      await pause();
+      await editor.webContents.executeJavaScript(`(() => {
+        const source=document.querySelector('[data-library-kind=text]'), target=document.querySelector('.editor-component.container');
+        if(!source||!target)throw Error('缺少组件库或容器');
+        const r=target.getBoundingClientRect(), x=r.left+r.width/2, y=r.top+r.height/2;
+        source.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:21,clientX:10,clientY:10}));
+        source.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:21,clientX:x,clientY:y}));
+        source.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:21,clientX:x,clientY:y}));
+      })()`);
+      await pause();
+      const group = getConfig()
+        .islandLayout.schemes[0]!.rows.flatMap((r) => r.nodes)
+        .find((n) => n.kind === 'group');
+      if (!group?.children.some((n) => n.kind === 'text')) throw Error('组件库内容没有进入容器');
+      const before = JSON.stringify(getConfig().islandLayout);
+      await editor.webContents.executeJavaScript(`(() => {
+        const source=document.querySelector('.editor-component.container > .node-handle'), target=document.querySelector('.editor-component.container .container-children .node-handle');
+        const r=target.getBoundingClientRect(), x=r.left+r.width/2, y=r.top+r.height/2;
+        source.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:22,clientX:10,clientY:10}));
+        source.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:22,clientX:x,clientY:y}));
+      })()`);
+      await pause();
+      return before === JSON.stringify(getConfig().islandLayout);
+    });
+    await check('常态与无通知展开内容分别保存，日期倒计时可配置并预览', async () => {
+      const before = JSON.stringify(getConfig().islandLayout.schemes[0]!.rows);
+      await editor.webContents.executeJavaScript(
+        `document.querySelectorAll('.surface-tabs button')[1].click();document.querySelector('[data-library-kind=countdown]').click()`,
+      );
+      await pause();
+      await editor.webContents.executeJavaScript(`(() => {
+        const set=(input,value)=>{input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));};
+        const field=[...document.querySelectorAll('.component-settings .el-form-item')].find(e=>e.textContent.includes('目标名称'));
+        set(field.querySelector('input'),'运动会');
+        document.querySelector('.component-settings .el-date-editor input').focus();
+      })()`);
+      await pause();
+      await editor.webContents.executeJavaScript(`(() => {
+        const picker=document.querySelector('.component-settings .el-date-editor input');
+        picker.value='2099-10-25';picker.dispatchEvent(new Event('input',{bubbles:true}));
+      })()`);
+      await pause();
+      await editor.webContents.executeJavaScript(`(() => {
+        const picker=document.querySelector('.component-settings .el-date-editor input');
+        picker.dispatchEvent(new Event('change',{bubbles:true}));picker.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true}));picker.blur();
+      })()`);
+      await pause();
+      const added = getConfig()
+        .islandLayout.schemes[0]!.expandedRows.flatMap((r) => r.nodes)
+        .find((n) => n.kind === 'countdown');
+      if (added?.settings.targetDate !== '2099-10-25' || added.settings.countdownTitle !== '运动会')
+        throw Error(JSON.stringify(added?.settings));
+      await editor.webContents.executeJavaScript(
+        `document.querySelector('.el-drawer__close-btn')?.click();document.querySelector('.surface-actions button:last-child')?.click()`,
+      );
+      await pause();
+      const preview = await editor.webContents.executeJavaScript(
+        `document.querySelector('.island-preview .countdown')?.textContent.includes('距运动会')`,
+      );
+      await editor.webContents.executeJavaScript(
+        `document.querySelectorAll('.surface-tabs button')[0].click()`,
+      );
+      await pause();
+      return preview && JSON.stringify(getConfig().islandLayout.schemes[0]!.rows) === before;
+    });
+    await check('天气坐标校验、并发合并与缓存使用 mock，不访问外网', async () => {
+      let calls = 0;
+      const request: typeof fetch = async (input) => {
+        calls++;
+        const url = new URL(String(input));
+        if (url.origin !== 'https://api.open-meteo.com' || url.searchParams.get('latitude') !== '12.34')
+          throw Error('请求边界错误');
+        return new Response(
+          JSON.stringify({ current: { temperature_2m: 23.4, weather_code: 2, wind_speed_10m: 8 } }),
+        );
+      };
+      const results = await Promise.all([
+        getIslandWeather({ latitude: 12.34, longitude: 56.78 }, request),
+        getIslandWeather({ latitude: 12.34, longitude: 56.78 }, request),
+      ]);
+      await getIslandWeather({ latitude: 12.34, longitude: 56.78 }, request);
+      let invalid = false;
+      try {
+        await getIslandWeather({ latitude: 100, longitude: 0 }, request);
+      } catch {
+        invalid = true;
+      }
+      const weather = islandNode('weather', 'weather-test'),
+        countdown = islandNode('countdown', 'countdown-test');
+      weather.settings.latitude = NaN;
+      countdown.settings.targetDate = '2026-02-31';
+      const config = defaultIslandLayouts();
+      config.schemes[0]!.rows[0]!.nodes = [weather, countdown];
+      const normalized = normalizeIslandLayouts(config).schemes[0]!.rows[0]!.nodes;
+      return (
+        calls === 1 &&
+        results.every((r) => r.temperature === 23.4 && !r.stale) &&
+        invalid &&
+        normalized[0]!.settings.latitude === null &&
+        normalized[1]!.settings.targetDate === ''
+      );
+    });
+    await check('右上角新建、重置和删除方案均可保存并恢复原方案', async () => {
+      await editor.webContents.executeJavaScript(`document.querySelector('[aria-label="新建方案"]').click()`);
+      await pause();
+      await editor.webContents.executeJavaScript(
+        `(() => { const input=document.querySelector('.el-message-box__input input'); input.value='组件方案验收';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('.el-message-box__btns .el-button--primary').click(); })()`,
+      );
+      await pause();
+      if (getConfig().islandLayout.schemes.length !== 2) throw Error('新建方案没有保存');
+      await editor.webContents.executeJavaScript(
+        `document.querySelector('[aria-label="重置当前方案"]').click()`,
+      );
+      await pause();
+      await editor.webContents.executeJavaScript(
+        `document.querySelector('.el-message-box__btns .el-button--primary').click()`,
+      );
+      await pause();
+      await editor.webContents.executeJavaScript(`document.querySelector('[aria-label="管理方案"]').click()`);
+      await pause();
+      await editor.webContents.executeJavaScript(
+        `[...document.querySelectorAll('.el-dropdown-menu__item')].find(e=>e.textContent.trim()==='删除方案').click()`,
+      );
+      await pause();
+      await editor.webContents.executeJavaScript(
+        `document.querySelector('.el-message-box__btns .el-button--primary').click()`,
+      );
+      await pause();
+      return (
+        getConfig().islandLayout.schemes.length === 1 &&
+        getConfig().islandLayout.activeSchemeId === 'default' &&
+        getConfig().islandLayout.schemes[0]!.rows.length === 2
+      );
+    });
+    await check('方案 JSON 导入导出保留容器结构并重新生成标识', async () => {
+      await editor.webContents.executeJavaScript(`document.querySelector('[aria-label="管理方案"]').click()`);
+      await pause();
+      const exported = await editor.webContents.executeJavaScript(`(async () => {
+        let blob; const originalURL=URL.createObjectURL, originalClick=HTMLAnchorElement.prototype.click;
+        try {
+          URL.createObjectURL=value=>{blob=value;return 'blob:editor-smoke';};HTMLAnchorElement.prototype.click=()=>{};
+          [...document.querySelectorAll('.el-dropdown-menu__item')].find(e=>e.textContent.trim()==='导出方案').click();
+        } finally { URL.createObjectURL=originalURL;HTMLAnchorElement.prototype.click=originalClick; }
+        const text=await blob.text(), parsed=JSON.parse(text);
+        const input=document.querySelector('.island-editor-page input[type=file]'), transfer=new DataTransfer();
+        transfer.items.add(new File([text],'组件方案.json',{type:'application/json'}));input.files=transfer.files;
+        input.dispatchEvent(new Event('change',{bubbles:true}));return parsed;
+      })()`);
+      await pause();
+      const layouts = getConfig().islandLayout;
+      const imported = layouts.schemes.find((s) => s.id === layouts.activeSchemeId)!;
+      const shape = (nodes: ReturnType<typeof islandNode>[]): string =>
+        JSON.stringify(
+          nodes.map((n) => ({ kind: n.kind, children: shape(n.children), settings: n.settings })),
+        );
+      const preserved =
+        exported.format === 'classhelper-island-layout' &&
+        imported.id !== exported.scheme.id &&
+        imported.rows.every(
+          (row, index) =>
+            row.id !== exported.scheme.rows[index].id &&
+            shape(row.nodes) === shape(exported.scheme.rows[index].nodes),
+        );
+      await editor.webContents.executeJavaScript(`document.querySelector('[aria-label="管理方案"]').click()`);
+      await pause();
+      await editor.webContents.executeJavaScript(
+        `[...document.querySelectorAll('.el-dropdown-menu__item')].find(e=>e.textContent.trim()==='删除方案').click()`,
+      );
+      await pause();
+      await editor.webContents.executeJavaScript(
+        `document.querySelector('.el-message-box__btns .el-button--primary').click()`,
+      );
+      await pause();
+      return preserved && getConfig().islandLayout.schemes.length === 1;
     });
     if (process.env.ISLAND_SHOTS_DIR) {
       await editor.webContents.executeJavaScript(`document.querySelector('.main').scrollTop=0`);

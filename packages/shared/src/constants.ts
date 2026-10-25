@@ -507,7 +507,7 @@ export const CLASSISLAND_TIME_TYPES = {
  */
 export const CLASSISLAND_TIME_TYPE_LABELS: Record<number, string> = {
   0: '上课',
-  1: '课间',
+  1: '课间休息',
   2: '分割线',
   3: '行动',
 };

@@ -1,6 +1,7 @@
 import {
   dayKeyLocal,
   resolveClassStatus,
+  type CourseBrief,
   type ScheduleDto,
   type ActiveClassPlanDto,
 } from '@classhelper/shared';
@@ -20,30 +21,96 @@ export async function loadPlans(classId: string) {
     orderBy: { updatedAt: 'desc' },
   });
 }
-export function projectPlan(plan: PlanRow): ScheduleDto[] {
-  return plan.entries
-    .filter((e) => e.isEnabled && e.course && e.timePoint.timeType === 'LESSON')
-    .map<ScheduleDto>((e) => ({
-      id: e.legacyScheduleId || e.id,
-      classId: plan.classId,
-      courseId: e.courseId!,
-      course: e.course!,
-      dayOfWeek: plan.weekday || 1,
-      startTime: e.timePoint.startTime,
-      endTime: e.timePoint.endTime,
-      location: e.location,
-      weekStart: plan.weekStart,
-      weekEnd: plan.weekEnd,
-      weekParity:
-        plan.weekCountDivTotal === 2 && plan.weekCountDiv
-          ? plan.weekCountDiv === 1
-            ? 'ODD'
-            : 'EVEN'
-          : 'ALL',
-      source: 'manual',
-      createdAt: plan.createdAt.toISOString(),
-      updatedAt: plan.updatedAt.toISOString(),
-    }))
+
+/** 时间点的默认课程映射（defaultClassId → 课程摘要）。 */
+export type DefaultCourseMap = Map<string, CourseBrief>;
+
+/**
+ * 一次性取出时间表里所有默认课程。
+ *
+ * 刻意不在 Prisma 里给 `TimeLayoutItem.defaultClassId` 加关系：该字段早已存在，
+ * 加外键要重建表；这里按 id 查一次课程即可，SQLite/MySQL 都通用。
+ */
+export async function loadDefaultCourseMap(
+  points: ReadonlyArray<{ defaultClassId: string | null }>,
+): Promise<DefaultCourseMap> {
+  const ids = [...new Set(points.flatMap((p) => (p.defaultClassId ? [p.defaultClassId] : [])))];
+  if (!ids.length) return new Map();
+  const courses = await prisma.course.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true },
+  });
+  return new Map(courses.map((course) => [course.id, course]));
+}
+
+/** 给时间表时间点附加默认课程，供 Web 编辑器与客户端读取。 */
+export async function decorateLayout<
+  T extends { classId: string | null; points: Array<{ defaultClassId: string | null }> },
+>(
+  layout: T,
+): Promise<
+  Omit<T, 'points'> & { points: Array<T['points'][number] & { defaultCourse: CourseBrief | null }> }
+> {
+  const defaults = await loadDefaultCourseMap(layout.points);
+  return {
+    ...layout,
+    points: layout.points.map((point) => ({
+      ...point,
+      // 全校时间表不能携带默认课程。
+      defaultCourse:
+        layout.classId && point.defaultClassId ? (defaults.get(point.defaultClassId) ?? null) : null,
+    })),
+  };
+}
+
+/**
+ * 日课表投影。
+ *
+ * 按**时间表的 LESSON 时间点**遍历，而不是只遍历已保存的条目：
+ * - 有条目：以条目为准（停用则整节不出现，课程为空则是显式空课，不回退）；
+ * - 没有条目：回退时间点的默认课程。
+ * 默认课程的回退项没有 `ClassPlanEntry`，用 `default:<planId>:<pointId>` 作为稳定 id，
+ * 仅供读取展示；旧 `/schedules` 写接口不会命中它。
+ */
+export function projectPlan(plan: PlanRow, defaults: DefaultCourseMap = new Map()): ScheduleDto[] {
+  const entryOf = new Map(plan.entries.map((entry) => [entry.timeLayoutItemId, entry]));
+  return plan.layout.points
+    .filter((point) => point.timeType === 'LESSON')
+    .flatMap<ScheduleDto>((point) => {
+      const entry = entryOf.get(point.id);
+      if (entry && !entry.isEnabled) return [];
+      // 全校时间表不能携带默认课程：旧数据即使残留 DefaultClassId 也不参与回退，
+      // 否则会把这门课泄漏到别的班级。
+      const fallback =
+        !entry && point.defaultClassId && plan.layout.classId
+          ? (defaults.get(point.defaultClassId) ?? null)
+          : null;
+      const course = entry ? (entry.course ?? null) : fallback;
+      if (!course) return [];
+      return [
+        {
+          id: entry?.legacyScheduleId || entry?.id || `default:${plan.id}:${point.id}`,
+          classId: plan.classId,
+          courseId: course.id,
+          course,
+          dayOfWeek: plan.weekday || 1,
+          startTime: point.startTime,
+          endTime: point.endTime,
+          location: entry?.location ?? null,
+          weekStart: plan.weekStart,
+          weekEnd: plan.weekEnd,
+          weekParity:
+            plan.weekCountDivTotal === 2 && plan.weekCountDiv
+              ? plan.weekCountDiv === 1
+                ? 'ODD'
+                : 'EVEN'
+              : 'ALL',
+          source: 'manual',
+          createdAt: plan.createdAt.toISOString(),
+          updatedAt: plan.updatedAt.toISOString(),
+        },
+      ];
+    })
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
 }
 
@@ -103,8 +170,9 @@ export async function resolveActiveClassPlan(
     candidates.find((p) => p.group?.isGlobal) ??
     candidates.find((p) => !p.associatedGroup) ??
     null;
+  const defaults = plan ? await loadDefaultCourseMap(plan.layout.points) : new Map<string, CourseBrief>();
   const schedules = plan
-    ? projectPlan(plan).map((s) => ({
+    ? projectPlan(plan, defaults).map((s) => ({
         ...s,
         dayOfWeek: weekday,
         weekStart: week,
@@ -120,6 +188,8 @@ export async function resolveActiveClassPlan(
           points: plan.layout.points.map((p) => ({
             ...p,
             timeType: p.timeType as 'LESSON' | 'BREAK' | 'DIVIDER' | 'ACTION',
+            defaultCourse:
+              plan.layout.classId && p.defaultClassId ? (defaults.get(p.defaultClassId) ?? null) : null,
           })),
         }
       : null,

@@ -23,6 +23,7 @@ import type { IslandNotification, UpdateInfo } from '@classhelper/shared';
  * 之前就抛 `An object could not be cloned.`。调用方必须传纯数据，见 desktop.d.ts。
  */
 const bridge: DesktopBridge = {
+  getIslandWeather: (coordinates) => ipcRenderer.invoke('island:weather', coordinates),
   downloadCourseware: (id) => ipcRenderer.invoke('courseware:download', id),
   revealCourseware: (id) => ipcRenderer.invoke('courseware:reveal', id),
   listLocalCourseware: () => ipcRenderer.invoke('courseware:local-list'),

@@ -1,6 +1,9 @@
+import { isDayKey } from './utils.js';
+
 export const ISLAND_COMPONENTS = [
   'date',
   'clock',
+  'weather',
   'countdown',
   'schedule',
   'text',
@@ -32,17 +35,25 @@ export const CLASSISLAND_ISLAND_METRICS = {
   fadedOpacity: 0.05,
 } as const;
 export type IslandComponentKind = (typeof ISLAND_COMPONENTS)[number];
+export interface IslandWeather {
+  temperature: number;
+  code: number;
+  windSpeed: number;
+  fetchedAt: number;
+  stale: boolean;
+}
 export const ISLAND_COMPONENT_LABELS: Record<IslandComponentKind, string> = {
   date: '日期',
   clock: '时钟',
+  weather: '天气简报',
   countdown: '倒计时',
   schedule: '课程表',
   text: '文本',
-  separator: '分隔符',
-  slide: '轮播',
-  rolling: '滚动',
-  group: '分组',
-  stack: '堆叠',
+  separator: '分割线',
+  slide: '轮播容器',
+  rolling: '滚动容器',
+  group: '分组容器',
+  stack: '堆叠容器',
   notification: '通知',
   homework: '作业',
   call: '叫人',
@@ -71,7 +82,12 @@ export interface IslandComponentNode {
     template: boolean;
     hour12: boolean;
     seconds: boolean;
-    target: 'auto' | 'next' | 'end' | 'school';
+    target: 'auto' | 'next' | 'end' | 'school' | 'date';
+    targetDate: string;
+    countdownTitle: string;
+    locationName: string;
+    latitude: number | null;
+    longitude: number | null;
     display: 'current' | 'next' | 'today';
     count: number;
     showPeriod: boolean;
@@ -165,6 +181,11 @@ export function islandNode(kind: IslandComponentKind, id: string): IslandCompone
       hour12: false,
       seconds: true,
       target: 'auto',
+      targetDate: '',
+      countdownTitle: '目标日',
+      locationName: '',
+      latitude: null,
+      longitude: null,
       display: 'current',
       count: 5,
       showPeriod: true,
@@ -260,7 +281,18 @@ export function normalizeIslandLayouts(input: unknown): IslandLayoutSettings {
         template: s.template === true,
         hour12: s.hour12 === true,
         seconds: s.seconds !== false,
-        target: ['auto', 'next', 'end', 'school'].includes(s.target) ? s.target : 'auto',
+        target: ['auto', 'next', 'end', 'school', 'date'].includes(s.target) ? s.target : 'auto',
+        targetDate: typeof s.targetDate === 'string' && isDayKey(s.targetDate) ? s.targetDate : '',
+        countdownTitle: String(s.countdownTitle || '目标日').slice(0, 64),
+        locationName: String(s.locationName || '').slice(0, 64),
+        latitude:
+          typeof s.latitude === 'number' && Number.isFinite(s.latitude)
+            ? clamp(s.latitude, -90, 90, 0)
+            : null,
+        longitude:
+          typeof s.longitude === 'number' && Number.isFinite(s.longitude)
+            ? clamp(s.longitude, -180, 180, 0)
+            : null,
         display: ['current', 'next', 'today'].includes(s.display) ? s.display : 'current',
         count: clamp(s.count, 1, 40, 5),
         showPeriod: s.showPeriod !== false,

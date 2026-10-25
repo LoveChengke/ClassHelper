@@ -243,7 +243,7 @@ function fillSample(): void {
         <el-table-column prop="endTime" label="结束" width="90" />
         <el-table-column label="类型" width="100">
           <template #default="{ row }">
-            {{ row.type === 'break' ? '课间' : row.type === 'divider' ? '分割线' : '上课' }}
+            {{ row.type === 'break' ? '课间休息' : row.type === 'divider' ? '分割线' : '上课' }}
           </template>
         </el-table-column>
         <el-table-column label="跳过" width="80">

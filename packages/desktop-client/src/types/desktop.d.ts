@@ -1,5 +1,7 @@
 import type {
   IslandLayoutSettings as ContractIslandLayoutSettings,
+  IslandTimePointDto as ContractIslandTimePointDto,
+  IslandWeather,
   ReleaseProgressDto as ContractReleaseProgressDto,
   ScheduleDto as ContractScheduleDto,
 } from '@classhelper/shared';
@@ -111,6 +113,8 @@ export interface IslandPushContext {
 
 export interface IslandClassStatePayload {
   schedules?: ContractScheduleDto[];
+  /** 今天的完整时间点（含课间/分割线/默认隐藏标记），自定义岛课程表组件使用。 */
+  timePoints?: ContractIslandTimePointDto[];
   inClass: boolean;
   currentPeriodEnd?: string | null;
   week?: number;
@@ -175,6 +179,7 @@ export interface DesktopBridge {
   onUpdateAvailable(handler: (info: UpdateInfo) => void): void;
 
   /* 灵动岛 */
+  getIslandWeather(coordinates: { latitude: number; longitude: number }): Promise<IslandWeather>;
   /** 把一条通知投递到灵动岛（payload 必须是纯数据，说明见 saveConfig） */
   islandPush(payload: { notification: IslandNotification; context?: IslandPushContext }): void;
   islandRemoveNotification(id: string): void;

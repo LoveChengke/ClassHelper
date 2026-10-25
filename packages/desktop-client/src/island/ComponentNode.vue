@@ -5,13 +5,16 @@ import {
   resolveClassStatus,
   type IslandComponentNode,
   type IslandState,
+  type IslandTimePointDto,
   type ScheduleDto,
 } from '@classhelper/shared';
+import WeatherBrief from './WeatherBrief.vue';
 const props = defineProps<{
   node: IslandComponentNode;
   state: IslandState;
   now: number;
   schedules: ScheduleDto[];
+  timePoints: IslandTimePointDto[];
   editing: boolean;
   selectedId: string;
   alertNodeId: string;
@@ -38,20 +41,69 @@ function timeAt(time: string) {
   d.setHours(h!, m!, 0, 0);
   return d.getTime();
 }
-const elapsed = computed(() =>
-  current.value
-    ? Math.max(
-        0,
-        Math.min(
-          1,
-          (props.now - timeAt(current.value.startTime)) /
-            Math.max(1, timeAt(current.value.endTime) - timeAt(current.value.startTime)),
-        ),
-      )
-    : 0,
+/**
+ * 今天的时间点：优先用服务端下发的完整时间表（含课间/分割线/默认隐藏），
+ * 没有时回退到课表条目，保证旧服务端与离线缓存仍能显示课程。
+ */
+const dayPoints = computed<IslandTimePointDto[]>(() => {
+  const source = props.timePoints.length
+    ? props.timePoints
+    : today.value.map<IslandTimePointDto>((s) => ({
+        id: s.id,
+        timeType: 'LESSON',
+        name: '',
+        courseName: s.course?.name ?? null,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        isHideDefault: false,
+      }));
+  return [...source].sort((a, b) => a.startTime.localeCompare(b.startTime));
+});
+const currentPoint = computed(
+  () =>
+    dayPoints.value.find(
+      (point) =>
+        point.timeType !== 'DIVIDER' &&
+        point.timeType !== 'ACTION' &&
+        props.now >= timeAt(point.startTime) &&
+        props.now < timeAt(point.endTime),
+    ) ?? null,
 );
+const currentLesson = computed(() => (currentPoint.value?.timeType === 'LESSON' ? currentPoint.value : null));
+/** 课程表组件按 ClassIsland 主界面的折叠/展开规则挑选时间点。 */
+const schedulePoints = computed<IslandTimePointDto[]>(() => {
+  const display = props.node.settings.display;
+  if (display === 'next')
+    return dayPoints.value
+      .filter((point) => point.timeType === 'LESSON' && timeAt(point.startTime) > props.now)
+      .slice(0, 1);
+  if (display === 'current') {
+    if (currentPoint.value) return [currentPoint.value];
+    return dayPoints.value
+      .filter((point) => point.timeType === 'LESSON' && timeAt(point.startTime) > props.now)
+      .slice(0, 1);
+  }
+  const visible = dayPoints.value.filter(
+    (point) =>
+      point.timeType === 'DIVIDER' ||
+      point.id === currentPoint.value?.id ||
+      (point.timeType === 'LESSON' && !point.isHideDefault),
+  );
+  const count = Math.max(1, props.node.settings.count);
+  if (visible.length <= count) return visible;
+  const index = visible.findIndex((point) => point.id === currentPoint.value?.id);
+  const start = Math.max(0, Math.min(index - Math.floor(count / 2), visible.length - count));
+  return visible.slice(start, start + count);
+});
+const elapsed = computed(() => {
+  const point = currentLesson.value;
+  if (!point) return 0;
+  const start = timeAt(point.startTime);
+  const end = timeAt(point.endTime);
+  return Math.max(0, Math.min(1, (props.now - start) / Math.max(1, end - start)));
+});
 const remaining = computed(() =>
-  current.value ? Math.max(0, Math.ceil((timeAt(current.value.endTime) - props.now) / 1000)) : 0,
+  currentLesson.value ? Math.max(0, Math.ceil((timeAt(currentLesson.value.endTime) - props.now) / 1000)) : 0,
 );
 const hidden = computed(
   () =>
@@ -62,11 +114,11 @@ const hidden = computed(
         (r) =>
           (r === 'in-class' && props.state.inClass) ||
           (r === 'no-message' && !props.state.active) ||
-          (r === 'no-class' && !current.value),
+          (r === 'no-class' && !currentLesson.value),
       )),
 );
 const visibleChildren = computed(() =>
-  props.node.kind === 'slide'
+  props.node.kind === 'slide' && !props.editing
     ? props.node.children.filter(
         (_, i) =>
           i ===
@@ -95,6 +147,18 @@ const content = computed(() => {
           .replaceAll('{course}', current.value?.course?.name || '暂无课程')
       : n.settings.text;
   if (n.kind === 'countdown') {
+    if (n.settings.target === 'date') {
+      if (!n.settings.targetDate) return '请设置目标日期';
+      const [year, month, day] = n.settings.targetDate.split('-').map(Number);
+      const days = Math.round(
+        (Date.UTC(year!, month! - 1, day!) - Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000,
+      );
+      return days > 0
+        ? `距${n.settings.countdownTitle} ${days} 天`
+        : days === 0
+          ? `${n.settings.countdownTitle}就在今天`
+          : `${n.settings.countdownTitle}已过 ${-days} 天`;
+    }
     const ending = n.settings.target === 'end' || (n.settings.target === 'auto' && !!current.value);
     const time =
       n.settings.target === 'school'
@@ -111,13 +175,6 @@ const content = computed(() => {
   }
   return '';
 });
-const lessons = computed(() =>
-  props.node.settings.display === 'today'
-    ? today.value.slice(0, props.node.settings.count)
-    : [props.node.settings.display === 'next' ? next.value : current.value || next.value].filter(
-        (s): s is ScheduleDto => Boolean(s),
-      ),
-);
 const style = computed<CSSProperties>(() => {
   const n = props.node,
     a = n.appearance,
@@ -177,6 +234,7 @@ const style = computed<CSSProperties>(() => {
         :state="state"
         :now="now"
         :schedules="schedules"
+        :time-points="timePoints"
         :editing="editing"
         :selected-id="selectedId"
         :alert-node-id="alertNodeId"
@@ -188,26 +246,33 @@ const style = computed<CSSProperties>(() => {
       </ComponentNode>
     </template>
     <template v-else-if="node.kind === 'separator'"><span aria-hidden="true">│</span></template>
+    <WeatherBrief v-else-if="node.kind === 'weather'" :settings="node.settings" />
     <template v-else-if="node.kind === 'schedule'">
-      <div v-for="s in lessons" :key="s.id" class="lesson-line">
-        <strong>{{ s.course?.name }}</strong>
-        <small v-if="node.settings.showPeriod" class="lesson-time">{{ s.startTime }}–{{ s.endTime }}</small>
-        <small v-if="node.settings.showProgress && current?.id === s.id" class="lesson-remaining">
-          距下课 {{ Math.floor(remaining / 60) }}:{{ String(remaining % 60).padStart(2, '0') }}
-        </small>
-      </div>
-      <span v-if="!lessons.length">暂无课程</span>
-      <div
-        v-if="current && node.settings.showProgress && node.settings.display !== 'next'"
-        class="lesson-progress"
-        role="progressbar"
-        :aria-valuenow="Math.round(elapsed * 100)"
-        :aria-valuemin="0"
-        :aria-valuemax="100"
-        :aria-label="`${current.course?.name}课程进度，距下课${remaining}秒`"
-      >
-        <i :style="{ transform: `scaleX(${elapsed})` }" />
-      </div>
+      <template v-for="p in schedulePoints" :key="p.id">
+        <span v-if="p.timeType === 'DIVIDER'" class="time-divider" aria-hidden="true">│</span>
+        <div
+          v-else
+          class="lesson-line"
+          :class="{ current: p.id === currentPoint?.id, break: p.timeType === 'BREAK' }"
+        >
+          <strong>{{ p.courseName || p.name || '—' }}</strong>
+          <small v-if="p.id === currentPoint?.id && node.settings.showPeriod" class="lesson-time">
+            {{ p.startTime }}–{{ p.endTime }}
+          </small>
+          <span
+            v-if="p.id === currentPoint?.id && p.timeType === 'LESSON' && node.settings.showProgress"
+            class="lesson-progress"
+            role="progressbar"
+            :aria-valuenow="Math.round(elapsed * 100)"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            :aria-label="`${p.courseName || '课程'}课程进度，距下课${remaining}秒`"
+          >
+            <i :style="{ transform: `scaleX(${elapsed})` }" />
+          </span>
+        </div>
+      </template>
+      <span v-if="!schedulePoints.length">暂无课程</span>
     </template>
     <template v-else-if="['notification', 'homework', 'call'].includes(node.kind)">
       <slot v-if="node.id === alertNodeId" name="alerts" />
@@ -238,17 +303,34 @@ const style = computed<CSSProperties>(() => {
   white-space: nowrap;
 }
 .schedule > .lesson-line {
+  position: relative;
   display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: center;
   gap: 6px;
+  padding-bottom: 3px;
 }
 .lesson-line strong {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.lesson-line.current strong {
+  color: #fff;
+}
+.lesson-line.break {
+  opacity: 0.86;
+}
+.time-divider {
+  display: block;
+  width: 1px;
+  height: 18px;
+  overflow: hidden;
+  background: currentColor;
+  font-size: 0;
+  opacity: 0.25;
 }
 .lesson-time {
   flex-shrink: 0;
@@ -257,10 +339,11 @@ const style = computed<CSSProperties>(() => {
 }
 .lesson-progress {
   position: absolute;
-  inset: auto 4px 0;
+  inset: auto 0 0;
   height: 2px;
   background: #ffffff24;
   overflow: hidden;
+  border-radius: 1px;
 }
 .lesson-progress i {
   display: block;
@@ -271,12 +354,6 @@ const style = computed<CSSProperties>(() => {
 }
 .schedule > .lesson-line + .lesson-line {
   margin-top: 8px;
-}
-.lesson-remaining {
-  font-size: var(--secondary, 14px);
-  font-variant-numeric: tabular-nums;
-  opacity: 0.8;
-  white-space: nowrap;
 }
 .separator > span {
   display: block;
@@ -298,6 +375,9 @@ const style = computed<CSSProperties>(() => {
 }
 .rolling > :deep(.component-node) {
   animation: rolling var(--rolling-duration) linear infinite;
+}
+.rolling.node-editing > :deep(.component-node) {
+  animation: none;
 }
 .selected {
   outline: 2px solid #85aaff;

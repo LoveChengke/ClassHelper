@@ -5,7 +5,6 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
-  TIME_POINT_TYPES,
   SOCKET_EVENTS,
   dayKeyLocal,
   shiftDayKey,
@@ -20,6 +19,8 @@ import { api } from '@/api/http';
 import { classApi, courseApi, courseIdFromExistsError, dashboardApi } from '@/api';
 import { useRealtimeStore } from '@/stores/realtime';
 import ArchiveIcon from '@/components/ArchiveIcon.vue';
+import PlanDetailsForm from '@/components/PlanDetailsForm.vue';
+import TimeLayoutEditor from '@/components/TimeLayoutEditor.vue';
 import { useAuthStore } from '@/stores/auth';
 import ClassPlanImportDialog from '@/components/ClassPlanImportDialog.vue';
 const auth = useAuthStore();
@@ -44,12 +45,26 @@ const selectedLayout = ref(''),
   week = ref(1),
   tab = ref('plans');
 const groups = ref<{ id: string; name: string; isGlobal: boolean; isDefault: boolean }[]>([]);
-const layout = computed(() => layouts.value.find((p) => p.id === selectedLayout.value));
-const plan = computed(() => plans.value.find((p) => p.id === selectedPlan.value));
+const layout = computed({
+  get: () => layouts.value.find((p) => p.id === selectedLayout.value),
+  set: (value) => {
+    if (!value) return;
+    const index = layouts.value.findIndex((p) => p.id === value.id);
+    if (index >= 0) layouts.value[index] = value;
+  },
+});
+const plan = computed({
+  get: () => plans.value.find((p) => p.id === selectedPlan.value),
+  set: (value) => {
+    if (!value) return;
+    const index = plans.value.findIndex((p) => p.id === value.id);
+    if (index >= 0) plans.value[index] = value;
+  },
+});
 const selected = ref<string[]>([]),
   copied = ref<ClassPlanDto['entries']>([]);
 const copiedPoints = ref<TimePointDto[]>([]);
-const types = { LESSON: '上课', BREAK: '课间', DIVIDER: '分割线', ACTION: '行动（只保存）' };
+const types = { LESSON: '上课', BREAK: '课间休息', DIVIDER: '分割线', ACTION: '行动（只保存）' };
 const selectedGroup = ref(''),
   temporaryGroup = ref(''),
   expireTime = ref('');
@@ -121,9 +136,24 @@ async function load() {
     activeWeek.value = active;
     selectedGroup.value = selection.selected || '';
     temporaryGroup.value = selection.temporary || '';
-    if (!plans.value.some((p) => p.id === selectedPlan.value)) selectedPlan.value = '';
-    if (!layouts.value.some((p) => p.id === selectedLayout.value))
-      selectedLayout.value = plan.value?.timeLayoutId || layouts.value[0]?.id || '';
+    if (!plans.value.some((p) => p.id === selectedPlan.value)) {
+      // 单表编辑是默认视图：优先今天、其次周一、最后任意一张，避免打开页面空白。
+      const weekday = new Date().getDay() || 7;
+      const preferred =
+        active.days.find((day) => day.weekday === weekday)?.classPlan ??
+        active.days.find((day) => day.weekday === 1)?.classPlan ??
+        plans.value[0];
+      selectedPlan.value = preferred?.id || '';
+    }
+    if (!layouts.value.some((p) => p.id === selectedLayout.value)) {
+      const planLayout = plan.value?.timeLayoutId;
+      // 课表引用的布局可能已被删除或不在当前班级可见范围，退回第一份可用布局，
+      // 否则编辑器会停在“未选择时间表”，连添加时间点都不可用。
+      selectedLayout.value =
+        (planLayout && layouts.value.some((p) => p.id === planLayout) ? planLayout : '') ||
+        layouts.value[0]?.id ||
+        '';
+    }
   } catch {
     if (request === loadRequest) loadError.value = true;
   } finally {
@@ -136,45 +166,11 @@ watch(
   () => {
     selected.value = [];
     activePoint.value = '';
-    if (plan.value) selectedLayout.value = plan.value.timeLayoutId;
+    if (plan.value && layouts.value.some((item) => item.id === plan.value!.timeLayoutId))
+      selectedLayout.value = plan.value.timeLayoutId;
   },
   { flush: 'sync' },
 );
-const quickLessonMinutes = ref(45),
-  quickBreakMinutes = ref(10);
-function addMinutes(time: string, minutes: number): string {
-  const [hour, minute] = time.split(':').map(Number);
-  const total = ((hour ?? 0) * 60 + (minute ?? 0) + minutes) % (24 * 60);
-  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-}
-function addPoint(type: TimePointDto['timeType'] = 'LESSON') {
-  if (!layout.value) return;
-  const points = layout.value.points;
-  const previous = points[points.length - 1];
-  // 从上一时段结束处继续排，课程和课间共用快速时长。
-  const minutes =
-    type === 'BREAK' ? quickBreakMinutes.value : type === 'DIVIDER' ? 0 : quickLessonMinutes.value;
-  let startTime = previous?.endTime || '08:00';
-  let endTime = addMinutes(startTime, minutes);
-  // 上一时段已经排到午夜：跨天的结束时间不合法，新时段从当天零点开始。
-  if (type !== 'DIVIDER' && endTime <= startTime) {
-    startTime = '00:00';
-    endTime = addMinutes(startTime, minutes);
-  }
-  const lessonCount = points.filter((point) => point.timeType === 'LESSON').length;
-  points.push({
-    id: `draft-${crypto.randomUUID()}`,
-    name: type === 'LESSON' ? `第 ${lessonCount + 1} 节` : types[type],
-    startTime,
-    endTime,
-    timeType: type,
-    position: points.length,
-    isHideDefault: false,
-    defaultClassId: null,
-    breakName: '',
-    actionSet: '{}',
-  });
-}
 async function newLayout() {
   if (!canTime.value || saving.value) return;
   const { value } = await ElMessageBox.prompt('输入时间表名称', '新时间表');
@@ -216,12 +212,22 @@ async function cloneLayout() {
     await load();
   }
 }
-async function importLayout() {
-  const value = sourceLayout.value;
-  if (!value) return;
-  if (layout.value) {
-    await api.post(`/time-layouts/${layout.value.id}/import`, { sourceId: value });
+async function importLayout(sourceId: string) {
+  if (!sourceId || !layout.value || !canTime.value) return;
+  await api.post(`/time-layouts/${layout.value.id}/import`, { sourceId });
+  await load();
+  ElMessage.success('已从来源时间表导入时间点');
+}
+async function applyDefault(pointId: string) {
+  if (!layout.value || !canTime.value) return;
+  try {
+    const result = await api.post<{ plans: number }>(
+      `/time-layouts/${layout.value.id}/points/${pointId}/apply-default`,
+    );
     await load();
+    ElMessage.success(`已覆盖 ${result.plans} 张课表`);
+  } catch (error) {
+    if (error instanceof Error) ElMessage.error(error.message);
   }
 }
 const createVisible = ref(false);
@@ -484,10 +490,14 @@ onUnmounted(() => {
   realtime.off(SOCKET_EVENTS.scheduleUpdated, onScheduleUpdated);
 });
 onBeforeRouteLeave(() => confirmDiscard());
-const sourceLayout = ref('');
 watch(tab, () => {
   search.value = '';
-  if (tab.value === 'plans' && plan.value) selectedLayout.value = plan.value.timeLayoutId;
+  if (
+    tab.value === 'plans' &&
+    plan.value &&
+    layouts.value.some((item) => item.id === plan.value!.timeLayoutId)
+  )
+    selectedLayout.value = plan.value.timeLayoutId;
 });
 const missingSubjects = computed(() =>
   SUBJECT_CATALOG.filter((name) => !courses.value.some((c) => c.name === name)),
@@ -503,10 +513,65 @@ async function addSubject(name: string) {
   }
   ElMessage.success('科目已添加');
 }
-const lessonPoints = computed(() => layout.value?.points.filter((p) => p.timeType === 'LESSON') || []);
+const lessonPoints = computed(
+  () =>
+    layouts.value
+      .find((l) => l.id === plan.value?.timeLayoutId)
+      ?.points.filter((p) => p.timeType === 'LESSON') || [],
+);
 const currentPoint = computed(() => lessonPoints.value.find((p) => p.id === activePoint.value));
 const visiblePlans = computed(() => plans.value.filter((p) => p.name.includes(search.value)));
-const visibleLayouts = computed(() => layouts.value.filter((p) => p.name.includes(search.value)));
+const layoutPlanCount = computed(() =>
+  layout.value ? plans.value.filter((p) => p.timeLayoutId === layout.value!.id).length : 0,
+);
+const groupedPlans = computed(() => {
+  const bucket = new Map<
+    string,
+    { id: string; name: string; isGlobal: boolean; isDefault: boolean; plans: ClassPlanDto[] }
+  >();
+  for (const group of groups.value) bucket.set(group.id, { ...group, plans: [] });
+  const ungrouped: ClassPlanDto[] = [];
+  for (const item of visiblePlans.value) {
+    const group = item.associatedGroup ? bucket.get(item.associatedGroup) : undefined;
+    if (group) group.plans.push(item);
+    else ungrouped.push(item);
+  }
+  return [
+    ...[...bucket.values()].filter((group) => group.plans.length),
+    ...(ungrouped.length
+      ? [{ id: '', name: '未分组', isGlobal: false, isDefault: false, plans: ungrouped }]
+      : []),
+  ];
+});
+/** 条目存在就以条目为准；没有条目才回退时间点的默认课程。 */
+function displayCourseId(point: TimePointDto) {
+  const item = entry(point);
+  if (item) return item.courseId;
+  return point.defaultClassId ?? null;
+}
+function usingDefaultCourse(point: TimePointDto) {
+  return !entry(point) && Boolean(point.defaultClassId);
+}
+function gridCourseId(day: number, row: GridRow) {
+  const point = gridPoint(day, row);
+  if (!point) return null;
+  const item = planEntry(dayPlan(day), point.id);
+  return item ? item.courseId : (point.defaultClassId ?? null);
+}
+function pointMinutes(point: TimePointDto) {
+  const [sh, sm] = point.startTime.split(':').map(Number);
+  const [eh, em] = point.endTime.split(':').map(Number);
+  return Math.max(0, (eh ?? 0) * 60 + (em ?? 0) - (sh ?? 0) * 60 - (sm ?? 0));
+}
+const planDetailsSummary = computed(() => {
+  const item = plan.value;
+  if (!item) return '';
+  const weekday = item.weekday ? `星期${'一二三四五六日'[item.weekday - 1]}` : '任意星期';
+  const rotation = item.weekCountDiv
+    ? `${item.weekCountDivTotal} 周轮换 · 第 ${item.weekCountDiv} 周`
+    : '每周';
+  return `${weekday} · ${rotation} · 第 ${item.weekStart}–${item.weekEnd} 周`;
+});
 const tabs = [
   { id: 'plans', name: '课表' },
   { id: 'layouts', name: '时间表' },
@@ -576,9 +641,9 @@ async function exportArchive() {
 const loading = ref(false),
   saving = ref(false),
   loadError = ref(false);
-const viewMode = ref<'list' | 'week' | 'month'>('week');
-const detailsVisible = ref(false),
-  helpVisible = ref(false);
+const viewMode = ref<'list' | 'week' | 'month'>('list');
+const inspectorTab = ref<'subjects' | 'plan'>('subjects');
+const helpVisible = ref(false);
 const autoAdvance = ref(true);
 const selectedDay = ref(1);
 const selectedDate = ref(dayKeyLocal(new Date()));
@@ -645,7 +710,12 @@ const initials: Record<string, string> = {
 function subjectInitial(name: string) {
   return initials[name] || name.slice(0, 1);
 }
-const selectedCourseId = computed(() => planEntry(plan.value, activePoint.value)?.courseId);
+const selectedCourseId = computed(() => {
+  const point = currentPoint.value;
+  if (!point) return null;
+  const item = planEntry(plan.value, point.id);
+  return item ? item.courseId : (point.defaultClassId ?? null);
+});
 async function pickSubject(name: string) {
   if (!canWrite.value || !plan.value || saving.value) return;
   let course = courses.value.find((c) => c.name === name);
@@ -861,7 +931,8 @@ function onScheduleUpdated() {
   if (!saving.value) void load();
 }
 function openDetails() {
-  if (plan.value) detailsVisible.value = true;
+  if (!plan.value) return;
+  inspectorTab.value = 'plan';
 }
 function selectPlanItem(id: string) {
   selectedPlan.value = id;
@@ -1085,12 +1156,12 @@ function selectPlanItem(id: string) {
                         v-if="gridPoint(day.day, row) && row.timeType === 'LESSON'"
                         class="lesson-cell"
                         :data-cell="`${day.day}-${index}`"
-                        :aria-label="`${day.label} ${row.startTime} ${courseName(gridEntry(day.day, row)?.courseId) || '空课'}，点击编辑科目`"
+                        :aria-label="`${day.label} ${row.startTime} ${courseName(gridCourseId(day.day, row)) || '空课'}，点击编辑科目`"
                         :aria-pressed="isSelectedCell(day.day, row)"
                         @click="selectCell(day.day, row)"
                         @keydown="moveCell(day.day, row, $event)"
                       >
-                        <strong>{{ courseName(gridEntry(day.day, row)?.courseId) || '—' }}</strong>
+                        <strong>{{ courseName(gridCourseId(day.day, row)) || '—' }}</strong>
                         <small v-if="gridEntry(day.day, row)?.location">
                           {{ gridEntry(day.day, row)?.location }}
                         </small>
@@ -1135,22 +1206,29 @@ function selectPlanItem(id: string) {
             </div>
           </div>
           <div v-else-if="viewMode === 'list'" class="list-view">
-            <aside class="plan-explorer">
+            <aside class="plan-explorer" aria-label="课表列表">
               <el-input v-model="search" placeholder="搜索课表" clearable />
-              <button
-                v-for="p in visiblePlans"
-                :key="p.id"
-                class="plan-item"
-                :class="{ active: selectedPlan === p.id }"
-                @click="selectPlanItem(p.id)"
-              >
-                <strong>{{ p.name }}</strong>
-                <small>
-                  {{ p.weekday ? `星期${'一二三四五六日'[p.weekday - 1]}` : '任意星期' }} ·
-                  {{ p.weekCountDiv ? `${p.weekCountDivTotal} 周轮换 / 第 ${p.weekCountDiv} 周` : '每周'
-                  }}{{ p.isOverlay ? ' · 临时层' : '' }}{{ p.isEnabled ? '' : ' · 已停用' }}
-                </small>
-              </button>
+              <section v-for="group in groupedPlans" :key="group.id || 'ungrouped'" class="plan-group">
+                <header class="plan-group-title">
+                  <span>{{ group.name }}</span>
+                  <small v-if="group.isGlobal">全局</small>
+                  <small v-if="group.isDefault">默认</small>
+                </header>
+                <button
+                  v-for="p in group.plans"
+                  :key="p.id"
+                  class="plan-item"
+                  :class="{ active: selectedPlan === p.id }"
+                  @click="selectPlanItem(p.id)"
+                >
+                  <strong>{{ p.name }}</strong>
+                  <small>
+                    {{ p.weekday ? `星期${'一二三四五六日'[p.weekday - 1]}` : '任意星期' }} ·
+                    {{ p.weekCountDiv ? `${p.weekCountDivTotal} 周轮换 / 第 ${p.weekCountDiv} 周` : '每周'
+                    }}{{ p.isOverlay ? ' · 临时层' : '' }}{{ p.isEnabled ? '' : ' · 已停用' }}
+                  </small>
+                </button>
+              </section>
               <button class="command" :disabled="!canWrite" @click="newPlan()">
                 <ArchiveIcon name="plus" />
                 新课表
@@ -1163,10 +1241,20 @@ function selectPlanItem(id: string) {
               </div>
               <template v-else>
                 <header class="section-header">
-                  <h3>{{ plan.name }}</h3>
+                  <div class="section-title">
+                    <h3>{{ plan.name }}</h3>
+                    <small>{{ planDetailsSummary }}</small>
+                  </div>
                   <button class="command" @click="openDetails">详细信息</button>
                 </header>
-                <section class="course-list" aria-label="课程时段">
+                <div class="course-table" aria-label="课程时段">
+                  <div class="course-table-head" role="row">
+                    <span>选择</span>
+                    <span>时间</span>
+                    <span>科目</span>
+                    <span>教室</span>
+                    <span>启用</span>
+                  </div>
                   <div
                     v-for="p in lessonPoints"
                     :key="p.id"
@@ -1183,39 +1271,38 @@ function selectPlanItem(id: string) {
                       :aria-label="`选择 ${p.startTime} 课程`"
                       @change="toggleSelected(p.id, $event)"
                     />
-                    <button
-                      class="drag"
-                      :disabled="!canWrite"
-                      aria-label="拖动交换课程"
-                      @pointerdown="dragStart($event, p.id)"
-                      @pointermove="dragMove"
-                      @pointerup="dragEnd"
-                      @pointercancel="
-                        moving = '';
-                        target = '';
-                      "
-                    >
-                      ⠿
-                    </button>
                     <div class="course-time">
-                      <strong>{{ p.name || '课时' }}</strong>
-                      <small>{{ p.startTime }}–{{ p.endTime }}</small>
+                      <button
+                        class="drag"
+                        :disabled="!canWrite"
+                        aria-label="拖动交换课程"
+                        @pointerdown="dragStart($event, p.id)"
+                        @pointermove="dragMove"
+                        @pointerup="dragEnd"
+                        @pointercancel="
+                          moving = '';
+                          target = '';
+                        "
+                      >
+                        ⠿
+                      </button>
+                      <div class="course-time-text">
+                        <strong>{{ p.name || '课时' }}</strong>
+                        <small>{{ p.startTime }}–{{ p.endTime }} · {{ pointMinutes(p) }} 分钟</small>
+                      </div>
                     </div>
-                    <el-select
-                      :model-value="entry(p)?.courseId"
-                      :disabled="!canWrite"
-                      clearable
-                      placeholder="选择科目"
-                      @change="assign(p, $event || null)"
-                    >
-                      <el-option v-for="c in courses" :key="c.id" :value="c.id" :label="c.name" />
-                    </el-select>
-                    <el-switch
-                      :model-value="entry(p)?.isEnabled ?? true"
-                      :disabled="!canWrite"
-                      aria-label="启用课程"
-                      @change="editEntry(p)!.isEnabled = Boolean($event)"
-                    />
+                    <div class="course-course">
+                      <el-select
+                        :model-value="displayCourseId(p)"
+                        :disabled="!canWrite"
+                        clearable
+                        placeholder="选择科目"
+                        @change="assign(p, $event || null)"
+                      >
+                        <el-option v-for="c in courses" :key="c.id" :value="c.id" :label="c.name" />
+                      </el-select>
+                      <span v-if="usingDefaultCourse(p)" class="default-badge">默认</span>
+                    </div>
                     <el-input
                       :model-value="entry(p)?.location || ''"
                       :disabled="!canWrite"
@@ -1223,9 +1310,15 @@ function selectPlanItem(id: string) {
                       class="location-input"
                       @update:model-value="editEntry(p)!.location = $event"
                     />
+                    <el-switch
+                      :model-value="entry(p)?.isEnabled ?? true"
+                      :disabled="!canWrite"
+                      aria-label="启用课程"
+                      @change="editEntry(p)!.isEnabled = Boolean($event)"
+                    />
                   </div>
                   <el-empty v-if="!lessonPoints.length" description="时间表还没有上课时间点" />
-                </section>
+                </div>
                 <div class="toolbar">
                   <el-button :disabled="!canWrite" @click="batch">批量排课</el-button>
                   <el-button @click="copyPlan">复制课程</el-button>
@@ -1269,193 +1362,85 @@ function selectPlanItem(id: string) {
             <p class="month-hint">点击日期查看该周的生效课表</p>
           </div>
         </main>
-        <aside class="subject-panel" aria-label="编辑科目">
-          <h3>编辑科目</h3>
-          <div class="subject-palette">
+        <aside class="subject-panel" aria-label="课表侧栏">
+          <nav class="inspector-tabs" aria-label="课表信息">
             <button
-              v-for="s in palette"
-              :key="s.name"
-              :title="s.name"
-              :aria-label="`填入${s.name}`"
-              :aria-pressed="Boolean(s.course && selectedCourseId === s.course.id)"
-              :class="{ active: s.course && selectedCourseId === s.course.id }"
-              :disabled="!canWrite || !plan || saving"
-              @click="pickSubject(s.name)"
+              :class="{ active: inspectorTab === 'subjects' }"
+              :aria-selected="inspectorTab === 'subjects'"
+              @click="inspectorTab = 'subjects'"
             >
-              {{ s.course?.initial || subjectInitial(s.name) }}
+              科目
             </button>
-          </div>
-          <div v-if="currentPoint" class="selection-details">
-            <span>{{ currentPoint.name }} {{ currentPoint.startTime }}–{{ currentPoint.endTime }}</span>
-            <button class="command" :disabled="!canWrite" @click="clearCell">清空科目</button>
-          </div>
-          <el-checkbox v-model="autoAdvance" class="auto-advance">选完科目自动移动到下一个课程</el-checkbox>
+            <button
+              :class="{ active: inspectorTab === 'plan' }"
+              :aria-selected="inspectorTab === 'plan'"
+              :disabled="!plan"
+              @click="openDetails"
+            >
+              课表信息
+            </button>
+          </nav>
+          <template v-if="inspectorTab === 'subjects'">
+            <div class="subject-palette">
+              <button
+                v-for="s in palette"
+                :key="s.name"
+                :title="s.name"
+                :aria-label="`填入${s.name}`"
+                :aria-pressed="Boolean(s.course && selectedCourseId === s.course.id)"
+                :class="{ active: s.course && selectedCourseId === s.course.id }"
+                :disabled="!canWrite || !plan || saving"
+                @click="pickSubject(s.name)"
+              >
+                {{ s.course?.initial || subjectInitial(s.name) }}
+              </button>
+            </div>
+            <div v-if="currentPoint" class="selection-details">
+              <span>{{ currentPoint.name }} {{ currentPoint.startTime }}–{{ currentPoint.endTime }}</span>
+              <button class="command" :disabled="!canWrite" @click="clearCell">清空科目</button>
+            </div>
+            <el-checkbox v-model="autoAdvance" class="auto-advance">选完科目自动移动到下一个课程</el-checkbox>
+          </template>
+          <PlanDetailsForm
+            v-else-if="plan"
+            v-model:plan="plan"
+            :layouts="layouts"
+            :groups="groups"
+            :max-week="maxWeek"
+            :disabled="!canWrite || saving"
+            :saving="saving"
+            @change-layout="changeLayout"
+            @edit-layout="
+              tab = 'layouts';
+              selectedLayout = plan.timeLayoutId;
+            "
+            @save="savePlan"
+          />
+          <p v-else class="inspector-empty">选择一张课表后编辑信息</p>
         </aside>
       </div>
 
+      <TimeLayoutEditor
+        v-else-if="tab === 'layouts'"
+        :inert="saving"
+        v-model:layout="layout"
+        :layouts="layouts"
+        :courses="courses"
+        :can-edit="canTime"
+        :saving="saving"
+        :plan-count="layoutPlanCount"
+        @select-layout="selectedLayout = $event"
+        @create="newLayout"
+        @clone="cloneLayout"
+        @save="saveLayout"
+        @refresh="refresh"
+        @delete-layout="deleteSelected"
+        @import-points="importLayout"
+        @apply-default="applyDefault"
+      />
       <div v-else class="detail-workspace" :inert="saving">
-        <aside v-if="tab === 'layouts'" class="resource-explorer">
-          <el-input v-model="search" placeholder="搜索时间表" clearable />
-          <button
-            v-for="l in visibleLayouts"
-            :key="l.id"
-            class="plan-item"
-            :class="{ active: selectedLayout === l.id }"
-            @click="selectedLayout = l.id"
-          >
-            <strong>{{ l.name }}</strong>
-            <small>{{ l.classId ? '班级时间表' : '全校时间表' }}</small>
-          </button>
-          <button class="command" :disabled="!canTime" @click="newLayout">
-            <ArchiveIcon name="plus" />
-            新时间表
-          </button>
-        </aside>
         <main class="detail-content">
-          <template v-if="tab === 'layouts'">
-            <header class="section-header">
-              <h3>时间表编辑</h3>
-              <el-button type="primary" :loading="saving" :disabled="!canTime || !layout" @click="saveLayout">
-                保存时间表
-              </el-button>
-            </header>
-            <div v-if="!layout" class="panel-empty">
-              <ArchiveIcon name="clock" />
-              <p>新建一份时间表开始编辑</p>
-              <el-button :disabled="!canTime" @click="newLayout">＋ 新时间表</el-button>
-            </div>
-            <template v-else>
-              <div class="settings-card">
-                <div class="left-section">
-                  <strong>
-                    <el-icon><Document /></el-icon>
-                    时间表名称
-                  </strong>
-                  <small>保存后会同步到所有引用此表的课表</small>
-                </div>
-                <el-input v-model="layout.name" :disabled="!canTime" class="setting-control" />
-              </div>
-              <div class="settings-card">
-                <div class="left-section">
-                  <strong>
-                    <el-icon><Odometer /></el-icon>
-                    快速时长
-                  </strong>
-                  <small>新建课时和课间时自动填充分钟数</small>
-                </div>
-                <div class="control-row">
-                  <span>课程</span>
-                  <el-input-number v-model="quickLessonMinutes" :min="1" :max="180" />
-                  <span>分钟</span>
-                  <span>课间</span>
-                  <el-input-number v-model="quickBreakMinutes" :min="1" :max="120" />
-                  <span>分钟</span>
-                </div>
-              </div>
-              <div class="time-rows">
-                <div
-                  v-for="(p, i) in layout.points"
-                  :key="p.id"
-                  :data-point="p.id"
-                  :data-type="p.timeType"
-                  class="time-row"
-                >
-                  <button
-                    class="drag"
-                    :disabled="!canTime"
-                    aria-label="拖动时间点"
-                    @pointerdown="dragStart($event, p.id)"
-                    @pointermove="dragMove"
-                    @pointerup="dragEnd"
-                    @pointercancel="
-                      moving = '';
-                      target = '';
-                    "
-                  >
-                    ⠿
-                  </button>
-                  <el-input v-model="p.name" :disabled="!canTime" placeholder="时间点名称" />
-                  <el-select v-model="p.timeType" :disabled="!canTime">
-                    <el-option v-for="t in TIME_POINT_TYPES" :key="t" :value="t" :label="types[t]" />
-                  </el-select>
-                  <el-time-picker
-                    v-model="p.startTime"
-                    :disabled="!canTime"
-                    value-format="HH:mm"
-                    format="HH:mm"
-                    placeholder="开始时间"
-                    :clearable="false"
-                  />
-                  <el-time-picker
-                    v-model="p.endTime"
-                    :disabled="!canTime"
-                    value-format="HH:mm"
-                    format="HH:mm"
-                    placeholder="结束时间"
-                    :clearable="false"
-                  />
-                  <el-button :disabled="!canTime" type="danger" plain @click="layout.points.splice(i, 1)">
-                    删除
-                  </el-button>
-                  <div class="time-extra">
-                    <el-select
-                      v-if="p.timeType === 'LESSON'"
-                      v-model="p.defaultClassId"
-                      :disabled="!canTime"
-                      clearable
-                      placeholder="默认科目"
-                    >
-                      <el-option v-for="c in courses" :key="c.id" :value="c.id" :label="c.name" />
-                    </el-select>
-                    <el-checkbox v-model="p.isHideDefault" :disabled="!canTime">默认隐藏</el-checkbox>
-                    <el-input
-                      v-if="p.timeType === 'BREAK'"
-                      v-model="p.breakName"
-                      :disabled="!canTime"
-                      placeholder="课间名称"
-                    />
-                    <el-input
-                      v-if="p.timeType === 'ACTION'"
-                      v-model="p.actionSet"
-                      :disabled="!canTime"
-                      placeholder="行动 JSON（仅保存）"
-                    />
-                  </div>
-                </div>
-              </div>
-              <div class="toolbar">
-                <el-button type="primary" plain :disabled="!canTime" @click="addPoint()">
-                  ＋ 新建课时
-                </el-button>
-                <el-button :disabled="!canTime" @click="addPoint('BREAK')">＋ 新建课间</el-button>
-                <el-button :disabled="!canTime" @click="addPoint('DIVIDER')">＋ 分割线</el-button>
-                <el-button :disabled="!canTime" @click="addPoint('ACTION')">＋ 行动</el-button>
-                <el-button :disabled="!canTime" @click="cloneLayout">克隆时间表</el-button>
-                <el-button :disabled="!canTime" type="danger" plain @click="deleteSelected">
-                  删除时间表
-                </el-button>
-              </div>
-              <div class="settings-card">
-                <div class="left-section">
-                  <strong>
-                    <el-icon><Upload /></el-icon>
-                    从已有时间表导入
-                  </strong>
-                  <small>使用来源时间表的时间点替换当前内容</small>
-                </div>
-                <el-select v-model="sourceLayout" class="setting-control" placeholder="来源时间表">
-                  <el-option
-                    v-for="l in layouts.filter((l) => l.id !== selectedLayout)"
-                    :key="l.id"
-                    :label="l.name"
-                    :value="l.id"
-                  />
-                </el-select>
-                <el-button :disabled="!canTime || !sourceLayout" @click="importLayout">导入</el-button>
-              </div>
-            </template>
-          </template>
-          <template v-else-if="tab === 'subjects'">
+          <template v-if="tab === 'subjects'">
             <h3>科目管理</h3>
             <p>任课关系在班级管理中设置，此处编辑科目的显示信息。</p>
             <el-select
@@ -1632,117 +1617,15 @@ function selectPlanItem(id: string) {
         </el-button>
       </template>
     </el-dialog>
-    <el-drawer v-model="detailsVisible" title="课表详细信息" size="460px" class="archive-details">
-      <template v-if="plan">
-        <el-form :disabled="!canWrite || saving" label-position="top">
-          <div class="settings-card">
-            <div class="left-section">
-              <strong>
-                <el-icon><Document /></el-icon>
-                课表名称
-              </strong>
-              <small>便于区分每天和不同轮换周的课程计划</small>
-            </div>
-            <el-input v-model="plan.name" class="setting-control" />
-          </div>
-          <div class="settings-card">
-            <div class="left-section">
-              <strong>
-                <el-icon><Calendar /></el-icon>
-                启用星期
-              </strong>
-              <small>选择此张课表的作用星期</small>
-            </div>
-            <el-select v-model="plan.weekday" class="setting-control">
-              <el-option label="任意星期" :value="0" />
-              <el-option
-                v-for="day in 7"
-                :key="day"
-                :value="day"
-                :label="`星期${'一二三四五六日'[day - 1]}`"
-              />
-            </el-select>
-          </div>
-          <div class="settings-card">
-            <div class="left-section">
-              <strong>
-                <el-icon><Refresh /></el-icon>
-                轮周设定
-              </strong>
-              <small>第 0 周表示每周使用，支持 1–9 周轮换</small>
-            </div>
-            <div class="control-row">
-              <span>轮换周期</span>
-              <el-input-number v-model="plan.weekCountDivTotal" :min="1" :max="9" />
-              <span>使用第</span>
-              <el-input-number v-model="plan.weekCountDiv" :min="0" :max="plan.weekCountDivTotal" />
-              <span>周</span>
-            </div>
-          </div>
-          <div class="settings-card">
-            <div class="left-section">
-              <strong>
-                <el-icon><Calendar /></el-icon>
-                生效周次
-              </strong>
-              <small>只在指定教学周区间使用</small>
-            </div>
-            <div class="control-row">
-              <el-input-number v-model="plan.weekStart" :min="1" :max="plan.weekEnd" />
-              <span>至</span>
-              <el-input-number v-model="plan.weekEnd" :min="plan.weekStart" :max="maxWeek" />
-            </div>
-          </div>
-          <div class="settings-card">
-            <div class="left-section">
-              <strong>
-                <el-icon><Notebook /></el-icon>
-                时间表模板
-              </strong>
-              <small>课程使用所选时间表的上课时间点</small>
-            </div>
-            <el-select :model-value="plan.timeLayoutId" class="setting-control" @change="changeLayout">
-              <el-option v-for="l in layouts" :key="l.id" :label="l.name" :value="l.id" />
-            </el-select>
-            <el-button
-              @click="
-                selectedLayout = plan.timeLayoutId;
-                tab = 'layouts';
-              "
-            >
-              编辑时间表
-            </el-button>
-          </div>
-          <div class="settings-card">
-            <div class="left-section">
-              <strong>
-                <el-icon><Setting /></el-icon>
-                启用与群组
-              </strong>
-              <small>预定和临时课表可覆盖默认计划</small>
-            </div>
-            <el-select
-              v-model="plan.associatedGroup"
-              clearable
-              class="setting-control"
-              placeholder="默认群组"
-            >
-              <el-option v-for="g in groups" :key="g.id" :value="g.id" :label="g.name" />
-            </el-select>
-            <el-switch v-model="plan.isEnabled" active-text="启用" />
-          </div>
-        </el-form>
-        <el-button type="primary" :disabled="!canWrite" :loading="saving" @click="savePlan">
-          保存课表
-        </el-button>
-      </template>
-    </el-drawer>
     <el-dialog v-model="helpVisible" title="档案编辑帮助" class="archive-help" width="520px">
       <div class="editor-help">
-        <p>在每天上方点击「新课表」，选择时间表并创建日课表。</p>
-        <p>点击网格里的课程，再点击右侧科目简称填入课程。勾选自动移动后，可连续录入。</p>
-        <p>在「时间表」维护上课、课间、分割线和行动；在「详细信息」设置星期、轮换、周次和群组。</p>
-        <p>「调课」提供临时换课、预定和群组切换。底部可切换列表、周、月视图。</p>
+        <p>课表页默认进入单表编辑：左侧按课表群选择课表，中间逐节选择科目，右侧切换「科目 / 课表信息」。</p>
+        <p>没有单独设置科目的课时会回退时间表的默认课程，并标出「默认」；清空科目会写入一节空课。</p>
+        <p>
+          「时间表」维护上课、课间休息、分割线和行动；列表与时间轴视图可切换，拖动时间轴上下把柄可改起止时间。
+        </p>
+        <p>时间点可设置默认课程并「覆盖现有课程」，把这门课写入所有引用该时间表的日课表。</p>
+        <p>周视图点击网格里的课程后可用右侧科目简称快速填充；月视图按日期进入对应教学周。</p>
         <p>编辑完成点击「保存」或按 Ctrl+S。切换班级或离开前会提醒保存。</p>
       </div>
     </el-dialog>
@@ -1904,7 +1787,7 @@ function selectPlanItem(id: string) {
 }
 .schedule-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 264px;
+  grid-template-columns: minmax(0, 1fr) 300px;
   flex: 1;
   min-height: 0;
 }
@@ -2143,6 +2026,33 @@ function selectPlanItem(id: string) {
   font-size: var(--el-font-size-base);
   font-weight: 600;
 }
+.inspector-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--ch-border);
+}
+.inspector-tabs button {
+  flex: 1;
+  padding: 8px 6px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ch-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.inspector-tabs button.active {
+  border-bottom-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+}
+.inspector-tabs button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.inspector-empty {
+  color: var(--ch-text-muted);
+}
 .subject-palette {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -2328,35 +2238,71 @@ function selectPlanItem(id: string) {
 .archive-commands {
   margin-top: 0;
 }
-.course-list {
+.course-table {
   display: flex;
   flex-direction: column;
 }
+.course-table-head,
 .course-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 34px minmax(150px, 1fr) minmax(130px, 1.1fr) 100px 54px;
   align-items: center;
-  gap: 12px;
-  padding: 12px 5px;
+  gap: 10px;
+}
+.course-table-head {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--ch-border);
+  color: var(--ch-text-muted);
+  font-size: var(--el-font-size-extra-small);
+}
+.course-row {
+  padding: 9px 6px;
   border-bottom: 1px solid var(--ch-border);
 }
 .course-row.selected {
   background: var(--el-color-primary-light-9);
 }
-.course-row .el-select {
-  flex: 1;
-  min-width: 100px;
-}
 .course-time {
   display: flex;
-  flex-direction: column;
-  min-width: 95px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
-.course-time small {
+.course-time-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.course-time-text strong,
+.course-time-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.course-time-text small {
   color: var(--ch-text-muted);
   font-size: var(--el-font-size-extra-small);
 }
+.course-course {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.course-course :deep(.el-select) {
+  flex: 1;
+  min-width: 0;
+}
+.default-badge {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border: 1px solid var(--el-color-primary-light-5);
+  border-radius: 999px;
+  color: var(--el-color-primary);
+  font-size: var(--el-font-size-extra-small);
+}
 .location-input {
-  width: 95px;
+  width: 100%;
 }
 .drag {
   padding: 7px 3px;
@@ -2366,28 +2312,44 @@ function selectPlanItem(id: string) {
   cursor: grab;
   touch-action: none;
 }
-.time-row {
-  display: grid;
-  grid-template-columns: 26px minmax(90px, 1fr) 110px 130px 130px 65px;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--ch-border);
-}
-.time-row > .el-input,
-.time-row > .el-select,
-.time-row :deep(.el-date-editor) {
-  width: 100%;
-}
-.time-extra {
+.section-title {
   display: flex;
-  grid-column: 2 / -1;
-  align-items: center;
-  gap: 14px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
-.time-extra .el-select,
-.time-extra .el-input {
-  width: 220px;
+.section-title h3 {
+  margin: 0;
+}
+.section-title small {
+  color: var(--ch-text-muted);
+  font-size: var(--el-font-size-extra-small);
+}
+.plan-explorer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.plan-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.plan-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 2px;
+  color: var(--ch-text-muted);
+  font-size: var(--el-font-size-extra-small);
+  font-weight: 500;
+}
+.plan-group-title small {
+  padding: 0 5px;
+  border: 1px solid var(--ch-border);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 400;
 }
 .panel-empty,
 .workspace-empty {
@@ -2484,7 +2446,7 @@ function selectPlanItem(id: string) {
 }
 @media (max-width: 1180px) {
   .schedule-workspace {
-    grid-template-columns: minmax(0, 1fr) 230px;
+    grid-template-columns: minmax(0, 1fr) 260px;
   }
   .subject-panel {
     padding: 12px;
@@ -2496,8 +2458,9 @@ function selectPlanItem(id: string) {
     flex-wrap: wrap;
     gap: 6px;
   }
-  .time-row {
-    grid-template-columns: 24px minmax(80px, 1fr) 100px 105px 105px 65px;
+  .course-table-head,
+  .course-row {
+    grid-template-columns: 30px minmax(120px, 1fr) minmax(110px, 1fr) 80px 48px;
   }
   .list-view {
     flex-direction: column;
@@ -2615,19 +2578,22 @@ function selectPlanItem(id: string) {
   .daily-editor {
     padding: 12px;
   }
-  .time-row {
-    grid-template-columns: 20px minmax(80px, 1fr) 100px;
-  }
-  .time-extra {
-    grid-column: 1 / -1;
-    flex-wrap: wrap;
+  .course-table-head {
+    display: none;
   }
   .course-row {
+    display: flex;
     flex-wrap: wrap;
-    gap: 7px;
+    gap: 8px;
   }
   .course-time {
-    min-width: 75px;
+    flex: 1 1 140px;
+  }
+  .course-course {
+    flex: 1 1 140px;
+  }
+  .location-input {
+    flex: 0 1 96px;
   }
   .plan-picker {
     width: 150px;
@@ -2642,47 +2608,8 @@ function selectPlanItem(id: string) {
 </style>
 
 <style>
-.archive-details .settings-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--ch-border);
-}
-.archive-details .left-section {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.archive-details .left-section strong {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.archive-details .left-section small {
-  color: var(--ch-text-secondary);
-}
-.archive-details .control-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.archive-details .el-input-number {
-  width: 118px;
-}
-.archive-details .setting-control {
-  width: 100%;
-}
-.archive-details .el-form + .el-button {
-  margin-top: 18px;
-}
 .archive-dialog,
 .archive-help {
   max-width: calc(100vw - 24px);
-}
-.archive-details {
-  max-width: 100vw;
 }
 </style>

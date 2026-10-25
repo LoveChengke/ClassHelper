@@ -1,4 +1,7 @@
-import type { ScheduleDto as ContractScheduleDto } from '@classhelper/shared';
+import type {
+  IslandTimePointDto as ContractIslandTimePointDto,
+  ScheduleDto as ContractScheduleDto,
+} from '@classhelper/shared';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { BrowserWindow, ipcMain, screen } from 'electron';
@@ -138,6 +141,7 @@ export interface IslandPushContext {
 
 export interface IslandClassStatePayload {
   schedules?: ContractScheduleDto[];
+  timePoints?: ContractIslandTimePointDto[];
   inClass: boolean;
   currentPeriodEnd?: string | null;
   week?: number;
@@ -364,14 +368,15 @@ class IslandController {
       if (this.customTimer) clearTimeout(this.customTimer);
       this.customTimer = null;
       // 常驻岛只报告目标几何；窗口画布固定，禁止逐帧 setBounds 和两端尺寸防抖互相追赶。
-      if (
-        this.customSize.width !== Math.ceil(value.width) ||
-        this.customSize.height !== Math.ceil(value.height)
-      )
+      const width = Math.ceil(value.width);
+      const height = Math.ceil(value.height);
+      const changed = this.customSize.width !== width || this.customSize.height !== height;
+      if (changed)
         this.residentMotionUntil =
           Date.now() + (this.appearance.animations ? 600 / this.appearance.speed : 0);
-      this.customSize = { width: Math.ceil(value.width), height: Math.ceil(value.height) };
-      this.syncResidentShape(true);
+      this.customSize = { width, height };
+      // 时钟每分钟触发的重复测量尺寸没变，不要清空触摸形状（那 750ms 会漏掉点击）。
+      if (changed || !this.residentShaped) this.syncResidentShape(true);
       return;
     }
     if (this.customTimer) clearTimeout(this.customTimer);
@@ -618,6 +623,7 @@ class IslandController {
     // 首次进入时同步一次外观与状态，保证渲染进程不会停在初始默认值
     this.emitAppearance();
     this.win?.webContents.send('island:schedules', this.schedules);
+    this.win?.webContents.send('island:time-points', this.timePoints);
     this.emit();
     if (this.residentEnabled) {
       this.residentWasEnabled = true;
@@ -633,6 +639,10 @@ class IslandController {
   private schedules: ContractScheduleDto[] = [];
   getSchedules(): ContractScheduleDto[] {
     return [...this.schedules];
+  }
+  private timePoints: ContractIslandTimePointDto[] = [];
+  getTimePoints(): ContractIslandTimePointDto[] {
+    return [...this.timePoints];
   }
 
   getState(): IslandState {
@@ -859,6 +869,11 @@ class IslandController {
       this.refreshLessonReminder();
       if (this.ready && this.win && !this.win.isDestroyed())
         this.win.webContents.send('island:schedules', this.schedules);
+    }
+    if (Array.isArray(payload.timePoints)) {
+      this.timePoints = payload.timePoints.slice(0, 100);
+      if (this.ready && this.win && !this.win.isDestroyed())
+        this.win.webContents.send('island:time-points', this.timePoints);
     }
     const wasInClass = this.state.inClass;
     this.state.inClass = payload.inClass;
@@ -2319,6 +2334,9 @@ export const island = new IslandController();
 export function registerIslandIpc(): void {
   ipcMain.handle('island:get-schedules', (event) =>
     event.sender === island.getWindow()?.webContents ? island.getSchedules() : [],
+  );
+  ipcMain.handle('island:get-time-points', (event) =>
+    event.sender === island.getWindow()?.webContents ? island.getTimePoints() : [],
   );
   ipcMain.handle('island:get-layout', () => getConfig().islandLayout);
   ipcMain.handle('island:save-layout', (_event, value: unknown) => {

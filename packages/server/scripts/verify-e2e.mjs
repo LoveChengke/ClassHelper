@@ -2224,6 +2224,114 @@ async function main() {
     `status=${studentLayoutList.status}`,
   );
 
+  // 8.2.1 时间点默认课程：随布局返回、无条目时回退、覆盖现有课程写入条目
+  if (layoutId && courseId) {
+    const defaultCourseName = courses.payload?.data?.[0]?.name ?? '';
+    const savedLayout = await api(`/time-layouts/${layoutId}`, {
+      method: 'PUT',
+      token: adminToken,
+      body: {
+        name: '默认时间表',
+        classId,
+        points: [
+          {
+            name: '第 1 节',
+            startTime: '08:00',
+            endTime: '08:40',
+            timeType: 'LESSON',
+            defaultClassId: courseId,
+            isHideDefault: false,
+            breakName: '',
+            actionSet: '{}',
+          },
+          {
+            name: '课间',
+            startTime: '08:40',
+            endTime: '08:50',
+            timeType: 'BREAK',
+            breakName: '课间休息',
+            actionSet: '{}',
+          },
+        ],
+      },
+    });
+    const savedPoints = savedLayout.payload?.data?.points ?? [];
+    const lessonPoint = savedPoints.find((point) => point.timeType === 'LESSON');
+    record(
+      '时间表保存默认课程并随布局返回',
+      savedLayout.status === 200 &&
+        lessonPoint?.defaultClassId === courseId &&
+        lessonPoint?.defaultCourse?.name === defaultCourseName,
+      `status=${savedLayout.status} default=${lessonPoint?.defaultCourse?.name ?? '-'}`,
+    );
+
+    const defaultPlan = await api('/class-plans', {
+      method: 'POST',
+      token: teacherToken,
+      body: {
+        classId,
+        name: '默认课程验证课表',
+        timeLayoutId: layoutId,
+        weekday: 0,
+        weekCountDiv: 0,
+        weekCountDivTotal: 2,
+        weekStart: 1,
+        weekEnd: 30,
+        isEnabled: true,
+      },
+    });
+    const defaultPlanId = defaultPlan.payload?.data?.id ?? null;
+
+    const activeDefault = await api(`/schedules/active-week?classId=${classId}&week=1`, {
+      token: teacherToken,
+    });
+    const fallback = (activeDefault.payload?.data?.days ?? [])
+      .flatMap((day) => day.schedules ?? [])
+      .find((item) => item.course?.name === defaultCourseName && String(item.id).startsWith('default:'));
+    record(
+      '日课表没有单独条目时回退时间点默认课程',
+      activeDefault.status === 200 && Boolean(fallback),
+      `status=${activeDefault.status} fallback=${fallback ? fallback.course?.name : '-'}`,
+    );
+
+    if (lessonPoint?.id) {
+      const applied = await api(`/time-layouts/${layoutId}/points/${lessonPoint.id}/apply-default`, {
+        method: 'POST',
+        token: adminToken,
+      });
+      const plansAfterApply = await api(`/class-plans?classId=${classId}`, { token: teacherToken });
+      const appliedPlan = (plansAfterApply.payload?.data ?? []).find((item) => item.id === defaultPlanId);
+      const appliedEntry = appliedPlan?.entries?.find((entry) => entry.timeLayoutItemId === lessonPoint.id);
+      record(
+        '覆盖现有课程写入所有引用课表',
+        applied.status === 200 &&
+          (applied.payload?.data?.plans ?? 0) >= 1 &&
+          appliedEntry?.courseId === courseId,
+        `status=${applied.status} plans=${applied.payload?.data?.plans ?? 0}`,
+      );
+    }
+
+    if (defaultPlanId) {
+      await api(`/class-plans/${defaultPlanId}`, { method: 'DELETE', token: teacherToken });
+    }
+  }
+
+  // 8.2.2 时间表可通过新路由删除（Web 时间表编辑器使用的接口）
+  const removableLayout = await api('/time-layouts', {
+    method: 'POST',
+    token: adminToken,
+    body: { name: '临时删除验证', classId, points: [] },
+  });
+  const removableId = removableLayout.payload?.data?.id ?? null;
+  const removedLayout = removableId
+    ? await api(`/time-layouts/${removableId}`, { method: 'DELETE', token: adminToken })
+    : { status: 0 };
+  record(
+    '时间表可通过新路由删除',
+    removableLayout.status === 201 && removedLayout.status === 200,
+    `创建=${removableLayout.status} 删除=${removedLayout.status}`,
+  );
+
   // 8.3 成绩表格导入（CSV 校验 + XLSX 新增/重复/更新 + 错误行提示）
   const gradesCsv = [
     '学号,姓名,考试名称,分数,总分,科目',

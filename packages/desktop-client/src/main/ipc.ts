@@ -6,6 +6,7 @@ import {
   listLocalCourseware,
 } from './courseware.js';
 import { island } from './island.js';
+import { getIslandWeather } from './island-weather.js';
 import { getUpdateProgress } from './auto-update.js';
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import type { UpdateInfo } from '@classhelper/shared';
@@ -21,6 +22,7 @@ import type { DesktopAppInfo, DesktopStoredConfig } from '../types/desktop.js';
 export { IPC_CHANNELS };
 
 export function registerIpcHandlers(): void {
+  ipcMain.handle('island:weather', (_event, coordinates: unknown) => getIslandWeather(coordinates));
   ipcMain.handle('courseware:download', (_event, id: string) => downloadCourseware(id));
   ipcMain.handle('courseware:reveal', (_event, id: string) => revealCourseware(id));
   ipcMain.handle('courseware:local-list', () => listLocalCourseware());

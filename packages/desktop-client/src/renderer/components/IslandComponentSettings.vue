@@ -37,14 +37,63 @@ const containers = ['group', 'stack', 'slide', 'rolling'] as const;
               <el-switch v-model="node.settings.seconds" @change="emit('change')" />
             </el-form-item>
           </template>
-          <el-form-item v-else-if="node.kind === 'countdown'" label="倒计时目标">
-            <el-select v-model="node.settings.target" @change="emit('change')">
-              <el-option label="自动：距上课 / 下课" value="auto" />
-              <el-option label="下一节课" value="next" />
-              <el-option label="本节下课" value="end" />
-              <el-option label="放学" value="school" />
-            </el-select>
-          </el-form-item>
+          <template v-else-if="node.kind === 'countdown'">
+            <el-form-item label="倒计时目标">
+              <el-select v-model="node.settings.target" @change="emit('change')">
+                <el-option label="自动：距上课 / 下课" value="auto" />
+                <el-option label="下一节课" value="next" />
+                <el-option label="本节下课" value="end" />
+                <el-option label="放学" value="school" />
+                <el-option label="指定日期" value="date" />
+              </el-select>
+            </el-form-item>
+            <template v-if="node.settings.target === 'date'">
+              <el-form-item label="目标名称">
+                <el-input v-model="node.settings.countdownTitle" :maxlength="64" @change="emit('change')" />
+              </el-form-item>
+              <el-form-item label="目标日期">
+                <el-date-picker
+                  v-model="node.settings.targetDate"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                  placeholder="选择日期"
+                  @change="emit('change')"
+                />
+              </el-form-item>
+            </template>
+          </template>
+          <template v-else-if="node.kind === 'weather'">
+            <el-form-item label="地点名称">
+              <el-input
+                v-model="node.settings.locationName"
+                placeholder="例如：学校"
+                :maxlength="64"
+                @change="emit('change')"
+              />
+            </el-form-item>
+            <el-form-item label="纬度">
+              <el-input-number
+                v-model="node.settings.latitude"
+                :min="-90"
+                :max="90"
+                :precision="4"
+                @change="emit('change')"
+              />
+            </el-form-item>
+            <el-form-item label="经度">
+              <el-input-number
+                v-model="node.settings.longitude"
+                :min="-180"
+                :max="180"
+                :precision="4"
+                @change="emit('change')"
+              />
+            </el-form-item>
+            <p class="hint">
+              填写地点坐标后每 15 分钟更新天气。数据来自
+              Open-Meteo，断网时显示本次运行的缓存；天气提示不作为官方预警。
+            </p>
+          </template>
           <template v-else-if="node.kind === 'text'">
             <el-form-item label="文字内容">
               <el-input v-model="node.settings.text" type="textarea" :rows="3" @change="emit('change')" />
@@ -57,20 +106,24 @@ const containers = ['group', 'stack', 'slide', 'rolling'] as const;
           <template v-else-if="node.kind === 'schedule'">
             <el-form-item label="显示课程">
               <el-select v-model="node.settings.display" @change="emit('change')">
-                <el-option label="当前课程" value="current" />
+                <el-option label="当前时间点" value="current" />
                 <el-option label="下一节课" value="next" />
-                <el-option label="今日课表" value="today" />
+                <el-option label="今日时间点" value="today" />
               </el-select>
             </el-form-item>
-            <el-form-item v-if="node.settings.display === 'today'" label="显示节数">
+            <el-form-item v-if="node.settings.display === 'today'" label="显示时间点数">
               <el-input-number v-model="node.settings.count" :min="1" :max="30" @change="emit('change')" />
             </el-form-item>
-            <el-form-item label="显示课程时间">
+            <el-form-item label="当前时间点显示起止时间">
               <el-switch v-model="node.settings.showPeriod" @change="emit('change')" />
             </el-form-item>
-            <el-form-item label="显示上课进度">
+            <el-form-item label="当前课程显示进度">
               <el-switch v-model="node.settings.showProgress" @change="emit('change')" />
             </el-form-item>
+            <p class="hint">
+              今日时间点只展开当前项并显示时间段；课间休息与默认隐藏的时间点折叠时完全隐藏，轮到时才展开。
+              下课前一分钟的倒计时由「提醒」设置里的下课提醒负责。
+            </p>
           </template>
           <template v-else-if="containers.includes(node.kind as (typeof containers)[number])">
             <el-form-item label="排列方向">
@@ -80,7 +133,7 @@ const containers = ['group', 'stack', 'slide', 'rolling'] as const;
               </el-select>
             </el-form-item>
             <el-form-item label="组件间距">
-              <el-input-number v-model="node.settings.gap" :min="0" :max="80" @change="emit('change')" />
+              <el-input-number v-model="node.settings.gap" :min="0" :max="64" @change="emit('change')" />
             </el-form-item>
             <el-form-item v-if="node.kind === 'slide'" label="切换间隔（秒）">
               <el-input-number

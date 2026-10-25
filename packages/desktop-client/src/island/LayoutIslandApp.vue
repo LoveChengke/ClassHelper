@@ -5,6 +5,7 @@ import {
   DEFAULT_ISLAND_APPEARANCE,
   type IslandAppearance,
   type IslandState,
+  type IslandTimePointDto,
   type ScheduleDto,
 } from '@classhelper/shared';
 import FixedIsland from './IslandApp.vue';
@@ -14,6 +15,7 @@ import CustomIslandRuntime from './CustomIslandRuntime.vue';
 const settings = ref(defaultIslandLayouts()),
   ready = ref(false);
 const schedules = ref<ScheduleDto[]>([]);
+const timePoints = ref<IslandTimePointDto[]>([]);
 const appearance = ref<IslandAppearance>({ ...DEFAULT_ISLAND_APPEARANCE });
 const nativeVisible = ref(false);
 const resident = () => settings.value.layout === 'custom';
@@ -36,6 +38,7 @@ onMounted(async () => {
   if (bridge) {
     bridge.onLayout((value) => (settings.value = value));
     bridge.onSchedules((value) => (schedules.value = value));
+    bridge.onTimePoints((value) => (timePoints.value = value));
     bridge.onState((value) => (state.value = value));
     bridge.onAppearance((value) => (appearance.value = value));
     bridge.onVisibility((value) => (nativeVisible.value = value));
@@ -43,6 +46,7 @@ onMounted(async () => {
     appearance.value = await bridge.getAppearance();
     settings.value = await bridge.getLayout();
     schedules.value = await bridge.getSchedules();
+    timePoints.value = await bridge.getTimePoints();
     state.value = await bridge.getState();
   }
   await nextTick();
@@ -55,9 +59,18 @@ onMounted(async () => {
     :settings="settings"
     :state="state"
     :schedules="schedules"
+    :time-points="timePoints"
     :appearance="appearance"
     :native-visible="nativeVisible"
   />
-  <FixedIsland v-if="ready" v-show="!resident() && !state.coursewareTransfer" :suspended="resident() || !!state.coursewareTransfer" />
-  <CoursewareTransfer v-if="state.coursewareTransfer" :transfer="state.coursewareTransfer" :appearance="appearance" />
+  <FixedIsland
+    v-if="ready"
+    v-show="!resident() && !state.coursewareTransfer"
+    :suspended="resident() || !!state.coursewareTransfer"
+  />
+  <CoursewareTransfer
+    v-if="state.coursewareTransfer"
+    :transfer="state.coursewareTransfer"
+    :appearance="appearance"
+  />
 </template>

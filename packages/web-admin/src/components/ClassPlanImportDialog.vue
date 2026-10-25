@@ -45,7 +45,7 @@ const CLASS_PLAN_SAMPLE = `{
       "Name": "周一作息",
       "Layouts": [
         { "StartTime": "08:00:00", "EndTime": "08:45:00", "TimeType": 0, "BreakName": "" },
-        { "StartTime": "08:45:00", "EndTime": "08:55:00", "TimeType": 1, "BreakName": "课间" },
+        { "StartTime": "08:45:00", "EndTime": "08:55:00", "TimeType": 1, "BreakName": "课间休息" },
         { "StartTime": "08:55:00", "EndTime": "09:40:00", "TimeType": 0, "BreakName": "" }
       ]
     }
