@@ -6,8 +6,10 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { buildUpdateHelper } from './build-update-helper.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+buildUpdateHelper(path.join(root, 'dist/main/update-helper.exe'));
 
 const shared = {
   bundle: true,

@@ -3,7 +3,6 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { BrowserWindow, app } from 'electron';
 import {
   isNewerVersion,
@@ -15,6 +14,7 @@ import { getConfig, saveConfig } from './config.js';
 import { island } from './island.js';
 import { logger } from './logger.js';
 import { connectionEvents } from './config-events.js';
+import { prepareUpdateInstaller } from './update-installer.js';
 
 let updateEpoch = 0;
 let downloadAbort = new AbortController();
@@ -43,15 +43,17 @@ connectionEvents.on('changed', () => {
  *    空闲安装要求不在上课且主窗口隐藏满五分钟；
  * 2. **下完先校验 sha256**：服务端给的哈希对不上就删掉文件、记 error，**不做任何信任放行**
  *    （宁可这次更新失败，也不能把一个来源不明的 exe 装到教室里）；
- * 3. **安装脚本脱离本进程**：PowerShell 等旧进程退出、安装器完成后重新拉起应用，
- *    本进程随即走既有退出路径退出（重启应用这件事交给安装脚本，而不是自己 `relaunch`，
- *    否则会与"安装器正在覆盖自己"撞车 —— Windows 上正在运行的程序文件是删不掉的）。
+ * 3. **独立安装助手**：助手就绪后才退出旧进程，由助手执行安装并确认新版启动；
+ *    助手从更新目录运行，不锁住正在被安装器替换的应用文件。
  */
 
 let policy:
   | (Pick<ClientHeartbeatResponse, 'updateTargetVersion' | 'updateMode' | 'updateNotBefore'> & {
       serverUrl: string;
       username: string;
+      updateSha256: string;
+      updateSize: number;
+      updateFileName: string;
     })
   | null = null;
 function policyPath(): string {
@@ -107,6 +109,9 @@ export function syncUpdatePolicy(next: ClientHeartbeatResponse): void {
     updateTargetVersion: next.updateTargetVersion,
     updateMode: next.updateMode ?? 'idle',
     updateNotBefore: next.updateNotBefore ?? null,
+    updateSha256: next.update?.version === next.updateTargetVersion ? next.update.sha256 : '',
+    updateSize: next.update?.version === next.updateTargetVersion ? next.update.size : 0,
+    updateFileName: next.update?.version === next.updateTargetVersion ? next.update.fileName : '',
   };
   fs.mkdirSync(pendingUpdateDir(), { recursive: true });
   fs.writeFileSync(policyPath(), JSON.stringify(policy), 'utf8');
@@ -458,6 +463,14 @@ export async function maybeInstallPendingUpdate(): Promise<void> {
   }
   const active = loadPolicy();
   if (!active || active.updateTargetVersion !== version) return;
+  if (
+    !/^[0-9a-f]{64}$/i.test(active.updateSha256 ?? '') ||
+    active.updateSize <= 0 ||
+    active.updateFileName !== path.basename(installer)
+  ) {
+    logger.warn(`更新 ${version} 尚无有效的服务端摘要，等待心跳重新确认安装包`);
+    return;
+  }
   if (active.updateMode === 'after-school') {
     const at = Date.parse(active.updateNotBefore ?? '');
     if (!Number.isFinite(at) || Date.now() < at) return;
@@ -520,33 +533,29 @@ export async function maybeInstallPendingUpdate(): Promise<void> {
   logger.info(`开始静默安装更新 ${version}：${installer}`);
   try {
     const exe = process.env.PORTABLE_EXECUTABLE_FILE || app.getPath('exe');
-    const quote = (value: string): string => "'" + value.replaceAll("'", "''") + "'";
     const config = getConfig();
-    const resultFile = path.join(pendingUpdateDir(), 'install-result.json');
-    // 上一次失败的结果不能冒充这一次：安装开始时先清掉，只有本轮失败才重新写入。
-    fs.rmSync(resultFile, { force: true });
-    const script =
-      `$ErrorActionPreference = 'Stop'; try { Wait-Process -Id ${process.pid} -ErrorAction SilentlyContinue; ` +
-      `$installer = Start-Process -FilePath ${quote(installer)} -ArgumentList '/S','--updated','--force-run' -WindowStyle Hidden -Wait -PassThru; ` +
-      `if ($installer.ExitCode -ne 0) { throw ('安装器退出码：' + $installer.ExitCode) } ` +
-      `} catch { @{ version=${quote(version)}; serverUrl=${quote(config.serverUrl)}; username=${quote(config.username)}; error=$_.Exception.Message } | ConvertTo-Json -Compress | Set-Content -LiteralPath ${quote(resultFile)} -Encoding UTF8; ` +
-      `if (Test-Path -LiteralPath ${quote(exe)}) { Start-Process -FilePath ${quote(exe)} -WindowStyle Hidden } }`;
-    const encoded = Buffer.from(script, 'utf16le').toString('base64');
-    const child = spawn(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded],
-      {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-      },
-    );
-    await new Promise<void>((resolve, reject) => {
-      child.once('spawn', resolve);
-      child.once('error', reject);
+    const helper = await prepareUpdateInstaller({
+      directory: pendingUpdateDir(),
+      installer,
+      version,
+      sha256: active.updateSha256,
+      size: active.updateSize,
+      serverUrl: config.serverUrl,
+      username: config.username,
+      restartExe: exe,
+      portable: Boolean(process.env.PORTABLE_EXECUTABLE_FILE),
     });
-    child.unref();
-    // 安装器从实际安装目录启动新版；免安装版的旧 exe 可能随退出消失，只在安装失败时尝试恢复它。
+    if (
+      installEpoch !== updateEpoch ||
+      loadPolicy()?.updateTargetVersion !== version ||
+      getConfig().autoUpdate === false
+    ) {
+      helper.cancel();
+      installing = false;
+      return;
+    }
+    helper.commit();
+    logger.info(`更新 ${version} 的独立安装助手已就绪，确认退出旧客户端`);
     if (quitHandler) {
       quitHandler();
     } else {
@@ -555,6 +564,8 @@ export async function maybeInstallPendingUpdate(): Promise<void> {
     }
   } catch (error) {
     installing = false;
+    if (installEpoch !== updateEpoch) return;
+    installationRetryAt = Date.now() + 5 * 60_000;
     publishProgress({ stage: 'failed', error: String(error).slice(0, 1000) });
     logger.error(
       `启动更新安装失败（将在下次满足安装条件时重试）：${error instanceof Error ? error.message : String(error)}`,

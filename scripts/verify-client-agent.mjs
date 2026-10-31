@@ -33,6 +33,8 @@ const h = {
   acked: [],
   ackFails: false,
   quitCount: 0,
+  committed: 0,
+  cancelled: 0,
 };
 globalThis.__clientAgentTest = h;
 function check(name, fn) {
@@ -68,6 +70,13 @@ const mockSources = {
   courseware: `export const pollCourseware=async()=>{};`,
   logger: `export const logger={info:()=>{},warn:()=>{},error:()=>{},debug:()=>{}};`,
   process: `export const spawn=(...args)=>globalThis.__clientAgentTest.spawn(...args);`,
+  'update-installer': `const h=globalThis.__clientAgentTest;
+    export async function prepareUpdateInstaller(options) {
+      h.spawned.push({file:'update-helper.exe', options});
+      if(h.spawnError)throw new Error('模拟安装助手启动失败');
+      if(h.waitHelper)await new Promise(resolve=>h.releaseHelper=resolve);
+      return {commit:()=>h.committed++,cancel:()=>h.cancelled++};
+    }`,
 };
 try {
   const bundle = path.join(temp, 'agent.mjs');
@@ -86,7 +95,7 @@ try {
             path: args.path === 'electron' ? 'electron' : 'process',
             namespace: 'mock',
           }));
-          b.onResolve({ filter: /^\.\/(config|island|logger|courseware)\.js$/ }, (args) => ({
+          b.onResolve({ filter: /^\.\/(config|island|logger|courseware|update-installer)\.js$/ }, (args) => ({
             path: path.basename(args.path, '.js'),
             namespace: 'mock',
           }));
@@ -210,7 +219,7 @@ try {
     }),
   ]);
   check('慢速下载不阻塞心跳', () => assert.equal(agent.getClientAgentStatus().updateTargetVersion, '2.0.0'));
-  const installer = path.join(temp, 'updates', 'verified-setup.exe');
+  const installer = path.join(temp, 'updates', 'test-setup.exe');
   fs.mkdirSync(path.dirname(installer), { recursive: true });
   fs.writeFileSync(installer, '模拟安装器');
   Object.assign(h.config, { pendingUpdateVersion: '2.0.0', pendingUpdateFile: installer });
@@ -243,19 +252,29 @@ try {
   h.visible = true;
   h.inClass = true;
   await agent.maybeInstallPendingUpdate();
-  check('立即更新在校验包就绪后启动等待旧进程退出的安装助手', () => {
+  check('安装助手确认就绪后提交交接，再退出旧客户端', () => {
     assert.equal(h.quitCount, 1);
-    assert.equal(h.spawned.at(-1).file, 'powershell.exe');
-    const script = Buffer.from(h.spawned.at(-1).args.at(-1), 'base64').toString('utf16le');
-    assert.match(script, /Wait-Process -Id/);
-    assert.match(script, /-ArgumentList '\/S','--updated','--force-run'/);
-    assert.match(script, /if \(\$installer.ExitCode -ne 0/);
-    assert.match(script, /-WindowStyle|Start-Process/);
+    assert.equal(h.spawned.at(-1).file, 'update-helper.exe');
+    assert.equal(h.spawned.at(-1).options.sha256, responseData.update.sha256);
+    assert.equal(h.committed, 1);
     assert.equal(h.progressReports.at(-1).progress.stage, 'installing');
-    assert.match(script, /catch \{/);
-    assert.match(script, /install-result\.json/);
-    fs.writeFileSync(path.join(root, '.cache', 'verified-update-helper.ps1'), script, 'utf8');
   });
+  const cancelledInstall = await import(`${pathToFileURL(bundle).href}?cancel-before-ready=1`);
+  cancelledInstall.setQuitHandler(() => h.quitCount++);
+  cancelledInstall.syncUpdatePolicy({ ...responseData, updateMode: 'immediate' });
+  h.waitHelper = true;
+  const pendingInstall = cancelledInstall.maybeInstallPendingUpdate();
+  while (!h.releaseHelper) await new Promise((resolve) => setTimeout(resolve, 1));
+  h.config.autoUpdate = false;
+  h.releaseHelper();
+  await pendingInstall;
+  check('等待助手就绪时关闭自动更新会取消交接，旧客户端继续运行', () => {
+    assert.equal(h.quitCount, 1);
+    assert.equal(h.committed, 1);
+    assert.equal(h.cancelled, 1);
+  });
+  h.waitHelper = false;
+  h.config.autoUpdate = true;
   fs.writeFileSync(
     path.join(temp, 'updates', 'install-result.json'),
     JSON.stringify({

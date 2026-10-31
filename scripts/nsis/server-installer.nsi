@@ -88,6 +88,16 @@ Section "主程序" SecMain
     Delete "$INSTDIR\.env"
     Rename "$INSTDIR\.env.previous" "$INSTDIR\.env"
 
+  ; 配置模板不携带可用密钥；首次安装独立生成，覆盖升级保留原密钥。
+  nsExec::ExecToStack /TIMEOUT=30000 '"$INSTDIR\node.exe" "$INSTDIR\bootstrap-env.cjs"'
+  Pop $0
+  Pop $1
+  StrCmp $0 "0" configuration_ready
+    DetailPrint "配置初始化失败：$1"
+    SetErrorLevel 1
+    Abort
+  configuration_ready:
+
   WriteRegStr HKCU "Software\ClassHelperServer" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\ClassHelperServer" "Version" "${VERSION}"
   WriteUninstaller "$INSTDIR\uninstall.exe"

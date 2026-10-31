@@ -1,6 +1,7 @@
 import { assertClassDevice, assertPermission, classIdsFor } from '../../lib/authz/index.js';
 import { getReleaseProgress, setReleaseProgress } from './release-progress.js';
 import { Router } from 'express';
+import path from 'node:path';
 import { sendCreated, sendOk, ApiError } from '../../lib/http.js';
 import {
   authenticate,
@@ -132,7 +133,7 @@ router.delete(
 router.get(
   '/client/download/:version',
   validate({ params: clientReleaseVersionParamSchema }),
-  async (req, res) => {
+  async (req, res, next) => {
     const user = getAuthUser(req);
     if (user.role === 'CLASS_DEVICE') assertClassDevice(user, user.classId ?? user.sub);
     else {
@@ -143,12 +144,25 @@ router.get(
     const { version } = validatedParams<{ version: string }>(req);
     const found = await clientReleases.resolveReleaseFile(version);
     if (!found) throw ApiError.notFound('服务端没有缓存这个版本的安装包');
-    res.download(found.file, found.fileName, (error) => {
-      if (error) {
-        // 客户端中途取消下载也会走到这里，只记日志，不要往已发出的响应里再写东西
-        res.locals.downloadError = error instanceof Error ? error.message : String(error);
-      }
-    });
+    res.download(
+      path.basename(found.file),
+      found.fileName,
+      { root: path.dirname(found.file), dotfiles: 'allow' },
+      (error) => {
+        if (!error || res.destroyed) return;
+        if (res.headersSent) {
+          res.destroy(error);
+          return;
+        }
+        // 文件可能在解析元数据后被移除；尚未发送响应时必须结束请求，不能让客户端一直等待。
+        const code = (error as NodeJS.ErrnoException).code;
+        next(
+          code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR'
+            ? ApiError.notFound('安装包文件不存在或无法读取，请重新缓存')
+            : error,
+        );
+      },
+    );
   },
 );
 

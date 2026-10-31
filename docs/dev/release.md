@@ -41,6 +41,8 @@ pnpm verify:packaged --exe "releases/client/<版本>/安装包/ClassHelper-<版�
 | releases/server/<版本>/安装包/ClassHelper 服务端-<版本>-x64-setup.exe       | ClassHelper-<版本>-x64-server-setup.exe    |
 | releases/server/<版本>/linux-x64/classhelper-server-linux-x64-<版本>.tar.gz | 同名                                       |
 
+Windows 服务端安装包只携带配置占位符，首次安装时生成独立的 JWT 密钥；覆盖升级保留原有 `.env`。`pnpm verify:server-bootstrap` 验证密钥独立性和配置保留，打包后还需在解包副本中复验。
+
 Linux 还需同名 .tar.gz.sha256。正式 Linux 包在 Linux runner 运行 pnpm dist:server:linux；
 Windows 上的交叉构建仅作验证，可能缺目标平台的 Prisma engine。
 构建中间物可再生成，不将 win-unpacked、server staging 或解包副本当交付物保留。

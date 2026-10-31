@@ -37,6 +37,19 @@ ClassHelper 是 pnpm workspace：Express/Prisma/Socket.IO 服务端、Vue Web �
 客户端先维护 IndexedDB 缓存，断网读取缓存；主窗口通过 preload 与主进程通信，主进程管理唯一原生岛窗口。
 课件先流式上传到服务端文件目录，再由客户端下载、验摘要并独立回执。
 
+客户端统一更新由服务端缓存安装包、校验设备权限并通过心跳下发。客户端下载并校验 SHA256 后，
+把安装交给独立的 Windows 原生助手；助手从本机 `updates` 目录运行，再次验包并确认就绪，
+主进程复核更新策略后才退出。助手等待旧进程结束、执行安装并检查安装版的新版本及启动状态，
+失败写入 `install-result.json` 并尝试恢复客户端；成功仍以新版心跳为最终回执。
+排障日志为同目录下的 `install-helper.log`。Windows 构建使用系统 .NET Framework 编译器生成助手，
+教室机运行时不需要安装开发工具；助手与安装包均随客户端构建，不能只替换主进程 JS。
+
+更新专项验证使用 `pnpm verify:update-download`、Windows 下的 `pnpm verify:update-installer`。
+显式执行 `pnpm verify:client-update:real` 会创建临时数据库、班级和独立应用标识，真实安装并升级
+测试副本，再卸载测试安装，报告保存在 `.cache/client-update-real/`；它不属于普通冒烟，
+不会使用真实班级或桌面自动化，也不修改根版本号。
+传入 `--portable --unicode-paths --prefix-version` 可覆盖便携运行转安装版、中文空格路径和带 `v` 的目标版本号。
+
 ## 工程边界
 
 - 三端契约只放 shared，改后先 `pnpm build:shared`。

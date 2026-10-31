@@ -33,6 +33,9 @@
     "verify:v14": "node scripts/verify-v14.mjs",
     "verify:lifecycle": "node scripts/verify-lifecycle.mjs",
     "verify:client-agent": "node scripts/verify-client-agent.mjs",
+    "verify:update-download": "node scripts/verify-update-download.mjs",
+    "verify:update-installer": "node scripts/verify-update-installer.mjs",
+    "verify:client-update:real": "node scripts/verify-client-update-real.mjs --real-install",
     "verify:review-client": "node scripts/verify-review-client.mjs",
     "verify:review-api": "node scripts/verify-e2e-isolated.mjs --review-api",
     "verify:clients-api": "node scripts/verify-e2e-isolated.mjs --clients-api",
@@ -56,7 +59,8 @@
     "verify:desktop:visual": "node packages/desktop-client/scripts/smoke.mjs --visual",
     "verify:desktop:online": "node packages/desktop-client/scripts/smoke.mjs --online",
     "verify:authz": "node scripts/verify-authz.mjs",
-    "check:authz": "node scripts/check-authz.mjs"
+    "check:authz": "node scripts/check-authz.mjs",
+    "verify:server-bootstrap": "node scripts/verify-server-bootstrap.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

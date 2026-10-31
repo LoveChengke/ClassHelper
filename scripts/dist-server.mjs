@@ -455,7 +455,6 @@ function pruneRuntime() {
 /* ------------------------------------------------------------ 4. 配置与脚本 */
 
 function writeEnvironmentFile() {
-  const jwtSecret = crypto.randomBytes(48).toString('hex');
   const content = `# ClassHelper 服务端（安装程序生成，请妥善保管）
 # 修改后需重启服务生效（开始菜单 → ClassHelper 服务端 → 重启服务）
 
@@ -469,8 +468,8 @@ DATABASE_URL="file:../data/classhelper.db"
 # 首次启动时自动建表（数据库为空时执行随包的迁移 SQL）
 AUTO_MIGRATE=true
 
-# 登录令牌签名密钥（首次安装随机生成，请勿泄露/更换，更换后所有用户需重新登录）
-JWT_SECRET=${jwtSecret}
+# 登录令牌签名密钥由安装程序首次运行时生成；升级保留原值
+JWT_SECRET=CLASSHELPER_GENERATE_SECRET_ON_INSTALL
 JWT_EXPIRES_IN=7d
 
 # 允许跨域来源：* 表示全部允许；若通过域名访问建议改成具体来源，例如 https://class.example.com
@@ -494,6 +493,7 @@ TERM_START_DATE=
 }
 
 function writeRuntimeScripts() {
+  fs.copyFileSync(path.join(deployDir, 'bootstrap-env.cjs'), path.join(staging, 'bootstrap-env.cjs'));
   // 注意：.cmd 内容保持 ASCII，避免 cmd.exe 按 OEM 代码页（GBK）解析 UTF-8 中文出错；
   //       中文说明放在 README.txt 与安装向导里。
   //       启动采用 PowerShell Start-Process 分离进程 + 输出重定向到日志文件，
@@ -513,6 +513,9 @@ if defined PID (
     exit /b 0
   )
 )
+
+"%~dp0node.exe" "%~dp0bootstrap-env.cjs"
+if errorlevel 1 exit /b 1
 
 if not exist "logs" mkdir "logs"
 echo [ClassHelper] Starting server...

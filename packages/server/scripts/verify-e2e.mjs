@@ -1624,11 +1624,23 @@ async function main() {
       stateNote: '待机',
     };
 
-    // 心跳不强求权限键（教室端会话权限集为空），但**必须登录**：没有 JWT 一律 401
+    const deviceLogin = await api('/auth/class-login', {
+      method: 'POST',
+      body: { code: classes.find((item) => item.id === classId)?.code, password: '123456' },
+    });
+    const deviceToken = deviceLogin.payload?.data?.token;
+    if (!deviceToken) throw new Error('隔离班级设备登录失败，不能用员工身份替代');
+    const staffHeartbeat = await api('/clients/heartbeat', {
+      method: 'POST',
+      token: adminToken,
+      body: heartbeatBase,
+    });
+    record('员工会话不能冒充班级设备上报', staffHeartbeat.status === 403, 'status=' + staffHeartbeat.status);
+    // 只有本班 CLASS_DEVICE 可以上报和回执；管理端仍用管理员读取及下发。
     const heartbeatNoAuth = await api('/clients/heartbeat', { method: 'POST', body: heartbeatBase });
     const heartbeat = await api('/clients/heartbeat', {
       method: 'POST',
-      token: adminToken,
+      token: deviceToken,
       body: heartbeatBase,
     });
     const heartbeatData = heartbeat.payload?.data;
@@ -1675,7 +1687,7 @@ async function main() {
     });
     const heartbeatWithCommand = await api('/clients/heartbeat', {
       method: 'POST',
-      token: adminToken,
+      token: deviceToken,
       body: { ...heartbeatBase, stateNote: '待机' },
     });
     const delivered = heartbeatWithCommand.payload?.data?.command;
@@ -1688,13 +1700,13 @@ async function main() {
     const ackBody = { deviceKey, ok: true, result: 'e2e' };
     const ackFirst = await api(`/clients/commands/${delivered?.id}/ack`, {
       method: 'POST',
-      token: adminToken,
+      token: deviceToken,
       body: ackBody,
     });
     // 幂等：客户端重试回执不报错、也不覆盖第一次结果
     const ackSecond = await api(`/clients/commands/${delivered?.id}/ack`, {
       method: 'POST',
-      token: adminToken,
+      token: deviceToken,
       body: { deviceKey, ok: false, result: '重试不应覆盖结果' },
     });
     record(
@@ -1716,13 +1728,13 @@ async function main() {
     const otherDeviceKey = `${deviceKey}-other`;
     const otherHeartbeat = await api('/clients/heartbeat', {
       method: 'POST',
-      token: adminToken,
+      token: deviceToken,
       body: { ...heartbeatBase, deviceKey: otherDeviceKey, name: 'E2E 另一台测试机' },
     });
     const otherDeviceId = otherHeartbeat.payload?.data?.deviceId ?? null;
     const ackWrongDevice = await api(`/clients/commands/${delivered?.id}/ack`, {
       method: 'POST',
-      token: adminToken,
+      token: deviceToken,
       body: { deviceKey: otherDeviceKey, ok: true, result: 'e2e-other' },
     });
     record(
@@ -2496,13 +2508,14 @@ async function main() {
   // 8.3.1 科目归属越权回归（修复"非该科科任老师可以布置/导入其他科内容"）：
   //       ① 新建成同名课程必须被拒绝 —— 否则谁都能借"新建科目"把自己写成该科任课老师，
   //          后面那道 assertCanManageSubjectContent 的科目门随即失效；
-  //       ② 班主任导入**别人任教科目**的成绩必须逐行拒绝（原先只判到班级这一层）。
+  //       ② 班主任导入**别人任教科目**的成绩必须拒绝（原先只判到班级这一层）。
   {
     const guardedCourseName = `越权校验科目${Date.now().toString(36).slice(-5).toUpperCase()}`;
+    const otherTeacher = await api('/auth/me', { token: teacher2Token });
     const firstCourse = await api('/courses', {
       method: 'POST',
       token: adminToken,
-      body: { classId, name: guardedCourseName },
+      body: { classId, name: guardedCourseName, teacherId: otherTeacher.payload?.data?.id },
     });
     const firstCourseId = firstCourse.payload?.data?.id;
     record(
@@ -2524,8 +2537,7 @@ async function main() {
       `status=${duplicateCourse.status} code=${duplicateCourse.payload?.code} details=${JSON.stringify(duplicateCourse.payload?.details ?? {})}`,
     );
 
-    // 这门课的任课老师是**管理员**（course.create 会把创建者写成任课老师）：
-    // 班主任导入它的成绩必须被拒，且不能落库。
+    // 显式配置另一位教师任课；班主任身份不能代替科目写权限。
     const guardedCsv = [
       '学号,考试名称,分数,总分,科目',
       `${targetStudent?.studentNo ?? '202601'},越权校验考试,88,100,${guardedCourseName}`,
@@ -2548,14 +2560,12 @@ async function main() {
         mode: 'append',
       },
     });
-    const guardedErrors = guardedImport.payload?.data?.errors ?? [];
+    const guardedRows = await api('/grades?classId=' + classId, { token: adminToken });
     record(
-      '班主任导入他人任教科目成绩被逐行拒绝（不落库）',
-      guardedImport.status === 200 &&
-        guardedImport.payload?.data?.inserted === 0 &&
-        guardedImport.payload?.data?.failed === 1 &&
-        String(guardedErrors[0]?.message ?? '').includes('不是你任教的科目'),
-      `新增=${guardedImport.payload?.data?.inserted} 失败=${guardedImport.payload?.data?.failed} 提示=${guardedErrors[0]?.message ?? '-'}`,
+      '班主任不能导入他人任教科目成绩，拒绝后不落库',
+      guardedImport.status === 403 &&
+        !(guardedRows.payload?.data ?? []).some((item) => item.examName === '越权校验考试'),
+      'status=' + guardedImport.status + ' message=' + guardedImport.payload?.message,
     );
 
     if (firstCourseId) {
@@ -2588,7 +2598,7 @@ async function main() {
   );
 
   // 8.5 需求 6：表格导入在"老师端"可用且不越权
-  //     班主任 → 本班成绩可预览/导入；科任 → 403；班主任 → 名单导入仍 403（人员管理仅管理员）
+  //     授课教师可导入本人科目；他人科目与班级范围之外仍拒绝，名单导入另走人员管理权限。
   const teacherGradesPreview = await api('/imports/table/preview', {
     method: 'POST',
     token: teacherToken,
@@ -2628,32 +2638,66 @@ async function main() {
     `status=${teacherGradesCommit.status} 新增=${teacherGradesCommit.payload?.data?.inserted} 更新=${teacherGradesCommit.payload?.data?.updated} 失败=${teacherGradesCommit.payload?.data?.failed}`,
   );
 
-  // teacher2 是2025级3班的科任老师（班主任是 teacher1）——这才是真正的"科任"场景
-  const subjectOnlyClass = classes.find((item) => item.name?.includes('2025级3')) ?? null;
+  // 科任可以导入本人任教科目，不因没有班主任身份被拒。
+  const subjectOnlyClass = classes.find((item) => item.name?.includes('2025级3'));
+  if (!subjectOnlyClass) throw new Error('隔离科任班级缺失');
+  const subjectIdentity = await api('/auth/me', { token: teacher2Token });
+  const subjectCourses = await api('/courses?classId=' + subjectOnlyClass.id, { token: adminToken });
+  const subjectCourse = (subjectCourses.payload?.data ?? []).find(
+    (item) => item.teacherId === subjectIdentity.payload?.data?.id,
+  );
+  const subjectStudents = await api('/students?classId=' + subjectOnlyClass.id, { token: adminToken });
+  const subjectStudent = subjectStudents.payload?.data?.[0];
+  if (!subjectCourse || !subjectStudent) throw new Error('隔离科任导入数据缺失');
+  const subjectExam = '科任导入验证' + Date.now();
+  const subjectCsv = [
+    '学号,考试名称,分数,总分,科目',
+    [subjectStudent.studentNo, subjectExam, 88, 100, subjectCourse.name].join(','),
+  ].join(NL);
+  const subjectBody = {
+    kind: 'grades',
+    classId: subjectOnlyClass.id,
+    fileName: 'subject.csv',
+    contentBase64: Buffer.from('\ufeff' + subjectCsv + NL, 'utf8').toString('base64'),
+    mapping: {
+      studentNo: '学号',
+      examName: '考试名称',
+      score: '分数',
+      totalScore: '总分',
+      courseName: '科目',
+    },
+    mode: 'append',
+  };
   const subjectGradesImport = await api('/imports/table/commit', {
     method: 'POST',
     token: teacher2Token,
-    body: {
-      kind: 'grades',
-      classId: subjectOnlyClass?.id ?? classId,
-      fileName: 'grades.csv',
-      contentBase64: gradesCsvBase64,
-      mapping: {
-        studentNo: '学号',
-        name: '姓名',
-        examName: '考试名称',
-        score: '分数',
-        totalScore: '总分',
-        courseName: '科目',
-      },
-      mode: 'upsert',
-    },
+    body: subjectBody,
   });
   record(
-    '科任老师导入本班成绩被拒绝（403，需求 7）',
-    Boolean(subjectOnlyClass) && subjectGradesImport.status === 403,
-    `班级=${subjectOnlyClass?.name ?? '未找到2025级3班'} status=${subjectGradesImport.status}`,
+    '科任老师可导入本人授课科目成绩',
+    subjectGradesImport.status === 200 && subjectGradesImport.payload?.data?.inserted === 1,
+    'status=' + subjectGradesImport.status,
   );
+  const otherSubject = (subjectCourses.payload?.data ?? []).find(
+    (item) => item.teacherId !== subjectIdentity.payload?.data?.id,
+  );
+  if (!otherSubject) throw new Error('隔离越权科目缺失');
+  const deniedCsv = [
+    '学号,考试名称,分数,总分,科目',
+    [subjectStudent.studentNo, subjectExam + '越权', 88, 100, otherSubject.name].join(','),
+  ].join(NL);
+  const deniedImport = await api('/imports/table/commit', {
+    method: 'POST',
+    token: teacher2Token,
+    body: {
+      ...subjectBody,
+      contentBase64: Buffer.from('\ufeff' + deniedCsv + NL, 'utf8').toString('base64'),
+    },
+  });
+  record('科任老师仍不能导入他人任教科目成绩', deniedImport.status === 403, 'status=' + deniedImport.status);
+  const subjectRows = await api('/grades?classId=' + subjectOnlyClass.id, { token: adminToken });
+  for (const row of subjectRows.payload?.data ?? [])
+    if (row.examName === subjectExam) await api('/grades/' + row.id, { method: 'DELETE', token: adminToken });
 
   if (foreignClass) {
     const crossGradesImport = await api('/imports/table/commit', {
