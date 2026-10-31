@@ -18,6 +18,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { app, BrowserWindow } = require('electron');
+const { checkClassRelations } = require('./class-relations.cjs');
 
 // 使用独立（每次清空）的 userData，避免 Service Worker 缓存影响验证结果
 if (process.env.UI_SMOKE_PROFILE) {
@@ -30,9 +31,7 @@ const PASSWORD = process.env.UI_SMOKE_PASS ?? 'teacher123';
 const RESULT_FILE = process.env.UI_SMOKE_RESULT ?? '';
 
 /**
- * 侧边栏菜单（教师账号 teacher1 可见的部分）。
- * 按角色权限模型：班级管理 / 学生管理 / 教师管理 仅管理员可见，
- * 教师端不应出现这些入口（后端同时强校验），因此这里的期望值就是教师可见的全部菜单。
+ * 教师默认能力下可见的教学与班级入口；组织管理入口另行断言隐藏。
  */
 const MENU_ITEMS = [
   { label: '仪表盘', path: '/dashboard' },
@@ -44,12 +43,10 @@ const MENU_ITEMS = [
   { label: '通知发布', path: '/notifications' },
   { label: '课件', path: '/courseware' },
   { label: '成绩录入', path: '/grades' },
-  // 按 client:read 展示设备状态入口。
-  { label: '客户端', path: '/clients' },
 ];
 
 /** 教师端必须隐藏的入口（前端隐藏 + 后端 403，双重保障） */
-const HIDDEN_MENU_LABELS = ['教师管理', '数据库管理'];
+const HIDDEN_MENU_LABELS = ['教师管理', '权限与范围', '数据库管理', '系统设置', '客户端'];
 
 /** 管理员账号（教师录入用例）：与种子/安装初始化账号一致 */
 const ADMIN_USERNAME = process.env.UI_SMOKE_ADMIN ?? 'admin';
@@ -138,8 +135,9 @@ async function runAdminTeacherChecks(win) {
 
   for (const item of [
     { label: '学期周次', path: '/term-weeks' },
+    { label: '学年升级', path: '/promotion' },
     { label: '毕业归档', path: '/archives' },
-    { label: '权限组', path: '/permissions' },
+    { label: '权限', path: '/permissions' },
   ]) {
     await win.webContents.executeJavaScript(
       `Array.from(document.querySelectorAll('.el-menu-item')).find(node => node.textContent.trim().startsWith(${JSON.stringify(item.label)}))?.click()`,
@@ -150,7 +148,48 @@ async function runAdminTeacherChecks(win) {
       8000,
     );
     record(`管理侧栏入口：${item.label}`, ready);
+    if (item.path === '/term-weeks') {
+      const isolated = await win.webContents.executeJavaScript(
+        `!document.querySelector('.page').textContent.includes('学年升级计划')`,
+      );
+      record('学期周次不再嵌入学年升级计划', isolated);
+    }
   }
+  const permissionPreview = await win.webContents.executeJavaScript(`(async () => {
+    const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+    const until=async fn=>{const end=Date.now()+8000;while(Date.now()<end){if(fn())return true;await sleep(100);}return false;};
+    if(!await until(()=>Array.from(document.querySelectorAll('.el-table__row')).some(n=>n.textContent.includes('教师默认模板'))))return {reason:'成员表未就绪'};
+    const defaultTab=document.querySelector('.el-tabs__item.is-active')?.textContent.trim()==='成员与范围';
+    const rows=Array.from(document.querySelectorAll('.el-table__row'));
+    const admin=rows.find(n=>n.textContent.includes('固定全部权限，不可分配'));
+    const fixed=Boolean(admin?.querySelector('button:disabled'));
+    const teacher=rows.find(n=>n.textContent.includes('教师默认模板'));
+    teacher?.querySelector('button:not(:disabled)')?.click();
+    if(!await until(()=>Array.from(document.querySelectorAll('.el-dialog')).some(n=>n.textContent.includes('不选模板表示恢复默认模板'))))return {reason:'分配弹窗未打开'};
+    const dialog=Array.from(document.querySelectorAll('.el-dialog')).find(n=>n.textContent.includes('不选模板表示恢复默认模板'));
+    const noImplicitAssignment=dialog.querySelectorAll('.assignment').length===0;
+    const add=Array.from(dialog.querySelectorAll('button')).find(n=>n.textContent.trim()==='添加模板分配');add?.click();
+    await until(()=>dialog.querySelectorAll('.assignment').length===1);
+    dialog.querySelector('.assignment .el-select__wrapper')?.click();await sleep(150);
+    Array.from(document.querySelectorAll('.el-select-dropdown__item')).find(n=>n.textContent.trim()==='班主任')?.click();
+    const draft=await until(()=>dialog.querySelectorAll('.assignment').length===1 && dialog.querySelectorAll('.el-table__row').length>0 && dialog.textContent.includes('仅班主任班生效') && dialog.textContent.includes('高风险') && !dialog.querySelector('.el-loading-mask'));
+    const merged=dialog.textContent.includes('实际合并范围') && dialog.textContent.includes('可管理 / 可查看的班级');
+    const headHint=dialog.textContent.includes('仅班主任班生效');
+    const risk=dialog.textContent.includes('高风险');
+    Array.from(dialog.querySelectorAll('button')).find(n=>n.textContent.trim()==='取消')?.click();
+    return {defaultTab,fixed,noImplicitAssignment,draft,merged,headHint,risk};
+  })()`);
+  record(
+    '权限页展示成员独立范围、管理员固定权限及保存前生效预览',
+    permissionPreview?.defaultTab &&
+      permissionPreview?.fixed &&
+      permissionPreview?.noImplicitAssignment &&
+      permissionPreview?.draft &&
+      permissionPreview?.merged &&
+      permissionPreview?.headHint &&
+      permissionPreview?.risk,
+    JSON.stringify(permissionPreview),
+  );
   // 客户端推送弹窗真实切换安装时机，只检查界面，不向设备发送更新。
   await win.loadURL(`${TARGET_URL.replace(/\/$/, '')}/clients`);
   await waitFor(
@@ -790,7 +829,7 @@ async function main() {
   })()`);
   record('Service Worker 已注册（浏览器可安装为应用）', Boolean(swInfo?.ok), String(swInfo?.detail ?? ''));
 
-  // 7.5 权限入口隐藏（教师端不应出现班级/学生/成绩录入入口）
+  // 7.5 教师端隐藏未获授权的组织管理入口。
   const hiddenCheck = await win.webContents.executeJavaScript(`(() => {
     const labels = Array.from(document.querySelectorAll('.el-menu-item')).map((node) =>
       (node.textContent ?? '').trim(),
@@ -803,6 +842,29 @@ async function main() {
     (hiddenCheck?.leaked ?? ['?']).length === 0,
     `可见菜单=[${(hiddenCheck?.labels ?? []).join(',')}] 越权入口=[${(hiddenCheck?.leaked ?? []).join(',')}]`,
   );
+  record(
+    '学生名单与学生管理合并为一个侧栏入口',
+    hiddenCheck.labels.filter((label) => label.startsWith('学生管理') || label.startsWith('学生名单'))
+      .length === 1,
+    hiddenCheck.labels.join(','),
+  );
+  await checkClassRelations(
+    win,
+    {
+      url: TARGET_URL,
+      username: USERNAME,
+      password: PASSWORD,
+      adminUsername: ADMIN_USERNAME,
+      adminPassword: ADMIN_PASSWORD,
+    },
+    record,
+  );
+  await win.loadURL(`${TARGET_URL.replace(/\/$/, '')}/roster?status=active`);
+  const rosterRedirected = await waitFor(
+    win,
+    `location.pathname === '/students' && location.search === '?status=active'`,
+  );
+  record('旧学生名单地址保留查询条件并转到学生管理', rosterRedirected);
 
   // 7.51 仅管理员页面：教师**直接输网址**也必须被路由守卫挡回仪表盘
   //      （菜单隐藏只是"看不见"，不等于没有权限 —— 这里验证真的进不去）
@@ -1096,6 +1158,8 @@ async function main() {
   })()`);
   await sleep(300);
 
+  // 管理员维护入口：教师录入与设备管理。
+  await runAdminTeacherChecks(win);
   // 客户端页保留设备、远控与安装包入口；退役联动入口已移除。
   const clientsUi = await win.webContents.executeJavaScript(`(async () => {
     const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
@@ -1106,10 +1170,8 @@ async function main() {
     return location.pathname === '/clients' && document.body.innerText.includes('一键推送更新') &&
       !document.body.innerText.includes('ClassIsland 联动');
   })()`);
-  record('客户端设备页可以进入且已移除联动入口', clientsUi === true);
+  record('管理员可从侧栏进入客户端设备维护页且已移除联动入口', clientsUi === true);
 
-  // 7.9 管理员专属：教师录入（本轮新增「教师管理」页，仅管理员可见可用）
-  await runAdminTeacherChecks(win);
   await runPlanEditorChecks(win);
 
   // 8. 手机小屏适配（390×844，1Panel 风格：侧边栏收进抽屉 + 卡片内横向滚动）
@@ -1463,28 +1525,33 @@ async function runPlanEditorChecks(win) {
     const pickedName = document.querySelector('.class-picker input')?.value ?? '';
     const klass = (classes?.data ?? []).find(c => c.name === pickedName) ?? classes?.data?.[0];
     let created = null;
+    const layoutName = 'UI 冒烟时间表 ' + Date.now();
     if (klass) {
       // 探针课表可能占满全天；用接口建一张空时间表作为可逆验收数据，随后由 UI 刷新选中。
       created = await fetch('/api/time-layouts', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ name: 'UI 冒烟时间表', classId: klass.id, points: [] }),
+        body: JSON.stringify({ name: layoutName, classId: klass.id, points: [] }),
       }).then(r => r.json()).catch(() => null);
     }
     [...document.querySelectorAll('.archive-toolbar button')].find(b => b.textContent.trim() === '刷新')?.click();
     await wait(200);
     if (document.querySelector('.el-message-box'))
       document.querySelector('.el-message-box__btns .el-button--primary')?.click();
-    for (let i = 0; i < 30; i++) {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      const item = [...document.querySelectorAll('.layout-explorer .plan-item')].find(b => b.querySelector('strong')?.textContent.trim() === layoutName);
+      if (document.querySelector('.el-message-box'))
+        document.querySelector('.el-message-box__btns .el-button--primary')?.click();
+      if (item && !document.querySelector('.el-loading-mask')) item.click();
+      if (document.querySelector('.layout-explorer .plan-item.active strong')?.textContent.trim() === layoutName) break;
       await wait(100);
-      if ([...document.querySelectorAll('.layout-explorer .plan-item')].some(b => b.textContent.includes('UI 冒烟时间表'))) break;
     }
-    [...document.querySelectorAll('.layout-explorer .plan-item')].find(b => b.textContent.includes('UI 冒烟时间表'))?.click();
-    await wait(250);
     const before = document.querySelectorAll('.time-point-row').length;
     const addButton = [...document.querySelectorAll('.layout-toolbar button')].find(b => b.textContent.trim() === '上课');
     addButton?.click();
-    await wait(200);
+    const addDeadline = Date.now() + 3000;
+    while (Date.now() < addDeadline && document.querySelectorAll('.time-point-row').length !== before + 1) await wait(100);
     const rows = document.querySelectorAll('.time-point-row');
     const timeText = document.querySelector('.time-point-row.selected .point-time')?.textContent?.trim() ?? '';
     const match = timeText.match(/(\\d{2}:\\d{2})\\s*[–-]\\s*(\\d{2}:\\d{2})/);
@@ -1592,12 +1659,12 @@ async function runPlanEditorChecks(win) {
       `document.body.innerText.includes('开发环境') && Boolean(document.querySelector('.el-switch.is-disabled'))`,
     ),
   );
-  await win.loadURL(new URL('/term-weeks', TARGET_URL).href);
+  await win.loadURL(new URL('/promotion', TARGET_URL).href);
   record(
-    '学年升级设置与待补跑提示可见且不执行升级',
+    '学年升级独立页展示轨道、计划预览与执行记录且不执行升级',
     await waitFor(
       win,
-      `document.body.innerText.includes('学年升级计划') && document.body.innerText.includes('总周数')`,
+      `document.querySelector('.page-title')?.textContent.trim() === '学年升级' && document.body.innerText.includes('轨道名称') && document.body.innerText.includes('预览已保存计划') && document.body.innerText.includes('执行记录')`,
     ),
   );
   await win.loadURL(new URL('/archives', TARGET_URL).href);

@@ -6,7 +6,7 @@ import { idParamSchema } from '../../lib/schemas.js';
 import {
   authenticate,
   getAuthUser,
-  requireStaffPermission,
+  requirePermissionOrClassDevice,
   requirePermission,
   requireAnyPermission,
 } from '../../middleware/auth.js';
@@ -115,7 +115,7 @@ router.post(
     const input = validatedBody<TableCommitInput>(req);
     await assertImportKindAllowed(input.kind, getAuthUser(req));
     // 教师名单与班级无关；成绩/学生名单必须带班级，否则拒绝（避免写到"全局"）
-    if (input.kind !== 'teachers' && input.kind !== 'classTeachers' && !input.classId) {
+    if (input.kind === 'grades' && !input.classId) {
       throw ApiError.badRequest('请先选择要导入的班级');
     }
     const result = await commitTable(getAuthUser(req), input);
@@ -147,7 +147,7 @@ router.post(
 /** GET /api/imports/time-layout?classId= - 查看该班已导入的时间配置 */
 router.get(
   '/time-layout',
-  requireStaffPermission('schedule:read'),
+  requirePermissionOrClassDevice('schedule:read'),
   validate({ query: timeLayoutQuerySchema }),
   async (req, res) => {
     const { classId } = validatedQuery<{ classId: string }>(req);
@@ -161,7 +161,7 @@ router.get(
  */
 router.post(
   '/time-layout',
-  requirePermission('timetable:manage', 'import:schedule'),
+  requirePermission('schedule:write', 'import:schedule'),
   validate({ body: timeLayoutImportSchema }),
   async (req, res) => {
     const result = await importTimeLayout(getAuthUser(req), validatedBody<TimeLayoutImportInput>(req));
@@ -178,7 +178,7 @@ router.post(
 /** DELETE /api/imports/time-layout/:id - 删除某份时间配置 */
 router.delete(
   '/time-layout/:id',
-  requirePermission('timetable:manage'),
+  requirePermission('import:schedule', 'schedule:write'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const { id } = validatedParams<{ id: string }>(req);

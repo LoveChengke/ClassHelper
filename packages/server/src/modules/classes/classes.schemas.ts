@@ -41,12 +41,15 @@ export const createClassSchema = z.object({
  * `enrollmentYear` / `classIndex` 是给"有名无实的旧数据"补届别用的，改了会重算班级称呼。
  */
 export const updateClassSchema = z.strictObject({
+  enrollmentYear: enrollmentYearSchema.optional(),
+  classIndex: classIndexSchema.optional(),
+});
+
+export const updateClassSettingsSchema = z.strictObject({
   /** 本班学期开始日期（第 1 教学周的周一）；空串 = 回落到全局配置 */
   termStartDate: z
     .union([z.string().trim().refine(isDayKey, { message: '日期格式应为 YYYY-MM-DD' }), z.literal('')])
     .nullish(),
-  enrollmentYear: enrollmentYearSchema.optional(),
-  classIndex: classIndexSchema.optional(),
   termWeeks: z.coerce.number().int().min(1).max(60).optional(),
 });
 
@@ -125,3 +128,5 @@ export type UpdateClassAccountInput = z.infer<typeof updateClassAccountSchema>;
 export type UpdateStudentGradeQueryInput = z.infer<typeof updateStudentGradeQuerySchema>;
 export type AddStudentInput = z.infer<typeof addStudentSchema>;
 export type AssignSubjectTeachersInput = z.infer<typeof assignSubjectTeachersSchema>;
+
+export type UpdateClassSettingsInput = z.infer<typeof updateClassSettingsSchema>;

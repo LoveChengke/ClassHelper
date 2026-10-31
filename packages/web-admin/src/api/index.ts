@@ -105,6 +105,10 @@ export const classApi = {
   create: (payload: CreateClassRequest): Promise<ClassDto> => api.post(API_PATHS.classes, payload),
   update: (id: string, payload: UpdateClassRequest): Promise<ClassDto> =>
     api.patch(`${API_PATHS.classes}/${id}`, payload),
+  updateSettings: (
+    id: string,
+    payload: { termWeeks?: number; termStartDate?: string | null },
+  ): Promise<ClassDto> => api.patch(`${API_PATHS.classes}/${id}/settings`, payload),
   remove: (id: string): Promise<{ id: string }> => api.delete(`${API_PATHS.classes}/${id}`),
   students: (id: string): Promise<StudentDto[]> => api.get(`${API_PATHS.classes}/${id}/students`),
   addStudent: (

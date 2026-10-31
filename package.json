@@ -17,7 +17,7 @@
     "build:desktop": "pnpm build:shared && pnpm --filter @classhelper/desktop-client build",
     "check:icons": "node scripts/check-icons.mjs",
     "typecheck": "pnpm build:shared && pnpm -r --no-bail typecheck",
-    "lint": "eslint .",
+    "lint": "node scripts/check-authz.mjs && eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{ts,js,mjs,cjs,vue,json,md,yaml,yml,css,scss,html}\"",
     "format:check": "prettier --check \"**/*.{ts,js,mjs,cjs,vue,json,md,yaml,yml,css,scss,html}\"",
@@ -34,8 +34,8 @@
     "verify:lifecycle": "node scripts/verify-lifecycle.mjs",
     "verify:client-agent": "node scripts/verify-client-agent.mjs",
     "verify:review-client": "node scripts/verify-review-client.mjs",
-    "verify:review-api": "node scripts/verify-review-api.mjs",
-    "verify:clients-api": "node scripts/verify-clients-api.mjs",
+    "verify:review-api": "node scripts/verify-e2e-isolated.mjs --review-api",
+    "verify:clients-api": "node scripts/verify-e2e-isolated.mjs --clients-api",
     "verify:client-migrations": "node scripts/verify-client-migrations.mjs",
     "verify:desktop": "pnpm --filter @classhelper/desktop-client smoke",
     "verify:web": "node scripts/ui-smoke/run.mjs",
@@ -54,7 +54,9 @@
     "dist:server:linux": "pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build && node scripts/dist-server.mjs --platform linux",
     "dist:all": "pnpm dist:server && pnpm dist:win",
     "verify:desktop:visual": "node packages/desktop-client/scripts/smoke.mjs --visual",
-    "verify:desktop:online": "node packages/desktop-client/scripts/smoke.mjs --online"
+    "verify:desktop:online": "node packages/desktop-client/scripts/smoke.mjs --online",
+    "verify:authz": "node scripts/verify-authz.mjs",
+    "check:authz": "node scripts/check-authz.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

@@ -1,3 +1,6 @@
+import { refreshClassSubscriptions } from '../realtime/bus.js';
+import { invalidateAuthPrincipals } from './authz/principal.js';
+import { migratePermissionScope } from '@classhelper/shared';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import type { DatabaseProvider } from './db.js';
 
@@ -183,6 +186,24 @@ export async function restoreSnapshot(
     }
     for (const table of SNAPSHOT_TABLES) {
       const rows = (snapshot.data[table] ?? []).map((row) => {
+        if (table === 'PermissionGroup') {
+          const mapped = migratePermissionScope(
+            String(row.scope ?? 'TEACHING'),
+            String(row.scopeValue ?? ''),
+          );
+          return {
+            ...row,
+            ...mapped,
+            ...(row.defaultRole === 'TEACHER' ? { scope: 'TEACHING', scopeValue: '' } : {}),
+          };
+        }
+        if (table === 'UserPermissionGroup' && row.scope === undefined) {
+          const group = snapshot.data.PermissionGroup.find((g) => g.id === row.groupId);
+          return {
+            ...row,
+            ...migratePermissionScope(String(group?.scope ?? 'TEACHING'), String(group?.scopeValue ?? '')),
+          };
+        }
         if (table === 'StudentClassTransfer') {
           const { mode, ...rest } = row;
           return {
@@ -209,6 +230,8 @@ export async function restoreSnapshot(
   } finally {
     await setForeignKeys(prisma, provider, true).catch(() => undefined);
   }
+  invalidateAuthPrincipals();
+  refreshClassSubscriptions();
   return { counts };
 }
 

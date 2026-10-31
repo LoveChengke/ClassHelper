@@ -32,7 +32,10 @@ const realtime = useRealtimeStore();
 const { isMobile } = useResponsive();
 
 /** 仅管理员可管理班级（增删改）与人员分配 —— 与后端权限矩阵一致 */
-const canManageClass = computed(() => auth.can('class:manage'));
+const canManageClass = computed(() => auth.isAdmin && auth.can('class:manage'));
+function canHeadAction(row: ClassDto, key: 'class:account' | 'class:settings') {
+  return auth.canForClass(key, row.id) && (auth.isAdmin || row.teacher?.id === auth.user?.id);
+}
 
 /** 小屏下详情描述改为单列，避免文字被压成竖排 */
 const detailColumns = computed(() => (isMobile.value ? 1 : 3));
@@ -131,7 +134,6 @@ async function submitForm(): Promise<void> {
       await classApi.update(editingId.value, {
         enrollmentYear: form.enrollmentYear,
         classIndex: form.classIndex,
-        termWeeks: form.termWeeks,
       });
       // 编辑弹窗里也能直接换班主任（仅管理员；班主任决定谁能管这个班的课表与成绩）
       if (canManageClass.value && form.headTeacherId) {
@@ -246,6 +248,9 @@ async function removeClass(row: ClassDto): Promise<void> {
 const detailVisible = ref(false);
 const detailLoading = ref(false);
 const detail = ref<ClassDetailDto | null>(null);
+const canManageDetailRoster = computed(() => auth.canManageClass('roster:manage', detail.value?.id));
+const canManageDetailCourses = computed(() => auth.canManageClass('schedule:write', detail.value?.id));
+const canManageDetailGradeQuery = computed(() => auth.canManageClass('grade:write', detail.value?.id));
 const activeTab = ref('students');
 
 async function openDetail(row: ClassDto): Promise<void> {
@@ -285,7 +290,7 @@ const studentRules: FormRules = {
 };
 
 async function addStudent(): Promise<void> {
-  if (!detail.value) return;
+  if (!detail.value || !canManageDetailRoster.value) return;
   if (!studentForm.studentNo.trim() || !studentForm.name.trim()) {
     ElMessage.warning('请填写学号和姓名');
     return;
@@ -307,7 +312,7 @@ async function addStudent(): Promise<void> {
 }
 
 async function removeStudent(row: StudentDto): Promise<void> {
-  if (!detail.value) return;
+  if (!detail.value || !canManageDetailRoster.value) return;
   await ElMessageBox.confirm(`将「${row.name}」移出本班级？`, '确认', { type: 'warning' });
   await classApi.removeStudent(detail.value.id, row.id);
   ElMessage.success('已移出班级');
@@ -320,6 +325,7 @@ async function removeStudent(row: StudentDto): Promise<void> {
 const courseForm = reactive({ name: '' });
 
 async function addCourse(): Promise<void> {
+  if (!canManageDetailCourses.value) return;
   if (!detail.value || !courseForm.name.trim()) {
     ElMessage.warning('请输入课程名称');
     return;
@@ -331,6 +337,7 @@ async function addCourse(): Promise<void> {
 }
 
 async function removeCourse(row: CourseDto): Promise<void> {
+  if (!auth.canManageClass('schedule:write', row.classId)) return;
   await ElMessageBox.confirm(`删除课程「${row.name}」？相关课表与作业关联会被清除。`, '确认', {
     type: 'warning',
   });
@@ -409,7 +416,7 @@ const gradeQuerySaving = ref(false);
 
 /** 是否允许教室的 ClassHelper 班级端按学号查询本班学生的成绩明细 */
 async function toggleGradeQuery(enabled: boolean): Promise<void> {
-  if (!detail.value) return;
+  if (!detail.value || !canManageDetailGradeQuery.value) return;
   gradeQuerySaving.value = true;
   try {
     await classApi.setGradeQuery(detail.value.id, enabled);
@@ -470,6 +477,24 @@ onUnmounted(() => {
   realtime.off(SOCKET_EVENTS.notificationNew, onClassChanged);
   realtime.off(SOCKET_EVENTS.homeworkNew, onClassChanged);
 });
+const settings = reactive({ visible: false, id: '', termWeeks: 20, termStartDate: '' });
+function openSettings(row: ClassDto) {
+  Object.assign(settings, {
+    visible: true,
+    id: row.id,
+    termWeeks: row.termWeeks,
+    termStartDate: row.termStartDate ?? '',
+  });
+}
+async function saveSettings() {
+  await classApi.updateSettings(settings.id, {
+    termWeeks: settings.termWeeks,
+    termStartDate: settings.termStartDate,
+  });
+  settings.visible = false;
+  await loadClasses();
+  ElMessage.success('学期设置已保存');
+}
 </script>
 
 <template>
@@ -546,8 +571,16 @@ onUnmounted(() => {
         <el-table-column label="操作" width="310" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-            <el-button v-if="canManageClass" link type="warning" @click="openAccount(row)">
+            <el-button
+              v-if="canHeadAction(row, 'class:account')"
+              link
+              type="warning"
+              @click="openAccount(row)"
+            >
               班级账号
+            </el-button>
+            <el-button v-if="canHeadAction(row, 'class:settings')" link @click="openSettings(row)">
+              学期设置
             </el-button>
             <el-button v-if="canManageClass" link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button v-if="canManageClass" link type="danger" @click="removeClass(row)">删除</el-button>
@@ -556,6 +589,20 @@ onUnmounted(() => {
       </el-table>
     </el-card>
 
+    <el-dialog v-model="settings.visible" title="本班学期设置" width="440px">
+      <el-form label-width="100px">
+        <el-form-item label="教学周数">
+          <el-input-number v-model="settings.termWeeks" :min="1" :max="maxTermWeeks" />
+        </el-form-item>
+        <el-form-item label="开学日期">
+          <el-date-picker v-model="settings.termStartDate" type="date" value-format="YYYY-MM-DD" clearable />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="settings.visible = false">取消</el-button>
+        <el-button type="primary" @click="saveSettings">保存设置</el-button>
+      </template>
+    </el-dialog>
     <!-- 班级账号：班级码 + 班级密码（教室机器上 ClassHelper 班级端的登录凭据） -->
     <el-dialog v-model="accountVisible" title="班级账号（ClassHelper 班级端登录）" width="480px">
       <el-alert type="info" :closable="false" show-icon class="mb-12">
@@ -625,7 +672,7 @@ onUnmounted(() => {
             班主任可以管理本班课表与成绩；留空则默认由创建者本人担任
           </span>
         </el-form-item>
-        <el-form-item label="学期周数">
+        <el-form-item v-if="!editingId" label="学期周数">
           <el-input-number v-model="form.termWeeks" :min="1" :max="maxTermWeeks" :step="1" />
           <span class="text-muted ml-8">
             本学期一共多少教学周（默认 20，最多 {{ maxTermWeeks }} 周）；课表周次选择与默认结束周都按它来
@@ -680,7 +727,7 @@ onUnmounted(() => {
           <el-tab-pane label="学生名单" name="students">
             <div class="toolbar mt-12">
               <el-button
-                v-if="auth.can('roster:manage')"
+                v-if="canManageDetailRoster"
                 type="primary"
                 size="small"
                 :icon="'Plus'"
@@ -703,11 +750,9 @@ onUnmounted(() => {
               <el-table-column label="加入时间" width="180">
                 <template #default="{ row }">{{ formatDate(row.createdAt, true) }}</template>
               </el-table-column>
-              <el-table-column label="操作" width="90">
+              <el-table-column v-if="canManageDetailRoster" label="操作" width="90">
                 <template #default="{ row }">
-                  <el-button v-if="auth.can('roster:manage')" link type="danger" @click="removeStudent(row)">
-                    移出
-                  </el-button>
+                  <el-button link type="danger" @click="removeStudent(row)">移出</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -719,15 +764,14 @@ onUnmounted(() => {
               <el-table-column label="任课教师" width="140">
                 <template #default="{ row }">{{ row.teacher?.name ?? '-' }}</template>
               </el-table-column>
-              <el-table-column label="操作" width="90">
+              <el-table-column v-if="canManageDetailCourses" label="操作" width="90">
                 <template #default="{ row }">
-                  <el-button v-if="auth.can('schedule:write')" link type="danger" @click="removeCourse(row)">
-                    删除
-                  </el-button>
+                  <el-button link type="danger" @click="removeCourse(row)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>
             <el-input
+              v-if="canManageDetailCourses"
               v-model="courseForm.name"
               placeholder="输入课程名称后回车快速添加"
               class="mt-12"
@@ -817,7 +861,7 @@ onUnmounted(() => {
               <el-switch
                 :model-value="detail?.studentGradeQueryEnabled ?? true"
                 :loading="gradeQuerySaving"
-                :disabled="!auth.can('grade:write')"
+                :disabled="!canManageDetailGradeQuery"
                 @change="(value: boolean) => toggleGradeQuery(value)"
               />
             </div>

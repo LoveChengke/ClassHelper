@@ -9,7 +9,13 @@ import {
 } from './promotion.service.js';
 import { Router } from 'express';
 import { ApiError, sendOk } from '../../lib/http.js';
-import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
+import {
+  authenticate,
+  getAuthUser,
+  requireAnyPermission,
+  requirePermissionOrClassDevice,
+  requirePermission,
+} from '../../middleware/auth.js';
 import { validate, validatedBody, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
@@ -74,16 +80,21 @@ router.post(
  * - **写**：仅管理员 —— 周次是全校口径，改错会让所有班的课表整体错位；
  * - `classId` 留空 = 全校默认；某个班有自己的配置时优先用它。
  */
-router.get('/', requirePermission('term:read'), validate({ query: termQuerySchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { classId } = validatedQuery<{ classId?: string }>(req);
-  sendOk(res, await termService.getTermWeeks(user, classId), '获取学期周次成功');
-});
+router.get(
+  '/',
+  requirePermissionOrClassDevice('term:read'),
+  validate({ query: termQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { classId } = validatedQuery<{ classId?: string }>(req);
+    sendOk(res, await termService.getTermWeeks(user, classId), '获取学期周次成功');
+  },
+);
 
 /** PUT /api/term - 保存逐周区间（整表覆盖，仅管理员） */
 router.put(
   '/',
-  requirePermission('term:write'),
+  requireAnyPermission('term:write', 'class:settings'),
   validate({ body: updateTermWeeksSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -102,7 +113,7 @@ router.put(
  */
 router.post(
   '/auto',
-  requirePermission('term:write'),
+  requireAnyPermission('term:write', 'class:settings'),
   validate({ body: autoTermWeeksSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -121,7 +132,7 @@ router.post(
  */
 router.get(
   '/holidays',
-  requirePermission('term:write'),
+  requireAnyPermission('term:write', 'class:settings'),
   validate({ query: holidayQuerySchema }),
   async (req, res) => {
     const { year } = validatedQuery<{ year?: number }>(req);

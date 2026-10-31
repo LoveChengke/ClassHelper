@@ -8,11 +8,11 @@ import {
   getAccessibleClassIds,
   resolveClassScope,
 } from '../../lib/access.js';
-import { assertStaffPermission, assertPermission } from '../../lib/permissions.js';
+import { assertPermissionOrClassDevice, assertPermission } from '../../lib/permissions.js';
 import { changeStudentLifecycle, notifyStudentClasses } from '../../lib/student-lifecycle.js';
 import { activeStudentWhere } from '../../lib/students.js';
 import { prisma } from '../../lib/db.js';
-import { hasAllScope } from '../../lib/permission-scope.js';
+import { hasOrganizationalGrant } from '../../lib/authz/index.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { toStudentDto, toStudentTransferDto } from '../../lib/mappers.js';
@@ -38,7 +38,7 @@ const withClass = { class: { select: { name: true, grade: true } } } as const;
 
 /** 学生名单（按班级权限过滤） */
 export async function listStudents(user: TokenPayload, options: ListStudentsQuery): Promise<StudentDto[]> {
-  await assertStaffPermission(user, 'roster:read');
+  await assertPermissionOrClassDevice(user, 'roster:read');
   const scope = await resolveClassScope(user, options.classId, 'roster:read');
 
   const students = await prisma.student.findMany({
@@ -219,16 +219,16 @@ export async function listTransfers(
   options: ListTransfersQuery,
 ): Promise<PaginatedResult<StudentTransferDto>> {
   await assertPermission(user, 'roster:read');
-  const hasGlobalRosterScope = isAdmin(user) || (await hasAllScope(user, 'roster:read'));
+  const hasGlobalRosterScope = isAdmin(user) || (await hasOrganizationalGrant(user, 'roster:read'));
 
-  if (options.classId) await assertClassAccess(user, options.classId);
+  if (options.classId) await assertClassAccess(user, options.classId, 'roster:read');
   if (options.studentId) {
     const student = await prisma.student.findUnique({
       where: { id: options.studentId },
       select: { classId: true },
     });
     if (!student) throw ApiError.notFound('学生不存在');
-    if (student.classId) await assertClassAccess(user, student.classId);
+    if (student.classId) await assertClassAccess(user, student.classId, 'roster:read');
     else if (!hasGlobalRosterScope) throw ApiError.forbidden('无权查看未分班学生的调班历史');
   }
 

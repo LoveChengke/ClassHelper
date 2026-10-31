@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { sendCreated } from '../../lib/http.js';
-import { authenticate, getAuthUser, requireStaffPermission } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermissionOrClassDevice } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import { createCallSchema, type CreateCallInput } from './calls.schemas.js';
@@ -15,7 +15,7 @@ router.use(authenticate());
  */
 router.post(
   '/',
-  requireStaffPermission('call:create'),
+  requirePermissionOrClassDevice('call:create'),
   validate({ body: createCallSchema }),
   async (req, res) => {
     const user = getAuthUser(req);

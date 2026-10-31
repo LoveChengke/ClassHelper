@@ -27,9 +27,9 @@ description: 现行模型职责、迁移与快照边界。
 | `TimeLayout`           | 共享或班级自有时间表；旧 items JSON 保留迁移审计    |
 | `Grade`                | studentId、课程、考试、分数和等级                   |
 | `PermissionAudit`      | 权限与人工升级审计，操作人和前后 JSON，不建账号外键 |
-| `PermissionGroup`      | 默认/自定义/岗位组及 scope/scopeValue               |
+| `PermissionGroup`      | 岗位模板与建议 scope/scopeValue                     |
 | `PermissionGroupItem`  | 组内权限键                                          |
-| `UserPermissionGroup`  | 账号与组的多对多分配                                |
+| `UserPermissionGroup`  | 账号与模板的分配及实际 scope/scopeValue             |
 | `AppSetting`           | 周次、升级、AI 和系统设置                           |
 | `ClientDevice`         | deviceKey、心跳、更新目标与状态                     |
 | `ClientCommand`        | 白名单远控、有效期与执行回执                        |
@@ -85,3 +85,11 @@ User.careMode 是预留列；当前 Web 偏好在 localStorage，客户端偏好
 SNAPSHOT_TABLES 已加入 PermissionAudit，新增字段随模型导出。旧快照没有审计表可恢复为空，旧历史 mode 在恢复时转为 kind；
 没有新增列的旧行使用 schema 默认值。执行记录与升级快照不自动清理。
 升级计划存 AppSetting.term.promotionPlan，时间存 term.promotionAt，无需新增学校或学生账号模型。
+
+## 授权分配迁移
+
+`20261031000000_authz_assignments` 为 UserPermissionGroup 增加 scope（默认 TEACHING）与 scopeValue。先按旧模板范围回填分配，再将模板 SELF_CLASS/空值和 SELF_CLASS/HEAD 规范为 TEACHING/HEAD。教师默认模板建议范围固定 TEACHING；旧 ADMIN 默认模板与旧管理员专用键保留在库中，由运行时忽略。
+
+同一成员可将同一模板分配到多个范围，唯一约束为 userId/groupId/scope/scopeValue。PermissionGroup 的范围列仅作建议，不参与已有分配求值。
+
+快照表集合和版本 1 保持兼容。恢复旧模板时映射 SELF_CLASS；旧 UserPermissionGroup 没有范围列时按快照内对应模板推导，缺组回落 TEACHING。新快照按实际分配列恢复。真实库升级前先备份快照，隔离回归不替代真实库升级演练。

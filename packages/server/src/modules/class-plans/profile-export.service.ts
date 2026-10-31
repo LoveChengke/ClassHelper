@@ -4,7 +4,7 @@ import type { TokenPayload } from '../../lib/jwt.js';
 
 /** 按时间点外键生成完整档案，空课、停用课程与非上课时间点均保留。 */
 export async function exportProfile(user: TokenPayload, classId: string) {
-  await assertClassAccess(user, classId);
+  await assertClassAccess(user, classId, 'schedule:read');
   const [cls, layouts, plans, subjects, groups, scheduled, setting] = await Promise.all([
     prisma.class.findUniqueOrThrow({ where: { id: classId } }),
     prisma.timeLayout.findMany({

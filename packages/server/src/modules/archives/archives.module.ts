@@ -1,3 +1,4 @@
+import { requireAdmin } from '../../middleware/auth.js';
 import { restoreStudentSchema } from '../students/students.schemas.js';
 import { listTransferred, restoreTransferred } from './transferred.service.js';
 import { Router } from 'express';
@@ -15,7 +16,7 @@ import {
 import * as archiveService from './archives.service.js';
 
 const router = Router();
-router.use(authenticate());
+router.use(authenticate(), requireAdmin());
 router.get('/transferred', requirePermission('archive:manage'), async (req, res) =>
   sendOk(res, await listTransferred(getAuthUser(req))),
 );

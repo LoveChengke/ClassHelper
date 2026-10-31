@@ -21,6 +21,7 @@ const props = defineProps<{
   layouts: TimeLayoutDetailDto[];
   courses: CourseDto[];
   canEdit: boolean;
+  canCreate: boolean;
   saving: boolean;
   /** 引用当前时间表的日课表数量，显示在「时间表信息」里。 */
   planCount: number;
@@ -321,7 +322,7 @@ onUnmounted(() => {
     <aside class="layout-explorer" aria-label="时间表列表">
       <el-input v-model="search" placeholder="搜索时间表" clearable />
       <div class="explorer-actions">
-        <button class="command" :disabled="!canEdit" @click="emit('create')">
+        <button class="command" :disabled="!canCreate" @click="emit('create')">
           <ArchiveIcon name="plus" />
           新时间表
         </button>
@@ -388,7 +389,7 @@ onUnmounted(() => {
           <div v-if="!layout" class="panel-empty">
             <ArchiveIcon name="clock" />
             <p>新建一份时间表开始编辑</p>
-            <button class="command" :disabled="!canEdit" @click="emit('create')">＋ 新时间表</button>
+            <button class="command" :disabled="!canCreate" @click="emit('create')">＋ 新时间表</button>
           </div>
           <div v-else-if="view === 'list'" class="point-list" aria-label="时间点列表">
             <div

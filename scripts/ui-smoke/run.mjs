@@ -110,6 +110,7 @@ const timeout = setTimeout(() => {
 
 child.on('exit', async (code) => {
   clearTimeout(timeout);
+  let cleanupFailed = false;
   if (probe) {
     try {
       const removed = await cleanupInClassProbe(probe, { notificationTitle: urgentTitle });
@@ -119,14 +120,15 @@ child.on('exit', async (code) => {
           : '[ui-smoke] 探针清理完成（无残留数据）',
       );
     } catch (error) {
+      cleanupFailed = true;
       console.error(`[ui-smoke] 探针清理失败（请手动检查演示数据）：${error?.message ?? error}`);
     }
   }
 
   await context.cleanup();
   console.log(`[ui-smoke] 后台验收总耗时：${((Date.now() - startedAt) / 1000).toFixed(1)} 秒`);
-  if (code === 0) {
+  if (code === 0 && !cleanupFailed) {
     console.log(`[ui-smoke] 全部通过，结果文件：${resultFile}`);
   }
-  process.exit(code ?? 1);
+  process.exit(code === 0 && cleanupFailed ? 1 : (code ?? 1));
 });

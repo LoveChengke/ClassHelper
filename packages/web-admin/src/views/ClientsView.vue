@@ -672,15 +672,15 @@ const deviceEmptyText = computed(() =>
 
       <div class="client-actions">
         <el-tooltip
-          :disabled="can('client:update')"
-          content="当前账号没有「向客户端统一下发更新」权限（client:update）"
+          :disabled="can('client:update-push')"
+          content="当前账号没有「向客户端统一下发更新」权限（client:update-push）"
           placement="top"
         >
           <span>
             <el-button
               type="primary"
               :icon="'Upload'"
-              :disabled="!can('client:update')"
+              :disabled="!can('client:update-push')"
               @click="openUpdateDialog"
             >
               一键推送更新

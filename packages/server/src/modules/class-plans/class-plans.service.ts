@@ -1,3 +1,4 @@
+import { assertAdmin, assertHeadOnly, assertPermissionOrClassDevice } from '../../lib/authz/index.js';
 import { SOCKET_EVENTS } from '@classhelper/shared';
 import { prisma } from '../../lib/db.js';
 import { assertCanManageSchedule, assertClassAccess, getAccessibleClassIds } from '../../lib/access.js';
@@ -24,20 +25,24 @@ export async function notifyScheduleChanged(classId?: string | null) {
   for (const id of ids) emitToClass(id, SOCKET_EVENTS.scheduleUpdated, { classId: id, action: 'updated' });
 }
 export async function listLayouts(user: TokenPayload, classId?: string) {
-  if (classId) await assertClassAccess(user, classId);
-  const ids = classId ? [classId] : await getAccessibleClassIds(user);
+  await assertPermissionOrClassDevice(user, 'schedule:read');
+  if (classId) await assertClassAccess(user, classId, 'schedule:read');
+  const ids = classId ? [classId] : await getAccessibleClassIds(user, 'schedule:read');
   const rows = await prisma.timeLayout.findMany({
     where: { OR: [{ classId: null }, { classId: { in: ids } }] },
     include: { points: { orderBy: { position: 'asc' } } },
   });
   return Promise.all(rows.map((row) => decorateLayout(row)));
 }
-export async function saveLayout(input: z.infer<typeof layoutSchema>, id?: string) {
+export async function saveLayout(user: TokenPayload, input: z.infer<typeof layoutSchema>, id?: string) {
   const existing = id
     ? await prisma.timeLayout.findUnique({ where: { id }, select: { classId: true } })
     : null;
   if (id && !existing) throw ApiError.notFound('时间表不存在');
   const layoutClassId = existing ? existing.classId : (input.classId ?? null);
+  await assertLayoutWrite(user, layoutClassId, id);
+  if (existing && input.classId !== undefined && input.classId !== existing.classId)
+    throw ApiError.forbidden('不能移动时间表到其他班级');
   // 默认课程属于具体班级：全校时间表不保留默认课程，非上课时间点也不保留。
   const points = input.points.map((point) => ({
     ...point,
@@ -83,12 +88,13 @@ export async function saveLayout(input: z.infer<typeof layoutSchema>, id?: strin
  * 把时间点的默认课程写入所有引用该时间表的日课表（ClassIsland 的「覆盖现有课程」）。
  * 只处理班级时间表：全校时间表的默认课程没有归属班级。
  */
-export async function applyDefaultCourse(layoutId: string, pointId: string) {
+export async function applyDefaultCourse(user: TokenPayload, layoutId: string, pointId: string) {
   const layout = await prisma.timeLayout.findUnique({
     where: { id: layoutId },
     include: { points: true },
   });
   if (!layout) throw ApiError.notFound('时间表不存在');
+  await assertLayoutWrite(user, layout.classId, layout.id);
   if (!layout.classId) throw ApiError.badRequest('全校时间表不能覆盖默认课程');
   const point = layout.points.find((p) => p.id === pointId);
   if (!point || point.timeType !== 'LESSON') throw ApiError.badRequest('时间点不是上课时间点');
@@ -121,10 +127,11 @@ export async function applyDefaultCourse(layoutId: string, pointId: string) {
   return { plans: plans.length };
 }
 export async function listPlans(user: TokenPayload, classId?: string, week?: number) {
-  if (classId) await assertClassAccess(user, classId);
+  await assertPermissionOrClassDevice(user, 'schedule:read');
+  if (classId) await assertClassAccess(user, classId, 'schedule:read');
   return prisma.classPlan.findMany({
     where: {
-      classId: { in: classId ? [classId] : await getAccessibleClassIds(user) },
+      classId: { in: classId ? [classId] : await getAccessibleClassIds(user, 'schedule:read') },
       ...(week ? { weekStart: { lte: week }, weekEnd: { gte: week } } : {}),
     },
     include: planInclude,
@@ -134,7 +141,8 @@ export async function listPlans(user: TokenPayload, classId?: string, week?: num
 export async function requirePlan(user: TokenPayload, id: string, write = true) {
   const p = await prisma.classPlan.findUnique({ where: { id }, include: planInclude });
   if (!p) throw ApiError.notFound('课表不存在');
-  await (write ? assertCanManageSchedule : assertClassAccess)(user, p.classId);
+  if (write) await assertCanManageSchedule(user, p.classId);
+  else await assertClassAccess(user, p.classId, 'schedule:read');
   return p;
 }
 export async function savePlan(user: TokenPayload, input: z.infer<typeof planSchema>, id?: string) {
@@ -284,4 +292,25 @@ export async function createOverlay(
   });
   await notifyScheduleChanged(source.classId);
   return result;
+}
+
+export async function assertLayoutWrite(user: TokenPayload, classId: string | null, layoutId?: string) {
+  if (classId) await assertHeadOnly(user, 'schedule:write', classId);
+  else assertAdmin(user);
+  if (layoutId) {
+    const refs = await prisma.classPlan.findMany({
+      where: { timeLayoutId: layoutId },
+      select: { classId: true },
+    });
+    for (const id of new Set(refs.map((p) => p.classId))) await assertHeadOnly(user, 'schedule:write', id);
+  }
+}
+export async function deleteLayout(user: TokenPayload, id: string) {
+  const layout = await prisma.timeLayout.findUnique({ where: { id } });
+  if (!layout) throw ApiError.notFound('时间表不存在');
+  await assertLayoutWrite(user, layout.classId, id);
+  if (await prisma.classPlan.count({ where: { timeLayoutId: id } }))
+    throw ApiError.conflict('仍有课表使用该时间表');
+  await prisma.timeLayout.delete({ where: { id } });
+  await notifyScheduleChanged(layout.classId);
 }

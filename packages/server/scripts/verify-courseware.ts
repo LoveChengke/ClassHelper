@@ -255,7 +255,9 @@ try {
     emitted
       .filter((e) => e.event === SOCKET_EVENTS.coursewareChanged)
       .every((e) =>
-        e.rooms.every((room) => [classes[0]!.id, classes[1]!.id].some((id) => room === `class:${id}`)),
+        e.rooms.every((room) =>
+          [classes[0]!.id, classes[1]!.id].some((id) => room === `class:${id}:courseware`),
+        ),
       ),
   );
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -357,24 +359,27 @@ try {
   state = await prisma.clientDevice.findUniqueOrThrow({ where: { id: device.id } });
   check('取消目标后忽略旧任务进度', state.updateProgress === '');
   const teacherDeviceKey = 'courseware-teacher-device';
-  await request('/clients/heartbeat', tokens[0], { deviceKey: teacherDeviceKey, clientVersion: '1.0.0' });
-  let teacherDevice = await prisma.clientDevice.findUniqueOrThrow({ where: { deviceKey: teacherDeviceKey } });
-  check('教师电脑设备不绑定班级', teacherDevice.classId === null);
-  await prisma.clientDevice.update({
-    where: { id: teacherDevice.id },
-    data: { updateTargetVersion: '2.0.0' },
+  check(
+    '教师会话不能注册设备心跳',
+    (await request('/clients/heartbeat', tokens[0], { deviceKey: teacherDeviceKey, clientVersion: '1.0.0' }))
+      .status === 403,
+  );
+  const teacherDevice = await prisma.clientDevice.create({
+    data: { deviceKey: teacherDeviceKey, updateTargetVersion: '2.0.0' },
   });
   check(
-    '教师电脑可上报自己的更新进度',
+    '旧未绑定设备也不能由教师冒报进度',
     (
       await request('/clients/update-progress', tokens[0], {
         deviceKey: teacherDeviceKey,
         progress: { ...updateProgress, version: '2.0.0' },
       })
-    ).status === 200,
+    ).status === 403,
   );
-  teacherDevice = await prisma.clientDevice.findUniqueOrThrow({ where: { deviceKey: teacherDeviceKey } });
-  check('教师电脑更新进度已记录', JSON.parse(teacherDevice.updateProgress).stage === 'downloading');
+  check(
+    '拒绝请求不改变旧设备进度',
+    (await prisma.clientDevice.findUniqueOrThrow({ where: { id: teacherDevice.id } })).updateProgress === '',
+  );
   const snapshot = await exportSnapshot(prisma, 'sqlite');
   check(
     '备份包含课件、可见范围、推送和回执',

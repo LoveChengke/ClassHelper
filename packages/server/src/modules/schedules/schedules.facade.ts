@@ -40,8 +40,8 @@ export async function listSchedules(
   user: TokenPayload,
   options: ListScheduleOptions,
 ): Promise<ScheduleDto[]> {
-  if (options.classId) await assertClassAccess(user, options.classId);
-  const classIds = options.classId ? [options.classId] : await getAccessibleClassIds(user);
+  if (options.classId) await assertClassAccess(user, options.classId, 'schedule:read');
+  const classIds = options.classId ? [options.classId] : await getAccessibleClassIds(user, 'schedule:read');
   const result: ScheduleDto[] = [];
   for (const classId of classIds) {
     if (options.week) {
@@ -98,7 +98,7 @@ export async function getActiveScheduleWeek(
 ) {
   const classId = isClassDevice(user) ? requireClassDeviceClassId(user) : options.classId;
   if (!classId) throw ApiError.badRequest('请指定班级');
-  await assertClassAccess(user, classId);
+  await assertClassAccess(user, classId, 'schedule:read');
   const context = await loadTermContext(classId),
     week = options.week ?? resolveCurrentWeek(new Date(), context);
   if (week > context.maxWeek) throw ApiError.badRequest('周次超过本班教学周数');
@@ -124,7 +124,7 @@ export async function computeClassStatus(classId: string, at = new Date()): Prom
 export async function getClassStatus(user: TokenPayload, options: { classId?: string; at?: Date } = {}) {
   const classId = isClassDevice(user) ? requireClassDeviceClassId(user) : options.classId;
   if (!classId) throw ApiError.badRequest('请指定班级');
-  await assertClassAccess(user, classId);
+  await assertClassAccess(user, classId, 'schedule:read');
   return computeClassStatus(classId, options.at);
 }
 
@@ -151,8 +151,8 @@ function matches(p: PlanRow, day: number, week: number) {
     (p.weekCountDiv === 0 || ((week - 1) % p.weekCountDivTotal) + 1 === p.weekCountDiv)
   );
 }
-async function assertCourse(courseId: string, classId: string) {
-  if (!(await prisma.course.findFirst({ where: { id: courseId, classId } })))
+async function assertCourse(courseId: string, classId: string, db: Tx = prisma) {
+  if (!(await db.course.findFirst({ where: { id: courseId, classId } })))
     throw ApiError.badRequest('课程不属于本班');
 }
 export async function createSchedule(
@@ -161,10 +161,8 @@ export async function createSchedule(
   transaction?: Tx,
   identity?: string,
 ): Promise<ScheduleDto> {
-  if (!transaction) {
-    await assertCanManageSchedule(user, input.classId);
-    await assertCourse(input.courseId, input.classId);
-  }
+  await assertCanManageSchedule(user, input.classId, transaction);
+  await assertCourse(input.courseId, input.classId, transaction);
   const cls = await (transaction ?? prisma).class.findUniqueOrThrow({ where: { id: input.classId } }),
     max = transaction
       ? normalizeMaxWeeks(
@@ -282,6 +280,8 @@ export async function updateSchedule(
   const rule: Partial<{ weekStart: number; weekEnd: number; weekParity: 'ALL' | 'ODD' | 'EVEN' }> = stored
     ? JSON.parse(stored.value)
     : {};
+  for (const targetClassId of new Set(entries.map((e) => e.plan.classId)))
+    await assertCanManageSchedule(user, targetClassId);
   const classId = entries[0]!.plan.classId;
   await assertCanManageSchedule(user, classId);
   if (input.courseId) await assertCourse(input.courseId, classId);

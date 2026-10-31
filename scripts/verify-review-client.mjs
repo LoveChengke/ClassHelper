@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { EventEmitter } from 'node:events';
+import { PERMISSION_KEYS } from '../packages/shared/dist/index.js';
 const root = path.resolve('.');
 const { build } = createRequire(path.join(root, 'packages/desktop-client/package.json'))('esbuild');
 fs.mkdirSync(path.join(root, '.cache/tmp'), { recursive: true });
@@ -55,7 +56,7 @@ try {
   const previousStorage = globalThis.localStorage;
   globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
   try {
-    h.webPermissions = ['permission:manage', 'system:manage'];
+    h.webPermissions = [];
     const webAuth = await bundle('web-auth', 'packages/web-admin/src/stores/auth.ts', {
       vue: refMock,
       pinia: 'export const defineStore=(_name, setup)=>setup;',
@@ -67,12 +68,15 @@ try {
     auth.token.value = 'admin-test';
     await auth.ensurePermissions();
     check(
-      '管理员界面不会绕过已收回的默认组权限',
-      !auth.can('remote:control') && !auth.can('ai:use') && auth.can('permission:manage'),
+      '界面只采用服务端返回能力，不硬编码管理员入口',
+      !auth.can('remote:control') && !auth.can('ai:use') && !auth.can('permission:manage'),
     );
-    h.webPermissions.push('remote:control');
+    h.webPermissions = [...PERMISSION_KEYS];
     await auth.ensurePermissions(true);
-    check('刷新权限后管理员界面采用当前生效集合', auth.can('remote:control'));
+    check(
+      '刷新后界面镜像服务端管理员固定全集',
+      PERMISSION_KEYS.every((key) => auth.can(key)),
+    );
   } finally {
     globalThis.localStorage = previousStorage;
   }
@@ -216,6 +220,8 @@ try {
       vue: 'export const watch=()=>()=>{};',
       '../api/index.js':
         'const h=globalThis.__reviewClientTest; export const scheduleApi={list:(params)=>h.scheduleLoader(params)}; export const notificationApi={list:async()=>[]};',
+      '../api/http.js':
+        'export const api={get:async(_path,params)=>({week:params.week,days:[{weekday:new Date().getDay()||7,schedules:await globalThis.__reviewClientTest.scheduleLoader(params)}]})};',
       './db.js': 'export const cacheGet=async()=>null; export const cacheSet=async()=>{};',
       '../stores/app.js':
         'export const useAppStore=()=>globalThis.__reviewClientTest.appStore; export const readOfflineSince=()=>null; export const clearOfflineSince=()=>{};',
@@ -227,9 +233,10 @@ try {
     'const Date=globalThis.__reviewClientTest.FixedDate;\n',
   );
   try {
+    await h.appStore.refreshTerm();
     await bridge.refreshIslandSchedules();
     check(
-      '先解析真实教学周再请求课表，不会误取第 1 周',
+      '课表请求使用已解析的真实教学周，不会误取第 1 周',
       h.requestedWeek === 9 && bridge.getIslandClassContext().inClass,
     );
     const loader = h.scheduleLoader;
@@ -243,6 +250,7 @@ try {
     );
     h.scheduleLoader = loader;
     h.termWeek = 10;
+    await h.appStore.refreshTerm();
     await bridge.refreshIslandSchedules();
     check('教学周变更后按新周请求并计算', h.requestedWeek === 10 && bridge.getIslandClassContext().inClass);
     h.scheduleLoader = () =>

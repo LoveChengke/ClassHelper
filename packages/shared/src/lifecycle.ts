@@ -2,14 +2,13 @@ import type { PermissionScope } from './class-plan.js';
 
 /** 范围解析供保存、查询与展示共用；旧库空岗位范围会由调用方拒绝访问。 */
 export function parsePermissionScope(scope: PermissionScope, value = '', knownGrades?: readonly string[]) {
-  if (scope === 'ALL') return { scope, scopeValue: '', grades: [], scopeLabel: '全校' };
-  if (scope === 'SELF_CLASS') {
-    if (value !== '' && value !== 'HEAD') throw new Error('关联班级范围只允许全部关联班级或仅班主任班');
+  if (scope === 'ALL' || scope === 'TEACHING' || scope === 'HEAD') {
+    if (value !== '') throw new Error('关联班级或全校范围不接受范围值');
     return {
       scope,
-      scopeValue: value,
+      scopeValue: '',
       grades: [],
-      scopeLabel: value === 'HEAD' ? '仅班主任班' : '班主任与任课班级',
+      scopeLabel: scope === 'ALL' ? '全校' : scope === 'HEAD' ? '仅班主任班' : '班主任与任课班级',
     };
   }
   if (scope !== 'GRADE' && scope !== 'DIVISION') throw new Error('未知的数据范围');
@@ -49,4 +48,11 @@ export function defaultPromotionPlan(classCount = 1): PromotionPlan {
     termStartDate: null,
     resetTermWeeks: true,
   };
+}
+
+/** 仅迁移和旧快照恢复使用；运行时不接受旧枚举。 */
+export function migratePermissionScope(scope: string, scopeValue = '') {
+  return scope === 'SELF_CLASS'
+    ? { scope: scopeValue === 'HEAD' ? 'HEAD' : 'TEACHING', scopeValue: '' }
+    : { scope, scopeValue };
 }

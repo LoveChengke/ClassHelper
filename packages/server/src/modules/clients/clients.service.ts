@@ -1,3 +1,4 @@
+import { assertClassDevice } from '../../lib/authz/index.js';
 import {
   CLIENT_COMMAND_EXPIRE_MS,
   CLIENT_COMMAND_LABELS,
@@ -136,6 +137,11 @@ export async function heartbeat(
   input: ClientHeartbeatInput,
   ip: string,
 ): Promise<ClientHeartbeatResponse> {
+  const boundClassId = resolveClassId(user);
+  assertClassDevice(user, boundClassId ?? '');
+  const previousDevice = await prisma.clientDevice.findUnique({ where: { deviceKey: input.deviceKey } });
+  if (previousDevice && previousDevice.classId !== boundClassId)
+    throw ApiError.forbidden('设备不属于当前班级');
   const now = new Date();
   const heartbeatAt = {
     classId: resolveClassId(user),
@@ -149,11 +155,17 @@ export async function heartbeat(
     lastIp: ip,
   };
 
-  const device = (await prisma.clientDevice.upsert({
-    where: { deviceKey: input.deviceKey },
-    create: { deviceKey: input.deviceKey, ...heartbeatAt },
-    update: heartbeatAt,
-  })) as unknown as DeviceRow;
+  const device = (await prisma.clientDevice
+    .upsert({
+      where: { deviceKey: input.deviceKey, classId: boundClassId },
+      create: { deviceKey: input.deviceKey, ...heartbeatAt },
+      update: heartbeatAt,
+    })
+    .catch(async (error: unknown) => {
+      const current = await prisma.clientDevice.findUnique({ where: { deviceKey: input.deviceKey } });
+      if (current && current.classId !== boundClassId) throw ApiError.forbidden('设备不属于当前班级');
+      throw error;
+    })) as unknown as DeviceRow;
 
   const targetVersion = device.updateTargetVersion.trim();
   if (targetVersion && input.clientVersion && compareVersions(input.clientVersion, targetVersion) >= 0) {
@@ -204,7 +216,7 @@ export async function reportUpdateProgress(
   progress: ClientUpdateProgressDto,
 ) {
   const device = await prisma.clientDevice.findUnique({ where: { deviceKey } });
-  // 教师/管理员电脑不绑定班级（会话与设备两侧都是 null），同样允许上报自己的进度。
+  assertClassDevice(user, device?.classId ?? '');
   if (!device || device.classId !== resolveClassId(user)) throw ApiError.forbidden('设备不属于当前班级');
   // 已取消或更换目标的迟到进度不得覆盖当前任务。
   if (progress.version !== device.updateTargetVersion || progress.stage === 'completed') return;
@@ -240,14 +252,16 @@ function readUpdateProgress(raw: string): ClientUpdateProgressDto | null {
 
 /** POST /api/clients/commands/:id/ack - 客户端执行完远控命令后的回执 */
 export async function ackCommand(
+  user: TokenPayload,
   commandId: string,
   input: ClientCommandAckRequest,
 ): Promise<ClientCommandDto> {
   const command = (await prisma.clientCommand.findUnique({
     where: { id: commandId },
-    include: { device: { select: { deviceKey: true, name: true } } },
-  })) as (CommandRow & { device: { deviceKey: string; name: string } }) | null;
+    include: { device: { select: { deviceKey: true, name: true, classId: true } } },
+  })) as (CommandRow & { device: { deviceKey: string; name: string; classId: string | null } }) | null;
   if (!command) throw ApiError.notFound('命令不存在');
+  assertClassDevice(user, command.device.classId ?? '');
 
   if (command.device.deviceKey !== input.deviceKey) {
     throw ApiError.forbidden('这条命令不是发给这台电脑的');
@@ -271,7 +285,7 @@ export async function listDevices(
   user: TokenPayload,
   options: { classId?: string } = {},
 ): Promise<ClientDeviceDto[]> {
-  const scope = await resolveClassScope(user, options.classId);
+  const scope = await resolveClassScope(user, options.classId, 'client:read');
   const rows = (await prisma.clientDevice.findMany({
     where: classScopeWhere(scope),
     include: { class: { select: { id: true, name: true } } },
@@ -394,7 +408,7 @@ export async function createCommands(
 
 /** 更新推送的目标集合：优先设备，其次班级，最后"全部" */
 async function resolveUpdateTargets(user: TokenPayload, input: PushClientUpdateInput): Promise<DeviceRow[]> {
-  const scope = classScopeWhere(await resolveClassScope(user, undefined, 'client:update'));
+  const scope = classScopeWhere(await resolveClassScope(user, undefined, 'client:update-push'));
   const deviceIds = [...new Set(input.deviceIds ?? [])];
   if (deviceIds.length > 0) {
     const rows = (await prisma.clientDevice.findMany({

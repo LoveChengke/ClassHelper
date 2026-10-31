@@ -1563,27 +1563,17 @@ async function main() {
         `含 homework:write=${teacher2ResetPermissions.includes('homework:write')}`,
     );
 
-    // 管理员可以分配权限组，但始终保留两个管理入口
     const assignAdmin = await api(`/permissions/users/${adminMember?.id}/groups`, {
       method: 'PUT',
       token: adminToken,
-      body: { groupIds: permissionGroupId ? [permissionGroupId] : [] },
+      body: { assignments: [] },
     });
+    const fixedAdmin = await api('/permissions/me', { token: adminToken });
     record(
-      '管理员可以分配权限组（PUT /users/:id/groups → 200）',
-      Boolean(adminMember) &&
-        assignAdmin.status === 200 &&
-        Array.isArray(assignAdmin.payload?.data?.permissions) &&
-        assignAdmin.payload.data.permissions.includes('permission:manage') &&
-        assignAdmin.payload.data.permissions.includes('system:manage'),
-      `status=${assignAdmin.status} 响应=${assignAdmin.payload?.message ?? ''}`,
+      '管理员固定全集并拒绝分配模板',
+      assignAdmin.status === 400 && fixedAdmin.payload?.data?.permissions.includes('teacher:manage'),
+      `status=${assignAdmin.status}`,
     );
-
-    await api(`/permissions/users/${adminMember?.id}/groups`, {
-      method: 'PUT',
-      token: adminToken,
-      body: { groupIds: [] },
-    });
 
     // 内置权限组不可删除：先找一个 builtin 的（**演示库当前没有内置组**，此时只报事实、不算失败）
     const groupsList = await api('/permissions/groups', { token: adminToken });

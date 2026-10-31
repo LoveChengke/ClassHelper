@@ -1,3 +1,4 @@
+import type { Prisma } from '../generated/prisma/client.js';
 import { randomUUID } from 'node:crypto';
 import { currentAcademicYearStart, SOCKET_EVENTS, type StudentLifecycleKind } from '@classhelper/shared';
 import { prisma } from './db.js';
@@ -31,17 +32,20 @@ export async function changeStudentLifecycle(
       status?: 'active' | 'inactive';
     };
   },
+  transaction?: Prisma.TransactionClient,
 ) {
   const batchId = randomUUID();
   const ids = [...new Set(input.studentIds)];
-  const existing = ids.length ? await prisma.student.findMany({ where: { id: { in: ids } } }) : [];
+  const existing = ids.length
+    ? await (transaction ?? prisma).student.findMany({ where: { id: { in: ids } } })
+    : [];
   if (existing.length !== ids.length) throw ApiError.notFound('部分学生不存在，请刷新后重试');
   for (const cls of new Set(existing.map((student) => student.classId)))
-    await assertCanManageRoster(user, cls ?? undefined);
-  if (input.toClassId) await assertCanManageRoster(user, input.toClassId);
-  else if (!existing.length) await assertCanManageRoster(user);
+    await assertCanManageRoster(user, cls ?? undefined, transaction);
+  if (input.toClassId) await assertCanManageRoster(user, input.toClassId, transaction);
+  else if (!existing.length) await assertCanManageRoster(user, undefined, transaction);
   const changedClasses: (string | null)[] = [];
-  const result = await prisma.$transaction(async (tx) => {
+  const work = async (tx: Prisma.TransactionClient) => {
     const target = input.toClassId ? await tx.class.findUnique({ where: { id: input.toClassId } }) : null;
     if (input.toClassId && !target) throw ApiError.badRequest('目标班级不存在');
     if (target?.archivedYearId) throw ApiError.conflict('目标班级已归档，不能调入');
@@ -160,7 +164,8 @@ export async function changeStudentLifecycle(
       transfers: records.map(toStudentTransferDto),
       studentId: students[0].id,
     };
-  });
-  notifyStudentClasses(changedClasses);
+  };
+  const result = transaction ? await work(transaction) : await prisma.$transaction(work);
+  if (!transaction) notifyStudentClasses(changedClasses);
   return result;
 }

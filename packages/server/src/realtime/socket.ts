@@ -3,36 +3,42 @@ import { Server } from 'socket.io';
 import {
   SOCKET_EVENTS,
   SOCKET_ROOMS,
+  SOCKET_CHANNELS,
+  type SocketChannel,
+  type PermissionKey,
   type ClientToServerEvents,
   type ServerToClientEvents,
   type SocketAuthPayload,
-  type UserRole,
 } from '@classhelper/shared';
 import { env } from '../config/env.js';
-import { getAccessibleClassIds } from '../lib/access.js';
-import { verifyToken } from '../lib/jwt.js';
+import { verifyToken, type TokenPayload } from '../lib/jwt.js';
+import { loadSessionUser } from '../lib/authz/session.js';
+import { classIdsFor, loadAuthPrincipal, classDeviceClassId } from '../lib/authz/index.js';
 import { logger } from '../lib/logger.js';
-import { registerEmitter, type RealtimeEmitter } from './bus.js';
+import { registerEmitter, registerSessionInvalidator } from './bus.js';
 
 interface SocketData {
-  user: {
-    id: string;
-    username: string;
-    name: string;
-    role: UserRole;
-    classId: string | null;
-    classSession: boolean;
-  };
+  user: TokenPayload;
+  token: string;
 }
-
 export type RealtimeServer = Server<
   ClientToServerEvents,
   ServerToClientEvents,
   Record<string, never>,
   SocketData
 >;
-
-/** 绑定 Socket.IO 到 HTTP 服务，并注册到事件总线 */
+const channelKeys: Record<SocketChannel, PermissionKey[]> = {
+  core: ['class:read', 'schedule:read'],
+  homework: ['homework:read'],
+  notification: ['notification:read'],
+  grade: ['grade:read'],
+  courseware: ['courseware:read'],
+};
+async function channelClasses(user: TokenPayload, channel: SocketChannel): Promise<Set<string>> {
+  const id = classDeviceClassId(user);
+  if (id) return new Set([id]);
+  return new Set((await Promise.all(channelKeys[channel].map((key) => classIdsFor(user, key)))).flat());
+}
 export function initRealtime(httpServer: HttpServer): RealtimeServer {
   const io: RealtimeServer = new Server(httpServer, {
     cors: { origin: env.corsOrigins, credentials: true },
@@ -40,110 +46,92 @@ export function initRealtime(httpServer: HttpServer): RealtimeServer {
     pingInterval: 25000,
     pingTimeout: 20000,
   });
-
-  // 握手鉴权：客户端通过 handshake.auth.token 传入 JWT
   io.use((socket, next) => {
-    try {
-      const auth = (socket.handshake.auth ?? {}) as Partial<SocketAuthPayload>;
-      const queryToken =
-        typeof socket.handshake.query.token === 'string' ? socket.handshake.query.token : null;
-      const token = auth.token ?? queryToken;
-      if (!token) {
-        next(new Error('缺少认证 token'));
-        return;
+    void (async () => {
+      try {
+        const auth = socket.handshake.auth as Partial<SocketAuthPayload>;
+        const token =
+          auth.token ??
+          (typeof socket.handshake.query.token === 'string' ? socket.handshake.query.token : '');
+        const user = await loadSessionUser(verifyToken(token));
+        await loadAuthPrincipal(user);
+        socket.data = { user, token };
+        next();
+      } catch {
+        next(new Error('认证失败，请重新登录'));
       }
-      const payload = verifyToken(token);
-      // ClassHelper 班级端：socket.data.user.id 用**班级 id**，据此加入 session:{classId} 房间，
-      // 「叫人」等定向消息因此能直达教室机器（见 calls.service）。
-      socket.data.user = {
-        id: payload.classSession ? (payload.classId ?? payload.sub) : payload.sub,
-        username: payload.classSession ? (payload.classCode ?? payload.username) : payload.username,
-        name: payload.name,
-        role: payload.role,
-        classId: payload.classId,
-        classSession: payload.classSession === true,
-      };
-      next();
-    } catch {
-      next(new Error('认证失败，请重新登录'));
-    }
+    })();
   });
-
   io.on('connection', (socket) => {
     const user = socket.data.user;
-    void (async () => {
-      const rooms = [SOCKET_ROOMS.session(user.id), SOCKET_ROOMS.role(user.role)];
-
-      try {
-        const classIds = await getAccessibleClassIds({
-          sub: user.id,
-          username: user.username,
-          name: user.name,
-          role: user.role,
-          classId: user.classId,
-          classSession: user.classSession,
-        });
-        for (const classId of classIds) {
-          await socket.join(SOCKET_ROOMS.class(classId));
-          rooms.push(SOCKET_ROOMS.class(classId));
-        }
-      } catch (error) {
-        logger.warn(`加入班级房间失败（user=${user.id}）`, error);
-      }
-
-      // ClassHelper 班级端归入 students 房间（它代表全班），教师/管理员归入 teachers
-      const audienceRoom = user.role === 'CLASS_DEVICE' ? SOCKET_ROOMS.students : SOCKET_ROOMS.teachers;
-      await socket.join(audienceRoom);
-      rooms.push(audienceRoom);
-
-      logger.info(`实时连接建立：${user.name}(${user.role}) sid=${socket.id}`);
-      socket.emit(SOCKET_EVENTS.connected, { sessionId: user.id, role: user.role, rooms });
-    })();
-
-    // 客户端可显式订阅某个班级（服务端二次校验权限）
-    socket.on('class:join', (classId, ack) => {
+    // 手动订阅每次回查账号与权限；不沿用握手时的权限快照。
+    const ready = (async () => {
+      const base = [
+        SOCKET_ROOMS.session(user.sub),
+        SOCKET_ROOMS.role(user.role),
+        user.role === 'CLASS_DEVICE' ? SOCKET_ROOMS.students : SOCKET_ROOMS.teachers,
+      ];
+      await socket.join(base);
+      for (const channel of SOCKET_CHANNELS)
+        for (const id of await channelClasses(user, channel))
+          await socket.join(SOCKET_ROOMS.classChannel(id, channel));
+      socket.emit(SOCKET_EVENTS.connected, {
+        sessionId: user.sub,
+        role: user.role,
+        rooms: [...socket.rooms].filter((r) => r !== socket.id),
+      });
+    })().catch((error) => {
+      logger.warn('实时订阅失败', error);
+      socket.disconnect(true);
+    });
+    socket.on('class:join', (request, ack) => {
       void (async () => {
+        await ready;
         try {
-          const allowed = await getAccessibleClassIds({
-            sub: user.id,
-            username: user.username,
-            name: user.name,
-            role: user.role,
-            classId: user.classId,
-            classSession: user.classSession,
-          });
-          if (!allowed.includes(classId)) {
-            ack?.({ ok: false, message: '无权订阅该班级' });
+          const current = await loadSessionUser(verifyToken(socket.data.token));
+          const classId = typeof request === 'string' ? request : request.classId;
+          const requested =
+            typeof request === 'string' ? SOCKET_CHANNELS : (request.channels ?? SOCKET_CHANNELS);
+          if (!requested.length || requested.some((c) => !SOCKET_CHANNELS.includes(c))) {
+            ack?.({ ok: false, message: '未知事件通道' });
             return;
           }
-          await socket.join(SOCKET_ROOMS.class(classId));
+          const allowed: SocketChannel[] = [];
+          for (const channel of requested)
+            if ((await channelClasses(current, channel)).has(classId)) allowed.push(channel);
+          // 旧字符串协议只加入有权通道；新协议显式通道有任一无权则全部拒绝。
+          if (!allowed.length || (typeof request !== 'string' && allowed.length !== requested.length)) {
+            ack?.({ ok: false, message: '无权订阅该班级或通道' });
+            return;
+          }
+          for (const channel of allowed) await socket.join(SOCKET_ROOMS.classChannel(classId, channel));
           ack?.({ ok: true });
         } catch {
           ack?.({ ok: false, message: '订阅失败' });
         }
       })();
     });
-
-    socket.on('class:leave', (classId) => {
-      void socket.leave(SOCKET_ROOMS.class(classId));
+    socket.on('class:leave', (request) => {
+      void (async () => {
+        await ready;
+        const classId = typeof request === 'string' ? request : request.classId;
+        for (const channel of typeof request === 'string'
+          ? SOCKET_CHANNELS
+          : (request.channels ?? SOCKET_CHANNELS))
+          await socket.leave(SOCKET_ROOMS.classChannel(classId, channel));
+      })();
     });
-
-    socket.on('ping', (ack) => {
-      ack?.();
-    });
-
-    socket.on('disconnect', (reason) => {
-      logger.debug(`实时连接断开：${user.name} (${reason})`);
-    });
+    socket.on('ping', (ack) => ack?.());
   });
-
-  const emit: RealtimeEmitter = (rooms, event, payload) => {
-    const target = io.to(rooms) as unknown as { emit: (event: string, payload: unknown) => void };
-    target.emit(event, payload);
-    logger.debug(`实时推送 ${event} -> ${rooms.join(',')}`);
-  };
-  registerEmitter(emit);
-
-  logger.info('Socket.IO 实时通道已就绪（房间规则：class:{classId} / session:{id}）');
+  registerEmitter((rooms, event, payload) => {
+    (io.to(rooms) as unknown as { emit(event: string, payload: unknown): void }).emit(event, payload);
+  });
+  registerSessionInvalidator((ids) => {
+    if (ids === null) {
+      io.in(SOCKET_ROOMS.teachers).disconnectSockets(true);
+      return;
+    }
+    for (const id of ids) io.in(SOCKET_ROOMS.session(id)).disconnectSockets(true);
+  });
   return io;
 }

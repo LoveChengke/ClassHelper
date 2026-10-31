@@ -1,13 +1,9 @@
 import type { Request, RequestHandler } from 'express';
 import type { PermissionKey, UserRole } from '@classhelper/shared';
 import { PERMISSION_LABELS } from '@classhelper/shared';
-import { prisma } from '../lib/db.js';
 import { ApiError } from '../lib/http.js';
-import {
-  bindRequestPermission,
-  bindRequestPermissions,
-  loadEffectivePermissions,
-} from '../lib/permissions.js';
+import { loadAuthPrincipal } from '../lib/authz/index.js';
+import { loadSessionUser } from '../lib/authz/session.js';
 import { extractBearerToken, verifyToken, type TokenPayload } from '../lib/jwt.js';
 
 /**
@@ -25,44 +21,8 @@ export function authenticate(): RequestHandler {
 
       const payload = verifyToken(token);
 
-      // ClassHelper 班级端：主体是**班级**而不是某个账号，回查 Class 表
-      if (payload.classSession) {
-        const record = await prisma.class.findUnique({
-          where: { id: payload.classId ?? payload.sub },
-          select: { id: true, name: true, code: true },
-        });
-        if (!record) throw ApiError.unauthorized('班级不存在或已被删除');
-
-        const user: TokenPayload = {
-          sub: record.id,
-          username: record.code,
-          name: record.name,
-          role: 'CLASS_DEVICE',
-          classId: record.id,
-          classSession: true,
-          classCode: record.code,
-        };
-        req.auth = { token, user, permissions: await loadEffectivePermissions(user) };
-        next();
-        return;
-      }
-
-      // 账号（教师 / 管理员）：`User` 是纯账号表，学生不在里面
-      const user = await prisma.user.findUnique({
-        where: { id: payload.sub },
-        select: { id: true, username: true, name: true, role: true },
-      });
-      if (!user) throw ApiError.unauthorized('账号不存在或已被删除');
-
-      const authUser: TokenPayload = {
-        sub: user.id,
-        username: user.username,
-        name: user.name,
-        role: user.role as UserRole,
-        classId: null,
-      };
-      req.auth = { token, user: authUser, permissions: await loadEffectivePermissions(authUser) };
-      bindRequestPermissions(authUser, req.auth.permissions!);
+      const user = await loadSessionUser(payload);
+      req.auth = { token, user, permissions: (await loadAuthPrincipal(user)).permissions };
       next();
     } catch (error) {
       next(error);
@@ -89,7 +49,7 @@ export function requireRole(...roles: UserRole[]): RequestHandler {
 /**
  * 权限守卫：要求当前登录主体拥有**全部**列出的权限键。
  *
- * 权限集合来自 {@link loadEffectivePermissions}（权限组并集，或角色默认模板）。
+ * 权限集合来自 {@link loadAuthPrincipal}（管理员全集，或教师模板与分配）。
  * 提示文案用中文权限名，用户看到的是"缺少「导入成绩」权限"而不是一堆键名。
  */
 export function requirePermission(...keys: PermissionKey[]): RequestHandler {
@@ -105,13 +65,12 @@ export function requirePermission(...keys: PermissionKey[]): RequestHandler {
       next(ApiError.forbidden(`当前账号缺少${labels}权限，请联系管理员在「权限组」里分配`));
       return;
     }
-    if (keys[0]) bindRequestPermission(req.auth.user, keys[0]);
     next();
   };
 }
 
 /** 班级端按班级范围开放读取；教师/管理员仍按可编辑的功能权限校验。 */
-export function requireStaffPermission(...keys: PermissionKey[]): RequestHandler {
+export function requirePermissionOrClassDevice(...keys: PermissionKey[]): RequestHandler {
   const guard = requirePermission(...keys);
   return (req, res, next) => {
     if (req.auth?.user.role === 'CLASS_DEVICE') return next();
@@ -139,8 +98,6 @@ export function requireAnyPermission(...keys: PermissionKey[]): RequestHandler {
       );
       return;
     }
-    const matched = keys.find((key) => permissions.has(key));
-    if (matched) bindRequestPermission(req.auth.user, matched);
     next();
   };
 }
@@ -161,3 +118,5 @@ export function getAuthPermissions(req: Request): ReadonlySet<PermissionKey> {
 export function hasAuthPermission(req: Request, key: PermissionKey): boolean {
   return (req.auth?.permissions ?? new Set<PermissionKey>()).has(key);
 }
+
+export const requireAdmin = (): RequestHandler => requireRole('ADMIN');

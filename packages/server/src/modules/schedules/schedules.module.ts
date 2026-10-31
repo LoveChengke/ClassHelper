@@ -10,7 +10,7 @@ import { idParamSchema } from '../../lib/schemas.js';
 import {
   authenticate,
   getAuthUser,
-  requireStaffPermission,
+  requirePermissionOrClassDevice,
   requirePermission,
 } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
@@ -30,18 +30,18 @@ const router = Router();
 router.use(authenticate());
 router.get(
   '/active-week',
-  requireStaffPermission('schedule:read'),
+  requirePermissionOrClassDevice('schedule:read'),
   validate({ query: gridQuerySchema }),
   async (req, res) =>
     sendOk(res, await scheduleService.getActiveScheduleWeek(getAuthUser(req), validatedQuery(req))),
 );
 router.get(
   '/scheduled',
-  requireStaffPermission('schedule:read'),
+  requirePermissionOrClassDevice('schedule:read'),
   validate({ query: z.object({ classId: z.string().min(1) }) }),
   async (req, res) => {
     const { classId } = validatedQuery<{ classId: string }>(req);
-    await assertClassAccess(getAuthUser(req), classId);
+    await assertClassAccess(getAuthUser(req), classId, 'schedule:read');
     sendOk(
       res,
       await prisma.scheduledClassPlan.findMany({
@@ -109,7 +109,7 @@ router.post(
 /** GET /api/schedules?classId=&week=&dayOfWeek= - 课表列表 */
 router.get(
   '/',
-  requireStaffPermission('schedule:read'),
+  requirePermissionOrClassDevice('schedule:read'),
   validate({ query: listSchedulesQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -121,7 +121,7 @@ router.get(
 /** GET /api/schedules/grid?classId=&week= - 周视图（7 列结构） */
 router.get(
   '/grid',
-  requireStaffPermission('schedule:read'),
+  requirePermissionOrClassDevice('schedule:read'),
   validate({ query: gridQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -145,7 +145,7 @@ router.get(
  */
 router.get(
   '/current',
-  requireStaffPermission('schedule:read'),
+  requirePermissionOrClassDevice('schedule:read'),
   validate({ query: classStatusQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);

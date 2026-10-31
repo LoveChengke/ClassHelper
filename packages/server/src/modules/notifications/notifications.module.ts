@@ -4,7 +4,7 @@ import { idParamSchema } from '../../lib/schemas.js';
 import {
   authenticate,
   getAuthUser,
-  requireStaffPermission,
+  requirePermissionOrClassDevice,
   requirePermission,
 } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
@@ -28,7 +28,7 @@ router.use(authenticate());
 /** GET /api/notifications?classId=&priority=&unreadOnly=&date=&from=&to=&createdBy= - 通知列表 */
 router.get(
   '/',
-  requireStaffPermission('notification:read'),
+  requirePermissionOrClassDevice('notification:read'),
   validate({ query: listNotificationsQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -40,7 +40,7 @@ router.get(
 /** GET /api/notifications/days?classId=&from=&to=&createdBy= - 按天归档（日期 + 条数） */
 router.get(
   '/days',
-  requireStaffPermission('notification:read'),
+  requirePermissionOrClassDevice('notification:read'),
   validate({ query: notificationArchiveQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -52,7 +52,7 @@ router.get(
 /** GET /api/notifications/creators?classId=&from=&to=&date= - 按发布人归档 */
 router.get(
   '/creators',
-  requireStaffPermission('notification:read'),
+  requirePermissionOrClassDevice('notification:read'),
   validate({ query: notificationArchiveQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -64,7 +64,7 @@ router.get(
 /** GET /api/notifications/unread-count?classId= - 未读数（客户端红点） */
 router.get(
   '/unread-count',
-  requireStaffPermission('notification:read'),
+  requirePermissionOrClassDevice('notification:read'),
   validate({ query: notificationScopeQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -76,7 +76,7 @@ router.get(
 /** POST /api/notifications/read-all - 全部标为已读 */
 router.post(
   '/read-all',
-  requireStaffPermission('notification:read'),
+  requirePermissionOrClassDevice('notification:read'),
   validate({ body: notificationScopeQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -88,7 +88,7 @@ router.post(
 /** POST /api/notifications - 发布通知（发布后广播 notification:new） */
 router.post(
   '/',
-  requireStaffPermission('notification:publish'),
+  requirePermissionOrClassDevice('notification:publish'),
   validate({ body: createNotificationSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -100,7 +100,7 @@ router.post(
 /** POST /api/notifications/bulk - 一次给多个班级发同一条通知（逐班结果，不整批回滚） */
 router.post(
   '/bulk',
-  requireStaffPermission('notification:publish'),
+  requirePermissionOrClassDevice('notification:publish'),
   validate({ body: bulkCreateNotificationSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -115,7 +115,7 @@ router.post(
 /** POST /api/notifications/:id/read - 标记已读 */
 router.post(
   '/:id/read',
-  requireStaffPermission('notification:read'),
+  requirePermissionOrClassDevice('notification:read'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);

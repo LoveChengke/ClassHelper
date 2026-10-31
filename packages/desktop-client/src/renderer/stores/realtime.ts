@@ -60,9 +60,10 @@ export const useRealtimeStore = defineStore('realtime', () => {
       connecting.value = false;
       dispatch('__connected__', null);
     });
-    instance.on('disconnect', () => {
+    instance.on('disconnect', (reason: string) => {
       connected.value = false;
       dispatch('__disconnected__', null);
+      if (reason === 'io server disconnect' && socket === instance) instance.connect();
     });
     instance.on('connect_error', (error: Error) => {
       connected.value = false;

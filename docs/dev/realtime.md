@@ -5,22 +5,21 @@ description: 实际事件与房间、断线恢复和客户端提醒分工。
 
 # 实时事件（Socket.IO）
 
-连接使用 `io(url, { auth: { token } })`，服务端在握手校验 JWT。
+连接使用 `io(url, { auth: { token } })`，服务端握手校验 JWT 并与 HTTP 共用数据库身份加载。
 事件与房间定义在 shared 的 `constants.ts`，载荷类型在 shared 的 `types.ts`，以这些契约和发送点为准。
 
 ## 房间与定向推送
 
-| 房间            | 作用                                               |
-| --------------- | -------------------------------------------------- |
-| class:{classId} | 某班级的业务广播                                   |
-| session:{id}    | 会话定向名；员工 id 为账号 id，班级端 id 为班级 id |
-| role:{role}     | 角色房间名，定义在共享常量                         |
-| teacher:{id}    | 教师房间名，定义在共享常量                         |
-| students        | 班级端连接的广播房间，代表全班，不是个人学生账号   |
-| teachers        | 教师和管理员连接的广播房间                         |
+| 房间                      | 作用                                               |
+| ------------------------- | -------------------------------------------------- |
+| class:{classId}:{channel} | 某班级对应读域的业务广播                           |
+| session:{id}              | 会话定向名；员工 id 为账号 id，班级端 id 为班级 id |
+| role:{role}               | 角色房间名，定义在共享常量                         |
+| teacher:{id}              | 教师房间名，定义在共享常量                         |
+| students                  | 班级端连接的广播房间，代表全班，不是个人学生账号   |
+| teachers                  | 教师和管理员连接的广播房间                         |
 
-`realtime/socket.ts` 当前显式 join 可访问的 class 房间与 students/teachers 广播房间；
-同时在 connected 载荷列出 session/role 名。不能把共享常量或该列表当成所有房间均已成功 join 的证明，实际订阅以 join 调用为准。
+`realtime/socket.ts` 按域加入授权班级房间，并加入 session/role 与 students/teachers 房间；connected 载荷列出实际已加入房间。
 业务经 `realtime/bus.ts` 的 emitToClass/emitToSession/emitToRooms 推送。
 叫人记录属于班级通知，并发送班级广播与班级会话定向事件；学生本身没有连接和个人房间。
 
@@ -47,3 +46,7 @@ description: 实际事件与房间、断线恢复和客户端提醒分工。
 
 同步修改共享事件名与载荷、服务端发送点、Web `stores/realtime.ts`、客户端 `stores/realtime.ts` 及相关缓存/岛逻辑。
 不要手写事件名；只改服务端会导致前端静默不刷新。涉及成绩时另检查隐私载荷和班级范围。
+
+## 读域订阅
+
+现行班级房间为 `class:{id}:{channel}`。channel 为 core/homework/notification/grade/courseware，事件映射来自 shared 的 SOCKET_EVENT_CHANNELS。旧 `class:{id}` 仅保留兼容名称，生产不订阅。班级端加入本班全部域；教师按对应读键和分配范围加入。`class:join` 接受旧 classId 字符串或 `{classId, channels}`，后者逐通道校验，有任一无权则拒绝整次请求。握手回查账号与角色，权限变更断开旧订阅。

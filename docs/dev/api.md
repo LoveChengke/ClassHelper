@@ -12,18 +12,18 @@ API 前缀 /api，JWT 使用 Authorization: Bearer。成功/失败结构以 `lib
 
 ## 身份与班级
 
-| 方法与路径（省略 /api）                                                 | 行为及边界                                                                        |
-| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| POST /auth/login、/auth/class-login                                     | 员工/班级登录，共享登录限流；学生无账号                                           |
-| GET /auth/me；POST /auth/logout；PATCH /auth/password                   | 当前身份、退出、员工本人改密码                                                    |
-| GET/POST /classes；GET/PATCH/DELETE /classes/:id                        | 班级查询/管理，读取 class:read；写入 class:manage 与目标范围，创建/删除需全校范围 |
-| PATCH /classes/:id/class-account、/classes/:id/head-teacher             | 班级凭据/班主任维护                                                               |
-| PUT /classes/:id/subject-teachers                                       | 任课关系设置，Course 为唯一来源                                                   |
-| GET/PATCH /classes/:id/student-grade-query                              | 查看/修改班级个人成绩查询开关，班级端不能修改                                     |
-| GET/POST /classes/:id/students；DELETE /classes/:id/students/:studentId | 本班名单及维护，受名单功能权限和班级关系约束                                      |
-| /students、/teachers                                                    | 名单与账号 CRUD；读/写使用不同权限键，具体角色限制读取对应模块                    |
-| POST /teachers/:id/reset-password                                       | 指定新密码或默认重置；学生无对应接口                                              |
-| /permissions/me、/catalog、/groups、/users                              | 当前有效权限、目录、组与账号分组                                                  |
+| 方法与路径（省略 /api）                                                 | 行为及边界                                                     |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------- |
+| POST /auth/login、/auth/class-login                                     | 员工/班级登录，共享登录限流；学生无账号                        |
+| GET /auth/me；POST /auth/logout；PATCH /auth/password                   | 当前身份、退出、员工本人改密码                                 |
+| GET/POST /classes；GET/PATCH/DELETE /classes/:id                        | 班级查询/管理，读取 class:read；写入 class:manage 且仅管理员   |
+| PATCH /classes/:id/class-account、/classes/:id/head-teacher             | 班级凭据 class:account + 班主任；班主任分配仅管理员            |
+| PUT /classes/:id/subject-teachers                                       | 任课关系设置，Course 为唯一来源                                |
+| GET/PATCH /classes/:id/student-grade-query                              | 查看/修改班级个人成绩查询开关，班级端不能修改                  |
+| GET/POST /classes/:id/students；DELETE /classes/:id/students/:studentId | 本班名单及维护，受名单功能权限和班级关系约束                   |
+| /students、/teachers                                                    | 名单与账号 CRUD；读/写使用不同权限键，具体角色限制读取对应模块 |
+| POST /teachers/:id/reset-password                                       | 指定新密码或默认重置；学生无对应接口                           |
+| /permissions/me、/catalog、/groups、/users                              | 当前有效权限、目录、组与账号分组                               |
 
 ## 教学与文件
 
@@ -58,11 +58,11 @@ API 前缀 /api，JWT 使用 Authorization: Bearer。成功/失败结构以 `lib
 | POST /clients/update-progress                                                                           | 设备上传下载、校验、等待、安装和失败状态，校验设备班级归属                       |
 | GET /clients/devices；DELETE /clients/devices/:id                                                       | 设备读取/维护，分别检查功能键和范围                                              |
 | POST /clients/commands                                                                                  | remote:control + 对应范围，白名单动作                                            |
-| POST /clients/updates                                                                                   | client:update，安装策略 immediate/after-school/idle                              |
+| POST /clients/updates                                                                                   | client:update-push，安装策略 immediate/after-school/idle                         |
 | GET /update/check                                                                                       | 员工需 update:check；强制刷新另检查 update:force                                 |
 | GET /update/client/releases                                                                             | 缓存版本读取，按路由允许的读取权限                                               |
-| POST /update/client/fetch、/update/client/releases；DELETE /update/client/releases/:version             | 安装包写入口统一 client:update                                                   |
-| GET /update/client/download/:version                                                                    | 已登录下载，不挂员工权限键，供班级端更新                                         |
+| POST /update/client/fetch、/update/client/releases；DELETE /update/client/releases/:version             | 安装包写入口仅管理员 client:update                                               |
+| GET /update/client/download/:version                                                                    | 本班 CLASS_DEVICE 或 client:read + 有效班级范围                                  |
 | /term；POST /term/auto；GET /term/holidays                                                              | 学期读取/编辑/假日建议，term:read/term:write                                     |
 | GET/PUT /term/promotion；POST /term/promotion/run                                                       | 升级计划与执行，promotion:manage + 全校范围，执行要求确认与计划哈希              |
 | /archives、/archives/transferred、/archives/transferred/:id/restore                                     | 历史归档需 archive:manage 全校范围；撤回转出需 roster:manage；不提供手动创建归档 |
@@ -83,8 +83,8 @@ API 前缀 /api，JWT 使用 Authorization: Bearer。成功/失败结构以 `lib
 | GET /permissions/scopes                              | permission:manage；返回可选年级、部建议和计划年级                                                                                       |
 | GET /permissions/groups/:id/members                  | permission:manage；包含显式分组及角色默认回落的生效成员                                                                                 |
 | GET /permissions/audit?page=&pageSize=               | permission:manage；分页操作人、目标、前后 JSON，pageSize 最大 100                                                                       |
-| POST/PATCH/DELETE /permissions/groups[/:id]          | permission:manage；范围校验与防提权；默认组仅 ADMIN 可改，内置组不可删                                                                  |
-| PUT /permissions/users/:id/groups                    | groupIds 整体替换；默认组角色须匹配，空数组恢复角色默认模板；禁止越键越范围                                                             |
+| POST/PATCH/DELETE /permissions/groups[/:id]          | 仅 ADMIN；仅可分配键，范围校验，教师默认模板固定 TEACHING，内置组不可删                                                                 |
+| PUT /permissions/users/:id/groups                    | assignments 整体替换，每项 groupId/scope/scopeValue；兼容 groupIds 按建议范围分配；空数组恢复教师默认模板；ADMIN 不可分配               |
 | GET /students?status=&includeArchived=               | roster:read；默认 active，归档单独筛选；历史状态不会再被在读条件覆盖                                                                    |
 | POST /students                                       | roster:manage；仅 active/inactive，学号重复 409，班级不得归档                                                                           |
 | PATCH /students/:id                                  | roster:manage；仅资料字段；classId/status 明确返回 400                                                                                  |
@@ -105,3 +105,15 @@ API 前缀 /api，JWT 使用 Authorization: Bearer。成功/失败结构以 `lib
 生命周期历史以 kind 为事实源，mode 为派生兼容字段；新响应另含 batchId、academicYear、fromGrade/toGrade、fromSchool/toSchool。
 归档详情含 inactive 列表、inactiveCount 和按学生去重的 transferInCount；升级记录含 operatorId/operatorName、detailsJson、snapshotSha256、error。
 所有学生与历史写入在同一事务，提交后再广播旧班与新班。班级详情只有持 roster:read 且在对应范围内的员工才能获得学生明细。
+
+## 分配级范围与班级设置
+
+`GET /permissions/catalog` 增加 meta（kind/risk/relation/allowedScopes）。模板 DTO 的 defaultScope/defaultScopeValue/defaultScopeLabel 及兼容 scope 字段都是建议范围；kind、inactiveKeys、warnings 展示模板类别和停用键。成员 DTO 的 assignments 是实际分配，groupIds 为派生值；ADMIN fixed=true。
+
+`GET /permissions/users/:id/effective` 仅 ADMIN，返回 permissions、entries（每键 scopes/classes/classCount）、conflicts、headOnlyKeys。可选 query assignments 为 JSON 数组，预览尚未保存的整体分配；预览与实际授权共用求值器。
+
+`PATCH /classes/:id/settings` 使用 class:settings + 本班班主任（ADMIN 例外）保存 termWeeks/termStartDate。管理员 `PATCH /classes/:id` 只接收 enrollmentYear/classIndex。`PATCH /classes/:id/class-account` 使用 class:account + 本班班主任。全局周次仅管理员，带 classId 的周次写走 class:settings + 班主任。时间表写入按存储 classId 分流，班级时间表需要 schedule:write + 班主任，全校时间表仅管理员。
+
+成绩 overview/collective/exams/ranking 显式检查 grade:read，班级端由服务断言限本班并执行查询开关。设备 heartbeat/update-progress/commands/:id/ack 仅接受绑定本班的 CLASS_DEVICE，不接受教师个人设备。
+
+`GET /permissions/me` 同时返回 classScopes、manageScopes、allScopeKeys，供 Web 按钮与班级选择器显示实际能力范围；manageScopes 对名单、日课表、导入和考试配置叠加班主任或显式组织范围规则。界面范围提示不替代服务端断言。

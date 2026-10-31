@@ -50,7 +50,12 @@ try {
     const script = `const {ensureSchema}=await import('./packages/server/src/lib/db-bootstrap.ts');
       const result=await ensureSchema(); if(result.applied!==${expected})throw new Error(JSON.stringify(result));
       const {ensureDefaultGroups}=await import('./packages/server/src/lib/permissions.ts');
-      await ensureDefaultGroups();process.exit(0);`;
+      await ensureDefaultGroups();
+      const {loadAuthPrincipal}=await import('./packages/server/src/lib/authz/index.ts');
+      const {PERMISSION_KEYS}=await import('./packages/shared/dist/index.js');
+      const admin=await loadAuthPrincipal({sub:'legacy-admin-user',role:'ADMIN',name:'测试',username:'测试',classId:null});
+      if(admin.permissions.size!==PERMISSION_KEYS.length||admin.fromGroups)throw new Error('管理员不应受默认组限制');
+      process.exit(0);`;
     const result = spawnSync(
       process.execPath,
       ['--import', './packages/server/node_modules/tsx/dist/loader.mjs', '--input-type=module', '-e', script],
@@ -125,6 +130,18 @@ try {
         sql: "INSERT INTO \"StudentClassTransfer\" (id,studentId,studentNo,studentName,mode) VALUES (?,'legacy-student','LEGACY','旧学生',?)",
         args: [id, mode],
       });
+    await legacy.execute(
+      `INSERT INTO "User" (id,username,passwordHash,name,role,updatedAt) VALUES ('legacy-teacher','legacy-teacher','unused','旧教师','TEACHER',CURRENT_TIMESTAMP),('legacy-admin-user','legacy-admin-user','unused','旧管理员','ADMIN',CURRENT_TIMESTAMP)`,
+    );
+    await legacy.execute(
+      `INSERT INTO "PermissionGroup" (id,name,scope,scopeValue,updatedAt) VALUES ('old-self','旧任教模板','SELF_CLASS','',CURRENT_TIMESTAMP),('old-head','旧班主任模板','SELF_CLASS','HEAD',CURRENT_TIMESTAMP)`,
+    );
+    await legacy.execute(
+      `INSERT INTO "PermissionGroup" (id,name,defaultRole,scope,scopeValue,updatedAt) VALUES ('old-teacher-default','旧教师默认模板','TEACHER','ALL','',CURRENT_TIMESTAMP)`,
+    );
+    await legacy.execute(
+      `INSERT INTO "UserPermissionGroup" (id,userId,groupId) VALUES ('old-self-link','legacy-teacher','old-self'),('old-head-link','legacy-teacher','old-head'),('old-admin-link','legacy-admin-user','legacy-admin')`,
+    );
     legacy.close();
     run(names.length - split, legacyUrl);
     const upgraded = createClient({ url: legacyUrl });
@@ -133,6 +150,32 @@ try {
         await upgraded.execute(`SELECT key FROM "PermissionGroupItem" WHERE groupId='legacy-admin'`)
       ).rows.map((row) => row.key);
       assert(keys.includes('roster:read') && keys.includes('promotion:manage'));
+      const assignments = (
+        await upgraded.execute(
+          `SELECT scope,scopeValue FROM "UserPermissionGroup" WHERE userId='legacy-teacher' ORDER BY scope`,
+        )
+      ).rows;
+      assert.deepEqual(
+        assignments.map((a) => [a.scope, a.scopeValue]),
+        [
+          ['HEAD', ''],
+          ['TEACHING', ''],
+        ],
+      );
+      assert.equal(
+        (await upgraded.execute(`SELECT scope FROM "PermissionGroup" WHERE defaultRole='TEACHER'`)).rows[0]
+          .scope,
+        'TEACHING',
+      );
+      assert.equal(
+        (await upgraded.execute(`SELECT scope FROM "PermissionGroup" WHERE id='old-head'`)).rows[0].scope,
+        'HEAD',
+      );
+      assert.equal(
+        (await upgraded.execute(`SELECT count(*) AS n FROM "PermissionGroup" WHERE defaultRole='ADMIN'`))
+          .rows[0].n,
+        1,
+      );
       const kinds = (await upgraded.execute('SELECT id,kind,batchId FROM "StudentClassTransfer" ORDER BY id'))
         .rows;
       assert.deepEqual(

@@ -1,4 +1,5 @@
-import { assertStaffPermission } from '../../lib/permissions.js';
+import { assertContentWrite } from '../../lib/authz/index.js';
+import { assertPermissionOrClassDevice } from '../../lib/permissions.js';
 import {
   SOCKET_EVENTS,
   dayKeyLocal,
@@ -12,13 +13,7 @@ import {
   type HomeworkSubmissionDto,
   type HomeworkSubmissionsDto,
 } from '@classhelper/shared';
-import {
-  assertCanManageSubjectContent,
-  assertClassAccess,
-  classScopeWhere,
-  isClassDevice,
-  resolveClassScope,
-} from '../../lib/access.js';
+import { assertClassAccess, classScopeWhere, isClassDevice, resolveClassScope } from '../../lib/access.js';
 import { normalizeBulkClassIds, summarizeBulk, toBulkFailure } from '../../lib/bulk.js';
 import { activeStudentWhere, isActiveStudent } from '../../lib/students.js';
 import { prisma } from '../../lib/db.js';
@@ -56,8 +51,8 @@ export async function listHomeworks(
   user: TokenPayload,
   options: ListHomeworkOptions,
 ): Promise<HomeworkDto[]> {
-  await assertStaffPermission(user, 'homework:read');
-  const scope = await resolveClassScope(user, options.classId);
+  await assertPermissionOrClassDevice(user, 'homework:read');
+  const scope = await resolveClassScope(user, options.classId, 'homework:read');
   const device = isClassDevice(user);
   // ClassHelper 班级端以全班学生为范围；教师/管理员没有"自己的完成状态"
   const personalIds = device ? await resolvePersonalIds(user) : [];
@@ -97,8 +92,8 @@ export async function listHomeworkDays(
   user: TokenPayload,
   options: { classId?: string; from?: string; to?: string; days?: number },
 ): Promise<HomeworkDaysDto> {
-  await assertStaffPermission(user, 'homework:read');
-  const scope = await resolveClassScope(user, options.classId);
+  await assertPermissionOrClassDevice(user, 'homework:read');
+  const scope = await resolveClassScope(user, options.classId, 'homework:read');
   const today = dayKeyLocal(new Date());
   const to = options.to ?? today;
   const from = options.from ?? shiftDayKey(to, -(options.days ?? 60) + 1);
@@ -122,7 +117,7 @@ export async function listHomeworkDays(
 }
 
 export async function getHomework(user: TokenPayload, homeworkId: string): Promise<HomeworkDto> {
-  await assertStaffPermission(user, 'homework:read');
+  await assertPermissionOrClassDevice(user, 'homework:read');
   const device = isClassDevice(user);
   const personalIds = device ? await resolvePersonalIds(user) : [];
   const homework = await prisma.homework.findUnique({
@@ -136,7 +131,7 @@ export async function getHomework(user: TokenPayload, homeworkId: string): Promi
     },
   });
   if (!homework) throw ApiError.notFound('作业不存在');
-  await assertClassAccess(user, homework.classId);
+  await assertClassAccess(user, homework.classId, 'homework:read');
 
   return toHomeworkDto(homework, {
     studentIds: device ? personalIds : [],
@@ -149,15 +144,15 @@ export async function getHomework(user: TokenPayload, homeworkId: string): Promi
 /**
  * 发布作业并实时推送到班级房间。
  *
- * 权限走 `assertCanManageSubjectContent`（`allowClassDevice: true`）：
+ * 权限走 ``（`allowClassDevice: true`）：
  * - **选了科目** → 必须是该科的任课老师（班主任不教这一科也发不了）；
  * - **没选科目** → 本班班主任或管理员；
  * - **ClassHelper 班级端** → 可以录（老师在教室电脑上顺手记一条是常见需求，
  *   见 AGENTS.md 的现行工程约定），班级端录入的作业归属该班班主任。
  */
 export async function createHomework(user: TokenPayload, input: CreateHomeworkInput): Promise<HomeworkDto> {
-  await assertStaffPermission(user, 'homework:write');
-  await assertCanManageSubjectContent(user, input.classId, input.courseId ?? null, '布置作业', {
+  await assertPermissionOrClassDevice(user, 'homework:write');
+  await assertContentWrite(user, 'homework:write', input.classId, input.courseId ?? null, '布置作业', {
     allowClassDevice: true,
   });
   if (input.courseId) await assertCourseInClass(input.courseId, input.classId);
@@ -212,7 +207,7 @@ export async function bulkCreateHomeworks(
   user: TokenPayload,
   input: BulkCreateHomeworkRequest,
 ): Promise<BulkPublishResult> {
-  await assertStaffPermission(user, 'homework:write');
+  await assertPermissionOrClassDevice(user, 'homework:write');
   const classIds = normalizeBulkClassIds(input.classIds);
   const results: BulkPublishClassResult[] = [];
 
@@ -261,13 +256,16 @@ export async function updateHomework(
   homeworkId: string,
   input: UpdateHomeworkInput,
 ): Promise<HomeworkDto> {
-  await assertStaffPermission(user, 'homework:write');
+  await assertPermissionOrClassDevice(user, 'homework:write');
   const current = await prisma.homework.findUnique({ where: { id: homeworkId } });
   if (!current) throw ApiError.notFound('作业不存在');
 
   // 改科目等于把这条作业挪到另一个科目的权限域下，两端都要判
+  await assertContentWrite(user, 'homework:write', current.classId, current.courseId, '修改作业', {
+    allowClassDevice: true,
+  });
   const nextCourseId = input.courseId === undefined ? current.courseId : (input.courseId ?? null);
-  await assertCanManageSubjectContent(user, current.classId, nextCourseId, '修改作业', {
+  await assertContentWrite(user, 'homework:write', current.classId, nextCourseId, '修改作业', {
     allowClassDevice: true,
   });
   if (nextCourseId) await assertCourseInClass(nextCourseId, current.classId);
@@ -294,13 +292,13 @@ export async function updateHomework(
 }
 
 export async function deleteHomework(user: TokenPayload, homeworkId: string): Promise<void> {
-  await assertStaffPermission(user, 'homework:write');
+  await assertPermissionOrClassDevice(user, 'homework:write');
   const current = await prisma.homework.findUnique({
     where: { id: homeworkId },
     include: { course: courseSelect, creator: creatorSelect },
   });
   if (!current) throw ApiError.notFound('作业不存在');
-  await assertCanManageSubjectContent(user, current.classId, current.courseId, '删除作业', {
+  await assertContentWrite(user, 'homework:write', current.classId, current.courseId, '删除作业', {
     allowClassDevice: true,
   });
 
@@ -323,11 +321,13 @@ export async function updateHomeworkStatus(
   homeworkId: string,
   input: UpdateHomeworkStatusInput,
 ): Promise<HomeworkStatusDto> {
-  await assertStaffPermission(user, 'homework:write');
+  await assertPermissionOrClassDevice(user, 'homework:write');
   const homework = await prisma.homework.findUnique({ where: { id: homeworkId } });
   if (!homework) throw ApiError.notFound('作业不存在');
 
-  await assertClassAccess(user, homework.classId);
+  await assertContentWrite(user, 'homework:write', homework.classId, homework.courseId, '维护作业提交名单', {
+    allowClassDevice: true,
+  });
 
   if (isClassDevice(user)) {
     const studentIds = await resolvePersonalIds(user);
@@ -417,13 +417,15 @@ export async function listHomeworkSubmissions(
   user: TokenPayload,
   homeworkId: string,
 ): Promise<HomeworkSubmissionsDto> {
-  await assertStaffPermission(user, 'homework:read');
+  await assertPermissionOrClassDevice(user, 'homework:write');
   const homework = await prisma.homework.findUnique({
     where: { id: homeworkId },
-    select: { id: true, classId: true },
+    select: { id: true, classId: true, courseId: true },
   });
   if (!homework) throw ApiError.notFound('作业不存在');
-  await assertClassAccess(user, homework.classId);
+  await assertContentWrite(user, 'homework:write', homework.classId, homework.courseId, '维护作业提交名单', {
+    allowClassDevice: true,
+  });
   assertCanManageSubmissions(user);
   return buildSubmissions(homework.classId, homeworkId);
 }
@@ -437,13 +439,15 @@ export async function updateHomeworkSubmissions(
   homeworkId: string,
   input: UpdateHomeworkSubmissionsInput,
 ): Promise<HomeworkSubmissionsDto> {
-  await assertStaffPermission(user, 'homework:write');
+  await assertPermissionOrClassDevice(user, 'homework:write');
   const homework = await prisma.homework.findUnique({
     where: { id: homeworkId },
-    select: { id: true, classId: true },
+    select: { id: true, classId: true, courseId: true },
   });
   if (!homework) throw ApiError.notFound('作业不存在');
-  await assertClassAccess(user, homework.classId);
+  await assertContentWrite(user, 'homework:write', homework.classId, homework.courseId, '维护作业提交名单', {
+    allowClassDevice: true,
+  });
   assertCanManageSubmissions(user);
 
   const students = await prisma.student.findMany({

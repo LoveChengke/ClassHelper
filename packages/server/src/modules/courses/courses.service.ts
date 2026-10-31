@@ -1,3 +1,4 @@
+import { refreshClassSubscriptions } from '../../realtime/bus.js';
 import type { CourseDto } from '@classhelper/shared';
 import { assertCanManageSchedule, classScopeWhere, resolveClassScope } from '../../lib/access.js';
 import { prisma } from '../../lib/db.js';
@@ -9,7 +10,7 @@ import type { CreateCourseInput, UpdateCourseInput } from './courses.schemas.js'
 const teacherSelect = { select: { id: true, name: true, username: true } } as const;
 
 export async function listCourses(user: TokenPayload, classId?: string): Promise<CourseDto[]> {
-  const scope = await resolveClassScope(user, classId);
+  const scope = await resolveClassScope(user, classId, 'schedule:read');
   const courses = await prisma.course.findMany({
     where: classScopeWhere(scope),
     include: { teacher: teacherSelect },
@@ -26,7 +27,7 @@ export async function createCourse(user: TokenPayload, input: CreateCourseInput)
    *
    * 这条不是"友好提示"，是**权限护栏**：`course.create` 会把创建者写成这门课的任课老师，
    * 于是只要能再建一门同名的「数学」，创建者就凭空成了「数学」的老师 ——
-   * 后面那道 `assertCanManageSubjectContent` 的科目门随即形同虚设
+   * 后面那道 `` 的科目门随即形同虚设
    * （可以布置该科作业、录入该科成绩、删该科内容）。这就是"非该科科任老师
    * 能布置其他科作业"的入口。
    *
@@ -82,4 +83,5 @@ export async function deleteCourse(user: TokenPayload, courseId: string): Promis
   if (!course) throw ApiError.notFound('课程不存在');
   await assertCanManageSchedule(user, course.classId);
   await prisma.course.delete({ where: { id: courseId } });
+  refreshClassSubscriptions();
 }

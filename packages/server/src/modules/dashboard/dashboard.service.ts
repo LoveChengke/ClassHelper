@@ -1,9 +1,9 @@
+import type { PermissionKey } from '@classhelper/shared';
+import { classIdsFor, loadAuthPrincipal } from '../../lib/authz/index.js';
 import { activeStudentWhere } from '../../lib/students.js';
 import type { DashboardSummary, HomeworkDto, NotificationDto } from '@classhelper/shared';
 import {
   assertClassAccess,
-  classScopeIdFilter,
-  classScopeWhere,
   isClassDevice,
   resolveClassScope,
   requireClassDeviceClassId,
@@ -25,7 +25,7 @@ const creatorSelect = { select: { id: true, name: true, username: true } } as co
  * - 都不传：全局默认（getMaxTermWeeks 兜底）。
  */
 export async function resolveTermWeeks(user: TokenPayload, classId?: string): Promise<number> {
-  if (classId) await assertClassAccess(user, classId);
+  if (classId) await assertClassAccess(user, classId, 'term:read');
   const targetClassId = classId ?? (isClassDevice(user) ? requireClassDeviceClassId(user) : undefined);
   if (!targetClassId) return getMaxTermWeeks();
   const record = await prisma.class.findUnique({
@@ -42,10 +42,38 @@ export async function resolveTermWeeks(user: TokenPayload, classId?: string): Pr
 export async function getDashboardSummary(user: TokenPayload): Promise<DashboardSummary> {
   const device = isClassDevice(user);
   // 班级端强制限定在自己班级，避免越权统计
-  const scope = await resolveClassScope(user, device ? requireClassDeviceClassId(user) : undefined);
+  const scope = await resolveClassScope(
+    user,
+    device ? requireClassDeviceClassId(user) : undefined,
+    'dashboard:read',
+  );
   // 子表按 classId 过滤；Class 表本身按主键 id 过滤
-  const where = classScopeWhere(scope);
-  const classWhere = classScopeIdFilter(scope);
+  const allowed = scope.mode === 'in' ? scope.classIds : await classIdsFor(user, 'dashboard:read');
+  const auth = await loadAuthPrincipal(user);
+  async function segment(key: PermissionKey) {
+    const ids = device ? allowed : (await classIdsFor(user, key)).filter((id) => allowed.includes(id));
+    return { classId: { in: ids } };
+  }
+  const [classes, students, courses, schedules, homeworks, notifications, grades] = await Promise.all(
+    [
+      'class:read',
+      'roster:read',
+      'schedule:read',
+      'schedule:read',
+      'homework:read',
+      'notification:read',
+      'grade:read',
+    ].map((key) => segment(key as PermissionKey)),
+  );
+  const sections = {
+    classes: device || auth.permissions.has('class:read'),
+    students: device || auth.permissions.has('roster:read'),
+    courses: device || auth.permissions.has('schedule:read'),
+    schedules: device || auth.permissions.has('schedule:read'),
+    homeworks: device || auth.permissions.has('homework:read'),
+    notifications: device || auth.permissions.has('notification:read'),
+    grades: device || auth.permissions.has('grade:read'),
+  };
   // ClassHelper 班级端以全班学生为范围
   const personalIds = await resolvePersonalIds(user);
   const personalWhere = personalIdWhere(personalIds);
@@ -64,27 +92,27 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
     recentHomeworks,
   ] = await Promise.all([
     // 学生数只算在读的：已毕业/转出的学生不属于"本班现在有多少人"
-    prisma.class.count({ where: classWhere }),
-    prisma.student.count({ where: { ...where, ...activeStudentWhere(), archivedYearId: null } }),
-    prisma.course.count({ where }),
-    prisma.classPlan.count({ where }),
-    prisma.homework.count({ where }),
-    prisma.notification.count({ where }),
-    prisma.grade.count({ where: { ...where, student: activeStudentWhere() } }),
-    prisma.notification.count({ where: { ...where, reads: { none: personalWhere } } }),
+    prisma.class.count({ where: { id: classes.classId } }),
+    prisma.student.count({ where: { ...students, ...activeStudentWhere(), archivedYearId: null } }),
+    prisma.course.count({ where: courses }),
+    prisma.classPlan.count({ where: schedules }),
+    prisma.homework.count({ where: homeworks }),
+    prisma.notification.count({ where: notifications }),
+    prisma.grade.count({ where: { ...grades, student: activeStudentWhere() } }),
+    prisma.notification.count({ where: { ...notifications, reads: { none: personalWhere } } }),
     device
       ? prisma.homework.count({
-          where: { ...where, statuses: { none: { ...personalWhere, completed: true } } },
+          where: { ...homeworks, statuses: { none: { ...personalWhere, completed: true } } },
         })
-      : prisma.homework.count({ where }),
+      : prisma.homework.count({ where: homeworks }),
     prisma.notification.findMany({
-      where,
+      where: notifications,
       include: { creator: creatorSelect, reads: { where: personalWhere } },
       orderBy: { createdAt: 'desc' },
       take: 5,
     }),
     prisma.homework.findMany({
-      where,
+      where: homeworks,
       include: {
         course: courseSelect,
         creator: creatorSelect,
@@ -96,6 +124,7 @@ export async function getDashboardSummary(user: TokenPayload): Promise<Dashboard
   ]);
 
   return {
+    sections,
     classCount,
     studentCount,
     courseCount,

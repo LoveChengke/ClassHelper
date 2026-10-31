@@ -9,8 +9,9 @@ import { idParamSchema } from '../../lib/schemas.js';
 import {
   authenticate,
   getAuthUser,
-  requireStaffPermission,
+  requirePermissionOrClassDevice,
   requirePermission,
+  requireAnyPermission,
 } from '../../middleware/auth.js';
 import { validate, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
@@ -21,7 +22,7 @@ const layouts = Router();
 layouts.use(authenticate());
 layouts.get(
   '/',
-  requireStaffPermission('schedule:read'),
+  requirePermissionOrClassDevice('schedule:read'),
   validate({ query: schemas.scopeQuery }),
   async (req, res) =>
     sendOk(
@@ -31,26 +32,27 @@ layouts.get(
 );
 layouts.post(
   '/',
-  requirePermission('timetable:manage'),
+  requireAnyPermission('timetable:manage', 'schedule:write'),
   validate({ body: schemas.layoutSchema }),
-  async (req, res) => sendCreated(res, await service.saveLayout(req.body)),
+  async (req, res) => sendCreated(res, await service.saveLayout(getAuthUser(req), req.body)),
 );
 layouts.put(
   '/:id',
-  requirePermission('timetable:manage'),
+  requireAnyPermission('timetable:manage', 'schedule:write'),
   validate({ params: idParamSchema, body: schemas.layoutSchema }),
-  async (req, res) => sendOk(res, await service.saveLayout(req.body, String(req.params.id))),
+  async (req, res) =>
+    sendOk(res, await service.saveLayout(getAuthUser(req), req.body, String(req.params.id))),
 );
 layouts.post(
   '/:id/clone',
-  requirePermission('timetable:manage'),
+  requireAnyPermission('timetable:manage', 'schedule:write'),
   validate({ params: idParamSchema, body: schemas.cloneSchema }),
   async (req, res) => {
     const current = (await service.listLayouts(getAuthUser(req))).find((p) => p.id === req.params.id);
     if (!current) throw ApiError.notFound('时间表不存在');
     sendCreated(
       res,
-      await service.saveLayout({
+      await service.saveLayout(getAuthUser(req), {
         ...current,
         name: req.body.name || `${current.name} 副本`,
         points: current.points.map((p) => ({ ...p, id: undefined, timeType: p.timeType as 'LESSON' })),
@@ -60,7 +62,7 @@ layouts.post(
 );
 layouts.post(
   '/:id/import',
-  requirePermission('timetable:manage'),
+  requireAnyPermission('timetable:manage', 'schedule:write'),
   validate({ params: idParamSchema, body: schemas.importLayoutSchema }),
   async (req, res) => {
     const all = await service.listLayouts(getAuthUser(req));
@@ -70,6 +72,7 @@ layouts.post(
     sendOk(
       res,
       await service.saveLayout(
+        getAuthUser(req),
         {
           ...target,
           points: source.points.map((p) => ({ ...p, id: undefined, timeType: p.timeType as 'LESSON' })),
@@ -81,21 +84,21 @@ layouts.post(
 );
 layouts.post(
   '/:id/points/:pointId/apply-default',
-  requirePermission('timetable:manage'),
+  requireAnyPermission('timetable:manage', 'schedule:write'),
   validate({ params: z.object({ id: z.string().min(1), pointId: z.string().min(1) }) }),
   async (req, res) =>
-    sendOk(res, await service.applyDefaultCourse(String(req.params.id), String(req.params.pointId))),
+    sendOk(
+      res,
+      await service.applyDefaultCourse(getAuthUser(req), String(req.params.id), String(req.params.pointId)),
+    ),
 );
 layouts.delete(
   '/:id',
-  requirePermission('timetable:manage'),
+  requireAnyPermission('timetable:manage', 'schedule:write'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const id = String(req.params.id);
-    if (await prisma.classPlan.count({ where: { timeLayoutId: id } }))
-      throw ApiError.conflict('仍有课表使用该时间表');
-    await prisma.timeLayout.delete({ where: { id } });
-    await service.notifyScheduleChanged();
+    await service.deleteLayout(getAuthUser(req), id);
     sendOk(res, { id });
   },
 );
@@ -104,7 +107,7 @@ const plans = Router();
 plans.use(authenticate());
 plans.get(
   '/profile',
-  requireStaffPermission('schedule:read'),
+  requirePermissionOrClassDevice('schedule:read'),
   validate({ query: z.object({ classId: z.string().min(1) }) }),
   async (req, res) =>
     sendOk(res, await exportProfile(getAuthUser(req), validatedQuery<{ classId: string }>(req).classId)),
@@ -127,7 +130,7 @@ plans.post(
 );
 plans.get(
   '/',
-  requireStaffPermission('schedule:read'),
+  requirePermissionOrClassDevice('schedule:read'),
   validate({ query: schemas.scopeQuery }),
   async (req, res) => {
     const q = validatedQuery<{ classId?: string; week?: number }>(req);
@@ -175,7 +178,7 @@ plans.post(
 );
 plans.get(
   '/:id/export',
-  requireStaffPermission('schedule:read'),
+  requirePermissionOrClassDevice('schedule:read'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const p = await service.requirePlan(getAuthUser(req), String(req.params.id), false);
@@ -207,22 +210,22 @@ const groups = Router();
 groups.use(authenticate());
 groups.get(
   '/selection',
-  requireStaffPermission('schedule:read'),
+  requirePermissionOrClassDevice('schedule:read'),
   validate({ query: z.object({ classId: z.string().min(1) }) }),
   async (req, res) => {
     const { classId } = validatedQuery<{ classId: string }>(req);
-    await assertClassAccess(getAuthUser(req), classId);
+    await assertClassAccess(getAuthUser(req), classId, 'schedule:read');
     const value = await prisma.appSetting.findUnique({ where: { key: `schedule.group.${classId}` } });
     sendOk(res, value ? JSON.parse(value.value) : {});
   },
 );
 groups.get(
   '/',
-  requireStaffPermission('schedule:read'),
+  requirePermissionOrClassDevice('schedule:read'),
   validate({ query: z.object({ classId: z.string().min(1) }) }),
   async (req, res) => {
     const { classId } = validatedQuery<{ classId: string }>(req);
-    await assertClassAccess(getAuthUser(req), classId);
+    await assertClassAccess(getAuthUser(req), classId, 'schedule:read');
     sendOk(res, await prisma.classPlanGroup.findMany({ where: { classId } }));
   },
 );

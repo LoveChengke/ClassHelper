@@ -1,5 +1,6 @@
 import type { Request, RequestHandler } from 'express';
-import type { ZodType } from 'zod';
+import { ZodError, type ZodType } from 'zod';
+import { ApiError } from '../lib/http.js';
 
 interface ValidationTargets<B, Q, P> {
   body?: ZodType<B>;
@@ -14,6 +15,7 @@ interface ValidationTargets<B, Q, P> {
  */
 export function validate<B = unknown, Q = unknown, P = unknown>(
   targets: ValidationTargets<B, Q, P>,
+  errorStatus: 400 | 422 = 422,
 ): RequestHandler {
   return (req, _res, next) => {
     try {
@@ -22,9 +24,19 @@ export function validate<B = unknown, Q = unknown, P = unknown>(
       if (targets.params) req.validatedParams = targets.params.parse(req.params) as unknown;
       next();
     } catch (error) {
-      next(error);
+      next(
+        errorStatus === 400 && error instanceof ZodError
+          ? ApiError.badRequest('请求参数不合法', error.issues)
+          : error,
+      );
     }
   };
+}
+
+export function validateBadRequest<B = unknown, Q = unknown, P = unknown>(
+  targets: ValidationTargets<B, Q, P>,
+): RequestHandler {
+  return validate(targets, 400);
 }
 
 /** 读取已校验的 query（类型由调用方用 zod schema 保证） */

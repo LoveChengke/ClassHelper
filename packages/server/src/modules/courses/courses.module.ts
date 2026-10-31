@@ -4,7 +4,7 @@ import { idParamSchema } from '../../lib/schemas.js';
 import {
   authenticate,
   getAuthUser,
-  requireStaffPermission,
+  requirePermissionOrClassDevice,
   requirePermission,
 } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
@@ -24,7 +24,7 @@ router.use(authenticate());
 /** GET /api/courses?classId= - 课程列表 */
 router.get(
   '/',
-  requireStaffPermission('schedule:read'),
+  requirePermissionOrClassDevice('schedule:read'),
   validate({ query: listCoursesQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);

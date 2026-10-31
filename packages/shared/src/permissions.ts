@@ -1,4 +1,5 @@
 import type { UserRole } from './types.js';
+import type { PermissionScope } from './class-plan.js';
 
 /**
  * 班级内的角色（相对"某一个班级"而言）。
@@ -168,6 +169,8 @@ export const PERMISSION_KEYS = [
   // 班级与人员
   'class:read',
   'class:manage',
+  'class:account',
+  'class:settings',
   'roster:read',
   'roster:manage',
   'teacher:read',
@@ -243,11 +246,22 @@ export const BUILTIN_TEACHER_GROUPS = [
   {
     id: 'builtin-head',
     name: '班主任',
-    scope: 'SELF_CLASS',
-    scopeValue: 'HEAD',
-    keys: [...TEACHING_KEYS, 'client:read', 'client:manage'],
+    scope: 'HEAD',
+    scopeValue: '',
+    keys: [
+      ...TEACHING_KEYS,
+      'class:read',
+      'class:account',
+      'class:settings',
+      'roster:manage',
+      'schedule:write',
+      'import:students',
+      'import:schedule',
+      'client:read',
+      'client:manage',
+    ],
   },
-  { id: 'builtin-teacher', name: '教师', scope: 'SELF_CLASS', scopeValue: '', keys: TEACHING_KEYS },
+  { id: 'builtin-teacher', name: '教师', scope: 'TEACHING', scopeValue: '', keys: TEACHING_KEYS },
   { id: 'builtin-grade', name: '级长', scope: 'GRADE', scopeValue: '', keys: LEAD_KEYS },
   { id: 'builtin-division', name: '部长', scope: 'DIVISION', scopeValue: '', keys: LEAD_KEYS },
 ] as const;
@@ -257,7 +271,9 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   'courseware:read': '查看与下载课件',
   'courseware:write': '上传、设置可见范围与推送自己的课件',
   'class:read': '查看班级与班级列表',
-  'class:manage': '创建 / 修改 / 删除班级（含班级账号密码）',
+  'class:manage': '创建 / 修改 / 删除班级',
+  'class:account': '管理本班班级码与密码（仅班主任）',
+  'class:settings': '管理本班学期设置（仅班主任）',
   'roster:read': '查看学生名单',
   'roster:manage': '学生名单管理（资料 / 调班 / 转入转出 / 停用）',
   'teacher:read': '查看教师名单',
@@ -305,6 +321,8 @@ export const PERMISSION_CATEGORIES: readonly { title: string; keys: readonly Per
     keys: [
       'class:read',
       'class:manage',
+      'class:account',
+      'class:settings',
       'roster:read',
       'roster:manage',
       'teacher:read',
@@ -376,6 +394,8 @@ export const PERMISSION_DEFAULT_ROLES: Record<PermissionKey, readonly UserRole[]
   'courseware:write': ['ADMIN', 'TEACHER'],
   'class:read': ['ADMIN', 'TEACHER'],
   'class:manage': ['ADMIN'],
+  'class:account': ['ADMIN', 'TEACHER'],
+  'class:settings': ['ADMIN', 'TEACHER'],
   'roster:read': ['ADMIN', 'TEACHER'],
   'roster:manage': ['ADMIN', 'TEACHER'],
   'teacher:read': ['ADMIN', 'TEACHER'],
@@ -422,7 +442,7 @@ export const ALL_PERMISSION_KEYS: readonly PermissionKey[] = PERMISSION_KEYS;
 /**
  * 角色默认权限清单（由 {@link PERMISSION_DEFAULT_ROLES} 派生）。
  *
- * `ADMIN` 是全集（服务端还会强制补上 `permission:manage` / `system:manage`，防止把自己锁死）。
+ * `ADMIN` 固定为全集，不由模板限制。
  */
 export const ROLE_DEFAULT_PERMISSIONS: Record<UserRole, readonly PermissionKey[]> = {
   ADMIN: PERMISSION_KEYS,
@@ -460,7 +480,7 @@ export const PERMISSION_MATRIX: readonly {
   subject: boolean;
   classDevice?: boolean;
 }[] = [
-  { action: '学年升级（默认管理员，可按权限组授权）', admin: true, head: false, subject: false },
+  { action: '学年升级（仅管理员）', admin: true, head: false, subject: false },
   { action: '班级创建 / 修改 / 删除', admin: true, head: false, subject: false },
   { action: '分配班主任与各科科任老师', admin: true, head: false, subject: false },
   { action: '学生名单管理（增删 / 导入 / 调班）', admin: true, head: true, subject: false },
@@ -474,3 +494,68 @@ export const PERMISSION_MATRIX: readonly {
   { action: '按学号查询学生成绩明细', admin: true, head: true, subject: true, classDevice: true },
   { action: '查看 ClassHelper 班级端在线状态', admin: true, head: true, subject: true },
 ];
+
+/** 能力目录：管理员能力不可下放，关系提示不替代服务层数据校验。 */
+export const PERMISSION_SCOPES = ['TEACHING', 'HEAD', 'GRADE', 'DIVISION', 'ALL'] as const;
+export interface PermissionMeta {
+  kind: 'admin' | 'class' | 'org';
+  risk: 'normal' | 'high';
+  relation: 'head' | 'subject' | 'publish' | 'creator' | 'none';
+  allowedScopes: readonly PermissionScope[];
+  defaultRoles: readonly UserRole[];
+  label: string;
+  category: string;
+}
+const ADMIN_KEYS: readonly PermissionKey[] = [
+  'class:manage',
+  'teacher:manage',
+  'permission:manage',
+  'system:manage',
+  'database:manage',
+  'update:force',
+  'ai:manage',
+  'import:teachers',
+  'import:class-teachers',
+  'timetable:manage',
+  'promotion:manage',
+  'archive:manage',
+  'term:write',
+  'client:update',
+];
+const ORG_KEYS: readonly PermissionKey[] = ['teacher:read', 'update:check'];
+const HIGH_KEYS: readonly PermissionKey[] = [
+  ...ADMIN_KEYS,
+  'class:account',
+  'client:manage',
+  'client:update-push',
+  'remote:control',
+  'import:students',
+  'import:schedule',
+  'grade:import',
+];
+export const PERMISSION_META: Record<PermissionKey, PermissionMeta> = Object.fromEntries(
+  PERMISSION_KEYS.map((key) => {
+    const kind = ADMIN_KEYS.includes(key) ? 'admin' : ORG_KEYS.includes(key) ? 'org' : 'class';
+    const relation = ['class:account', 'class:settings'].includes(key)
+      ? 'head'
+      : ['homework:write', 'grade:write', 'grade:import'].includes(key)
+        ? 'subject'
+        : ['notification:publish', 'call:create'].includes(key)
+          ? 'publish'
+          : key === 'notification:delete'
+            ? 'creator'
+            : 'none';
+    return [
+      key,
+      {
+        kind,
+        relation,
+        risk: HIGH_KEYS.includes(key) ? 'high' : 'normal',
+        allowedScopes: kind === 'class' ? PERMISSION_SCOPES : [],
+        defaultRoles: PERMISSION_DEFAULT_ROLES[key],
+        label: PERMISSION_LABELS[key],
+        category: PERMISSION_CATEGORIES.find((c) => c.keys.includes(key))?.title ?? '',
+      },
+    ];
+  }),
+) as unknown as Record<PermissionKey, PermissionMeta>;

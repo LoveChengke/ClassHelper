@@ -1,7 +1,7 @@
-import { assertStaffPermission } from '../../lib/permissions.js';
+import { assertPublish } from '../../lib/authz/index.js';
+import { assertPermissionOrClassDevice } from '../../lib/permissions.js';
 import { resolveContentCreator } from '../../lib/access.js';
 import { SOCKET_EVENTS, buildCallTitle, dayKeyLocal, type NotificationDto } from '@classhelper/shared';
-import { assertCanPublishNotification } from '../../lib/access.js';
 import { isActiveStudent } from '../../lib/students.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
@@ -29,8 +29,8 @@ const creatorSelect = { select: { id: true, name: true, username: true } } as co
  * 全班都看得到在叫谁，这与需求「教室机器代全班」一致。
  */
 export async function createCall(user: TokenPayload, input: CreateCallInput): Promise<NotificationDto> {
-  await assertStaffPermission(user, 'call:create');
-  await assertCanPublishNotification(user, input.classId);
+  await assertPermissionOrClassDevice(user, 'call:create');
+  await assertPublish(user, 'call:create', input.classId, { allowClassDevice: true });
 
   const student = await prisma.student.findUnique({
     where: { id: input.studentId },

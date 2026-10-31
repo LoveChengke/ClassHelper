@@ -12,6 +12,7 @@ import {
   type ServerToClientEvents,
 } from '@classhelper/shared';
 import { SOCKET_URL } from '@/config';
+import { useAuthStore } from '@/stores/auth';
 
 type RealtimeEventName = keyof ServerToClientEvents;
 type EventHandler = (payload: unknown) => void;
@@ -55,8 +56,20 @@ export const useRealtimeStore = defineStore('realtime', () => {
       connected.value = true;
       connecting.value = false;
     });
-    instance.on('disconnect', () => {
+    instance.on('disconnect', (reason: string) => {
       connected.value = false;
+      if (reason === 'io server disconnect') {
+        void (async () => {
+          const auth = useAuthStore();
+          try {
+            await auth.fetchProfile();
+            await auth.ensurePermissions(true);
+            if (socket === instance && auth.token) instance.connect();
+          } catch {
+            /* 身份失效时等待重新登录。 */
+          }
+        })();
+      }
     });
     instance.on('connect_error', (error: Error) => {
       connected.value = false;

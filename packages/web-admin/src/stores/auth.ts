@@ -2,6 +2,7 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import {
   ROLE_LABELS,
+  PERMISSION_META,
   STORAGE_KEYS,
   hasPermission,
   type LoginRequest,
@@ -10,6 +11,7 @@ import {
   type SessionUser,
 } from '@classhelper/shared';
 import { authApi, permissionApi } from '@/api';
+import type { MenuAction } from '@/config/navigation';
 
 /**
  * 会话主体。
@@ -44,6 +46,54 @@ export const useAuthStore = defineStore('auth', () => {
   /** 生效权限是否来自显式分组；没有显式分组时使用可编辑的角色默认组。 */
   const permissionsFromGroups = ref(false);
   const permissionsLoaded = ref(false);
+  const classScopes = ref<Partial<Record<PermissionKey, string[]>>>({});
+  const manageScopes = ref<Partial<Record<PermissionKey, string[]>>>({});
+  const actionScopes = ref<Partial<Record<PermissionKey, string[]>>>({});
+  const allScopeKeys = ref<PermissionKey[]>([]);
+  function canForClass(key: PermissionKey, classId: string | null | undefined): boolean {
+    return (
+      can(key) &&
+      (classId ? (classScopes.value[key] ?? []).includes(classId) : allScopeKeys.value.includes(key))
+    );
+  }
+  function canManageClass(key: PermissionKey, classId: string | null | undefined): boolean {
+    return (
+      can(key) &&
+      (classId
+        ? (manageScopes.value[key] ?? classScopes.value[key] ?? []).includes(classId)
+        : allScopeKeys.value.includes(key))
+    );
+  }
+  function canShowMenu(permission: PermissionKey | undefined, actions?: readonly MenuAction[]): boolean {
+    if (permission && !can(permission)) return false;
+    if (!actions) return true;
+    return actions.some((action) => {
+      const key = typeof action === 'string' ? action : action.key;
+      if (!can(key)) return false;
+      if (
+        (typeof action !== 'string' && action.scope === 'permission') ||
+        PERMISSION_META[key].kind !== 'class'
+      )
+        return true;
+      const ids =
+        typeof action !== 'string' && action.scope === 'manage'
+          ? (manageScopes.value[key] ?? [])
+          : (actionScopes.value[key] ?? []);
+      // 全校名单维护还允许新建未分班学生。
+      if (
+        key === 'roster:manage' &&
+        allScopeKeys.value.includes(key) &&
+        (!permission || allScopeKeys.value.includes(permission))
+      )
+        return true;
+      return ids.some(
+        (id) =>
+          !permission ||
+          PERMISSION_META[permission].kind !== 'class' ||
+          (classScopes.value[permission] ?? []).includes(id),
+      );
+    });
+  }
 
   const isAuthenticated = computed(() => Boolean(token.value));
   const role = computed(() => user.value?.role ?? null);
@@ -54,10 +104,9 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * 是否有某个生效权限。
    *
-   * 管理员同样遵守生效集合，只保留与服务端一致的两个管理入口，避免锁死。
+   * 页面直接使用服务端生效集合；管理员全集也由服务端返回。
    */
   function can(key: PermissionKey): boolean {
-    if (isAdmin.value && (key === 'permission:manage' || key === 'system:manage')) return true;
     return hasPermission(permissions.value, key);
   }
 
@@ -73,6 +122,10 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const mine = await permissionApi.me();
       permissions.value = mine.permissions;
+      classScopes.value = mine.classScopes ?? {};
+      manageScopes.value = mine.manageScopes ?? {};
+      actionScopes.value = mine.actionScopes ?? {};
+      allScopeKeys.value = mine.allScopeKeys ?? [];
       permissionsFromGroups.value = mine.fromGroups;
       permissionsLoaded.value = true;
     } catch {
@@ -83,6 +136,10 @@ export const useAuthStore = defineStore('auth', () => {
   /** 清掉权限缓存（换账号 / 退出登录时必须调用，否则会沿用上一个账号的权限） */
   function resetPermissions(): void {
     permissions.value = [];
+    classScopes.value = {};
+    manageScopes.value = {};
+    actionScopes.value = {};
+    allScopeKeys.value = [];
     permissionsFromGroups.value = false;
     permissionsLoaded.value = false;
   }
@@ -146,6 +203,9 @@ export const useAuthStore = defineStore('auth', () => {
     displayName,
     roleLabel,
     can,
+    canForClass,
+    canManageClass,
+    canShowMenu,
     ensurePermissions,
     login,
     logout,

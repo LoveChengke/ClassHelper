@@ -1,4 +1,6 @@
-import { assertStaffPermission, assertPermission } from '../../lib/permissions.js';
+import { assertClassRead, isHead } from '../../lib/authz/index.js';
+import { assertPublish } from '../../lib/authz/index.js';
+import { assertPermissionOrClassDevice, assertPermission } from '../../lib/permissions.js';
 import { resolveContentCreator } from '../../lib/access.js';
 import {
   SOCKET_EVENTS,
@@ -12,12 +14,7 @@ import {
   type NotificationDto,
 } from '@classhelper/shared';
 import { normalizeBulkClassIds, summarizeBulk, toBulkFailure } from '../../lib/bulk.js';
-import {
-  assertClassAccess,
-  assertCanPublishNotification,
-  classScopeWhere,
-  resolveClassScope,
-} from '../../lib/access.js';
+import { assertClassAccess, classScopeWhere, resolveClassScope } from '../../lib/access.js';
 import { activeStudentWhere } from '../../lib/students.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
@@ -73,8 +70,8 @@ export async function listNotifications(
   user: TokenPayload,
   options: ListNotificationOptions,
 ): Promise<NotificationDto[]> {
-  await assertStaffPermission(user, 'notification:read');
-  const scope = await resolveClassScope(user, options.classId);
+  await assertPermissionOrClassDevice(user, 'notification:read');
+  const scope = await resolveClassScope(user, options.classId, 'notification:read');
   const isStaff = user.role === 'ADMIN' || user.role === 'TEACHER';
   // 班级账号（班级设备）以全班学生为"个人范围"，普通学生就是自己
   const personalIds = await resolvePersonalIds(user);
@@ -112,8 +109,8 @@ export async function listNotificationDays(
   user: TokenPayload,
   options: { classId?: string; priority?: string; createdBy?: string; from?: string; to?: string },
 ): Promise<NotificationDaysDto> {
-  await assertStaffPermission(user, 'notification:read');
-  const scope = await resolveClassScope(user, options.classId);
+  await assertPermissionOrClassDevice(user, 'notification:read');
+  const scope = await resolveClassScope(user, options.classId, 'notification:read');
   const grouped = await prisma.notification.groupBy({
     by: ['assignDate'],
     where: { ...classScopeWhere(scope), ...archiveWhere(options) },
@@ -133,8 +130,8 @@ export async function listNotificationCreators(
   user: TokenPayload,
   options: { classId?: string; priority?: string; date?: string; from?: string; to?: string },
 ): Promise<NotificationCreatorsDto> {
-  await assertStaffPermission(user, 'notification:read');
-  const scope = await resolveClassScope(user, options.classId);
+  await assertPermissionOrClassDevice(user, 'notification:read');
+  const scope = await resolveClassScope(user, options.classId, 'notification:read');
   const grouped = await prisma.notification.groupBy({
     by: ['createdBy'],
     where: { ...classScopeWhere(scope), ...archiveWhere(options) },
@@ -171,7 +168,7 @@ export async function bulkCreateNotifications(
   user: TokenPayload,
   input: BulkCreateNotificationRequest,
 ): Promise<BulkPublishResult> {
-  await assertStaffPermission(user, 'notification:publish');
+  await assertPermissionOrClassDevice(user, 'notification:publish');
   const classIds = normalizeBulkClassIds(input.classIds);
   const results: BulkPublishClassResult[] = [];
 
@@ -208,8 +205,8 @@ export async function createNotification(
   user: TokenPayload,
   input: CreateNotificationInput,
 ): Promise<NotificationDto> {
-  await assertStaffPermission(user, 'notification:publish');
-  await assertCanPublishNotification(user, input.classId);
+  await assertPermissionOrClassDevice(user, 'notification:publish');
+  await assertPublish(user, 'notification:publish', input.classId, { allowClassDevice: true });
 
   const priority = input.priority ?? 'NORMAL';
   if (priority === 'URGENT' && input.confirmDuringClass !== true) {
@@ -251,7 +248,9 @@ export async function deleteNotification(user: TokenPayload, notificationId: str
   await assertPermission(user, 'notification:delete');
   const current = await prisma.notification.findUnique({ where: { id: notificationId } });
   if (!current) throw ApiError.notFound('通知不存在');
-  await assertCanPublishNotification(user, current.classId);
+  await assertClassRead(user, 'notification:delete', current.classId);
+  if (user.role !== 'ADMIN' && current.createdBy !== user.sub && !(await isHead(user, current.classId)))
+    throw ApiError.forbidden('只有发布者、班主任或管理员可删除通知');
   await prisma.notification.delete({ where: { id: notificationId } });
   emitToClass(current.classId, SOCKET_EVENTS.notificationDeleted, {
     id: notificationId,
@@ -267,10 +266,10 @@ export async function markAsRead(
   user: TokenPayload,
   notificationId: string,
 ): Promise<{ notificationId: string; readAt: string; marked: number }> {
-  await assertStaffPermission(user, 'notification:read');
+  await assertPermissionOrClassDevice(user, 'notification:read');
   const notification = await prisma.notification.findUnique({ where: { id: notificationId } });
   if (!notification) throw ApiError.notFound('通知不存在');
-  await assertClassAccess(user, notification.classId);
+  await assertClassAccess(user, notification.classId, 'notification:read');
 
   const personalIds = await resolvePersonalIds(user);
   // 先过滤已读过的记录再创建：SQLite 下 createMany 不支持 skipDuplicates，
@@ -293,8 +292,8 @@ export async function markAsRead(
 
 /** 全部标为已读（可按班级限定） */
 export async function markAllAsRead(user: TokenPayload, classId?: string): Promise<{ marked: number }> {
-  await assertStaffPermission(user, 'notification:read');
-  const scope = await resolveClassScope(user, classId);
+  await assertPermissionOrClassDevice(user, 'notification:read');
+  const scope = await resolveClassScope(user, classId, 'notification:read');
   const personalIds = await resolvePersonalIds(user);
   const personalWhere = personalIdWhere(personalIds);
 
@@ -324,8 +323,8 @@ export async function markAllAsRead(user: TokenPayload, classId?: string): Promi
 
 /** 未读数量（客户端红点） */
 export async function unreadCount(user: TokenPayload, classId?: string): Promise<number> {
-  await assertStaffPermission(user, 'notification:read');
-  const scope = await resolveClassScope(user, classId);
+  await assertPermissionOrClassDevice(user, 'notification:read');
+  const scope = await resolveClassScope(user, classId, 'notification:read');
   const personalIds = await resolvePersonalIds(user);
   return prisma.notification.count({
     where: { ...classScopeWhere(scope), reads: { none: personalIdWhere(personalIds) } },

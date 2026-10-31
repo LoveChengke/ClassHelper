@@ -451,7 +451,8 @@ model Grade {
 }
 
 model PermissionGroup {
-  scope       String @default("SELF_CLASS")
+  /// 新分配的建议范围，不参与已有分配求值。
+  scope       String @default("TEACHING")
   scopeValue  String @default("")
   /// 角色默认组；自定义组为空，改名不影响对应角色。
   defaultRole String? @unique
@@ -483,6 +484,9 @@ model PermissionGroupItem {
 
 /// 账号 ←→ 权限组 的分配关系（一个账号可属多个组）
 model UserPermissionGroup {
+  /// 此条分配的生效范围。
+  scope String @default("TEACHING")
+  scopeValue String @default("")
   id        String   @id @default(cuid())
   userId    String
   groupId   String
@@ -491,7 +495,7 @@ model UserPermissionGroup {
   user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   group PermissionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, groupId])
+  @@unique([userId, groupId, scope, scopeValue])
   @@index([userId])
   @@index([groupId])
 }

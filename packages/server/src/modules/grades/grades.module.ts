@@ -1,11 +1,11 @@
 import { Router } from 'express';
-import { sendCreated, sendOk } from '../../lib/http.js';
+import { ApiError, sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
 import {
   authenticate,
   getAuthUser,
   requirePermission,
-  requireStaffPermission,
+  requirePermissionOrClassDevice,
 } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
@@ -31,9 +31,10 @@ import * as gradeService from './grades.service.js';
 const router = Router();
 router.use(authenticate());
 
-router.get('/overview', async (req, res) => {
+router.get('/overview', requirePermissionOrClassDevice('grade:read'), async (req, res) => {
   const user = getAuthUser(req);
-  const classId = user.classId ?? user.sub;
+  const classId = user.role === 'CLASS_DEVICE' ? (user.classId ?? user.sub) : String(req.query.classId ?? '');
+  if (!classId) throw ApiError.badRequest('请指定班级');
   const cls = await (await import('../../lib/db.js')).prisma.class.findUnique({ where: { id: classId } });
   sendOk(
     res,
@@ -42,14 +43,19 @@ router.get('/overview', async (req, res) => {
       : await gradeService.collectiveAnalysis(user, classId),
   );
 });
-router.get('/collective', validate({ query: examListQuerySchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { classId } = validatedQuery<{ classId: string }>(req);
-  sendOk(res, await gradeService.collectiveAnalysis(user, classId));
-});
+router.get(
+  '/collective',
+  requirePermissionOrClassDevice('grade:read'),
+  validate({ query: examListQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { classId } = validatedQuery<{ classId: string }>(req);
+    sendOk(res, await gradeService.collectiveAnalysis(user, classId));
+  },
+);
 
 /** GET /api/grades/my - ClassHelper 班级端查看本班成绩（教师/管理员返回空数组） */
-router.get('/my', async (req, res) => {
+router.get('/my', requirePermissionOrClassDevice('grade:read'), async (req, res) => {
   const user = getAuthUser(req);
   sendOk(res, await gradeService.listMyGrades(user), '获取本班成绩成功');
 });
@@ -65,7 +71,7 @@ router.get('/my', async (req, res) => {
  */
 router.get(
   '/student/:studentNo',
-  requireStaffPermission('student:grade-query'),
+  requirePermissionOrClassDevice('student:grade-query'),
   validate({ params: studentGradeParamSchema, query: studentGradeQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -93,11 +99,16 @@ router.get(
  * **刻意不挂权限键**：ClassHelper 班级端要用它列出可选考试（班级端的有效权限是空集，
  * 挂 `grade:read` 会把教室机器挡在门外）。边界在 service 里：`assertClassAccess` + 班级开关。
  */
-router.get('/exams', validate({ query: examListQuerySchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { classId } = validatedQuery<{ classId: string }>(req);
-  sendOk(res, await gradeService.listExams(user, classId), '获取考试列表成功');
-});
+router.get(
+  '/exams',
+  requirePermissionOrClassDevice('grade:read'),
+  validate({ query: examListQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { classId } = validatedQuery<{ classId: string }>(req);
+    sendOk(res, await gradeService.listExams(user, classId), '获取考试列表成功');
+  },
+);
 
 /** PUT /api/grades/exams - 设置"这次考试是否把所有科目相加做总分排名"（教师/管理员） */
 router.put(
@@ -121,11 +132,16 @@ router.put(
  * 同样不挂权限键（班级端要看），边界在 service 里 —— 与按学号查明细共用
  * `canQueryStudentGrades`：班级端受按班开关控制，教师端不受影响。
  */
-router.get('/ranking', validate({ query: examRankingQuerySchema }), async (req, res) => {
-  const user = getAuthUser(req);
-  const { classId, examName } = validatedQuery<{ classId: string; examName: string }>(req);
-  sendOk(res, await gradeService.getExamRanking(user, classId, examName), '获取考试排名成功');
-});
+router.get(
+  '/ranking',
+  requirePermissionOrClassDevice('grade:read'),
+  validate({ query: examRankingQuerySchema }),
+  async (req, res) => {
+    const user = getAuthUser(req);
+    const { classId, examName } = validatedQuery<{ classId: string; examName: string }>(req);
+    sendOk(res, await gradeService.getExamRanking(user, classId, examName), '获取考试排名成功');
+  },
+);
 
 /** GET /api/grades?classId=&courseId=&studentId=&examName= - 成绩列表（教师） */
 router.get(

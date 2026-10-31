@@ -1,3 +1,5 @@
+import type { PermissionKey } from '@classhelper/shared';
+import { assertAdmin, assertPermission, classIdsFor } from '../../lib/authz/index.js';
 import { activeStudentWhere } from '../../lib/students.js';
 import {
   dayKeyLocal,
@@ -84,6 +86,7 @@ export async function updateAiSettings(
   user: TokenPayload,
   input: UpdateAiSettingsInput,
 ): Promise<AiSettingsDto> {
+  assertAdmin(user);
   if (input.enabled !== undefined) await setSetting(SETTING_KEYS.aiEnabled, input.enabled ? 'true' : 'false');
   if (input.provider !== undefined) await setSetting(SETTING_KEYS.aiProvider, input.provider);
   if (input.baseUrl !== undefined) await setSetting(SETTING_KEYS.aiBaseUrl, input.baseUrl.trim());
@@ -105,17 +108,33 @@ interface AssistantContext {
 }
 
 async function resolveContext(user: TokenPayload, classId?: string): Promise<AssistantContext> {
-  if (classId) await assertClassAccess(user, classId);
-  const classIds = await getAccessibleClassIds(user);
+  if (classId) await assertClassAccess(user, classId, 'ai:use');
+  await assertPermission(user, 'ai:use');
+  const candidates = new Set(
+    (
+      await Promise.all(
+        ['notification:publish', 'homework:write', 'call:create'].map((key) =>
+          classIdsFor(user, key as PermissionKey),
+        ),
+      )
+    ).flat(),
+  );
+  const classIds = (await getAccessibleClassIds(user, 'ai:use')).filter((id) => candidates.has(id));
   const classes = await prisma.class.findMany({
-    where: { id: { in: classIds } },
+    where: {
+      id: { in: classIds },
+      ...(user.role !== 'ADMIN'
+        ? { OR: [{ teacherId: user.sub }, { courses: { some: { teacherId: user.sub } } }] }
+        : {}),
+    },
     select: { id: true, name: true },
     orderBy: { name: 'asc' },
     take: 80,
   });
-  const courses = classId
-    ? await prisma.course.findMany({ where: { classId }, select: { id: true, name: true } })
-    : [];
+  const courses =
+    classId && classIds.includes(classId)
+      ? await prisma.course.findMany({ where: { classId }, select: { id: true, name: true } })
+      : [];
   return { classes, courses };
 }
 
@@ -345,7 +364,7 @@ export async function interpret(user: TokenPayload, input: AiInterpretInput): Pr
   }
 
   if (typeof params.classId === 'string') {
-    await assertClassAccess(user, params.classId);
+    await assertClassAccess(user, params.classId, 'ai:use');
     if (typeof params.courseId === 'string') {
       const course = await prisma.course.findFirst({
         where: { id: params.courseId, classId: params.classId },

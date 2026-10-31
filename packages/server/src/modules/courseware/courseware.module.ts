@@ -6,7 +6,7 @@ import {
   getAuthUser,
   requireRole,
   requirePermission,
-  requireStaffPermission,
+  requirePermissionOrClassDevice,
 } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedQuery, validatedParams } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
@@ -22,7 +22,7 @@ import * as service from './courseware.service.js';
 const router = Router();
 router.use(authenticate());
 const staff = [requireRole('ADMIN', 'TEACHER'), requirePermission('courseware:write')];
-router.get('/', requireStaffPermission('courseware:read'), async (req, res) =>
+router.get('/', requirePermissionOrClassDevice('courseware:read'), async (req, res) =>
   sendOk(res, await service.listCourseware(getAuthUser(req))),
 );
 router.get('/classes', ...staff, async (req, res) =>
@@ -83,10 +83,14 @@ router.post('/upload', ...staff, validate({ query: coursewareUploadQuery }), asy
 );
 router.get(
   '/:id/download',
-  requireStaffPermission('courseware:read'),
+  requirePermissionOrClassDevice('courseware:read'),
   validate({ params: idParamSchema }),
   async (req, res, next) => {
-    const row = await service.readable(getAuthUser(req), validatedParams<{ id: string }>(req).id);
+    const row = await service.readable(
+      getAuthUser(req),
+      validatedParams<{ id: string }>(req).id,
+      'courseware:read',
+    );
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Content-Type', 'application/octet-stream');
     res.download(row.storagePath, row.name, { root: service.coursewareRoot, dotfiles: 'allow' }, (error) => {
@@ -127,7 +131,7 @@ router.delete('/:id', ...staff, validate({ params: idParamSchema }), async (req,
 });
 router.get(
   '/:id',
-  requireStaffPermission('courseware:read'),
+  requirePermissionOrClassDevice('courseware:read'),
   validate({ params: idParamSchema }),
   async (req, res) =>
     sendOk(res, await service.getCourseware(getAuthUser(req), validatedParams<{ id: string }>(req).id)),

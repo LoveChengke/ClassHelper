@@ -20,7 +20,11 @@ import { callApi, classApi, studentApi } from '@/api';
 import TableImportDialog from '@/components/TableImportDialog.vue';
 
 const auth = useAuthStore();
-const readOnly = computed(() => !auth.can('roster:manage'));
+const readOnly = computed(() =>
+  filter.classId
+    ? !auth.canManageClass('roster:manage', filter.classId)
+    : !classes.value.some((row) => auth.canManageClass('roster:manage', row.id)),
+);
 const loading = ref(false);
 const students = ref<StudentDto[]>([]);
 const classes = ref<ClassDto[]>([]);
@@ -54,6 +58,12 @@ function exportRoster() {
   URL.revokeObjectURL(url);
 }
 const classOptions = computed(() => classes.value);
+const managedClassOptions = computed(() =>
+  classes.value.filter((row) => auth.canManageClass('roster:manage', row.id)),
+);
+function canSelectStudent(row: StudentDto): boolean {
+  return auth.canManageClass('roster:manage', row.classId) && row.status === 'active' && !row.archivedYearId;
+}
 
 async function loadClasses(): Promise<void> {
   classes.value = auth.can('class:read') ? await classApi.list() : [];
@@ -404,7 +414,7 @@ async function submitCall(): Promise<void> {
         <el-button v-if="!readOnly" @click="openIn()">转入学生</el-button>
         <el-button v-if="!readOnly" type="primary" :icon="'Plus'" @click="openCreate">新建学生</el-button>
         <el-button
-          v-if="!readOnly && auth.can('import:students')"
+          v-if="!readOnly && filter.classId && auth.canManageClass('import:students', filter.classId)"
           type="warning"
           :icon="'Document'"
           @click="openImport"
@@ -448,7 +458,7 @@ async function submitCall(): Promise<void> {
         empty-text="暂无学生数据"
         @selection-change="(rows: StudentDto[]) => (selection = rows)"
       >
-        <el-table-column v-if="!readOnly" type="selection" width="46" />
+        <el-table-column v-if="!readOnly" type="selection" width="46" :selectable="canSelectStudent" />
         <el-table-column prop="studentNo" label="学号" width="130" />
         <el-table-column prop="name" label="姓名" width="110" />
         <el-table-column label="性别" width="80">
@@ -478,7 +488,7 @@ async function submitCall(): Promise<void> {
         <el-table-column label="操作" width="370" fixed="right">
           <template #default="{ row }">
             <el-button
-              v-if="auth.can('call:create') && row.status === 'active'"
+              v-if="auth.canForClass('call:create', row.classId) && row.status === 'active'"
               link
               type="success"
               @click="openCall(row)"
@@ -486,7 +496,11 @@ async function submitCall(): Promise<void> {
               叫人
             </el-button>
             <el-button
-              v-if="!readOnly && row.status === 'active' && !row.archivedYearId"
+              v-if="
+                auth.canManageClass('roster:manage', row.classId) &&
+                row.status === 'active' &&
+                !row.archivedYearId
+              "
               link
               type="primary"
               @click="openTransfer([row])"
@@ -495,7 +509,11 @@ async function submitCall(): Promise<void> {
             </el-button>
             <el-button link @click="openHistory(row)">生命周期历史</el-button>
             <el-button
-              v-if="!readOnly && ['active', 'inactive'].includes(row.status) && !row.archivedYearId"
+              v-if="
+                auth.canManageClass('roster:manage', row.classId) &&
+                ['active', 'inactive'].includes(row.status) &&
+                !row.archivedYearId
+              "
               link
               type="primary"
               @click="openEdit(row)"
@@ -503,7 +521,11 @@ async function submitCall(): Promise<void> {
               编辑
             </el-button>
             <el-button
-              v-if="!readOnly && row.status === 'active' && !row.archivedYearId"
+              v-if="
+                auth.canManageClass('roster:manage', row.classId) &&
+                row.status === 'active' &&
+                !row.archivedYearId
+              "
               link
               type="danger"
               @click="removeStudent(row)"
@@ -521,7 +543,11 @@ async function submitCall(): Promise<void> {
               删除空记录
             </el-button>
             <el-button
-              v-if="!readOnly && ['transferred', 'inactive'].includes(row.status) && !row.archivedYearId"
+              v-if="
+                auth.canManageClass('roster:manage', row.classId) &&
+                ['transferred', 'inactive'].includes(row.status) &&
+                !row.archivedYearId
+              "
               link
               type="primary"
               @click="openIn(row)"
@@ -556,7 +582,7 @@ async function submitCall(): Promise<void> {
             style="width: 100%"
           >
             <el-option
-              v-for="item in classOptions"
+              v-for="item in managedClassOptions"
               :key="item.id"
               :label="`${item.name} / ${item.grade}`"
               :value="item.id"
@@ -604,7 +630,7 @@ async function submitCall(): Promise<void> {
         <el-form-item label="目标在读班级" required>
           <el-select v-model="inForm.toClassId">
             <el-option
-              v-for="item in classOptions"
+              v-for="item in managedClassOptions"
               :key="item.id"
               :label="`${item.name} / ${item.grade}`"
               :value="item.id"
@@ -729,7 +755,7 @@ async function submitCall(): Promise<void> {
         <el-form-item v-if="!editingId" label="班级">
           <el-select v-model="form.classId" placeholder="暂不分班" clearable style="width: 100%">
             <el-option
-              v-for="item in classOptions"
+              v-for="item in managedClassOptions"
               :key="item.id"
               :label="`${item.name} / ${item.grade}`"
               :value="item.id"

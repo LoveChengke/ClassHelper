@@ -1,9 +1,14 @@
 import { z } from 'zod';
 import { Router } from 'express';
-import { sendCreated, sendOk } from '../../lib/http.js';
+import { ApiError, sendCreated, sendOk } from '../../lib/http.js';
 import { idParamSchema } from '../../lib/schemas.js';
-import { authenticate, getAuthUser, requirePermission } from '../../middleware/auth.js';
-import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
+import { authenticate, getAuthUser, requirePermission, requireAdmin } from '../../middleware/auth.js';
+import {
+  validateBadRequest as validate,
+  validatedBody,
+  validatedParams,
+  validatedQuery,
+} from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import {
   assignUserGroupsSchema,
@@ -29,17 +34,19 @@ router.get('/me', async (req, res) => {
   sendOk(res, await permissionService.myPermissions(user), '获取当前权限成功');
 });
 
+router.use(requireAdmin());
+
 /** GET /api/permissions/catalog - 权限键目录（权限页整棵勾选树的唯一来源） */
-router.get('/catalog', requirePermission('permission:manage'), async (_req, res) => {
-  sendOk(res, await permissionService.permissionCatalog(), '获取权限目录成功');
+router.get('/catalog', requirePermission('permission:manage'), async (req, res) => {
+  sendOk(res, await permissionService.permissionCatalog(getAuthUser(req)), '获取权限目录成功');
 });
 
 /** GET /api/permissions/groups - 权限组列表 */
-router.get('/groups', requirePermission('permission:manage'), async (_req, res) => {
-  sendOk(res, await permissionService.listGroups(), '获取权限组成功');
+router.get('/groups', requirePermission('permission:manage'), async (req, res) => {
+  sendOk(res, await permissionService.listGroups(getAuthUser(req)), '获取权限组成功');
 });
 
-router.get('/scopes', requirePermission('permission:manage'), async (_req, res) =>
+router.get('/scopes', requirePermission('permission:manage'), async (req, res) =>
   sendOk(res, await permissionService.scopeOptions()),
 );
 router.get(
@@ -53,14 +60,15 @@ router.get(
   }),
   async (req, res) => {
     const { page, pageSize } = validatedQuery<{ page: number; pageSize: number }>(req);
-    sendOk(res, await permissionService.listAudits(page, pageSize));
+    sendOk(res, await permissionService.listAudits(getAuthUser(req), page, pageSize));
   },
 );
 router.get(
   '/groups/:id/members',
   requirePermission('permission:manage'),
   validate({ params: idParamSchema }),
-  async (req, res) => sendOk(res, await permissionService.groupMembers(String(req.params.id))),
+  async (req, res) =>
+    sendOk(res, await permissionService.groupMembers(getAuthUser(req), String(req.params.id))),
 );
 
 /** POST /api/permissions/groups - 新建权限组 */
@@ -99,10 +107,29 @@ router.delete(
 );
 
 /** GET /api/permissions/users - 成员列表（含所属权限组与生效权限数量） */
-router.get('/users', requirePermission('permission:manage'), async (_req, res) => {
-  sendOk(res, await permissionService.listMembers(), '获取成员成功');
+router.get('/users', requirePermission('permission:manage'), async (req, res) => {
+  sendOk(res, await permissionService.listMembers(getAuthUser(req)), '获取成员成功');
 });
 
+router.get(
+  '/users/:id/effective',
+  validate({ params: idParamSchema, query: z.object({ assignments: z.string().max(16000).optional() }) }),
+  async (req, res) => {
+    const query = validatedQuery<{ assignments?: string }>(req);
+    let preview: AssignUserGroupsInput | undefined;
+    if (query.assignments !== undefined) {
+      try {
+        preview = assignUserGroupsSchema.parse({ assignments: JSON.parse(query.assignments) });
+      } catch {
+        throw ApiError.badRequest('分配预览格式不正确');
+      }
+    }
+    sendOk(
+      res,
+      await permissionService.effectivePermissions(getAuthUser(req), String(req.params.id), preview),
+    );
+  },
+);
 /** PUT /api/permissions/users/:id/groups - 整体替换某账号的权限组 */
 router.put(
   '/users/:id/groups',

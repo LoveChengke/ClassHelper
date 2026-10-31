@@ -493,6 +493,22 @@ export const SOCKET_EVENTS = {
   connected: 'connected',
 } as const;
 
+/** 班级事件域；订阅资格按对应读能力逐域求值。 */
+export const SOCKET_CHANNELS = ['core', 'homework', 'notification', 'grade', 'courseware'] as const;
+export type SocketChannel = (typeof SOCKET_CHANNELS)[number];
+export const SOCKET_EVENT_CHANNELS: Record<string, SocketChannel> = {
+  'class:updated': 'core',
+  'schedule:updated': 'core',
+  'homework:new': 'homework',
+  'homework:updated': 'homework',
+  'homework:status': 'homework',
+  'notification:new': 'notification',
+  'notification:deleted': 'notification',
+  'call:new': 'notification',
+  'grade:updated': 'grade',
+  'courseware:changed': 'courseware',
+};
+
 /** ClassIsland JSON 导入：时间点类型（与 TimeLayoutItem.TimeType 一致） */
 export const CLASSISLAND_TIME_TYPES = {
   class: 0,
@@ -560,6 +576,8 @@ export function buildCallTitle(studentName: string, teacherName: string): string
 
 /** Socket.IO 房间名生成规则：与后端保持一致，客户端订阅时复用 */
 export const SOCKET_ROOMS = {
+  classChannel: (classId: string, channel: SocketChannel): string => `class:${classId}:${channel}`,
+  /** @deprecated 仅供旧协议测试识别，生产不再订阅。 */
   class: (classId: string): string => `class:${classId}`,
   /**
    * 会话自身的房间：老师/管理员是账号 id，ClassHelper 班级端是班级 id。

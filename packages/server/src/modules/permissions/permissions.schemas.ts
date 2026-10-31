@@ -22,7 +22,7 @@ const keysSchema = z.array(permissionKeySchema).max(200, '一次最多提交 200
 export const createPermissionGroupSchema = z.object({
   name: z.string().trim().min(1, '请输入权限组名称').max(40, '权限组名称最多 40 个字'),
   description: z.string().trim().max(200, '描述最多 200 个字').optional(),
-  scope: z.enum(['SELF_CLASS', 'GRADE', 'DIVISION', 'ALL']).optional(),
+  scope: z.enum(['TEACHING', 'HEAD', 'GRADE', 'DIVISION', 'ALL']).optional(),
   scopeValue: z.string().trim().max(200).optional(),
   keys: keysSchema.optional(),
 });
@@ -36,15 +36,33 @@ export const createPermissionGroupSchema = z.object({
 export const updatePermissionGroupSchema = z.object({
   name: z.string().trim().min(1, '请输入权限组名称').max(40, '权限组名称最多 40 个字').optional(),
   description: z.string().trim().max(200, '描述最多 200 个字').optional(),
-  scope: z.enum(['SELF_CLASS', 'GRADE', 'DIVISION', 'ALL']).optional(),
+  scope: z.enum(['TEACHING', 'HEAD', 'GRADE', 'DIVISION', 'ALL']).optional(),
   scopeValue: z.string().trim().max(200).optional(),
   keys: keysSchema.optional(),
 });
 
 /** 给账号分配权限组：整体替换；传空数组 = 回到角色默认模板 */
-export const assignUserGroupsSchema = z.object({
-  groupIds: z.array(z.string().min(1)).max(50, '一次最多分配 50 个权限组'),
-});
+export const assignUserGroupsSchema = z
+  .object({
+    groupIds: z.array(z.string().min(1)).max(50).optional(),
+    assignments: z
+      .array(
+        z
+          .object({
+            groupId: z.string().min(1),
+            scope: z.enum(['TEACHING', 'HEAD', 'GRADE', 'DIVISION', 'ALL']),
+            scopeValue: z.string().max(200).default(''),
+          })
+          .strict(),
+      )
+      .max(50)
+      .optional(),
+  })
+  .strict()
+  .refine(
+    (v) => (v.assignments !== undefined) !== (v.groupIds !== undefined),
+    '请提供 assignments 或 groupIds 之一',
+  );
 
 export type CreatePermissionGroupInput = z.infer<typeof createPermissionGroupSchema>;
 export type UpdatePermissionGroupInput = z.infer<typeof updatePermissionGroupSchema>;

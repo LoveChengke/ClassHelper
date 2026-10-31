@@ -13,7 +13,7 @@ export const clientReleaseVersionSchema = z
   .trim()
   .min(1, '请输入版本号')
   .max(40, '版本号最多 40 个字符')
-  .refine((value) => SAFE_SEGMENT.test(value), {
+  .refine((value) => SAFE_SEGMENT.test(value) && value !== '.' && value !== '..' && !value.includes('..'), {
     message: '版本号只能包含字母、数字、点、下划线与短横线',
   });
 
@@ -30,7 +30,9 @@ export const registerClientReleaseSchema = z.object({
     .trim()
     .min(1)
     .max(120)
-    .refine((value) => SAFE_SEGMENT.test(value), { message: '文件名只能包含字母、数字、点、下划线与短横线' })
+    .refine((value) => SAFE_SEGMENT.test(value) && value !== '.' && value !== '..' && !value.includes('..'), {
+      message: '文件名只能包含字母、数字、点、下划线与短横线',
+    })
     .optional(),
   notes: z.string().trim().max(500).optional(),
 });

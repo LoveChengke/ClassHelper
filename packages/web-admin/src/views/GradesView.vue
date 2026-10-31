@@ -35,7 +35,7 @@ const auth = useAuthStore();
  * （查 `Course.teacherId`），越权一律 403。因此这里只要是教师就放行按钮，
  * 让老师能看到入口并在被拒时得到明确的后端提示，而不是"按钮凭空消失、不知道为什么"。
  */
-const canManageGrades = computed(() => auth.role === 'ADMIN' || auth.role === 'TEACHER');
+const canManageGrades = computed(() => auth.can('grade:write'));
 const realtime = useRealtimeStore();
 
 const loading = ref(false);
@@ -221,10 +221,7 @@ const ownCourses = computed(() =>
 );
 
 /** 能不能在该班新建科目（与课表管理同权限：管理员或本班班主任） */
-const canCreateCourse = computed(() => {
-  if (auth.isAdmin) return true;
-  return classes.value.find((item) => item.id === filter.classId)?.teacherId === auth.user?.id;
-});
+const canCreateCourse = computed(() => auth.canManageClass('schedule:write', filter.classId));
 
 /** 录入弹窗的默认科目：优先沿用页面筛选，但筛的是别人的科目时退回"我的科目"第一条 */
 function defaultFormCourseId(): string {
@@ -489,6 +486,12 @@ onMounted(async () => {
 onUnmounted(() => {
   realtime.off(SOCKET_EVENTS.gradeUpdated, onGradeEvent);
 });
+function canEditContent(row: GradeDto): boolean {
+  if (!auth.canForClass('grade:write', row.classId)) return false;
+  if (auth.isAdmin) return true;
+  if (!row.courseId) return classes.value.find((c) => c.id === row.classId)?.teacher?.id === auth.user?.id;
+  return courses.value.some((c) => c.id === row.courseId && c.teacherId === auth.user?.id);
+}
 </script>
 
 <template>
@@ -519,7 +522,7 @@ onUnmounted(() => {
         <el-button v-if="canManageGrades" type="success" :icon="'Upload'" @click="openBulk">
           批量录入
         </el-button>
-        <el-button v-if="canManageGrades" type="warning" :icon="'Document'" @click="openImport">
+        <el-button v-if="auth.can('grade:import')" type="warning" :icon="'Document'" @click="openImport">
           导入表格
         </el-button>
         <el-button v-if="canManageGrades" :icon="'Sort'" @click="openLevelBatch">批量改等级</el-button>
@@ -537,7 +540,11 @@ onUnmounted(() => {
 
     <!-- 考试口径：这次考试要不要把所有科目相加做总分排名（按「班级 + 考试名」记，
          客户端据此显示总分榜）。导入成绩时顺手就能定下来。 -->
-    <el-card v-if="canManageGrades && filter.classId && filter.examName" shadow="never" class="mt-12">
+    <el-card
+      v-if="auth.canManageClass('grade:write', filter.classId) && filter.examName"
+      shadow="never"
+      class="mt-12"
+    >
       <div class="toolbar">
         <span class="exam-label">考试口径</span>
         <el-tag effect="plain">{{ filter.examName }}</el-tag>
@@ -615,7 +622,7 @@ onUnmounted(() => {
               </el-tag>
               <!-- 单个编辑：percent 口径下相当于手动覆盖自动换算的结果 -->
               <el-select
-                v-if="canManageGrades"
+                v-if="canEditContent(row)"
                 :model-value="row.level"
                 size="small"
                 style="width: 88px"
@@ -639,7 +646,9 @@ onUnmounted(() => {
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="canManageGrades" link type="danger" @click="removeGrade(row)">删除</el-button>
+            <el-button v-if="canEditContent(row)" link type="danger" @click="removeGrade(row)">
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>

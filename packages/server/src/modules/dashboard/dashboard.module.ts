@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { sendOk } from '../../lib/http.js';
 import { resolveCurrentWeek, loadTermContext } from '../../lib/term.js';
-import { authenticate, getAuthUser, requireStaffPermission } from '../../middleware/auth.js';
+import { authenticate, getAuthUser, requirePermissionOrClassDevice } from '../../middleware/auth.js';
 import { defineModule } from '../module.types.js';
 import * as dashboardService from './dashboard.service.js';
 
@@ -9,7 +9,7 @@ const router = Router();
 router.use(authenticate());
 
 /** GET /api/dashboard/summary - 首页汇总（按角色权限收敛数据范围） */
-router.get('/summary', requireStaffPermission('dashboard:read'), async (req, res) => {
+router.get('/summary', requirePermissionOrClassDevice('dashboard:read'), async (req, res) => {
   const user = getAuthUser(req);
   sendOk(res, await dashboardService.getDashboardSummary(user), '获取仪表盘数据成功');
 });
@@ -21,7 +21,7 @@ router.get('/summary', requireStaffPermission('dashboard:read'), async (req, res
  * 这样周次选择器不会再出现"实际 20 周却给到 30 周"的情况；不带 classId 时退回全局默认值。
  * 带 classId 时会先校验班级访问权限（见 resolveTermWeeks）。
  */
-router.get('/term', requireStaffPermission('term:read'), async (req, res) => {
+router.get('/term', requirePermissionOrClassDevice('term:read'), async (req, res) => {
   const user = getAuthUser(req);
   const classId = typeof req.query.classId === 'string' && req.query.classId ? req.query.classId : undefined;
   const maxWeek = await dashboardService.resolveTermWeeks(user, classId);

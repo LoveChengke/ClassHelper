@@ -1,3 +1,4 @@
+import { refreshClassSubscriptions } from '../../realtime/bus.js';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -441,6 +442,7 @@ async function executePromotion(year: number, options: RunOptions) {
   for (const track of preview.tracks)
     for (const cls of track.classes)
       emitToClass(cls.id, SOCKET_EVENTS.classUpdated, { classId: cls.id, action: 'updated' });
+  refreshClassSubscriptions();
   await notifyScheduleChanged();
   return { ...(await prisma.promotionRun.findUniqueOrThrow({ where: { year } })), alreadyDone: false };
 }

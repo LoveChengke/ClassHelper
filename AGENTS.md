@@ -28,9 +28,9 @@ pnpm monorepo，根 `package.json` 是版本单一来源。文档、注释、界
 - 模块由 `packages/server/src/modules/registry.ts` 注册；新增或下线功能改注册表，不另改 `app.ts` 挂载。
 - 路由用 `middleware/validate.ts` 与 zod；响应复用 `lib/http.ts`，错误交给统一中间件。
 - 学生是 `Student` 名单记录，没有账号、角色或密码。教师/管理员存 `User`；班级登录读取 `Class.code/passwordHash`，会话角色 `CLASS_DEVICE`，主体 id 为班级 id。
-- 任课关系只在 `Course(classId, name, teacherId)`。班主任不自动获得别的科目的作业、成绩写权限，统一走 `assertCanManageSubjectContent`。班级端可录作业，不可写成绩；员工还须对应功能权限。
-- 功能权限取 `lib/permissions.ts` 的 `loadEffectivePermissions()`：已分组取并集；未分组使用数据库对应角色的可编辑默认组；管理员永远保留 `permission:manage/system:manage`；班级端为空集。
-- 岗位组不新增 `User.role`。班主任/教师/级长/部长仍为 TEACHER；范围在 `PermissionGroup.scope/scopeValue`，由 `lib/permission-scope.ts` 收口，空年级/部范围拒绝。设备写权限只合并含对应键的分组范围，范围不替代科目授权。
+- 任课关系只在 `Course(classId, name, teacherId)`。班主任不自动获得别的科目的作业、成绩写权限，统一走 `lib/authz/assert.ts` 的 `assertContentWrite`。班级端可录作业，不可写成绩；员工还须对应功能权限。
+- 功能、范围、关系统一由 `lib/authz/` 判定，所有服务显式传权限键。ADMIN 固定全部能力；TEACHER 永久忽略管理员专用键；CLASS_DEVICE 为空集，接口明确允许并校验本班。权限管理仅 ADMIN。
+- 岗位模板只管能力与建议范围，生效范围存 `UserPermissionGroup.scope/scopeValue`，使用 TEACHING/HEAD/GRADE/DIVISION/ALL。无显式分配的教师使用默认模板与固定 TEACHING；空或未知年级拒绝。按键独立合并范围，无键查询为空集；班级账号/学期设置永远要求本班班主任，科目写检查原/目标科目。具体断言和迁移见 `docs/dev/permissions.md`。
 - 只有一份 `prisma/schema.prisma`，切库改 provider；保持 SQLite/MySQL 通用，不加 Prisma enum 或 `@db.*`。模型变动同步迁移、`lib/snapshot.ts` 的 `SNAPSHOT_TABLES` 与旧库兼容逻辑。
 - `deleteTeacher` 必须保护班主任、课程任课、发布的作业/通知和所属课件，避免级联删除业务内容。
 - 作业和通知按本地 `assignDate` 归类，使用 `dayKeyLocal/isDayKey/shiftDayKey`，不用 UTC 日期切片。
@@ -44,7 +44,7 @@ pnpm monorepo，根 `package.json` 是版本单一来源。文档、注释、界
 - `/api/schedules/*` 是新模型兼容门面。启用解析统一走 `lib/class-plan.ts`，在线客户端不得另写启用优先级。
 - 时间点有上课、课间、分割线、行动四种；课程显式引用时间点外键。排序不能靠数组下标代替关联。
 - 支持 1–9 周轮换、群组、预定及临时层；完整档案导入走 `profile-import.service.ts`，不经过单双周有损格式。
-- 全校时间表写入用 `timetable:manage`；班级日课表写入还须班主任/管理员断言。离线整套课表导入可建立班级自有作息，不把 JSON 的 TeacherName 当授权。
+- 全校时间表写入仅管理员；班级时间表按存储 classId 校验 `schedule:write` 与班主任关系，引用班级也校验。日课表/名单在 TEACHING/HEAD 范围要求班主任，显式年级/部/全校分配可在范围内维护。离线整套课表导入可建立班级自有作息，不把 JSON 的 TeacherName 当授权。
 - 周次统一 `loadTermContext/resolveCurrentWeek`：班级逐周区间优先于全校区间，缺省再线性推算。开学日会参考班级设置、第 1 周区间、全校设置与环境兜底，详见 `lib/term.ts`。
 - 全校周数上限存 `term.maxWeeks`，默认 30、范围 1–60；服务端 `getMaxTermWeeks()`，shared 做归一化与离线兜底。班级周数不超全校上限。
 - 关闭个人成绩查询后，班级端仍可看服务端集体聚合；个人明细、原始全班成绩和排名拒绝读取。稀疏样本及补集抑制，不下发原始成绩后在客户端聚合。
@@ -57,9 +57,9 @@ pnpm monorepo，根 `package.json` 是版本单一来源。文档、注释、界
 - preload 仅暴露 contextBridge 白名单，不暴露 ipcRenderer；跨桥接传纯数据，不传 Vue Proxy。契约写在 `src/types/desktop.d.ts`。
 - 保留 CSP、导航同源校验与弹窗限制。安装包不能含凭据，保留 `check-bundle-secrets` 构建门禁。
 - 离线缓存按服务端与班级隔离，缓存故障不应阻断在线读取。退出、切服务器时清理会话状态，设备 `deviceKey` 保持不变，渲染层不能改写它。
-- 设备维护只走 `/api/clients/*`，管理页 `ClientsView.vue`。心跳约 30 秒，90 秒窗口判在线；未登录不报，401/403 退避，切配置重置计时并隔离迟到响应。
+- 设备维护只走 `/api/clients/*`，管理页 `ClientsView.vue`；心跳、进度、回执仅接受本班 CLASS_DEVICE，deviceKey 不可跨班迁移。心跳约 30 秒，90 秒窗口判在线；未登录不报，401/403 退避，切配置重置计时并隔离迟到响应。
 - 远控须 `remote:control`，只允许 shutdown/restart/logoff/lock，客户端立即执行、持久去重并回执。冒烟始终假执行，不得真关机/重启/注销/锁屏。
-- 更新写入口用 `client:update`；服务端缓存包并登记 SHA256，教室机从本服务下载；无哈希拒收，按立即/放学后/空闲策略执行，关闭自动更新不得强装。冒烟不运行安装器。
+- 安装包登记/删除为管理员 `client:update`；班级推送用 `client:update-push`；服务端缓存包并登记 SHA256，教室机从本服务下载；无哈希拒收，按立即/放学后/空闲策略执行，关闭自动更新不得强装。冒烟不运行安装器。
 - 灵动岛方案保存在本机 `config.json.islandLayout`，默认 `layout=fixed`；`custom` 当前即常驻模式，旧 `residentEnabled` 是兼容字段。新尺寸上报仅在 custom 模式执行。
 - `LayoutIslandApp.vue` 选择经典 `IslandApp.vue` 或 `CustomIslandRuntime.vue`，共用一个原生岛窗口；课件传输状态优先显示 `CoursewareTransfer.vue`。
 - 经典模式：普通通知/作业上课暂存；普通叫人保留可点击胶囊；紧急消息立即展开。自定义常驻模式：消息先提示铃铛数量，用户主动展开；上课也可主动查看。不要把两个模式规则混写。
@@ -71,7 +71,7 @@ pnpm monorepo，根 `package.json` 是版本单一来源。文档、注释、界
 
 ## 5. 实时、界面与资源
 
-- 事件名与房间名取 shared 常量。业务用 `emitToClass/emitToSession`，不直接依赖 Socket.IO 实例。
+- 事件名与房间名取 shared 常量。班级房间为 `class:{id}:{channel}`，教师按每域读键及范围订阅，班级端仅本班全部通道；握手回查数据库身份。业务用 `emitToClass/emitToSession`，由总线选择事件域。
 - 会话房间为 `session:{id}`；教师/管理员 id 为账号 id，班级端为班级 id。`students` 是班级端广播房间，不是个人学生账号房间。
 - 新实时事件同步服务端、Web 订阅、客户端订阅。成绩实时载荷不可泄漏个人成绩。
 - Web 菜单分组在 `config/navigation.ts`，标题/图标/权限取路由；守卫与服务端都检查权限，前端隐藏不能代替鉴权。

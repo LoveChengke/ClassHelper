@@ -1,3 +1,6 @@
+import { disconnectUserSessions, refreshClassSubscriptions } from '../../realtime/bus.js';
+import { assertHeadOnly, assertManage } from '../../lib/authz/index.js';
+import { auditData } from '../permissions/permissions.service.js';
 import type { ClassDetailDto, ClassDto, StudentDto, SubjectTeacherDto } from '@classhelper/shared';
 import { SOCKET_EVENTS, formatClassName } from '@classhelper/shared';
 import { env } from '../../config/env.js';
@@ -23,12 +26,17 @@ import type {
   AssignSubjectTeachersInput,
   CreateClassInput,
   UpdateClassInput,
+  UpdateClassSettingsInput,
   UpdateStudentGradeQueryInput,
 } from './classes.schemas.js';
 import { loadPromotionPlan } from '../term/promotion.service.js';
 import { assertClassInScope, canAccessClass } from '../../lib/access.js';
 import { changeStudentLifecycle } from '../../lib/student-lifecycle.js';
-import { assertStaffPermission, assertPermission, hasEffectivePermission } from '../../lib/permissions.js';
+import {
+  assertPermissionOrClassDevice,
+  assertPermission,
+  hasEffectivePermission,
+} from '../../lib/permissions.js';
 import { activeStudentWhere } from '../../lib/students.js';
 import { getMaxTermWeeks } from '../../lib/term.js';
 import { logger } from '../../lib/logger.js';
@@ -79,7 +87,7 @@ function toClassDtoWithAccount(
  * 混在常规列表里会让老师误以为那届还在上课。需要看归档班级请用 `/api/archives`。
  */
 export async function listClasses(user: TokenPayload, keyword?: string): Promise<ClassDto[]> {
-  await assertStaffPermission(user, 'class:read');
+  await assertPermissionOrClassDevice(user, 'class:read');
   const scope = await resolveClassScope(user, undefined, 'class:read');
   // Class 表按主键 id 过滤（classScopeWhere 针对的是带 classId 字段的子表）
   const where = {
@@ -102,8 +110,8 @@ export async function listClasses(user: TokenPayload, keyword?: string): Promise
 
 /** 班级详情：学生名单 + 课程 + 班主任 + 各科任课老师 */
 export async function getClassDetail(user: TokenPayload, classId: string): Promise<ClassDetailDto> {
-  await assertStaffPermission(user, 'class:read');
-  await assertClassAccess(user, classId);
+  await assertPermissionOrClassDevice(user, 'class:read');
+  await assertClassAccess(user, classId, 'class:read');
 
   const item = await prisma.class.findUnique({
     where: { id: classId },
@@ -147,7 +155,7 @@ export async function listSubjectTeachers(
   user: TokenPayload,
   classId: string,
 ): Promise<{ headTeacher: SubjectTeacherDto | null; subjectTeachers: SubjectTeacherDto[] }> {
-  await assertClassAccess(user, classId);
+  await assertClassAccess(user, classId, 'class:read');
   const item = await prisma.class.findUnique({
     where: { id: classId },
     include: {
@@ -206,6 +214,13 @@ export async function createClass(user: TokenPayload, input: CreateClassInput): 
     },
   });
 
+  await prisma.permissionAudit.create({
+    data: auditData(user, 'class-create', 'class', created.id, null, {
+      name: created.name,
+      teacherId: created.teacherId,
+    }),
+  });
+  refreshClassSubscriptions();
   return toClassDtoWithAccount(user, created);
 }
 
@@ -222,6 +237,10 @@ export async function updateHeadTeacher(
   teacherId: string,
 ): Promise<ClassDto> {
   await assertCanAssignTeachers(user, classId);
+  const before = await prisma.class.findUniqueOrThrow({
+    where: { id: classId },
+    select: { teacherId: true },
+  });
   const targetId = await requireTeacher(teacherId, '指定的班主任不存在或角色不是教师');
 
   const updated = await prisma.class.update({
@@ -233,6 +252,10 @@ export async function updateHeadTeacher(
     },
   });
 
+  await prisma.permissionAudit.create({
+    data: auditData(user, 'class-head', 'class', classId, before, { teacherId: targetId }),
+  });
+  disconnectUserSessions([before.teacherId, targetId].filter((id): id is string => !!id));
   emitToClass(classId, SOCKET_EVENTS.classUpdated, { classId, action: 'head-teacher-changed' });
   return toClassDtoWithAccount(user, updated);
 }
@@ -256,6 +279,10 @@ export async function assignSubjectTeachers(
   const targetClass = await prisma.class.findUnique({ where: { id: classId }, select: { id: true } });
   if (!targetClass) throw ApiError.notFound('班级不存在');
 
+  const before = await prisma.course.findMany({
+    where: { classId },
+    select: { id: true, name: true, teacherId: true },
+  });
   for (const assignment of input.assignments) {
     const teacherId = assignment.teacherId
       ? await requireTeacher(assignment.teacherId, `「${assignment.subjectName}」的任课老师不存在或不是教师`)
@@ -290,6 +317,17 @@ export async function assignSubjectTeachers(
     where: { id: classId },
     include: { courses: { orderBy: { name: 'asc' }, include: { teacher: teacherBriefSelect } } },
   });
+  await prisma.permissionAudit.create({
+    data: auditData(
+      user,
+      'class-subjects',
+      'class',
+      classId,
+      before,
+      refreshed.courses.map((c) => ({ id: c.id, name: c.name, teacherId: c.teacherId })),
+    ),
+  });
+  disconnectUserSessions([...new Set([...before, ...refreshed.courses].map((c) => c.teacherId))]);
   return refreshed.courses.map((course) => ({
     courseId: course.id,
     subjectName: course.name,
@@ -304,7 +342,8 @@ export async function updateClassAccount(
   classId: string,
   input: { code?: string; password?: string },
 ): Promise<ClassDto> {
-  await assertCanManageClasses(user, classId);
+  await assertHeadOnly(user, 'class:account', classId);
+  const before = await prisma.class.findUniqueOrThrow({ where: { id: classId }, select: { code: true } });
   if (
     'termWeeks' in input &&
     typeof input.termWeeks === 'number' &&
@@ -322,6 +361,12 @@ export async function updateClassAccount(
     },
   });
   if (!updated) throw ApiError.notFound('班级不存在');
+  await prisma.permissionAudit.create({
+    data: auditData(user, 'class-account', 'class', classId, before, {
+      code: updated.code,
+      passwordChanged: input.password !== undefined,
+    }),
+  });
   return toClassDtoWithAccount(user, updated);
 }
 
@@ -340,19 +385,12 @@ export async function updateClass(
   if (!current) throw ApiError.notFound('班级不存在');
 
   if ('grade' in input) throw ApiError.badRequest('修改年级请使用学年升级入口');
-  if (input.termWeeks !== undefined && input.termWeeks > (await getMaxTermWeeks()))
-    throw ApiError.badRequest('班级周数不能超过全校上限');
   const enrollmentYear = input.enrollmentYear ?? current.enrollmentYear;
   const classIndex = input.classIndex ?? current.classIndex;
 
   const updated = await prisma.class.update({
     where: { id: classId },
     data: {
-      ...(input.termWeeks !== undefined ? { termWeeks: input.termWeeks } : {}),
-      // 学期开始日期：空串/null 都表示"回落到全局配置"（如 .env 的 TERM_START_DATE）
-      ...(input.termStartDate !== undefined
-        ? { termStartDate: input.termStartDate ? input.termStartDate : null }
-        : {}),
       ...(input.enrollmentYear !== undefined ? { enrollmentYear } : {}),
       ...(input.classIndex !== undefined ? { classIndex } : {}),
       // 届别齐了就把称呼重算一遍：班级称呼的唯一来源是「入学年份 + 班号」
@@ -364,10 +402,45 @@ export async function updateClass(
     },
   });
 
+  await prisma.permissionAudit.create({
+    data: auditData(user, 'class-update', 'class', classId, current, {
+      enrollmentYear: updated.enrollmentYear,
+      classIndex: updated.classIndex,
+      name: updated.name,
+    }),
+  });
   emitToClass(classId, SOCKET_EVENTS.classUpdated, { classId, action: 'updated' });
   return toClassDto(updated);
 }
 
+export async function updateClassSettings(
+  user: TokenPayload,
+  classId: string,
+  input: UpdateClassSettingsInput,
+): Promise<ClassDto> {
+  await assertHeadOnly(user, 'class:settings', classId);
+  if (input.termWeeks !== undefined && input.termWeeks > (await getMaxTermWeeks()))
+    throw ApiError.badRequest('班级周数不能超过全校上限');
+  const before = await prisma.class.findUniqueOrThrow({
+    where: { id: classId },
+    select: { termWeeks: true, termStartDate: true },
+  });
+  const updated = await prisma.class.update({
+    where: { id: classId },
+    data: {
+      termWeeks: input.termWeeks,
+      ...(input.termStartDate !== undefined ? { termStartDate: input.termStartDate || null } : {}),
+    },
+  });
+  await prisma.permissionAudit.create({
+    data: auditData(user, 'class-settings', 'class', classId, before, {
+      termWeeks: updated.termWeeks,
+      termStartDate: updated.termStartDate,
+    }),
+  });
+  emitToClass(classId, SOCKET_EVENTS.classUpdated, { classId, action: 'updated' });
+  return toClassDto(updated);
+}
 /**
  * 学年升级（按升级权限与班级范围）：把若干班级的年级改掉，**不归档、数据沿用**。
  *
@@ -405,6 +478,7 @@ export async function promoteClasses(
     }
   });
   for (const classId of ids) emitToClass(classId, SOCKET_EVENTS.classUpdated, { classId, action: 'updated' });
+  refreshClassSubscriptions();
   return { promoted: ids.length };
 }
 
@@ -414,13 +488,21 @@ export async function deleteClass(user: TokenPayload, classId: string): Promise<
   if (await prisma.student.count({ where: { classId } }))
     throw ApiError.conflict('班级仍有学生，请先通过名单生命周期入口移出或归档，不能级联清除归属');
   emitToClass(classId, SOCKET_EVENTS.classUpdated, { classId, action: 'deleted' });
+  const before = await prisma.class.findUniqueOrThrow({
+    where: { id: classId },
+    select: { id: true, name: true, grade: true },
+  });
   await prisma.class.delete({ where: { id: classId } });
+  refreshClassSubscriptions();
+  await prisma.permissionAudit.create({
+    data: auditData(user, 'class-delete', 'class', classId, before, null),
+  });
 }
 
 /** 班级学生名单 */
 export async function listClassStudents(user: TokenPayload, classId: string): Promise<StudentDto[]> {
-  await assertStaffPermission(user, 'roster:read');
-  await assertClassAccess(user, classId);
+  await assertPermissionOrClassDevice(user, 'roster:read');
+  await assertClassAccess(user, classId, 'roster:read');
   const students = await prisma.student.findMany({
     where: { classId, ...activeStudentWhere() },
     include: { class: { select: { name: true, grade: true } } },
@@ -472,7 +554,7 @@ export async function getStudentGradeQuery(
   user: TokenPayload,
   classId: string,
 ): Promise<{ studentGradeQueryEnabled: boolean }> {
-  await assertClassAccess(user, classId);
+  await assertClassAccess(user, classId, 'class:read');
   const record = await prisma.class.findUnique({
     where: { id: classId },
     select: { studentGradeQueryEnabled: true },
@@ -493,7 +575,7 @@ export async function updateStudentGradeQuery(
   classId: string,
   input: UpdateStudentGradeQueryInput,
 ): Promise<{ studentGradeQueryEnabled: boolean }> {
-  await assertClassAccess(user, classId);
+  await assertManage(user, 'grade:write', classId);
   if (!isStaff(user)) {
     throw ApiError.forbidden('成绩查询开关由教师/管理员在 Web 端设置，班级端只读');
   }

@@ -1,4 +1,9 @@
-/** 只定义分组；子页标题、图标和权限直接读取路由，避免菜单与路由各维护一套权限。 */
+import type { PermissionKey } from '@classhelper/shared';
+
+/** 字符串动作使用服务端业务范围；manage 用于班级管理，permission 用于无班级目标的操作。 */
+export type MenuAction = PermissionKey | { key: PermissionKey; scope: 'manage' | 'permission' };
+
+/** 只定义分组；标题、图标、读权限和可操作条件均读取路由。 */
 export const MANAGEMENT_GROUPS = [
   { id: 'workspace', title: '工作台', icon: 'Odometer', paths: ['/dashboard', '/assistant'] },
   {
@@ -11,7 +16,7 @@ export const MANAGEMENT_GROUPS = [
     id: 'school',
     title: '班级与人员',
     icon: 'School',
-    paths: ['/classes', '/students', '/teachers', '/roster', '/term-weeks', '/promotion', '/archives'],
+    paths: ['/classes', '/students', '/teachers', '/term-weeks', '/promotion', '/archives'],
   },
   { id: 'devices', title: '设备运维', icon: 'Monitor', paths: ['/clients'] },
   {

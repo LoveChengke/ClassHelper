@@ -6,7 +6,7 @@ import { PERMISSION_KEYS, defaultPromotionPlan, parsePermissionScope } from '@cl
 import { prisma } from '../src/lib/db.js';
 import { createApp } from '../src/app.js';
 import { signToken, type TokenPayload } from '../src/lib/jwt.js';
-import { ensureDefaultGroups, loadEffectivePermissions } from '../src/lib/permissions.js';
+import { ensureDefaultGroups, loadAuthPrincipal } from '../src/lib/permissions.js';
 import { registerEmitter } from '../src/realtime/bus.js';
 import * as students from '../src/modules/students/students.service.js';
 import * as classes from '../src/modules/classes/classes.service.js';
@@ -53,7 +53,7 @@ const a = await cls('TESTA', '高一', 2025, 1),
   c = await cls('TESTC', '高二', 2024, 1, admin.sub);
 const events: { classId: string; event: string }[] = [];
 registerEmitter((rooms, event) => {
-  for (const room of rooms) events.push({ classId: room.replace('class:', ''), event });
+  for (const room of rooms) events.push({ classId: room.split(':')[1], event });
 });
 const server = createServer(createApp());
 await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -91,24 +91,22 @@ try {
     assert.equal((PERMISSION_KEYS as readonly string[]).includes('promotion:manage'), true),
   );
   const delegate = await account('临时教务授权', 'TEACHER');
-  const governance = await permissions.createGroup(admin, {
-    name: '教务授权',
-    scope: 'ALL',
-    keys: ['class:read', 'class:manage', 'archive:manage', 'promotion:manage'],
-  });
-  await permissions.assignUserGroups(admin, delegate.sub, { groupIds: [governance.id] });
-  const delegatedClass = await request(
-    '/classes',
-    delegate,
-    'POST',
-    { grade: '高一', enrollmentYear: 2028, classIndex: 99 },
-    201,
+  await denied(
+    permissions.createGroup(admin, {
+      name: '不可下放组织能力',
+      keys: ['class:manage', 'archive:manage', 'promotion:manage'],
+    }),
+    400,
   );
-  await request(`/classes/${delegatedClass.id}`, delegate, 'PATCH', { termWeeks: 10 });
-  await request(`/classes/${delegatedClass.id}`, delegate, 'DELETE');
-  await request('/archives', delegate);
-  await request('/term/promotion', delegate);
-  check('教师持对应全校功能键可管理班级、读取归档与升级配置', () => {});
+  for (const url of ['/classes', '/archives', '/term/promotion'])
+    await request(
+      url,
+      delegate,
+      url === '/classes' ? 'POST' : 'GET',
+      url === '/classes' ? {} : undefined,
+      403,
+    );
+  check('组织管理能力不能下放给教师，路由永久拒绝', () => {});
   const allRoster = await permissions.createGroup(admin, {
     name: '全校名单',
     scope: 'ALL',
@@ -132,50 +130,41 @@ try {
     scope: 'ALL',
     keys: ['class:read'],
   });
-  const ownWrite = await permissions.createGroup(admin, { name: '关联班级维护', keys: ['class:manage'] });
+  const ownWrite = await permissions.createGroup(admin, { name: '关联班级维护', keys: ['class:settings'] });
   await permissions.assignUserGroups(admin, delegate.sub, { groupIds: [readAll.id, ownWrite.id] });
   const foreignDetail = await request(`/classes/${a.id}`, delegate);
   assert.equal(foreignDetail.students.length, 0, '班级读取键不能代替名单读取键');
-  await request(`/classes/${a.id}`, delegate, 'PATCH', { termWeeks: 11 }, 403);
+  await request(`/classes/${a.id}/settings`, delegate, 'PATCH', { termWeeks: 11 }, 403);
   check('全校读取组不能借给写操作范围，班级详情不泄漏未授权名单', () => {});
   const defaults = await prisma.permissionGroup.findUniqueOrThrow({ where: { defaultRole: 'TEACHER' } });
   await permissions.assignUserGroups(admin, teacher.sub, { groupIds: [] });
-  assert((await loadEffectivePermissions(teacher)).has('roster:manage'));
+  assert((await loadAuthPrincipal(teacher)).permissions.has('roster:manage'));
   const additional = await permissions.createGroup(admin, {
-    name: '追加升级权限',
+    name: '追加设备读权限',
     scope: 'ALL',
-    keys: ['promotion:manage'],
+    keys: ['client:read'],
   });
   await permissions.assignUserGroups(admin, teacher.sub, { groupIds: [defaults.id, additional.id] });
-  check('无组回落、显式默认组与多组并集', () => {});
-  assert((await loadEffectivePermissions(teacher)).has('promotion:manage'));
+  assert((await loadAuthPrincipal(teacher)).permissions.has('client:read'));
+  assert(!(await loadAuthPrincipal(teacher)).permissions.has('promotion:manage'));
   await denied(
     permissions.assignUserGroups(admin, teacher.sub, { groupIds: ['default-permission-admin'] }),
-    403,
+    400,
   );
-  const assistant = await permissions.createGroup(admin, {
-    name: '权限协助',
-    keys: ['permission:manage', 'roster:read'],
-  });
-  await permissions.assignUserGroups(admin, manager.sub, { groupIds: [assistant.id] });
   await denied(permissions.createGroup(manager, { name: '越权', keys: ['system:manage'] }), 403);
-  await denied(
-    permissions.createGroup(manager, { name: '越范围', scope: 'ALL', keys: ['roster:read'] }),
-    403,
-  );
   await denied(permissions.updateGroup(manager, defaults.id, { keys: [] }), 403);
   await denied(permissions.assignUserGroups(manager, manager.sub, { groupIds: [additional.id] }), 403);
-  check('跨角色默认组、越键、越范围和默认组编辑均拒绝', () => {});
+  check('分配并集、管理员默认组忽略、非管理员权限管理均拒绝', () => {});
   await denied(permissions.createGroup(admin, { name: '空范围', scope: 'GRADE' }), 400);
   await denied(permissions.createGroup(admin, { name: '未知范围', scope: 'GRADE', scopeValue: '未知' }), 400);
   check('范围统一归一化并拒绝空值和未知年级', () =>
     assert.equal(parsePermissionScope('DIVISION', '高二，高一、 高一').scopeValue, '高一,高二'),
   );
-  const memberList = await permissions.listMembers();
+  const memberList = await permissions.listMembers(admin);
   check('成员含真实权限与范围，组成员包含默认回落账号', () =>
-    assert(memberList.find((m) => m.id === teacher.sub)?.permissions.includes('promotion:manage')),
+    assert(memberList.find((m) => m.id === teacher.sub)?.permissions.includes('client:read')),
   );
-  const audits = await permissions.listAudits();
+  const audits = await permissions.listAudits(admin);
   check('审计记录操作人与变更前后快照', () =>
     assert(audits.items.every((audit) => audit.actorId && audit.actorName && audit.afterJson)),
   );
@@ -197,7 +186,7 @@ try {
     }
   }
   try {
-    await permissions.listMembers();
+    await permissions.listMembers(admin);
     const small = queryCount;
     queryCount = 0;
     await prisma.user.createMany({
@@ -208,7 +197,7 @@ try {
         passwordHash: '临时',
       })),
     });
-    await permissions.listMembers();
+    await permissions.listMembers(admin);
     check('成员增加后权限查询次数保持不变', () => assert.equal(queryCount, small));
   } finally {
     restoreMethods.forEach((restore) => restore());

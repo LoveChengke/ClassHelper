@@ -29,12 +29,16 @@ const importVisible = ref(false),
   search = ref(''),
   activePoint = ref('');
 const fileInput = ref<HTMLInputElement>();
-const canTime = computed(() => auth.permissions.includes('timetable:manage'));
-const canWrite = computed(
+const canCreateTime = computed(
   () =>
-    auth.can('schedule:write') &&
-    (auth.role === 'ADMIN' || classes.value.find((c) => c.id === classId.value)?.teacherId === auth.user?.id),
+    auth.can('timetable:manage') ||
+    (auth.can('schedule:write') &&
+      classes.value.find((c) => c.id === classId.value)?.teacher?.id === auth.user?.id),
 );
+const canTime = computed(
+  () => auth.can('timetable:manage') || (canCreateTime.value && layout.value?.classId === classId.value),
+);
+const canWrite = computed(() => auth.canManageClass('schedule:write', classId.value));
 const classes = ref<ClassDto[]>([]),
   courses = ref<CourseDto[]>([]);
 const classId = ref(''),
@@ -172,11 +176,11 @@ watch(
   { flush: 'sync' },
 );
 async function newLayout() {
-  if (!canTime.value || saving.value) return;
+  if (!canCreateTime.value || saving.value) return;
   const { value } = await ElMessageBox.prompt('输入时间表名称', '新时间表');
   const result = await api.post<TimeLayoutDetailDto>('/time-layouts', {
     name: value,
-    classId: classId.value,
+    classId: classId.value || null,
     points: [],
   });
   selectedLayout.value = result.id;
@@ -974,10 +978,18 @@ function selectPlanItem(id: string) {
             </el-button>
           </template>
           <div class="transfer-menu">
-            <el-button text :disabled="!canWrite || !classId" @click="openImport">
+            <el-button
+              text
+              :disabled="!canWrite || !auth.can('import:schedule') || !classId"
+              @click="openImport"
+            >
               导入 ClassIsland 档案
             </el-button>
-            <el-button text :disabled="!canWrite || !classId" @click="fileInput?.click()">
+            <el-button
+              text
+              :disabled="!canWrite || !auth.can('import:schedule') || !classId"
+              @click="fileInput?.click()"
+            >
               导入 JSON
             </el-button>
             <el-button text :disabled="!classId" @click="exportArchive">导出完整档案</el-button>
@@ -1427,6 +1439,7 @@ function selectPlanItem(id: string) {
         :layouts="layouts"
         :courses="courses"
         :can-edit="canTime"
+        :can-create="canCreateTime"
         :saving="saving"
         :plan-count="layoutPlanCount"
         @select-layout="selectedLayout = $event"

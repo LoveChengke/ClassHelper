@@ -140,7 +140,9 @@ try {
     const payload = await ready;
     check(
       '班级端连接后自动加入自己的班级房间',
-      payload.rooms.some((room) => room === SOCKET_ROOMS.class(token === ownLogin.token ? a : b)),
+      payload.rooms.some(
+        (room) => room === SOCKET_ROOMS.classChannel(token === ownLogin.token ? a : b, 'notification'),
+      ),
     );
   }
   const join = await new Promise((resolve) =>
@@ -174,7 +176,7 @@ try {
     weekStart: 15,
   });
   check('按班级学期兜底后仍检查起始周不能越过结束周', badSchedule.status === 400);
-  await api(`/classes/${a}`, admin, { termWeeks: 30 }, 'PATCH');
+  await api(`/classes/${a}/settings`, admin, { termWeeks: 30 }, 'PATCH');
   const imported = await api('/imports/class-plan', admin, {
     classId: a,
     mode: 'merge',
@@ -289,8 +291,8 @@ try {
   });
   assert.ok(roleImport.status < 300, JSON.stringify(roleImport));
   check(
-    '角色导入夹具确实更新了目标账号',
-    roleImport.data?.updated === 1 && roleImport.data.errors.length === 0,
+    '教师批量导入不会更新管理员账号，须使用管理员账号维护入口',
+    roleImport.data?.updated === 0 && roleImport.data.errors.length === 1,
   );
   const teachers = (await api('/teachers', admin)).data;
   check(
@@ -311,20 +313,28 @@ try {
     '未授予强制检查时教师的 force 参数不能绕过缓存',
     (await api('/update/check?force=1', staffToken)).data.checkedAt === initialUpdate.checkedAt,
   );
-  await api(`/permissions/groups/${groupId}`, admin, { keys: [...baseKeys, 'update:force'] }, 'PATCH');
+  check(
+    '教师模板不能保存管理员强制更新键',
+    (await api(`/permissions/groups/${groupId}`, admin, { keys: [...baseKeys, 'update:force'] }, 'PATCH'))
+      .status === 400,
+  );
   const forcedUpdate = (await api('/update/check?force=1', staffToken)).data;
-  check('授予强制检查权限后教师也能按权限绕过缓存', forcedUpdate.checkedAt !== initialUpdate.checkedAt);
+  check('教师即使尝试授予管理员能力也不能绕过更新缓存', forcedUpdate.checkedAt === initialUpdate.checkedAt);
   const readUpdateGroup = (
     await api('/permissions/groups', admin, { name: `审查管理员只读更新${stamp}`, keys: ['update:check'] })
   ).data;
   extraGroups.push(readUpdateGroup.id);
-  await api(`/permissions/users/${roleUser.id}/groups`, admin, { groupIds: [readUpdateGroup.id] }, 'PUT');
+  check(
+    '管理员不接受模板分配',
+    (await api(`/permissions/users/${roleUser.id}/groups`, admin, { groupIds: [readUpdateGroup.id] }, 'PUT'))
+      .status === 400,
+  );
   const limitedAdmin = (
     await api('/auth/login', null, { username: roleUser.username, password: 'review-test-123' })
   ).data.token;
   check(
-    '管理员没有强制检查权限时同样不能绕过缓存',
-    (await api('/update/check?force=1', limitedAdmin)).data.checkedAt === forcedUpdate.checkedAt,
+    '管理员固定拥有强制检查能力',
+    (await api('/update/check?force=1', limitedAdmin)).data.checkedAt !== forcedUpdate.checkedAt,
   );
   previousAi = (await api('/ai/settings', admin)).data;
   await api('/ai/settings', admin, { enabled: true, provider: 'mock' }, 'PUT');

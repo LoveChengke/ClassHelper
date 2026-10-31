@@ -21,8 +21,8 @@ const routes: RouteRecordRaw[] = [
         meta: {
           title: '课件',
           icon: 'FolderOpened',
-          roles: ['ADMIN', 'TEACHER'],
           permission: 'courseware:read',
+          menuActions: [{ key: 'courseware:write', scope: 'permission' }],
         },
       },
       {
@@ -32,15 +32,13 @@ const routes: RouteRecordRaw[] = [
         meta: {
           title: '课表档案',
           icon: 'Calendar',
-          roles: ['ADMIN', 'TEACHER'],
           permission: 'schedule:read',
+          menuActions: ['schedule:write', 'timetable:manage'],
         },
       },
       {
         path: 'roster',
-        name: 'roster',
-        component: () => import('@/views/StudentsView.vue'),
-        meta: { title: '学生名单', icon: 'User', roles: ['TEACHER'], permission: 'roster:read' },
+        redirect: (to) => ({ path: '/students', query: to.query, hash: to.hash }),
       },
       {
         path: 'system-settings',
@@ -52,37 +50,59 @@ const routes: RouteRecordRaw[] = [
         path: 'dashboard',
         name: 'dashboard',
         component: () => import('@/views/DashboardView.vue'),
-        meta: { title: '仪表盘', icon: 'Odometer' },
+        meta: { title: '仪表盘', icon: 'Odometer', permission: 'dashboard:read' },
       },
       {
         path: 'classes',
         name: 'classes',
         component: () => import('@/views/ClassesView.vue'),
-        meta: { title: '班级管理', icon: 'School', permission: 'class:read' },
+        meta: {
+          title: '班级管理',
+          icon: 'School',
+          permission: 'class:read',
+          menuActions: [
+            'class:manage',
+            'class:account',
+            'class:settings',
+            'roster:manage',
+            'schedule:write',
+            { key: 'grade:write', scope: 'manage' },
+          ],
+        },
       },
       {
         path: 'students',
         name: 'students',
         component: () => import('@/views/StudentsView.vue'),
-        meta: { title: '学生管理', icon: 'User', permission: 'roster:read' },
+        meta: {
+          title: '学生管理',
+          icon: 'User',
+          permission: 'roster:read',
+          menuActions: ['roster:manage', 'call:create'],
+        },
       },
       {
         path: 'teachers',
         name: 'teachers',
         component: () => import('@/views/TeachersView.vue'),
-        meta: { title: '教师管理', icon: 'UserFilled', roles: ['ADMIN'] },
+        meta: { title: '教师管理', icon: 'UserFilled', permission: 'teacher:manage' },
       },
       {
         path: 'term-weeks',
         name: 'term-weeks',
         component: () => import('@/views/TermWeeksView.vue'),
         // 改周次会让全校/某班的课表口径整体变化，与「班级管理」同一档权限
-        meta: { title: '学期周次', icon: 'Calendar', permission: 'term:read' },
+        meta: {
+          title: '学期周次',
+          icon: 'Calendar',
+          permission: 'term:read',
+          menuActions: ['term:write', 'class:settings'],
+        },
       },
       {
         path: 'promotion',
         name: 'promotion',
-        component: () => import('@/components/PromotionSettings.vue'),
+        component: () => import('@/views/PromotionView.vue'),
         meta: { title: '学年升级', icon: 'Calendar', permission: 'promotion:manage' },
       },
       {
@@ -96,25 +116,40 @@ const routes: RouteRecordRaw[] = [
         path: 'schedules',
         name: 'schedules',
         redirect: '/plan-editor',
-        meta: { title: '课表管理', icon: 'Calendar' },
+        meta: { title: '课表管理', icon: 'Calendar', permission: 'schedule:read' },
       },
       {
         path: 'homeworks',
         name: 'homeworks',
         component: () => import('@/views/HomeworksView.vue'),
-        meta: { title: '作业发布', icon: 'Notebook' },
+        meta: {
+          title: '作业发布',
+          icon: 'Notebook',
+          permission: 'homework:read',
+          menuActions: ['homework:write'],
+        },
       },
       {
         path: 'notifications',
         name: 'notifications',
         component: () => import('@/views/NotificationsView.vue'),
-        meta: { title: '通知发布', icon: 'Bell' },
+        meta: {
+          title: '通知发布',
+          icon: 'Bell',
+          permission: 'notification:read',
+          menuActions: ['notification:publish', 'notification:delete', 'call:create'],
+        },
       },
       {
         path: 'grades',
         name: 'grades',
         component: () => import('@/views/GradesView.vue'),
-        meta: { title: '成绩录入', icon: 'Trophy' },
+        meta: {
+          title: '成绩录入',
+          icon: 'Trophy',
+          permission: 'grade:read',
+          menuActions: ['grade:write', 'grade:import'],
+        },
       },
       {
         path: 'assistant',
@@ -122,7 +157,7 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/AssistantView.vue'),
         // 按**生效权限**门控（教师默认就有 ai:use，见 shared/permissions.ts 的默认模板）：
         // 管理员把 ai:use 从某个权限组收回后，这一页同时从菜单与路由上消失
-        meta: { title: 'AI 助手', icon: 'MagicStick', permission: 'ai:use' },
+        meta: { title: 'AI 助手', icon: 'MagicStick', permission: 'ai:use', menuActions: ['ai:use'] },
       },
       {
         path: 'ai-settings',
@@ -136,24 +171,34 @@ const routes: RouteRecordRaw[] = [
         name: 'database',
         component: () => import('@/views/DatabaseView.vue'),
         // 与后端 requireRole('ADMIN') 对齐：改动数据库是最高危操作，仅管理员
-        meta: { title: '数据库管理', icon: 'Coin', roles: ['ADMIN'] },
+        meta: { title: '数据库管理', icon: 'Coin', permission: 'database:manage' },
       },
       {
         path: 'permissions',
         name: 'permissions',
         component: () => import('@/views/PermissionsView.vue'),
-        // 这一页**按生效权限**门控而不是按角色：教师被某个权限组授予 permission:manage 后同样可用，
-        // 与后端 requirePermission('permission:manage') 对齐（详见下方守卫）
-        meta: { title: '权限组管理', icon: 'Lock', permission: 'permission:manage' },
+        // 管理员专用能力不可下放，菜单与路由仍统一按服务端能力集合过滤。
+        meta: { title: '权限与范围', icon: 'Lock', permission: 'permission:manage' },
       },
       {
         path: 'clients',
         name: 'clients',
         component: () => import('@/views/ClientsView.vue'),
-        meta: { title: '客户端', icon: 'Monitor', permission: 'client:read' },
+        meta: {
+          title: '客户端',
+          icon: 'Monitor',
+          permission: 'client:read',
+          menuActions: ['client:manage', 'client:update-push', 'remote:control', 'client:update'],
+        },
       },
       { path: 'client-devices', redirect: '/clients' },
     ],
+  },
+  {
+    path: '/no-access',
+    name: 'no-access',
+    component: () => import('@/views/NoAccessView.vue'),
+    meta: { title: '暂无功能授权' },
   },
   {
     path: '/:pathMatch(.*)*',
@@ -168,18 +213,6 @@ export const router = createRouter({
   routes,
 });
 
-/** 读取已保存的登录用户角色（路由守卫用；未登录/解析失败返回 null） */
-function storedRole(): string | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.user);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { role?: string };
-    return parsed?.role ?? null;
-  } catch {
-    return null;
-  }
-}
-
 router.beforeEach(async (to) => {
   const token = localStorage.getItem(STORAGE_KEYS.token);
   if (to.meta.public) {
@@ -189,23 +222,22 @@ router.beforeEach(async (to) => {
   if (!token) {
     return { name: 'login', query: { redirect: to.fullPath } };
   }
-  // 仅管理员可见的页面（班级/学生/教师管理）：直接输网址也要挡回去，
-  // 不能依赖"菜单隐藏"——菜单隐藏只是看不见，不是权限。
-  const roles = to.meta.roles;
-  if (Array.isArray(roles) && roles.length > 0) {
-    const role = storedRole();
-    if (!role || !(roles as string[]).includes(role)) {
-      return { name: 'dashboard' };
-    }
-  }
-  // 按**生效权限**门控的页面（权限组管理）：角色判不出来 —— 教师被权限组授予
-  // permission:manage 后同样该放行，所以这里异步取一次生效权限。
-  // `ensurePermissions()` 在 store 内是幂等的（本次会话只真拉一次），不会每次跳转都打接口。
   const permission = to.meta.permission;
   if (typeof permission === 'string') {
     const auth = useAuthStore();
     await auth.ensurePermissions();
-    if (!auth.can(permission as PermissionKey)) return { name: 'dashboard' };
+    if (!auth.can(permission as PermissionKey)) {
+      if (auth.can('dashboard:read')) return { name: 'dashboard' };
+      const fallback = router
+        .getRoutes()
+        .find(
+          (r) =>
+            r.name &&
+            typeof r.meta.permission === 'string' &&
+            auth.canShowMenu(r.meta.permission, r.meta.menuActions),
+        );
+      return fallback ? { name: fallback.name! } : { name: 'no-access' };
+    }
   }
   return true;
 });

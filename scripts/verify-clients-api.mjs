@@ -28,12 +28,12 @@ const groups = (await api('/permissions/groups', admin)).data;
 const teacherDefault = groups.find((g) => g.defaultRole === 'TEACHER');
 const adminDefault = groups.find((g) => g.defaultRole === 'ADMIN');
 const key = `api-regression-${Date.now()}`;
-let deviceId, scheduleId, staffDeviceId;
+let deviceId, scheduleId, staffDeviceId, foreignClassId;
 const version = `99.0.0-regression-${Date.now()}`;
 const releaseDir = path.join(root, 'packages/data/client-releases', version);
 const releaseName = `ClassHelper-${version}-x64-client-setup.exe`;
 try {
-  check('角色默认组已创建且可以识别对应角色', teacherDefault && adminDefault);
+  check('只有教师默认组，管理员没有可编辑默认组', teacherDefault && !adminDefault);
   await api(`/permissions/groups/${teacherDefault.id}`, admin, { name: '回归教师默认组', keys: [] }, 'PATCH');
   let mine = await api('/permissions/me', teacher);
   check('未分组教师使用数据库默认组，空组真正收回权限', mine.data.permissions.length === 0);
@@ -47,15 +47,11 @@ try {
   mine = await api('/permissions/me', teacher);
   check('默认组改名后继续生效，可赋予远控与推送权限', mine.data.permissions.includes('remote:control'));
   check('拥有推送权限的教师可读取安装包列表', (await api('/update/client/releases', teacher)).status === 200);
-  await api(`/permissions/groups/${adminDefault.id}`, admin, { keys: [] }, 'PATCH');
   mine = await api('/permissions/me', admin);
   check(
-    '管理员默认组可收权，保留两个防锁死入口',
-    mine.data.permissions.length === 2 &&
-      mine.data.permissions.includes('permission:manage') &&
-      mine.data.permissions.includes('system:manage'),
+    '管理员固定全集，不受教师模板修改影响',
+    mine.data.permissions.includes('teacher:manage') && mine.data.permissions.includes('client:update'),
   );
-  await api(`/permissions/groups/${adminDefault.id}`, admin, { keys: adminDefault.keys }, 'PATCH');
 
   const beat = await api('/clients/heartbeat', classToken, {
     agentProtocol: 2,
@@ -112,13 +108,21 @@ try {
   fs.writeFileSync(path.join(releaseDir, releaseName), '用于下载校验的测试载荷，不是安装器');
   const registered = await api('/update/client/releases', admin, { version, fileName: releaseName });
   check('本地缓存安装包可登记', registered.status === 201);
-  staffDeviceId = (await api('/clients/heartbeat', admin, { agentProtocol: 2, deviceKey: `${key}-staff` }))
-    .data.deviceId;
-  const deniedCommand = await api('/clients/commands', teacher, { deviceIds: [staffDeviceId], kind: 'lock' });
+  const foreignClass = (await api('/classes', admin, { grade: '高一', enrollmentYear: 2035, classIndex: 99 }))
+    .data;
+  foreignClassId = foreignClass.id;
+  const otherClassToken = (
+    await api('/auth/class-login', null, { code: foreignClass.code, password: '123456' })
+  ).data.token;
+  staffDeviceId = (
+    await api('/clients/heartbeat', otherClassToken, { agentProtocol: 2, deviceKey: `${key}-other-class` })
+  ).data.deviceId;
   check(
-    '教师获远控权限后仍不能操作班级范围外设备',
-    deniedCommand.data.failed === 1 && deniedCommand.data.succeeded === 0,
+    '管理员个人会话不能冒充设备心跳',
+    (await api('/clients/heartbeat', admin, { agentProtocol: 2, deviceKey: `${key}-staff` })).status === 403,
   );
+  const deniedCommand = await api('/clients/commands', teacher, { deviceIds: [staffDeviceId], kind: 'lock' });
+  check('教师获远控权限后仍不能操作班级范围外设备', deniedCommand.status === 403);
   check(
     '教师获更新权限后不能越过班级范围推送',
     (await api('/clients/updates', teacher, { deviceIds: [staffDeviceId], version, mode: 'immediate' }))
@@ -213,12 +217,6 @@ try {
   );
 } finally {
   await api(
-    `/permissions/groups/${adminDefault.id}`,
-    admin,
-    { name: adminDefault.name, keys: adminDefault.keys },
-    'PATCH',
-  );
-  await api(
     `/permissions/groups/${teacherDefault.id}`,
     admin,
     { name: teacherDefault.name, keys: teacherDefault.keys },
@@ -226,8 +224,11 @@ try {
   );
   if (deviceId) await api(`/clients/devices/${deviceId}`, admin, undefined, 'DELETE');
   if (staffDeviceId) await api(`/clients/devices/${staffDeviceId}`, admin, undefined, 'DELETE');
+  if (foreignClassId) await api(`/classes/${foreignClassId}`, admin, undefined, 'DELETE');
   if (scheduleId) await api(`/schedules/${scheduleId}`, admin, undefined, 'DELETE');
   await api(`/update/client/releases/${version}`, admin, undefined, 'DELETE');
+  if (!path.resolve(releaseDir).startsWith(path.resolve(root, 'packages/data/client-releases') + path.sep))
+    throw new Error('拒绝清理交付目录外的路径');
   fs.rmSync(releaseDir, { recursive: true, force: true });
 }
 console.log(`客户端 API 回归：${passed}/${passed} 项通过`);

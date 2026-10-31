@@ -77,18 +77,7 @@ function openAssistant(): void {
   void router.push('/assistant');
 }
 
-/**
- * 菜单项与可见角色（与后端 `@classhelper/shared/permissions` 矩阵保持一致）：
- * - 班级管理 / 学生管理 / 教师管理：仅管理员（班主任与科任老师都没有班级增删改与人员分配权限）
- * - 课表管理：管理员 + 班主任（页面内再按"是否本班班主任"控制增删改按钮）
- * - 成绩录入：管理员 + 教师；页面内只对"管理员或所选班级的班主任"显示写入/导入按钮
- *   （需求 6：成绩与表格导入老师端可用且不越权；科任老师只能看，写入会被后端 403）
- * - 作业 / 通知：所有教师
- * - 数据库管理：仅管理员（备份/恢复/导入导出/一键切换是最高危操作，后端同样 requireRole('ADMIN')）
- * - 权限组管理 / 客户端设备：`roles` 只是粗筛（管理员 + 教师），真正的门控是**生效权限**
- *   （`permission:manage` / `client:manage`）—— 教师被某个权限组授予它之后同样该看见
- *   （见 `visibleMenuItems`）
- */
+/** 菜单标题、图标、能力取路由；服务端负责范围与业务关系的最终校验。 */
 const menuItems = router
   .getRoutes()
   .filter((record) => MANAGEMENT_GROUPS.some((g) => (g.paths as readonly string[]).includes(record.path)))
@@ -96,16 +85,11 @@ const menuItems = router
     path: record.path,
     title: String(record.meta.title || record.path),
     icon: String(record.meta.icon || 'Setting'),
-    roles: record.meta.roles as string[] | undefined,
     permission: record.meta.permission as PermissionKey | undefined,
+    menuActions: record.meta.menuActions,
   }));
 const visibleMenuItems = computed(() =>
-  menuItems.filter(
-    (item) =>
-      !!auth.role &&
-      (!item.roles?.length || item.roles.includes(auth.role)) &&
-      (!item.permission || auth.can(item.permission)),
-  ),
+  menuItems.filter((item) => !!auth.role && auth.canShowMenu(item.permission, item.menuActions)),
 );
 const menuGroups = computed(() =>
   MANAGEMENT_GROUPS.map((group) => ({
@@ -123,12 +107,12 @@ const searchResults = computed(() =>
 );
 const tabs = ref<Array<ManagementMenuItem & { fullPath: string }>>([]);
 function addCurrentTab() {
+  tabs.value = tabs.value.filter((tab) => visibleMenuItems.value.some((item) => item.path === tab.path));
   const item = visibleMenuItems.value.find((item) => item.path === route.path);
   if (!item) return;
   const tab = tabs.value.find((tab) => tab.path === item.path);
   if (tab) tab.fullPath = route.fullPath;
   else tabs.value.push({ path: item.path, title: item.title, icon: item.icon, fullPath: route.fullPath });
-  tabs.value = tabs.value.filter((tab) => visibleMenuItems.value.some((item) => item.path === tab.path));
   if (tabs.value.length > 20) tabs.value.splice(tabs.value[0]?.path === '/dashboard' ? 1 : 0, 1);
 }
 watch([() => route.fullPath, visibleMenuItems], addCurrentTab, { immediate: true });

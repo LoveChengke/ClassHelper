@@ -1,3 +1,5 @@
+import type { TokenPayload } from '../../lib/jwt.js';
+import { assertAdmin } from '../../lib/authz/index.js';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -794,4 +796,24 @@ async function runSwitch(job: SwitchJob, target: TargetConnectionInput): Promise
     job.status = 'error';
     job.finishedAt = new Date().toISOString();
   }
+}
+
+/** 请求入口必须携带 actor；后台调度只调用模块内部维护函数。 */
+export function forAdministrator(actor: TokenPayload) {
+  assertAdmin(actor);
+  return {
+    getDatabaseStatus,
+    testConnection,
+    listBackups,
+    createBackup,
+    restoreBackup,
+    deleteBackup,
+    exportSnapshotJson,
+    importSnapshotBase64,
+    sqliteFilePathForDownload,
+    getBackupSchedule,
+    saveSchedulePatch,
+    startSwitch,
+    getSwitchJob,
+  };
 }

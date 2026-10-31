@@ -1,3 +1,5 @@
+import type { TokenPayload } from '../../lib/jwt.js';
+import { assertAdmin } from '../../lib/authz/index.js';
 import { getReleaseProgress, setReleaseProgress } from './release-progress.js';
 import { Transform } from 'node:stream';
 import crypto from 'node:crypto';
@@ -54,10 +56,14 @@ function releaseRoot(): string {
 }
 
 function releaseDir(version: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(version) || version.includes('..'))
+    throw ApiError.badRequest('版本号不是安全路径段');
   return path.join(releaseRoot(), version);
 }
 
 function releaseFilePath(version: string, fileName: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(fileName) || fileName.includes('..'))
+    throw ApiError.badRequest('文件名不是安全路径段');
   return path.join(releaseDir(version), fileName);
 }
 
@@ -128,9 +134,11 @@ export async function resolveReleaseFile(
 
 /** 登记一份已经在磁盘上的安装包：算 sha256 / 大小后落库（可重复登记，会覆盖） */
 export async function registerRelease(
-  userId: string,
+  actor: TokenPayload,
   input: RegisterClientReleaseInput,
 ): Promise<ClientReleaseDto> {
+  assertAdmin(actor);
+  const userId = actor.sub;
   const version = input.version;
   // 文件名默认走发布命名约定（与 GitHub Release、官网兜底直链一致）
   const known = (await prisma.clientRelease.findUnique({ where: { version } })) as ReleaseRow | null;
@@ -171,11 +179,12 @@ export async function registerRelease(
 
 /** 让服务端从 GitHub 拉一份安装包并登记（教室无外网时由服务端代下） */
 export async function fetchReleaseFromGithub(
-  userId: string,
+  actor: TokenPayload,
   input: FetchClientReleaseInput,
 ): Promise<ClientReleaseDto> {
   if (['downloading', 'verifying'].includes(getReleaseProgress().stage))
     throw ApiError.conflict('已有安装包正在下载');
+  assertAdmin(actor);
   const version = input.version;
   setReleaseProgress({ version, stage: 'downloading', downloadedBytes: 0, totalBytes: 0, error: '' });
   const fileName = clientReleaseFileName(version);
@@ -221,13 +230,14 @@ export async function fetchReleaseFromGithub(
 
   // 落盘后统一走登记：sha256 / 大小 / 落库都在同一处算
   setReleaseProgress({ stage: 'verifying' });
-  const release = await registerRelease(userId, { version, fileName });
+  const release = await registerRelease(actor, { version, fileName });
   setReleaseProgress({ stage: 'ready', downloadedBytes: release.size, totalBytes: release.size });
   return release;
 }
 
 /** 删除一份缓存的安装包（元数据 + 磁盘文件） */
-export async function deleteRelease(version: string): Promise<{ version: string }> {
+export async function deleteRelease(actor: TokenPayload, version: string): Promise<{ version: string }> {
+  assertAdmin(actor);
   const row = (await prisma.clientRelease.findUnique({ where: { version } })) as ReleaseRow | null;
   if (!row) throw ApiError.notFound('服务端没有这个版本的安装包');
   await prisma.clientRelease.delete({ where: { version } });

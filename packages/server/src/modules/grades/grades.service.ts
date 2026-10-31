@@ -1,3 +1,5 @@
+import { assertManage, assertPermissionOrClassDevice } from '../../lib/authz/index.js';
+import { assertContentWrite } from '../../lib/authz/index.js';
 import type { CollectiveGradeAnalysisDto as ContractCollectiveGradeAnalysisDto } from '@classhelper/shared';
 import {
   SOCKET_EVENTS,
@@ -14,7 +16,6 @@ import {
   type StudentGradeDetailDto,
 } from '@classhelper/shared';
 import {
-  assertCanManageSubjectContent,
   assertClassAccess,
   classScopeWhere,
   isClassDevice,
@@ -57,16 +58,10 @@ const classSelect = { select: { name: true } } as const;
 const include = { course: courseSelect, student: studentSelect, class: classSelect } as const;
 
 async function assertDetailQuery(user: TokenPayload, classId: string): Promise<void> {
-  await assertClassAccess(user, classId);
+  await assertClassAccess(user, classId, 'grade:read');
   const cls = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
-  if (
-    !canQueryStudentGrades({
-      classRole: await resolveUserClassRole(user, classId),
-      gradeQueryEnabled: cls.studentGradeQueryEnabled,
-    })
-  ) {
+  if (isClassDevice(user) && !cls.studentGradeQueryEnabled)
     throw ApiError.forbidden('本班只开放集体分析，未开放个人成绩');
-  }
 }
 
 /** 服务端聚合；不返回极值、个人标识或可由补集反推的稀疏分段。 */
@@ -74,7 +69,7 @@ export async function collectiveAnalysis(
   user: TokenPayload,
   classId: string,
 ): Promise<ContractCollectiveGradeAnalysisDto> {
-  await assertClassAccess(user, classId);
+  await assertClassAccess(user, classId, 'grade:read');
   const rows = await prisma.grade.findMany({
     where: { classId, student: activeStudentWhere() },
     select: {
@@ -139,12 +134,17 @@ export interface ListGradeOptions {
  * 教师/管理员调用时返回空数组（他们没有"自己的成绩"），请用 `listGrades`。
  */
 export async function listMyGrades(user: TokenPayload): Promise<GradeDto[]> {
+  await assertPermissionOrClassDevice(user, 'grade:read');
   if (isClassDevice(user)) await assertDetailQuery(user, user.classId ?? user.sub);
   const studentIds = await resolvePersonalIds(user);
   if (studentIds.length === 0) return [];
 
   const grades = await prisma.grade.findMany({
-    where: { studentId: { in: studentIds }, student: activeStudentWhere() },
+    where: {
+      classId: user.classId ?? user.sub,
+      studentId: { in: studentIds },
+      student: activeStudentWhere(),
+    },
     include,
     orderBy: [{ publishedAt: 'desc' }, { examName: 'asc' }],
     take: 1000,
@@ -154,7 +154,7 @@ export async function listMyGrades(user: TokenPayload): Promise<GradeDto[]> {
 
 /** 教师 / 管理员查看成绩（按可访问班级过滤） */
 export async function listGrades(user: TokenPayload, options: ListGradeOptions): Promise<GradeDto[]> {
-  const scope = await resolveClassScope(user, options.classId);
+  const scope = await resolveClassScope(user, options.classId, 'grade:read');
   if (isClassDevice(user)) await assertDetailQuery(user, user.classId ?? user.sub);
   const grades = await prisma.grade.findMany({
     where: {
@@ -220,11 +220,11 @@ export async function getGradeStats(user: TokenPayload, options: ListGradeOption
 /**
  * 录入一条成绩。
  *
- * 权限走 `assertCanManageSubjectContent`：**科任老师只能录自己任教科目**的成绩，
+ * 权限走 ``：**科任老师只能录自己任教科目**的成绩，
  * 班主任若不教这一科同样被拒；不指定科目（courseId 为空）时只有班主任/管理员可录。
  */
 export async function createGrade(user: TokenPayload, input: CreateGradeInput): Promise<GradeDto> {
-  await assertCanManageSubjectContent(user, input.classId, input.courseId ?? null, '录入成绩');
+  await assertContentWrite(user, 'grade:write', input.classId, input.courseId ?? null, '录入成绩');
   await assertStudentInClass(input.studentId, input.classId);
   if (input.courseId) await assertCourseInClass(input.courseId, input.classId);
 
@@ -249,7 +249,7 @@ export async function createGrade(user: TokenPayload, input: CreateGradeInput): 
 
 /** 批量录入：同一个考试一次提交整班成绩 */
 export async function bulkCreateGrades(user: TokenPayload, input: BulkCreateGradeInput): Promise<GradeDto[]> {
-  await assertCanManageSubjectContent(user, input.classId, input.courseId ?? null, '录入成绩');
+  await assertContentWrite(user, 'grade:write', input.classId, input.courseId ?? null, '录入成绩');
   if (input.courseId) await assertCourseInClass(input.courseId, input.classId);
 
   const publishedAt = parseOptionalDate(input.publishedAt) ?? new Date();
@@ -292,8 +292,11 @@ export async function updateGrade(
   if (!current) throw ApiError.notFound('成绩记录不存在');
 
   // 改的是哪条成绩，就按那条成绩所属的班级 + 科目判权限
+  await assertContentWrite(user, 'grade:write', current.classId, current.courseId, '修改成绩', {
+    allowClassDevice: false,
+  });
   const nextCourseId = input.courseId === undefined ? current.courseId : (input.courseId ?? null);
-  await assertCanManageSubjectContent(user, current.classId, nextCourseId, '修改成绩');
+  await assertContentWrite(user, 'grade:write', current.classId, nextCourseId, '修改成绩');
   if (nextCourseId) await assertCourseInClass(nextCourseId, current.classId);
 
   const totalScore = input.totalScore ?? current.totalScore;
@@ -331,7 +334,7 @@ export async function updateGrade(
 export async function deleteGrade(user: TokenPayload, gradeId: string): Promise<void> {
   const current = await prisma.grade.findFirst({ where: { id: gradeId, student: activeStudentWhere() } });
   if (!current) throw ApiError.notFound('成绩记录不存在');
-  await assertCanManageSubjectContent(user, current.classId, current.courseId, '删除成绩');
+  await assertContentWrite(user, 'grade:write', current.classId, current.courseId, '删除成绩');
 
   await prisma.grade.delete({ where: { id: gradeId } });
   await emitGradeUpdated(current.classId, {
@@ -369,7 +372,7 @@ export async function updateGradeLevels(
     // 逐条判权限：可能跨多个班级/科目（管理员在成绩页多选修改时会这样）
     for (const item of input.items) {
       const record = byId.get(item.id)!;
-      await assertCanManageSubjectContent(user, record.classId, record.courseId, '修改成绩等级');
+      await assertContentWrite(user, 'grade:write', record.classId, record.courseId, '修改成绩等级');
     }
 
     await prisma.$transaction(
@@ -387,7 +390,7 @@ export async function updateGradeLevels(
 
   // 整批重算
   const classId = input.classId!;
-  await assertCanManageSubjectContent(user, classId, input.courseId ?? null, '调整成绩等级');
+  await assertContentWrite(user, 'grade:write', classId, input.courseId ?? null, '调整成绩等级');
   const levelType = input.levelType!;
   if (levelType === 'custom') throw ApiError.badRequest('自定义等级不能由分数推算，请逐条填写等级');
   const records = await prisma.grade.findMany({
@@ -433,7 +436,7 @@ export async function getStudentGradeDetail(
   requestedClassId?: string,
 ): Promise<StudentGradeDetailDto> {
   if (isClassDevice(user)) await assertDetailQuery(user, user.classId ?? user.sub);
-  const scope = await resolveClassScope(user, requestedClassId);
+  const scope = await resolveClassScope(user, requestedClassId, 'student:grade-query');
 
   const student = await prisma.student.findFirst({
     where: { ...activeStudentWhere(), studentNo: normalizeStudentNo(studentNo), ...classScopeWhere(scope) },
@@ -458,7 +461,7 @@ export async function getStudentGradeDetail(
   }
 
   const grades = await prisma.grade.findMany({
-    where: { studentId: student.id },
+    where: { studentId: student.id, ...classScopeWhere(scope) },
     include,
     orderBy: [{ publishedAt: 'desc' }, { examName: 'asc' }],
     take: 500,
@@ -488,7 +491,7 @@ export async function getStudentGradeDetailById(
   });
   if (!student || ('status' in student && !isActiveStudent(student as { status: string })))
     throw ApiError.notFound('学生不存在');
-  await assertClassAccess(user, student.classId ?? '');
+  await assertClassAccess(user, student.classId ?? '', 'student:grade-query');
   return getStudentGradeDetail(user, student.studentNo);
 }
 
@@ -579,7 +582,8 @@ async function assertCourseInClass(courseId: string, classId: string): Promise<v
  * 只列 `Exam` 会让刚导进去的那次考试在界面上根本找不到。
  */
 export async function listExams(user: TokenPayload, classId: string): Promise<ExamDto[]> {
-  await assertClassAccess(user, classId);
+  if (isClassDevice(user)) await assertDetailQuery(user, classId);
+  await assertClassAccess(user, classId, 'grade:read');
   const [groups, exams] = await Promise.all([
     prisma.grade.groupBy({
       by: ['examName'],
@@ -619,7 +623,7 @@ export async function setExamCountInTotal(
   name: string,
   countInTotal: boolean,
 ): Promise<ExamDto> {
-  await assertClassAccess(user, classId);
+  await assertManage(user, 'grade:write', classId);
   if (!isStaff(user)) throw ApiError.forbidden('只有教师/管理员可以设置考试口径');
 
   const row = await prisma.exam.upsert({
@@ -666,7 +670,7 @@ export async function getExamRanking(
   classId: string,
   examName: string,
 ): Promise<ExamRankingDto> {
-  await assertClassAccess(user, classId);
+  await assertClassAccess(user, classId, 'grade:read');
   const classRecord = await prisma.class.findUnique({
     where: { id: classId },
     select: { name: true, studentGradeQueryEnabled: true },

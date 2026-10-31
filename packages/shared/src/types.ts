@@ -12,7 +12,8 @@ import type {
 
 // 只导入类型（PermissionKey 由 permissions.ts 的 PERMISSION_KEYS 推导）：
 // 两个文件之间是**类型层面**的相互引用，编译后都会被抹掉，运行时不存在循环依赖。
-import type { PermissionKey } from './permissions.js';
+import type { PermissionKey, PermissionMeta } from './permissions.js';
+import type { SocketChannel } from './constants.js';
 
 /**
  * 账号角色：管理员 / 教师 / ClassHelper 班级端。
@@ -495,14 +496,12 @@ export interface CreateClassRequest {
 }
 
 export interface UpdateClassRequest {
-  /** 本班学期开始日期（YYYY-MM-DD，第 1 教学周的周一）；留空串表示回落到全局配置 */
-  termStartDate?: string | null;
-  /** 入学年份（有名无实的旧数据需要补填；填了会重算 name） */
   enrollmentYear?: number;
-  /** 班号（同上） */
   classIndex?: number;
-  /** 本学期教学周数（1~30，仅管理员可调） */
+}
+export interface UpdateClassSettingsRequest {
   termWeeks?: number;
+  termStartDate?: string | null;
 }
 
 /** 班级端成绩查询开关 */
@@ -1205,6 +1204,10 @@ export interface IslandState {
 /* ------------------------------------------------------------------ 仪表盘 */
 
 export interface DashboardSummary {
+  sections: Record<
+    'classes' | 'students' | 'courses' | 'schedules' | 'homeworks' | 'notifications' | 'grades',
+    boolean
+  >;
   classCount: number;
   studentCount: number;
   courseCount: number;
@@ -1325,8 +1328,11 @@ export interface TimeLayoutImportResult {
 
 /** 客户端 -> 服务端事件名 */
 export interface ClientToServerEvents {
-  'class:join': (classId: string, ack?: (result: { ok: boolean; message?: string }) => void) => void;
-  'class:leave': (classId: string) => void;
+  'class:join': (
+    classId: string | { classId: string; channels?: SocketChannel[] },
+    ack?: (result: { ok: boolean; message?: string }) => void,
+  ) => void;
+  'class:leave': (classId: string | { classId: string; channels?: SocketChannel[] }) => void;
   ping: (ack?: () => void) => void;
 }
 
@@ -1465,6 +1471,12 @@ export interface UpdateInfo {
  * **没有任何分组**时回落角色默认模板（逐条镜像权限组上线前各路由的 requireRole）。
  */
 export interface PermissionGroupDto {
+  defaultScope: ContractPermissionScope;
+  defaultScopeValue: string;
+  defaultScopeLabel: string;
+  kind: 'builtin' | 'custom' | 'default';
+  inactiveKeys: PermissionKey[];
+  warnings: string[];
   scope?: ContractPermissionScope;
   scopeValue?: string;
   scopeLabel: string;
@@ -1481,14 +1493,32 @@ export interface PermissionGroupDto {
 }
 
 /** 权限页里的一个成员（管理员/教师账号） */
+export interface PermissionAssignment {
+  groupId: string;
+  scope: ContractPermissionScope;
+  scopeValue: string;
+}
+export interface EffectivePermissionsDto {
+  permissions: PermissionKey[];
+  entries: {
+    key: PermissionKey;
+    scopes: string[];
+    classes: { id: string; name: string }[];
+    classCount: number;
+  }[];
+  conflicts: string[];
+  headOnlyKeys: PermissionKey[];
+}
 export interface PermissionMemberDto {
+  fixed: boolean;
+  assignments: (PermissionAssignment & { groupName: string; scopeLabel: string })[];
   id: string;
   username: string;
   name: string;
   role: UserRole;
-  /** 所属权限组；空数组 = 走角色默认模板 */
+  /** 所属模板的派生 id；空数组 = 教师默认模板 */
   groupIds: string[];
-  /** 生效权限数量；管理员在分组并集之外始终保留两个管理入口 */
+  /** 生效能力数量；管理员固定为全集 */
   permissionCount: number;
   permissions: PermissionKey[];
   scopeLabels: string[];
@@ -1496,6 +1526,7 @@ export interface PermissionMemberDto {
 
 /** `GET /api/permissions/catalog`：权限键目录（与 shared 的常量一一对应，供权限页渲染） */
 export interface PermissionCatalogDto {
+  meta: Record<PermissionKey, PermissionMeta>;
   keys: PermissionKey[];
   labels: Record<PermissionKey, string>;
   categories: { title: string; keys: PermissionKey[] }[];
@@ -1503,7 +1534,7 @@ export interface PermissionCatalogDto {
   defaultRoles: Record<PermissionKey, UserRole[]>;
   /** 每个角色的默认模板（"没有分组时会是什么"） */
   roleDefaults: Record<UserRole, PermissionKey[]>;
-  /** 管理员不可被剥夺的键（前端置灰、服务端也会合并回去） */
+  /** 兼容字段：管理员固定拥有的全部目录键 */
   unremovable: PermissionKey[];
 }
 
@@ -1525,7 +1556,8 @@ export interface UpdatePermissionGroupRequest {
 
 /** `PUT /api/permissions/users/:id/groups`：整体替换某账号的权限组 */
 export interface AssignUserGroupsRequest {
-  groupIds: string[];
+  groupIds?: string[];
+  assignments?: PermissionAssignment[];
 }
 
 /**
@@ -1535,9 +1567,15 @@ export interface AssignUserGroupsRequest {
  * 真正的拦截始终在服务端。
  */
 export interface MyPermissionsDto {
+  /** 各能力实际班级集合，供界面选择器与按钮使用；服务端仍须再授权。 */
+  classScopes?: Partial<Record<PermissionKey, string[]>>;
+  manageScopes?: Partial<Record<PermissionKey, string[]>>;
+  /** 结合班主任、任课及发布者关系后的动作范围，用于维护页面入口。 */
+  actionScopes?: Partial<Record<PermissionKey, string[]>>;
+  allScopeKeys?: PermissionKey[];
   role: UserRole;
   permissions: PermissionKey[];
-  /** true = 权限来自权限组；false = 走角色默认模板（未分配任何组） */
+  /** true = 教师有显式分配；管理员和班级端恒为 false */
   fromGroups: boolean;
 }
 

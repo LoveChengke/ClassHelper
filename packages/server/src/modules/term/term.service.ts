@@ -1,3 +1,4 @@
+import { assertAdmin, assertHeadOnly } from '../../lib/authz/index.js';
 import {
   buildAutoTermWeeks,
   validateTermWeeks,
@@ -38,9 +39,15 @@ function scopeOf(classId?: string | null): string {
 
 /** 读取某个范围的周次配置 */
 export async function getTermWeeks(user: TokenPayload, classId?: string | null): Promise<TermWeeksDto> {
-  const scope = scopeOf(classId);
-  if (scope) await assertClassAccess(user, scope);
+  const scope = user.role === 'CLASS_DEVICE' ? (user.classId ?? user.sub) : scopeOf(classId);
+  if (user.role === 'CLASS_DEVICE' && classId && classId !== scope)
+    throw ApiError.forbidden('不能读取其他班级周次');
+  if (!scope) await assertPermission(user, 'term:read');
+  if (scope) await assertClassAccess(user, scope, 'term:read');
+  return readTermWeeks(scope);
+}
 
+async function readTermWeeks(scope: string): Promise<TermWeeksDto> {
   const [weeks] = await Promise.all([
     prisma.termWeek.findMany({ where: { classId: scope }, orderBy: { weekNumber: 'asc' } }),
     scope
@@ -75,8 +82,9 @@ export async function updateTermWeeks(
   user: TokenPayload,
   input: UpdateTermWeeksInput,
 ): Promise<TermWeeksDto> {
-  await assertPermission(user, 'term:write');
   const scope = scopeOf(input.classId);
+  if (scope) await assertHeadOnly(user, 'class:settings', scope);
+  else assertAdmin(user);
 
   const maximum = input.maxTermWeeks ?? (await getMaxTermWeeks());
   if (input.maxTermWeeks !== undefined && scope) throw ApiError.badRequest('总周数只能在全校默认范围修改');
@@ -132,7 +140,7 @@ export async function updateTermWeeks(
   logger.info(`学期周次已更新：范围=${scope || '全校默认'} 周数=${input.weeks.length} 由 ${user.name} 执行`);
   if (input.maxTermWeeks !== undefined) await setSetting(SETTING_KEYS.termMaxWeeks, String(maximum));
   await publishTermChange(scope);
-  return getTermWeeks(user, scope || null);
+  return readTermWeeks(scope);
 }
 
 /**
@@ -142,8 +150,9 @@ export async function updateTermWeeks(
  * 比从空白开始一周周填要快得多。
  */
 export async function autoTermWeeks(user: TokenPayload, input: AutoTermWeeksInput): Promise<TermWeeksDto> {
-  await assertPermission(user, 'term:write');
   const scope = scopeOf(input.classId);
+  if (scope) await assertHeadOnly(user, 'class:settings', scope);
+  else assertAdmin(user);
   const context = await loadTermContext(scope || null);
   const termStartDate = input.termStartDate || context.termStartDate || env.termStartDate;
   const maxWeek = input.maxWeek ?? context.maxWeek;

@@ -78,6 +78,7 @@ const notSubmittedNames = computed(() =>
 
 /** 打开详情时顺带读一次未交名单（教师/管理员都有权限） */
 async function loadSubmissions(homeworkId: string): Promise<boolean> {
+  if (!current.value || !canEditContent(current.value)) return false;
   const requestId = ++submissionsRequestId;
   submissionsLoading.value = true;
   try {
@@ -237,10 +238,7 @@ const ownFormCourses = computed(() =>
 );
 
 /** 该班里能不能新建科目：与课表管理同权限（管理员或本班班主任） */
-const canCreateCourse = computed(() => {
-  if (auth.isAdmin) return true;
-  return classes.value.find((item) => item.id === form.classId)?.teacherId === auth.user?.id;
-});
+const canCreateCourse = computed(() => auth.canManageClass('schedule:write', form.classId));
 
 async function loadFormCourses(): Promise<void> {
   const classId = form.classId;
@@ -500,6 +498,12 @@ onUnmounted(() => {
   realtime.off(SOCKET_EVENTS.homeworkUpdated, onHomeworkEvent);
   realtime.off(SOCKET_EVENTS.homeworkStatus, onHomeworkEvent);
 });
+function canEditContent(row: HomeworkDto): boolean {
+  if (!auth.canForClass('homework:write', row.classId)) return false;
+  if (auth.isAdmin) return true;
+  if (!row.courseId) return classes.value.find((c) => c.id === row.classId)?.teacher?.id === auth.user?.id;
+  return courses.value.some((c) => c.id === row.courseId && c.teacherId === auth.user?.id);
+}
 </script>
 
 <template>
@@ -545,8 +549,10 @@ onUnmounted(() => {
           @keyup.enter="loadHomeworks"
           @clear="loadHomeworks"
         />
-        <el-button type="primary" :icon="'Plus'" @click="openCreate">发布作业</el-button>
-        <el-button @click="openBulk">批量布置</el-button>
+        <el-button v-if="auth.can('homework:write')" type="primary" :icon="'Plus'" @click="openCreate">
+          发布作业
+        </el-button>
+        <el-button v-if="auth.can('homework:write')" @click="openBulk">批量布置</el-button>
       </div>
     </div>
 
@@ -565,8 +571,10 @@ onUnmounted(() => {
         <el-table-column label="操作" width="210" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="removeHomework(row)">删除</el-button>
+            <el-button v-if="canEditContent(row)" link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="canEditContent(row)" link type="danger" @click="removeHomework(row)">
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -715,7 +723,7 @@ onUnmounted(() => {
             已完成 {{ completedMap.done }} / {{ completedMap.total }} 人（{{ completedMap.rate }}%）
             <el-progress :percentage="completedMap.rate" :stroke-width="10" class="mt-12" />
           </el-descriptions-item>
-          <el-descriptions-item label="未交名单" :span="2">
+          <el-descriptions-item v-if="current && canEditContent(current)" label="未交名单" :span="2">
             <div v-loading="submissionsLoading" class="submission-summary">
               <template v-if="submissionStudents.length === 0">该班还没有学生账号</template>
               <template v-else-if="notSubmittedNames.length === 0">

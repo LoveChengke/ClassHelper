@@ -114,8 +114,17 @@ for (const [userId, id, scopeValue] of [
   [head.id, 'builtin-head', 'HEAD'],
   [teacher.id, 'builtin-teacher', ''],
 ] as const) {
-  await prisma.permissionGroup.update({ where: { id }, data: { scopeValue } });
-  await prisma.userPermissionGroup.create({ data: { userId, groupId: id } });
+  const scope =
+    id === 'builtin-grade'
+      ? 'GRADE'
+      : id === 'builtin-division'
+        ? 'DIVISION'
+        : id === 'builtin-head'
+          ? 'HEAD'
+          : 'TEACHING';
+  await prisma.userPermissionGroup.create({
+    data: { userId, groupId: id, scope, scopeValue: ['GRADE', 'DIVISION'].includes(scope) ? scopeValue : '' },
+  });
 }
 const server = createServer(createApp());
 await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

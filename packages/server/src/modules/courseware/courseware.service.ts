@@ -1,3 +1,9 @@
+import {
+  assertContentWrite,
+  assertPermission,
+  assertPermissionOrClassDevice,
+  classWhere,
+} from '../../lib/authz/index.js';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -17,7 +23,7 @@ import {
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
-import { assertCanManageSubjectContent, requireClassDeviceClassId } from '../../lib/access.js';
+import { requireClassDeviceClassId } from '../../lib/access.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { emitToClass } from '../../realtime/bus.js';
@@ -47,13 +53,20 @@ function dto(row: RecordWithRelations): CoursewareDto {
   };
 }
 export async function teachingClasses(user: TokenPayload) {
+  await assertPermission(user, 'courseware:write');
   return prisma.class.findMany({
-    where: { archivedYearId: null, courses: { some: { teacherId: user.sub } } },
+    where: {
+      AND: [
+        { archivedYearId: null, courses: { some: { teacherId: user.sub } } },
+        await classWhere(user, 'courseware:write'),
+      ],
+    },
     select: { id: true, name: true },
     orderBy: { name: 'asc' },
   });
 }
 async function validateClasses(user: TokenPayload, ids: string[]) {
+  await assertPermission(user, 'courseware:write');
   const classIds = [...new Set(ids)];
   const allowed = new Set((await teachingClasses(user)).map((item) => item.id));
   if (classIds.some((id) => !allowed.has(id))) throw ApiError.forbidden('只能选择自己任教的在读班级');
@@ -62,11 +75,12 @@ async function validateClasses(user: TokenPayload, ids: string[]) {
       where: { classId, teacherId: user.sub },
       select: { id: true },
     });
-    await assertCanManageSubjectContent(user, classId, course?.id, '发布课件');
+    await assertContentWrite(user, 'courseware:write', classId, course?.id, '发布课件');
   }
   return classIds;
 }
-export async function readable(user: TokenPayload, id: string) {
+export async function readable(user: TokenPayload, id: string, key: 'courseware:read' | 'courseware:write') {
+  await assertPermissionOrClassDevice(user, key);
   const row = await prisma.courseware.findUnique({ where: { id }, include });
   if (!row) throw ApiError.notFound('课件不存在');
   if (user.role === 'CLASS_DEVICE') {
@@ -77,17 +91,19 @@ export async function readable(user: TokenPayload, id: string) {
   return row;
 }
 async function owned(user: TokenPayload, id: string) {
-  const row = await readable(user, id);
+  await assertPermission(user, 'courseware:write');
+  const row = await readable(user, id, 'courseware:write');
   if (row.ownerId !== user.sub) throw ApiError.forbidden('只能修改自己的课件');
   return row;
 }
 export async function getCourseware(user: TokenPayload, id: string) {
-  const item = dto(await readable(user, id));
+  const item = dto(await readable(user, id, 'courseware:read'));
   if (user.role === 'CLASS_DEVICE')
     item.classes = item.classes.filter((c) => c.id === requireClassDeviceClassId(user));
   return item;
 }
 export async function listCourseware(user: TokenPayload) {
+  await assertPermissionOrClassDevice(user, 'courseware:read');
   const classId = user.role === 'CLASS_DEVICE' ? requireClassDeviceClassId(user) : null;
   const rows = await prisma.courseware.findMany({
     where: classId
@@ -177,6 +193,7 @@ async function assertFolder(user: TokenPayload, folderPath: string) {
     throw ApiError.badRequest('请选择自己创建的文件夹');
 }
 export async function listFolders(user: TokenPayload) {
+  await assertPermission(user, 'courseware:write');
   const rows = await prisma.coursewareFolder.findMany({
     where: { ownerId: user.sub },
     orderBy: { path: 'asc' },
@@ -184,6 +201,7 @@ export async function listFolders(user: TokenPayload) {
   return rows.map((row) => ({ id: row.id, path: row.path }));
 }
 export async function createFolder(user: TokenPayload, folderPath: string) {
+  await assertPermission(user, 'courseware:write');
   const row = await prisma.coursewareFolder.upsert({
     where: { ownerId_path: { ownerId: user.sub, path: folderPath } },
     create: { ownerId: user.sub, path: folderPath },
@@ -259,7 +277,7 @@ export async function acknowledgeTransfer(user: TokenPayload, pushId: string, de
   const device = await deviceFor(user, deviceKey);
   const push = await prisma.coursewarePush.findFirst({ where: { id: pushId, classId: device.classId } });
   if (!push) throw ApiError.notFound('传输任务不存在');
-  await readable(user, push.coursewareId);
+  await readable(user, push.coursewareId, 'courseware:read');
   await prisma.coursewareReceipt.upsert({
     where: { pushId_deviceId: { pushId, deviceId: device.id } },
     create: { pushId, deviceId: device.id },

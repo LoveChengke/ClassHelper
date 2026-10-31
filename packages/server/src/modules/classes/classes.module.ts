@@ -4,8 +4,9 @@ import { idParamSchema } from '../../lib/schemas.js';
 import {
   authenticate,
   getAuthUser,
-  requireStaffPermission,
+  requirePermissionOrClassDevice,
   requirePermission,
+  requireAdmin,
 } from '../../middleware/auth.js';
 import { validate, validatedBody, validatedParams, validatedQuery } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
@@ -19,6 +20,8 @@ import {
   promoteClassesSchema,
   updateClassAccountSchema,
   updateClassSchema,
+  updateClassSettingsSchema,
+  type UpdateClassSettingsInput,
   updateStudentGradeQuerySchema,
   type AddStudentInput,
   type AssignSubjectTeachersInput,
@@ -42,7 +45,7 @@ router.use(authenticate());
  */
 router.get(
   '/',
-  requireStaffPermission('class:read'),
+  requirePermissionOrClassDevice('class:read'),
   validate({ query: listClassesQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -59,6 +62,7 @@ router.get(
  */
 router.post(
   '/promote',
+  requireAdmin(),
   requirePermission('promotion:manage'),
   validate({ body: promoteClassesSchema }),
   async (req, res) => {
@@ -71,7 +75,7 @@ router.post(
 /** GET /api/classes/:id - 班级详情（学生名单 + 课程 + 班主任 + 各科任课老师） */
 router.get(
   '/:id',
-  requireStaffPermission('class:read'),
+  requirePermissionOrClassDevice('class:read'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -83,6 +87,7 @@ router.get(
 /** POST /api/classes - 创建班级（称呼由入学年份 + 班号生成，如「2026级1班」） */
 router.post(
   '/',
+  requireAdmin(),
   requirePermission('class:manage'),
   validate({ body: createClassSchema }),
   async (req, res) => {
@@ -94,6 +99,7 @@ router.post(
 /** PATCH /api/classes/:id - 编辑班级（年级 / 届别 / 教学周数），按功能权限及范围校验 */
 router.patch(
   '/:id',
+  requireAdmin(),
   requirePermission('class:manage'),
   (req, _res, next) => {
     if (req.body && 'grade' in req.body) return next(ApiError.badRequest('年级请通过学年升级入口修改'));
@@ -107,9 +113,25 @@ router.patch(
   },
 );
 
+router.patch(
+  '/:id/settings',
+  requirePermission('class:settings'),
+  validate({ params: idParamSchema, body: updateClassSettingsSchema }),
+  async (req, res) => {
+    sendOk(
+      res,
+      await classService.updateClassSettings(
+        getAuthUser(req),
+        String(req.params.id),
+        validatedBody<UpdateClassSettingsInput>(req),
+      ),
+    );
+  },
+);
 /** DELETE /api/classes/:id - 删除班级 */
 router.delete(
   '/:id',
+  requireAdmin(),
   requirePermission('class:manage'),
   validate({ params: idParamSchema }),
   async (req, res) => {
@@ -126,7 +148,7 @@ router.delete(
  */
 router.patch(
   '/:id/class-account',
-  requirePermission('class:manage'),
+  requirePermission('class:account'),
   validate({ params: idParamSchema, body: updateClassAccountSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -145,6 +167,7 @@ router.patch(
  */
 router.patch(
   '/:id/head-teacher',
+  requireAdmin(),
   requirePermission('class:manage'),
   validate({ params: idParamSchema, body: assignHeadTeacherSchema }),
   async (req, res) => {
@@ -164,6 +187,7 @@ router.patch(
  */
 router.put(
   '/:id/subject-teachers',
+  requireAdmin(),
   requirePermission('class:manage'),
   validate({ params: idParamSchema, body: assignSubjectTeachersSchema }),
   async (req, res) => {
@@ -183,7 +207,7 @@ router.put(
  */
 router.get(
   '/:id/student-grade-query',
-  requireStaffPermission('class:read'),
+  requirePermissionOrClassDevice('class:read'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -210,7 +234,7 @@ router.patch(
 /** GET /api/classes/:id/students - 班级学生名单 */
 router.get(
   '/:id/students',
-  requireStaffPermission('roster:read'),
+  requirePermissionOrClassDevice('roster:read'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);

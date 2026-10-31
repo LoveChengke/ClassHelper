@@ -1,7 +1,8 @@
+import { refreshClassSubscriptions } from '../../realtime/bus.js';
+import { assertAdmin, assertManage, assertContentWrite } from '../../lib/authz/index.js';
+import { changeStudentLifecycle, notifyStudentClasses } from '../../lib/student-lifecycle.js';
 import { assertPermission } from '../../lib/permissions.js';
 import { assertCanManageRoster, assertCanAssignTeachers, assertClassAccess } from '../../lib/access.js';
-import { addStudent } from '../classes/classes.service.js';
-import { updateStudent } from '../students/students.service.js';
 import * as XLSX from 'xlsx';
 import { formatClassName, normalizeStudentNo, type TableImportKind } from '@classhelper/shared';
 import { activeStudentWhere, isActiveStudent } from '../../lib/students.js';
@@ -11,8 +12,6 @@ import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
 import { hashPassword } from '../../lib/password.js';
-import { resolveUserClassRole } from '../../lib/access.js';
-import { canImport, canManageSubjectContent } from '@classhelper/shared';
 import type { TableCommitInput, TableFileInput } from './imports.schemas.js';
 
 /**
@@ -362,7 +361,6 @@ export async function commitGrades(user: TokenPayload, input: TableCommitInput):
    * 不属于那门课的记录（且覆盖语义的 append/overwrite 会把它写进同一张表）。
    * 判定沿用 shared 的 canManageSubjectContent，与 Web 端单条录入、作业发布**同一份规则**。
    */
-  const classRole = await resolveUserClassRole(user, classId);
 
   const errors: ImportRowError[] = [];
   const warnings: string[] = [];
@@ -425,21 +423,7 @@ export async function commitGrades(user: TokenPayload, input: TableCommitInput):
       warnings.push(`第 ${rowNumber} 行：科目「${courseName}」不存在，已按"不指定科目"导入`);
 
     // 该科目的成绩能不能由**当前这个人**写（管理员全通；挂了科目就只能是该科任课老师）
-    const canWriteCourse = canManageSubjectContent({
-      classRole,
-      hasSubject: Boolean(course),
-      isSubjectTeacherOfCourse: course ? course.teacherId === user.sub : false,
-      allowClassDevice: false,
-    });
-    if (!canWriteCourse) {
-      errors.push({
-        row: rowNumber,
-        message: course
-          ? `「${course.name}」不是你任教的科目，不能导入该科目的成绩`
-          : '不指定科目的成绩只有班主任或管理员可以导入，请填写科目列后再导入',
-      });
-      continue;
-    }
+    await assertContentWrite(user, 'grade:import', classId, course?.id ?? null, '导入成绩');
 
     // 表格里带等级列就按"自定义等级"落库（教师明确给了等级），否则按百分制换算
     const levelType = levelText ? 'custom' : 'percent';
@@ -521,6 +505,15 @@ export async function commitStudents(user: TokenPayload, input: TableCommitInput
     else classByName.set(key, item);
   }
 
+  const operations: {
+    classId: string;
+    studentNo: string;
+    name: string;
+    gender: string;
+    guardianPhone: string;
+    existingId: string | null;
+    sourceClassId: string | null;
+  }[] = [];
   const errors: ImportRowError[] = [];
   const warnings: string[] = [];
   let inserted = 0;
@@ -580,19 +573,68 @@ export async function commitStudents(user: TokenPayload, input: TableCommitInput
         skipped += 1;
         continue;
       }
-      if (existing.classId !== classId)
-        await addStudent(user, classId, { studentNo, name, gender, guardianPhone });
-      await updateStudent(user, existing.id, {
+      if (existing.classId !== classId) await assertCanManageRoster(user, existing.classId ?? undefined);
+      operations.push({
+        classId,
+        studentNo,
         name,
-        ...(gender ? { gender } : {}),
-        ...(guardianPhone ? { guardianPhone } : {}),
+        gender,
+        guardianPhone,
+        existingId: existing.id,
+        sourceClassId: existing.classId,
       });
       updated += 1;
     } else {
-      await addStudent(user, classId, { studentNo, name, gender, guardianPhone });
+      operations.push({
+        classId,
+        studentNo,
+        name,
+        gender,
+        guardianPhone,
+        existingId: null,
+        sourceClassId: null,
+      });
       inserted += 1;
     }
   }
+  await prisma.$transaction(
+    async (tx) => {
+      for (const op of operations) {
+        if (!op.existingId || op.sourceClassId !== op.classId)
+          await changeStudentLifecycle(
+            user,
+            {
+              studentIds: op.existingId ? [op.existingId] : [],
+              kind: 'class-change',
+              toClassId: op.classId,
+              note: '学生名单导入',
+              ...(!op.existingId
+                ? {
+                    newStudent: {
+                      studentNo: op.studentNo,
+                      name: op.name,
+                      gender: op.gender,
+                      guardianPhone: op.guardianPhone,
+                    },
+                  }
+                : {}),
+            },
+            tx,
+          );
+        if (op.existingId)
+          await tx.student.update({
+            where: { id: op.existingId },
+            data: {
+              name: op.name,
+              ...(op.gender ? { gender: op.gender } : {}),
+              ...(op.guardianPhone ? { guardianPhone: op.guardianPhone } : {}),
+            },
+          });
+      }
+    },
+    { timeout: 30000 },
+  );
+  notifyStudentClasses(operations.flatMap((op) => [op.sourceClassId, op.classId]));
 
   const result: ImportResult = {
     kind: 'students',
@@ -618,73 +660,94 @@ export async function commitStudents(user: TokenPayload, input: TableCommitInput
  */
 export async function commitTeachers(user: TokenPayload, input: TableCommitInput): Promise<ImportResult> {
   await assertImportAllowed(user, undefined, 'teachers');
-  const buffer = decodeBase64(input.contentBase64);
-  const parsed = parseTable(buffer, input.fileName);
+  assertAdmin(user);
+  return prisma.$transaction(
+    async (tx) => {
+      const buffer = decodeBase64(input.contentBase64);
+      const parsed = parseTable(buffer, input.fileName);
 
-  const errors: ImportRowError[] = [];
-  const warnings: string[] = [];
-  let inserted = 0;
-  let updated = 0;
-  let skipped = 0;
+      const errors: ImportRowError[] = [];
+      const warnings: string[] = [];
+      let inserted = 0;
+      let updated = 0;
+      let skipped = 0;
 
-  for (const [index, row] of parsed.rows.entries()) {
-    const rowNumber = index + 2;
-    const username = cellValue(row, parsed.columns, input.mapping, 'username');
-    const name = cellValue(row, parsed.columns, input.mapping, 'name');
-    const phone = cellValue(row, parsed.columns, input.mapping, 'phone');
-    const password = cellValue(row, parsed.columns, input.mapping, 'password');
-    const roleCell = cellValue(row, parsed.columns, input.mapping, 'role');
+      for (const [index, row] of parsed.rows.entries()) {
+        const rowNumber = index + 2;
+        const username = cellValue(row, parsed.columns, input.mapping, 'username');
+        const name = cellValue(row, parsed.columns, input.mapping, 'name');
+        const phone = cellValue(row, parsed.columns, input.mapping, 'phone');
+        const password = cellValue(row, parsed.columns, input.mapping, 'password');
+        const roleCell = cellValue(row, parsed.columns, input.mapping, 'role');
 
-    if (!username || !name) {
-      errors.push({ row: rowNumber, message: '工号与姓名都必须填写' });
-      continue;
-    }
-    if (!/^[A-Za-z0-9_.-]{3,32}$/.test(username)) {
-      errors.push({ row: rowNumber, message: `工号「${username}」格式不合法（3~32 位字母/数字/._-）` });
-      continue;
-    }
+        if (!username || !name) {
+          errors.push({ row: rowNumber, message: '工号与姓名都必须填写' });
+          continue;
+        }
+        if (!/^[A-Za-z0-9_.-]{3,32}$/.test(username)) {
+          errors.push({ row: rowNumber, message: `工号「${username}」格式不合法（3~32 位字母/数字/._-）` });
+          continue;
+        }
 
-    const existing = await prisma.user.findUnique({ where: { username }, select: { id: true, role: true } });
-    if (existing) {
-      if (input.mode === 'append') {
-        skipped += 1;
-        continue;
+        const existing = await tx.user.findUnique({ where: { username }, select: { id: true, role: true } });
+        if (existing?.role === 'ADMIN') {
+          errors.push({ row: rowNumber, message: '管理员账号请通过教师账号管理修改' });
+          continue;
+        }
+        if (existing) {
+          if (input.mode === 'append') {
+            skipped += 1;
+            continue;
+          }
+          const nextRole = parseTeacherRole(roleCell) ?? existing.role;
+          await tx.user.update({
+            where: { id: existing.id },
+            data: { name, role: nextRole, ...(phone ? { phone } : {}) },
+          });
+          updated += 1;
+        } else {
+          const initialPassword = password || env.defaultTeacherPassword;
+          await tx.user.create({
+            data: {
+              username,
+              name,
+              phone,
+              role: parseTeacherRole(roleCell) ?? 'TEACHER',
+              passwordHash: await hashPassword(initialPassword),
+            },
+          });
+          inserted += 1;
+        }
       }
-      const nextRole = parseTeacherRole(roleCell) ?? existing.role;
-      await prisma.user.update({
-        where: { id: existing.id },
-        data: { name, role: nextRole, ...(phone ? { phone } : {}) },
-      });
-      updated += 1;
-    } else {
-      const initialPassword = password || env.defaultTeacherPassword;
-      await prisma.user.create({
+
+      const result: ImportResult = {
+        kind: 'teachers',
+        total: parsed.rows.length,
+        inserted,
+        updated,
+        skipped,
+        failed: errors.length,
+        errors,
+        warnings,
+      };
+      logger.info(
+        `教师名单导入：模式=${input.mode} 新增=${inserted} 更新=${updated} 跳过=${skipped} 失败=${errors.length}`,
+      );
+      await tx.permissionAudit.create({
         data: {
-          username,
-          name,
-          phone,
-          role: parseTeacherRole(roleCell) ?? 'TEACHER',
-          passwordHash: await hashPassword(initialPassword),
+          actorId: user.sub,
+          actorName: user.name,
+          action: 'import-commitTeachers',
+          targetType: 'import',
+          targetId: '',
+          beforeJson: 'null',
+          afterJson: JSON.stringify(result),
         },
       });
-      inserted += 1;
-    }
-  }
-
-  const result: ImportResult = {
-    kind: 'teachers',
-    total: parsed.rows.length,
-    inserted,
-    updated,
-    skipped,
-    failed: errors.length,
-    errors,
-    warnings,
-  };
-  logger.info(
-    `教师名单导入：模式=${input.mode} 新增=${inserted} 更新=${updated} 跳过=${skipped} 失败=${errors.length}`,
+      return result;
+    },
+    { timeout: 30000 },
   );
-  return result;
 }
 
 /* ------------------------------------------------------------------ 班级任课老师 */
@@ -705,160 +768,184 @@ export async function commitClassTeachers(
   input: TableCommitInput,
 ): Promise<ImportResult> {
   await assertImportAllowed(user, undefined, 'classTeachers');
-  const buffer = decodeBase64(input.contentBase64);
-  const parsed = parseTable(buffer, input.fileName);
+  assertAdmin(user);
+  return prisma
+    .$transaction(
+      async (tx) => {
+        const buffer = decodeBase64(input.contentBase64);
+        const parsed = parseTable(buffer, input.fileName);
 
-  const useTeacherNo = input.useTeacherNo !== false; // 默认开：有工号就优先按工号匹配
+        const useTeacherNo = input.useTeacherNo !== false; // 默认开：有工号就优先按工号匹配
 
-  const errors: ImportRowError[] = [];
-  const warnings: string[] = [];
-  let inserted = 0;
-  let updated = 0;
-  let skipped = 0;
+        const errors: ImportRowError[] = [];
+        const warnings: string[] = [];
+        let inserted = 0;
+        let updated = 0;
+        let skipped = 0;
 
-  const classes = await prisma.class.findMany({
-    where: { archivedYearId: null },
-    select: { id: true, name: true, teacherId: true },
-  });
-  const classByName = new Map<string, { id: string; name: string; teacherId: string | null }>();
-  for (const item of classes) {
-    const key = item.name.toLowerCase();
-    if (classByName.has(key)) classByName.delete(key);
-    else classByName.set(key, item);
-  }
-
-  // 本次导入新建的教师账号（同一份表格里再遇到同名/同工号时复用，避免重复建号）
-  const createdTeachers = new Map<string, string>();
-
-  for (const [index, row] of parsed.rows.entries()) {
-    const rowNumber = index + 2;
-    const className = cellValue(row, parsed.columns, input.mapping, 'className');
-    const subjectName = cellValue(row, parsed.columns, input.mapping, 'subjectName');
-    const teacherNo = cellValue(row, parsed.columns, input.mapping, 'teacherNo');
-    const teacherName = cellValue(row, parsed.columns, input.mapping, 'teacherName');
-    const roleCell = cellValue(row, parsed.columns, input.mapping, 'role');
-
-    if (!className || !teacherNo) {
-      errors.push({ row: rowNumber, message: '班级与教师工号都必须填写' });
-      continue;
-    }
-
-    const targetClass = classByName.get(className.toLowerCase());
-    if (!targetClass) {
-      errors.push({ row: rowNumber, message: `找不到班级「${className}」（可能已毕业归档或名称重复）` });
-      continue;
-    }
-
-    await assertImportAllowed(user, targetClass.id, 'classTeachers');
-    const role = parseClassTeacherRole(roleCell);
-    if (!role) {
-      errors.push({ row: rowNumber, message: `角色「${roleCell}」无法识别，请填「班主任」或「科任」` });
-      continue;
-    }
-    if (role === 'SUBJECT' && !subjectName) {
-      errors.push({ row: rowNumber, message: '科任老师必须填写科目' });
-      continue;
-    }
-
-    // ---- 匹配或新建教师账号
-    let teacherId = createdTeachers.get(teacherNo.toLowerCase());
-    if (!teacherId) {
-      if (useTeacherNo) {
-        const byNo = await prisma.user.findUnique({
-          where: { username: teacherNo },
-          select: { id: true },
+        const classes = await tx.class.findMany({
+          where: { archivedYearId: null },
+          select: { id: true, name: true, teacherId: true },
         });
-        if (byNo) {
-          teacherId = byNo.id;
+        const classByName = new Map<string, { id: string; name: string; teacherId: string | null }>();
+        for (const item of classes) {
+          const key = item.name.toLowerCase();
+          if (classByName.has(key)) classByName.delete(key);
+          else classByName.set(key, item);
         }
-      } else if (teacherName) {
-        const byName = await prisma.user.findMany({
-          where: { name: teacherName, role: { in: ['TEACHER', 'ADMIN'] } },
-          select: { id: true },
-          take: 2,
-        });
-        if (byName.length === 1) {
-          teacherId = byName[0]!.id;
-        } else if (byName.length > 1) {
-          errors.push({
-            row: rowNumber,
-            message: `姓名「${teacherName}」对应多个教师账号，无法确定是哪一个；请打开「使用工号匹配」再导入`,
-          });
-          continue;
+
+        // 本次导入新建的教师账号（同一份表格里再遇到同名/同工号时复用，避免重复建号）
+        const createdTeachers = new Map<string, string>();
+
+        for (const [index, row] of parsed.rows.entries()) {
+          const rowNumber = index + 2;
+          const className = cellValue(row, parsed.columns, input.mapping, 'className');
+          const subjectName = cellValue(row, parsed.columns, input.mapping, 'subjectName');
+          const teacherNo = cellValue(row, parsed.columns, input.mapping, 'teacherNo');
+          const teacherName = cellValue(row, parsed.columns, input.mapping, 'teacherName');
+          const roleCell = cellValue(row, parsed.columns, input.mapping, 'role');
+
+          if (!className || !teacherNo) {
+            errors.push({ row: rowNumber, message: '班级与教师工号都必须填写' });
+            continue;
+          }
+
+          const targetClass = classByName.get(className.toLowerCase());
+          if (!targetClass) {
+            errors.push({
+              row: rowNumber,
+              message: `找不到班级「${className}」（可能已毕业归档或名称重复）`,
+            });
+            continue;
+          }
+
+          const role = parseClassTeacherRole(roleCell);
+          if (!role) {
+            errors.push({ row: rowNumber, message: `角色「${roleCell}」无法识别，请填「班主任」或「科任」` });
+            continue;
+          }
+          if (role === 'SUBJECT' && !subjectName) {
+            errors.push({ row: rowNumber, message: '科任老师必须填写科目' });
+            continue;
+          }
+
+          // ---- 匹配或新建教师账号
+          let teacherId = createdTeachers.get(teacherNo.toLowerCase());
+          if (!teacherId) {
+            if (useTeacherNo) {
+              const byNo = await tx.user.findUnique({
+                where: { username: teacherNo },
+                select: { id: true },
+              });
+              if (byNo) {
+                teacherId = byNo.id;
+              }
+            } else if (teacherName) {
+              const byName = await tx.user.findMany({
+                where: { name: teacherName, role: { in: ['TEACHER', 'ADMIN'] } },
+                select: { id: true },
+                take: 2,
+              });
+              if (byName.length === 1) {
+                teacherId = byName[0]!.id;
+              } else if (byName.length > 1) {
+                errors.push({
+                  row: rowNumber,
+                  message: `姓名「${teacherName}」对应多个教师账号，无法确定是哪一个；请打开「使用工号匹配」再导入`,
+                });
+                continue;
+              }
+            }
+          }
+
+          if (!teacherId) {
+            if (!useTeacherNo) {
+              errors.push({
+                row: rowNumber,
+                message: `按姓名找不到教师「${teacherName || teacherNo}」；请打开「使用工号匹配」以便按工号新建账号`,
+              });
+              continue;
+            }
+            await assertPermission(user, 'teacher:manage');
+            await assertPermission(user, 'import:teachers');
+            const created = await tx.user.create({
+              data: {
+                username: teacherNo,
+                name: teacherName || teacherNo,
+                role: 'TEACHER',
+                passwordHash: await hashPassword(env.defaultTeacherPassword),
+              },
+              select: { id: true },
+            });
+            teacherId = created.id;
+            inserted += 1;
+            warnings.push(
+              `第 ${rowNumber} 行：工号 ${teacherNo} 没有对应账号，已新建教师「${teacherName || teacherNo}」（初始密码见部署配置）`,
+            );
+          }
+          createdTeachers.set(teacherNo.toLowerCase(), teacherId);
+
+          // ---- 写入角色
+          if (role === 'HEAD') {
+            if (targetClass.teacherId === teacherId) {
+              skipped += 1;
+              continue;
+            }
+            await tx.class.update({ where: { id: targetClass.id }, data: { teacherId } });
+            targetClass.teacherId = teacherId;
+            updated += 1;
+          } else {
+            const existing = await tx.course.findUnique({
+              where: { classId_name: { classId: targetClass.id, name: subjectName } },
+              select: { id: true, teacherId: true },
+            });
+            if (existing) {
+              if (existing.teacherId === teacherId) {
+                skipped += 1;
+                continue;
+              }
+              await tx.course.update({ where: { id: existing.id }, data: { teacherId } });
+            } else {
+              await tx.course.create({
+                data: { name: subjectName, classId: targetClass.id, teacherId },
+              });
+            }
+            updated += 1;
+          }
         }
-      }
-    }
 
-    if (!teacherId) {
-      if (!useTeacherNo) {
-        errors.push({
-          row: rowNumber,
-          message: `按姓名找不到教师「${teacherName || teacherNo}」；请打开「使用工号匹配」以便按工号新建账号`,
+        const result: ImportResult = {
+          kind: 'classTeachers',
+          total: parsed.rows.length,
+          inserted,
+          updated,
+          skipped,
+          failed: errors.length,
+          errors,
+          warnings,
+        };
+        logger.info(
+          `班级任课老师导入：用工号匹配=${useTeacherNo} 新建教师=${inserted} 更新关系=${updated} 跳过=${skipped} 失败=${errors.length}`,
+        );
+        await tx.permissionAudit.create({
+          data: {
+            actorId: user.sub,
+            actorName: user.name,
+            action: 'import-commitClassTeachers',
+            targetType: 'import',
+            targetId: '',
+            beforeJson: 'null',
+            afterJson: JSON.stringify(result),
+          },
         });
-        continue;
-      }
-      await assertPermission(user, 'teacher:manage');
-      await assertPermission(user, 'import:teachers');
-      const created = await prisma.user.create({
-        data: {
-          username: teacherNo,
-          name: teacherName || teacherNo,
-          role: 'TEACHER',
-          passwordHash: await hashPassword(env.defaultTeacherPassword),
-        },
-        select: { id: true },
-      });
-      teacherId = created.id;
-      inserted += 1;
-      warnings.push(
-        `第 ${rowNumber} 行：工号 ${teacherNo} 没有对应账号，已新建教师「${teacherName || teacherNo}」（初始密码见部署配置）`,
-      );
-    }
-    createdTeachers.set(teacherNo.toLowerCase(), teacherId);
-
-    // ---- 写入角色
-    if (role === 'HEAD') {
-      if (targetClass.teacherId === teacherId) {
-        skipped += 1;
-        continue;
-      }
-      await prisma.class.update({ where: { id: targetClass.id }, data: { teacherId } });
-      targetClass.teacherId = teacherId;
-      updated += 1;
-    } else {
-      const existing = await prisma.course.findUnique({
-        where: { classId_name: { classId: targetClass.id, name: subjectName } },
-        select: { id: true, teacherId: true },
-      });
-      if (existing) {
-        if (existing.teacherId === teacherId) {
-          skipped += 1;
-          continue;
-        }
-        await prisma.course.update({ where: { id: existing.id }, data: { teacherId } });
-      } else {
-        await prisma.course.create({
-          data: { name: subjectName, classId: targetClass.id, teacherId },
-        });
-      }
-      updated += 1;
-    }
-  }
-
-  const result: ImportResult = {
-    kind: 'classTeachers',
-    total: parsed.rows.length,
-    inserted,
-    updated,
-    skipped,
-    failed: errors.length,
-    errors,
-    warnings,
-  };
-  logger.info(
-    `班级任课老师导入：用工号匹配=${useTeacherNo} 新建教师=${inserted} 更新关系=${updated} 跳过=${skipped} 失败=${errors.length}`,
-  );
-  return result;
+        return result;
+      },
+      { timeout: 30000 },
+    )
+    .then((result) => {
+      refreshClassSubscriptions();
+      return result;
+    });
 }
 
 export async function commitTable(user: TokenPayload, input: TableCommitInput): Promise<ImportResult> {
@@ -890,19 +977,15 @@ async function assertImportAllowed(
   } as const;
   await assertPermission(user, key[kind]);
   if (classId) await assertClassAccess(user, classId, key[kind]);
-  if (kind === 'students') return assertCanManageRoster(user, classId);
+  if (kind === 'students') {
+    if (classId) await assertManage(user, 'import:students', classId);
+    return assertCanManageRoster(user, classId);
+  }
   if (kind === 'teachers') return assertPermission(user, 'teacher:manage');
   if (kind === 'classTeachers') return assertCanAssignTeachers(user, classId);
-  const classRole = classId ? await resolveUserClassRole(user, classId) : 'NONE';
-  if (canImport(user.role, classRole, kind)) return;
-  if (kind === 'grades') {
-    throw ApiError.forbidden(
-      classRole === 'SUBJECT' || classRole === 'CLASS_DEVICE'
-        ? '科任老师与 ClassHelper 班级端不能导入名单或成绩，请联系班主任或管理员'
-        : '只能导入自己担任班主任的班级的数据',
-    );
-  }
-  throw ApiError.forbidden('该导入仅限管理员使用');
+  if (kind === 'grades' && classId) return;
+  if (kind === 'scheduleTimes' && classId) return assertManage(user, 'import:schedule', classId);
+  throw ApiError.forbidden('请指定目标班级');
 }
 
 /** 只接受明确的角色值；空值或未识别值保留原角色，避免意外降级。 */

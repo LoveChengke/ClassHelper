@@ -4,7 +4,7 @@ import { idParamSchema } from '../../lib/schemas.js';
 import {
   authenticate,
   getAuthUser,
-  requireStaffPermission,
+  requirePermissionOrClassDevice,
   requirePermission,
 } from '../../middleware/auth.js';
 import { validate, validatedParams, validatedQuery } from '../../middleware/validate.js';
@@ -32,7 +32,7 @@ router.use(authenticate());
 /** GET /api/homeworks?classId=&courseId=&pendingOnly=&keyword= - 作业列表 */
 router.get(
   '/',
-  requireStaffPermission('homework:read'),
+  requirePermissionOrClassDevice('homework:read'),
   validate({ query: listHomeworksQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -54,7 +54,7 @@ router.get(
  */
 router.get(
   '/days',
-  requireStaffPermission('homework:read'),
+  requirePermissionOrClassDevice('homework:read'),
   validate({ query: listHomeworkDaysQuerySchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -65,7 +65,7 @@ router.get(
 
 router.get(
   '/:id',
-  requireStaffPermission('homework:read'),
+  requirePermissionOrClassDevice('homework:read'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -82,7 +82,7 @@ router.get(
  */
 router.post(
   '/',
-  requireStaffPermission('homework:write'),
+  requirePermissionOrClassDevice('homework:write'),
   validate({ body: createHomeworkSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -99,7 +99,7 @@ router.post(
  *
  * 与 POST / 的区别：批量发布是 Web 管理端的"多班同发"工作流，因此这里挂 `homework:write`；
  * 教室机器的班级账号仍走单班录入（POST /，权限在服务层判，见 AGENTS.md 的现行工程约定）。
- * 每个班的科目归属依然由 createHomework 里的 assertCanManageSubjectContent 逐个判定 ——
+ * 每个班的科目归属依然由 createHomework 里的 逐个判定 ——
  * 批量不是绕过科目门的后门（§5 第 5 条）。
  */
 router.post(
@@ -145,7 +145,7 @@ router.delete(
 /** PATCH /api/homeworks/:id/status - 标记完成 / 取消完成 */
 router.patch(
   '/:id/status',
-  requireStaffPermission('homework:write'),
+  requirePermissionOrClassDevice('homework:write'),
   validate({ params: idParamSchema, body: updateHomeworkStatusSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -162,7 +162,7 @@ router.patch(
 /** GET /api/homeworks/:id/submissions - 提交名单（未交名单功能） */
 router.get(
   '/:id/submissions',
-  requireStaffPermission('homework:read'),
+  requirePermissionOrClassDevice('homework:read'),
   validate({ params: idParamSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
@@ -175,7 +175,7 @@ router.get(
 /** PATCH /api/homeworks/:id/submissions - 勾选未交名单（其余学生一律视为已交） */
 router.patch(
   '/:id/submissions',
-  requireStaffPermission('homework:write'),
+  requirePermissionOrClassDevice('homework:write'),
   validate({ params: idParamSchema, body: updateHomeworkSubmissionsSchema }),
   async (req, res) => {
     const user = getAuthUser(req);

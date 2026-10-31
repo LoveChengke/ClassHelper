@@ -37,8 +37,20 @@ const quickEntries = computed(() =>
       icon: 'Calendar',
       enabled: auth.can('schedule:read'),
     },
-    { path: '/homeworks', title: '发布作业', hint: '布置并追踪完成情况', icon: 'Notebook', enabled: true },
-    { path: '/notifications', title: '通知与叫人', hint: '实时送达教室', icon: 'Bell', enabled: true },
+    {
+      path: '/homeworks',
+      title: '发布作业',
+      hint: '布置并追踪完成情况',
+      icon: 'Notebook',
+      enabled: auth.can('homework:read'),
+    },
+    {
+      path: '/notifications',
+      title: '通知与叫人',
+      hint: '实时送达教室',
+      icon: 'Bell',
+      enabled: auth.can('notification:read'),
+    },
     {
       path: '/clients',
       title: '客户端',
@@ -52,18 +64,24 @@ const quickEntries = computed(() =>
 const statCards = computed(() => {
   const data = summary.value;
   return [
-    { label: '管理班级', value: data?.classCount ?? 0, hint: '按权限范围统计' },
-    { label: '学生人数', value: data?.studentCount ?? 0, hint: '所辖班级学生' },
-    { label: '课程数量', value: data?.courseCount ?? 0, hint: '含全部课程' },
-    { label: '课表条目', value: data?.scheduleCount ?? 0, hint: '全部周次' },
+    { section: 'classes', label: '管理班级', value: data?.classCount ?? 0, hint: '按权限范围统计' },
+    { section: 'students', label: '学生人数', value: data?.studentCount ?? 0, hint: '所辖班级学生' },
+    { section: 'courses', label: '课程数量', value: data?.courseCount ?? 0, hint: '含全部课程' },
+    { section: 'schedules', label: '课表条目', value: data?.scheduleCount ?? 0, hint: '全部周次' },
     {
+      section: 'homeworks',
       label: '作业总数',
       value: data?.homeworkCount ?? 0,
       hint: `未完成/待完成 ${data?.pendingHomeworkCount ?? 0}`,
     },
-    { label: '通知总数', value: data?.notificationCount ?? 0, hint: `未读 ${unreadCount.value}` },
-    { label: '成绩记录', value: data?.gradeCount ?? 0, hint: '已发布成绩' },
-  ];
+    {
+      section: 'notifications',
+      label: '通知总数',
+      value: data?.notificationCount ?? 0,
+      hint: `未读 ${unreadCount.value}`,
+    },
+    { section: 'grades', label: '成绩记录', value: data?.gradeCount ?? 0, hint: '已发布成绩' },
+  ].filter((card) => data?.sections[card.section as keyof DashboardSummary['sections']]);
 });
 
 /**
@@ -76,7 +94,7 @@ async function load(): Promise<void> {
   loading.value = true;
   try {
     summary.value = await dashboardApi.summary();
-    const result = await notificationApi.unreadCount();
+    const result = auth.can('notification:read') ? await notificationApi.unreadCount() : { count: 0 };
     unreadCount.value = result.count;
   } finally {
     loading.value = false;
@@ -158,7 +176,7 @@ function openNotification(item: NotificationDto): void {
 
     <el-row :gutter="12" class="mt-16">
       <el-col :xs="24" :md="24">
-        <el-card shadow="never">
+        <el-card v-if="summary?.sections.notifications" shadow="never">
           <template #header>
             <div class="card-header">
               <span>最新通知</span>
@@ -184,7 +202,7 @@ function openNotification(item: NotificationDto): void {
       </el-col>
     </el-row>
 
-    <el-card shadow="never" class="mt-16 table-card">
+    <el-card v-if="summary?.sections.homeworks" shadow="never" class="mt-16 table-card">
       <template #header>
         <div class="card-header">
           <span>最近作业</span>

@@ -324,7 +324,7 @@ export async function importTimeLayout(
   user: TokenPayload,
   input: TimeLayoutImportInput,
 ): Promise<{ layout: TimeLayoutDto; mode: string; warnings: string[]; replaced: number; merged: number }> {
-  await assertCanImportSchedule(user, input.classId, 'timetable:manage');
+  await assertCanImportSchedule(user, input.classId);
 
   const parsed = parseClassIslandTimeLayout(input.payload);
   if (parsed.errors.length > 0) {
@@ -380,7 +380,7 @@ export async function importTimeLayout(
       actionSet: '{}',
     };
   });
-  const layout = await saveLayout({ classId: input.classId, name, points }, current?.id);
+  const layout = await saveLayout(user, { classId: input.classId, name, points }, current?.id);
   logger.info(`课表时间配置导入：班级=${input.classId} 模式=${input.mode} 共 ${combined.length} 个时间点`);
   return {
     layout: toDto(layout),

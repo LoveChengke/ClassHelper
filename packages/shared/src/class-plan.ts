@@ -89,7 +89,7 @@ export function getMaxTermWeeks(configured?: unknown): number {
   return Number.isInteger(value) && value >= 1 && value <= 60 ? value : 30;
 }
 
-export type PermissionScope = 'SELF_CLASS' | 'GRADE' | 'DIVISION' | 'ALL';
+export type PermissionScope = 'TEACHING' | 'HEAD' | 'GRADE' | 'DIVISION' | 'ALL';
 export interface ReleaseProgressDto {
   version: string;
   stage: 'idle' | 'downloading' | 'verifying' | 'ready' | 'waiting' | 'installing' | 'failed';

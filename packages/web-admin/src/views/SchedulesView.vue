@@ -31,12 +31,7 @@ const realtime = useRealtimeStore();
  * 课表管理权限：管理员，或"所选班级的班主任"（Class.teacherId === 当前用户）。
  * 与后端 assertCanManageSchedule 使用同一权限矩阵；科任老师不显示写入口。
  */
-const canManageSchedule = computed(() => {
-  if (auth.role === 'ADMIN') return true;
-  if (auth.role !== 'TEACHER') return false;
-  const current = classes.value.find((item) => item.id === query.classId);
-  return Boolean(current && current.teacherId === auth.user?.id);
-});
+const canManageSchedule = computed(() => auth.canManageClass('schedule:write', query.classId));
 
 const loading = ref(false);
 const classes = ref<ClassDto[]>([]);

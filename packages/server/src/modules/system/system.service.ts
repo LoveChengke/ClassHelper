@@ -1,3 +1,5 @@
+import { assertAdmin } from '../../lib/authz/index.js';
+import type { TokenPayload } from '../../lib/jwt.js';
 import { createAutostartController } from './autostart.js';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -10,7 +12,6 @@ import {
 } from '@classhelper/shared';
 import { env } from '../../config/env.js';
 import { prisma } from '../../lib/db.js';
-import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
 import { SETTING_KEYS, getBooleanSetting, setBooleanSetting } from '../../lib/settings.js';
 import { APP_VERSION } from '../../lib/version.js';
@@ -39,6 +40,7 @@ export async function updateSystemSettings(
   user: TokenPayload,
   input: UpdateSystemSettingsInput,
 ): Promise<SystemSettingsDto> {
+  assertAdmin(user);
   if (input.developerMode !== undefined) {
     await setBooleanSetting(SETTING_KEYS.developerMode, input.developerMode);
     logger.info(`开发者模式已${input.developerMode ? '开启' : '关闭'}（操作人=${user.username}）`);
@@ -55,7 +57,11 @@ const autostart = createAutostartController({
 export async function getAutostartStatus(): Promise<AutostartStatusDto> {
   return autostart.read();
 }
-export async function updateAutostart(input: UpdateAutostartInput): Promise<AutostartStatusDto> {
+export async function updateAutostart(
+  actor: TokenPayload,
+  input: UpdateAutostartInput,
+): Promise<AutostartStatusDto> {
+  assertAdmin(actor);
   return autostart.write(input.enabled);
 }
 

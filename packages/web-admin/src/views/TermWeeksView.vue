@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 学期周次（仅管理员）。
+ * 学期周次（按班级范围读取，管理员或本班班主任维护）。
  *
  * 为什么要有这一页：课表、作业、成绩都按**教学周**组织，而"开学日期 + 每周七天"的
  * 线性推算遇到法定节假日调休、周末补课、错峰开学就会**整体错位**（错一周全错）。
@@ -13,7 +13,6 @@
  * `classId` 留空 = 全校默认；某个班有自己的配置时优先用它。
  */
 import { useAuthStore } from '@/stores/auth';
-import PromotionSettings from '@/components/PromotionSettings.vue';
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
@@ -38,6 +37,13 @@ const scope = ref('');
 const weeks = ref<TermWeekDto[]>([]);
 const termStartDate = ref('');
 const maxTermWeeks = ref(getMaxTermWeeks());
+
+const canEdit = computed(() =>
+  scope.value
+    ? auth.canForClass('class:settings', scope.value) &&
+      (auth.isAdmin || classes.value.find((c) => c.id === scope.value)?.teacher?.id === auth.user?.id)
+    : auth.can('term:write'),
+);
 
 const scopeLabel = computed(() =>
   scope.value ? (classes.value.find((item) => item.id === scope.value)?.name ?? scope.value) : '全校默认',
@@ -171,16 +177,20 @@ async function fetchHolidays(): Promise<void> {
 }
 
 onMounted(async () => {
-  classes.value = await classApi.list().catch(() => []);
+  classes.value = (await classApi.list().catch(() => [])).filter((row) =>
+    auth.canForClass('term:read', row.id),
+  );
+  if (!auth.can('term:write')) {
+    scope.value = classes.value.find((row) => auth.canForClass('class:settings', row.id))?.id ?? '';
+  }
   await load();
 });
 </script>
 
 <template>
   <div class="page">
-    <PromotionSettings v-if="auth.can('promotion:manage')" />
     <el-form-item v-if="!scope" label="全校学期总周数">
-      <el-input-number v-model="maxTermWeeks" :min="1" :max="60" />
+      <el-input-number v-model="maxTermWeeks" :min="1" :max="60" :disabled="!canEdit" />
     </el-form-item>
     <div class="page-header">
       <div>
@@ -212,13 +222,7 @@ onMounted(async () => {
         >
           拉取放假安排
         </el-button>
-        <el-button
-          v-if="auth.can('term:write')"
-          type="primary"
-          :loading="saving"
-          :disabled="!dirty"
-          @click="save"
-        >
+        <el-button v-if="canEdit" type="primary" :loading="saving" :disabled="!dirty" @click="save">
           保存
         </el-button>
       </div>
@@ -240,12 +244,13 @@ onMounted(async () => {
         <span class="label">学期开始日期</span>
         <el-date-picker
           v-model="termStartDate"
+          :disabled="!canEdit"
           type="date"
           value-format="YYYY-MM-DD"
           placeholder="第 1 教学周的周一"
           style="width: 200px"
         />
-        <el-button v-if="auth.can('term:write')" type="primary" plain :loading="saving" @click="autoGenerate">
+        <el-button v-if="canEdit" type="primary" plain :loading="saving" @click="autoGenerate">
           按开学日期生成
         </el-button>
         <span class="hint">先生成一份标准学期，再把调休那几周改掉 —— 比一周周填快得多</span>
@@ -272,9 +277,7 @@ onMounted(async () => {
       <template #header>
         <div class="card-header">
           <span>逐周日期区间（{{ weeks.length }} 周）</span>
-          <el-button v-if="auth.can('term:write')" size="small" :icon="'Plus'" @click="addWeek">
-            添加一周
-          </el-button>
+          <el-button v-if="canEdit" size="small" :icon="'Plus'" @click="addWeek">添加一周</el-button>
         </div>
       </template>
 
@@ -283,6 +286,7 @@ onMounted(async () => {
           <template #default="{ row }">
             <el-input-number
               v-model="row.weekNumber"
+              :disabled="!canEdit"
               :min="1"
               :max="60"
               size="small"
@@ -296,6 +300,7 @@ onMounted(async () => {
                  el-date-picker 的 daterange 给的是一个数组，直接 v-model 会写到一个不存在的 range 上 -->
             <el-date-picker
               :model-value="row.startDate && row.endDate ? [row.startDate, row.endDate] : null"
+              :disabled="!canEdit"
               type="daterange"
               value-format="YYYY-MM-DD"
               range-separator="→"
@@ -316,6 +321,7 @@ onMounted(async () => {
           <template #default="{ row }">
             <el-input
               v-model="row.note"
+              :disabled="!canEdit"
               size="small"
               maxlength="64"
               placeholder="例如：国庆调休、期中考试周"
@@ -324,9 +330,7 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column label="操作" width="90">
           <template #default="{ $index }">
-            <el-button v-if="auth.can('term:write')" link type="danger" @click="removeWeek($index)">
-              删除
-            </el-button>
+            <el-button v-if="canEdit" link type="danger" @click="removeWeek($index)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

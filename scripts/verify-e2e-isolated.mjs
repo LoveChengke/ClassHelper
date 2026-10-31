@@ -46,8 +46,15 @@ function run(args, logName) {
     });
   });
 }
+const suite = process.argv.includes('--review-api')
+  ? 'review-api'
+  : process.argv.includes('--clients-api')
+    ? 'clients-api'
+    : null;
 const seedFile = path.join(root, 'packages/server/prisma', `.verification-seed-${process.pid}.ts`),
-  testFile = path.join(root, 'packages/server/scripts', `.verification-e2e-${process.pid}.mjs`);
+  testFile = suite
+    ? path.join(root, 'scripts', `.verification-${suite}-${process.pid}.mjs`)
+    : path.join(root, 'packages/server/scripts', `.verification-e2e-${process.pid}.mjs`);
 const prefix = `temporary${process.pid}_`;
 function namespace(code) {
   for (const name of ['admin', 'teacher1', 'teacher2'])
@@ -101,7 +108,12 @@ try {
   if (!ready) throw new Error('临时服务未就绪');
   fs.writeFileSync(
     testFile,
-    namespace(fs.readFileSync(path.join(root, 'packages/server/scripts/verify-e2e.mjs'), 'utf8')),
+    namespace(
+      fs.readFileSync(
+        path.join(root, suite ? `scripts/verify-${suite}.mjs` : 'packages/server/scripts/verify-e2e.mjs'),
+        'utf8',
+      ),
+    ),
     { flag: 'wx' },
   );
   if (process.argv.includes('--web')) {
@@ -110,6 +122,10 @@ try {
     env.UI_SMOKE_ADMIN_PASS = 'admin123';
     await run(['scripts/ui-smoke/run.mjs'], 'web.log');
   } else await run([testFile], 'e2e.log');
+  if (server.exitCode !== null || server.signalCode !== null)
+    throw new Error(`临时服务在验收收尾前退出：code=${server.exitCode} signal=${server.signalCode}`);
+  const readyAtEnd = await fetch(`${env.VERIFY_BASE_URL}/readyz`, { signal: AbortSignal.timeout(3000) });
+  if (!readyAtEnd.ok) throw new Error(`临时服务收尾检查失败：HTTP ${readyAtEnd.status}`);
 } finally {
   if (server && server.exitCode === null) {
     server.kill();

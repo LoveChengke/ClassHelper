@@ -1,3 +1,4 @@
+import { requireAdmin } from '../../middleware/auth.js';
 import { Router } from 'express';
 import { API_PATHS } from '@classhelper/shared';
 import { sendOk } from '../../lib/http.js';
@@ -13,7 +14,7 @@ import {
 import * as systemService from './system.service.js';
 
 const router = Router();
-router.use(authenticate());
+router.use(authenticate(), requireAdmin());
 
 /**
  * 系统设置与运维接口（**全部仅 ADMIN**，权限键 `system:manage`）。
@@ -46,7 +47,7 @@ router.put(
   validate({ body: updateAutostartSchema }),
   async (req, res) => {
     const input = validatedBody<UpdateAutostartInput>(req);
-    sendOk(res, await systemService.updateAutostart(input), '开机自启设置已生效');
+    sendOk(res, await systemService.updateAutostart(getAuthUser(req), input), '开机自启设置已生效');
   },
 );
 

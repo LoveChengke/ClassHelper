@@ -1,3 +1,4 @@
+import { assertClassDevice, assertPermission, classIdsFor } from '../../lib/authz/index.js';
 import { getReleaseProgress, setReleaseProgress } from './release-progress.js';
 import { Router } from 'express';
 import { sendCreated, sendOk, ApiError } from '../../lib/http.js';
@@ -7,9 +8,10 @@ import {
   hasAuthPermission,
   requireAnyPermission,
   requirePermission,
-  requireStaffPermission,
+  requireAdmin,
+  requirePermissionOrClassDevice,
 } from '../../middleware/auth.js';
-import { validate, validatedBody, validatedParams } from '../../middleware/validate.js';
+import { validateBadRequest as validate, validatedBody, validatedParams } from '../../middleware/validate.js';
 import { defineModule } from '../module.types.js';
 import * as clientReleases from './client-releases.service.js';
 import * as updateService from './update.service.js';
@@ -39,7 +41,7 @@ router.get('/client/progress', requirePermission('client:update'), async (_req, 
  * 权限：任何已登录用户都能查（信息本身来自公开仓库）。`force=1` 绕过服务端缓存，
  * 但**只有管理员生效** —— 否则任意登录用户都能靠刷这个参数把匿名限流打满。
  */
-router.get('/check', requireStaffPermission('update:check'), async (req, res) => {
+router.get('/check', requirePermissionOrClassDevice('update:check'), async (req, res) => {
   const force = req.query.force === '1' && hasAuthPermission(req, 'update:force');
   sendOk(res, await updateService.checkForUpdates({ force }), '更新检查完成');
 });
@@ -68,13 +70,14 @@ router.get(
  */
 router.post(
   '/client/fetch',
+  requireAdmin(),
   requirePermission('client:update'),
   validate({ body: fetchClientReleaseSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
     const input = validatedBody<FetchClientReleaseInput>(req);
     try {
-      sendCreated(res, await clientReleases.fetchReleaseFromGithub(user.sub, input), '安装包已下载并登记');
+      sendCreated(res, await clientReleases.fetchReleaseFromGithub(user, input), '安装包已下载并登记');
     } catch (error) {
       if (
         !(error instanceof ApiError && error.status === 409) &&
@@ -97,23 +100,25 @@ router.post(
  */
 router.post(
   '/client/releases',
+  requireAdmin(),
   requirePermission('client:update'),
   validate({ body: registerClientReleaseSchema }),
   async (req, res) => {
     const user = getAuthUser(req);
     const input = validatedBody<RegisterClientReleaseInput>(req);
-    sendCreated(res, await clientReleases.registerRelease(user.sub, input), '安装包已登记');
+    sendCreated(res, await clientReleases.registerRelease(user, input), '安装包已登记');
   },
 );
 
 /** DELETE /api/update/client/releases/:version - 删除缓存（元数据 + 磁盘文件） */
 router.delete(
   '/client/releases/:version',
+  requireAdmin(),
   requirePermission('client:update'),
   validate({ params: clientReleaseVersionParamSchema }),
   async (req, res) => {
     const { version } = validatedParams<{ version: string }>(req);
-    sendOk(res, await clientReleases.deleteRelease(version), '安装包已删除');
+    sendOk(res, await clientReleases.deleteRelease(getAuthUser(req), version), '安装包已删除');
   },
 );
 
@@ -128,6 +133,13 @@ router.get(
   '/client/download/:version',
   validate({ params: clientReleaseVersionParamSchema }),
   async (req, res) => {
+    const user = getAuthUser(req);
+    if (user.role === 'CLASS_DEVICE') assertClassDevice(user, user.classId ?? user.sub);
+    else {
+      await assertPermission(user, 'client:read');
+      if (user.role !== 'ADMIN' && !(await classIdsFor(user, 'client:read')).length)
+        throw ApiError.forbidden('无可访问班级');
+    }
     const { version } = validatedParams<{ version: string }>(req);
     const found = await clientReleases.resolveReleaseFile(version);
     if (!found) throw ApiError.notFound('服务端没有缓存这个版本的安装包');
