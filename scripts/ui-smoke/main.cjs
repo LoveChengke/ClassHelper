@@ -442,6 +442,10 @@ async function main() {
 
   win.on('show', () => record('后台验证禁止显示窗口', false, '出现 show 事件'));
   win.on('focus', () => record('后台验证禁止抢占焦点', false, '出现 focus 事件'));
+  win.webContents.session.webRequest.onErrorOccurred((details) => {
+    // 仅记录测试浏览器的失败请求；去除查询参数，便于区分换页取消和真实接口故障。
+    console.log(`[ui-network] ${details.error} ${new URL(details.url).pathname}`);
+  });
   // 把渲染进程的报错转发到控制台（兼容 Electron 新旧事件签名）
   win.webContents.on('console-message', (...args) => {
     const first = args[0];

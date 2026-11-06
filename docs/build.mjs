@@ -34,7 +34,7 @@ function readVersion() {
 
 /** 找不到 docfx 时给出可照抄的安装命令，而不是一句 spawn ENOENT */
 function ensureDocfx() {
-  const probe = spawnSync('docfx', ['--version'], { encoding: 'utf8', shell: process.platform === 'win32' });
+  const probe = spawnSync('docfx', ['--version'], { encoding: 'utf8' });
   if (probe.status === 0) return probe.stdout.trim();
 
   console.error('[docs] 找不到 docfx。docfx 是 .NET 工具，安装方式：');
@@ -50,7 +50,7 @@ function ensureDocfx() {
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'inherit', shell: process.platform === 'win32', ...options });
+    const child = spawn(command, args, { stdio: 'inherit', ...options });
     child.on('error', reject);
     child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${command} 退出码 ${code}`))));
   });

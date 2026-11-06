@@ -16,7 +16,7 @@
     "build": "pnpm build:shared && pnpm --filter @classhelper/server build && pnpm --filter @classhelper/web-admin build && pnpm --filter @classhelper/desktop-client build",
     "build:desktop": "pnpm build:shared && pnpm --filter @classhelper/desktop-client build",
     "check:icons": "node scripts/check-icons.mjs",
-    "typecheck": "pnpm build:shared && pnpm -r --no-bail typecheck",
+    "typecheck": "pnpm build:shared && pnpm -r --workspace-concurrency=1 --no-bail typecheck",
     "lint": "node scripts/check-authz.mjs && eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{ts,js,mjs,cjs,vue,json,md,yaml,yml,css,scss,html}\"",
@@ -59,6 +59,7 @@
     "verify:desktop:visual": "node packages/desktop-client/scripts/smoke.mjs --visual",
     "verify:desktop:online": "node packages/desktop-client/scripts/smoke.mjs --online",
     "verify:authz": "node scripts/verify-authz.mjs",
+    "verify:audit": "node scripts/verify-authz.mjs --audit && node scripts/verify-web-worker.mjs",
     "check:authz": "node scripts/check-authz.mjs",
     "verify:server-bootstrap": "node scripts/verify-server-bootstrap.mjs"
   },

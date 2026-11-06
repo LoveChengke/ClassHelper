@@ -392,7 +392,9 @@ export async function verifyResidentSmoke(
       }
       return false;
     };
-    const immediate = (await waitForCourse()) && Date.now() - started < 600;
+    const ready = await waitForCourse();
+    const latencyMs = Date.now() - started;
+    const immediate = ready && latencyMs < 600;
     const aligned = await win.webContents.executeJavaScript(`(() => {
       const name=document.querySelector('.resident-compact .schedule strong')?.getBoundingClientRect(), time=document.querySelector('.resident-compact .lesson-time')?.getBoundingClientRect();
       return Boolean(name&&time&&time.left>=name.right&&Math.abs(time.top+time.height/2-name.top-name.height/2)<=2);
@@ -405,7 +407,12 @@ export async function verifyResidentSmoke(
     island.syncCustomLayout();
     await pause(800);
     island.setClassState({ inClass: true, currentPeriodEnd: null, week: 1, schedules: [] });
-    return immediate && aligned && restored && snapshot[0]?.course?.name === '实时课程';
+    const snapshotMatches = snapshot[0]?.course?.name === '实时课程';
+    if (!immediate || !aligned || !restored || !snapshotMatches)
+      throw new Error(
+        `课表同步检查：${JSON.stringify({ ready, latencyMs, aligned, restored, snapshotMatches })}`,
+      );
+    return true;
   });
   await check('常驻岛开合复用固定画布，动画中没有滚动容器或旧胶囊形变', async () => {
     const bounds = new Set<string>();
