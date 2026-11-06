@@ -161,7 +161,7 @@ ClassHelper是给中小学班级用的一套信息管理系统。<br/>
 | 教室机器 / 学生电脑     | **学生客户端**                              | `ClassHelper-<版本>-x64-client-setup.exe`，或 `-client-portable.exe` 免安装 |
 
 也可以在官网的[下载页](https://lovechengke.github.io/ClassHelper/download.html)上挑：
-选一个版本，四个包排成四张卡，文件名、体积与 SHA256 清单都在那儿 ——
+选一个版本，按客户端、Windows 服务端和 Linux 服务端展示下载卡片，文件名、体积与 SHA256 清单都在那儿 ——
 那一页的清单是**当场**读 GitHub Releases 的，显示什么就能下什么。
 
 服务端**装上就算跑起来了**：双击安装程序，建库、建号、开机自启都由它自己办，
@@ -180,7 +180,7 @@ curl -fsSL -o /tmp/classhelper-install.sh https://raw.githubusercontent.com/Love
 ## 获取帮助
 
 - **使用文档**：[docs/](docs/index.md) —— 分四块：第一次装、已经在用了、负责运维、要改代码
-- **完整参考**：[docs/reference.md](docs/reference.md) —— 功能口径、REST API、权限矩阵、验收证据
+- **功能与源码索引**：[docs/reference.md](docs/reference.md) —— 各帮助章节、开发契约与源码入口
 - **遇到问题 / 想提需求**：[提交 Issue](https://github.com/LoveChengke/ClassHelper/issues/new/choose)
 
 ## 开发
@@ -198,11 +198,11 @@ cp packages/server/.env.example packages/server/.env   # 至少改 JWT_SECRET
 pnpm db:generate
 pnpm --filter @classhelper/server db:deploy            # 根 scripts 里没有 db:deploy
 pnpm build:shared                                      # 三端与 seed 的前置产物
-pnpm db:seed
+# 仅新建演示库时按需执行 pnpm db:seed（会清空业务表）
 pnpm dev                                               # 后端 4000 + Web 端 5173
 ```
 
-`pnpm db:seed` 会写一套演示数据（1 管理员 / 2 教师 / 3 个班 / 15 名学生 / 课表 / 作业 / 通知 / 成绩）：
+`pnpm db:seed` 会清空并写入演示账号、班级、学生、课表与教学内容，仅用于独立演示库：
 
 | 角色                       | 账号          | 密码         |
 | -------------------------- | ------------- | ------------ |

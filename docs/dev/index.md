@@ -5,9 +5,9 @@ description: ClassHelper的架构、接口、数据模型、权限、动效层�
 
 # 开发文档
 
-ClassHelper是一个 **pnpm monorepo**，一份代码产出四个交付物：
+ClassHelper 是一个 **pnpm monorepo**，应用包含后端服务、Web 管理端与桌面客户端；共享契约是内部依赖包：
 
-| 交付物     | 位置                      | 形态                                                            |
+| 组成       | 位置                      | 形态                                                            |
 | ---------- | ------------------------- | --------------------------------------------------------------- |
 | 后端服务   | `packages/server`         | Express 5 + Prisma 7 + Socket.IO，接口前缀 `/api`               |
 | Web 管理端 | `packages/web-admin`      | Vue 3 + Vite + Element Plus（教师 / 管理员用，PWA 可安装）      |
@@ -23,7 +23,7 @@ ClassHelper是一个 **pnpm monorepo**，一份代码产出四个交付物：
    后端服务（Express + Prisma）
         │  写库 + 按班级房间广播
         ▼
- Socket.IO ──► class:{classId} 房间 ──► 学生桌面客户端实时更新 UI（含灵动岛）
+ Socket.IO ──► class:{classId}:{channel} 房间 ──► 班级桌面客户端实时更新 UI（含灵动岛）
 
                                   ▲                          │
                                   └──── 老师下发的提醒 ◄──────┘

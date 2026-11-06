@@ -23,7 +23,9 @@ description: 隔离 API、隐藏 UI、后台客户端与显式视觉验收。
 | pnpm verify:client-agent                         | 假系统适配器验证命令、回执和更新策略                                         |
 | pnpm verify:client-migrations                    | 临时旧库验证迁移、联动退役与默认组持久化                                     |
 | pnpm verify:review-client                        | 无窗口逻辑回归                                                               |
-| pnpm verify:review-api / pnpm verify:clients-api | 需明确准备的隔离测试服务，使用 VERIFY_BASE_URL 等脚本参数                    |
+| pnpm verify:review-api / pnpm verify:clients-api | 包装器自动创建临时 SQLite、账号和随机端口服务，无需手动准备服务              |
+| pnpm verify:authz                                | 隔离授权攻击矩阵，覆盖按键范围、身份、任课与实时订阅                         |
+| pnpm verify:audit                                | 隔离事务故障、任课自授权、并发已读、模型操作计数和 Service Worker 回归       |
 | pnpm verify:desktop                              | 先 pnpm build:desktop；隐藏快速检查，独立 userData                           |
 | pnpm verify:desktop:online                       | 显式联网，需要测试管理员并创建临时教师/班级                                  |
 | pnpm verify:desktop:visual                       | 显式使用桌面，完整岛几何/动画/透明度/截图检查                                |
@@ -62,6 +64,7 @@ pnpm verify:web:isolated
 - 视觉用例需要真实桌面与稳定帧，先区分状态未稳定、窗口遮挡和实际回归，再针对原因重跑。
 - Element Plus dialog 关闭后 DOM 仍保留，应检查 overlay 的可见状态。
 - 本地 HTTP 探测绕过代理；Prisma 生成物和 shared/dist 缺失时先补前置构建。
+- 根类型检查按包串行控制峰值内存；Node 22 若出现 V8 原生内存错误，保留失败日志，使用满足 engines 的已安装 Node LTS 复验，记录实际版本。
 
 ## 截图
 

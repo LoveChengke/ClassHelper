@@ -25,6 +25,8 @@ ClassHelper 是 pnpm workspace：Express/Prisma/Socket.IO 服务端、Vue Web �
 | `packages/desktop-client/src/island/`         | 经典岛、自定义运行时、课程与课件提醒        |
 | `packages/desktop-client/src/renderer/`       | 主窗口页面、状态、IndexedDB 与岛桥接        |
 | `scripts/` / `deploy/`                        | 验证、版本、打包、部署与运维                |
+| `packages/data/`                              | 运行期数据，非 workspace 包                 |
+| `prompts/`                                    | 任务提示词与历史交付记录                    |
 | `docs/` / `website/`                          | 文档站与官网，Pages 构建时拼接              |
 
 ## 模块与数据流

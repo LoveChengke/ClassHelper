@@ -15,6 +15,8 @@ pnpm monorepo，根 `package.json` 是版本单一来源。文档、注释、界
 | `packages/server/`         | Express、Prisma、Socket.IO；API 前缀 `/api`               |
 | `packages/web-admin/`      | Vue Web 管理端，PWA                                       |
 | `packages/desktop-client/` | Electron 主进程、preload、主窗口与独立灵动岛渲染进程      |
+| `packages/data/`           | 运行期课件、安装包等数据；不是 workspace 包，不作源码清理 |
+| `prompts/`                 | 可执行任务提示词；历史 `*.result.md` 仅为当时交付记录     |
 | `scripts/`                 | 版本、构建、验证、打包、图标与 Pages 脚本                 |
 | `deploy/`                  | Windows/Linux/Docker 部署与运维模板                       |
 | `docs/`                    | docfx 文档；`images/` 为展示图，`screenshots/` 为回归截图 |
@@ -29,6 +31,7 @@ pnpm monorepo，根 `package.json` 是版本单一来源。文档、注释、界
 - 路由用 `middleware/validate.ts` 与 zod；响应复用 `lib/http.ts`，错误交给统一中间件。
 - 学生是 `Student` 名单记录，没有账号、角色或密码。教师/管理员存 `User`；班级登录读取 `Class.code/passwordHash`，会话角色 `CLASS_DEVICE`，主体 id 为班级 id。
 - 任课关系只在 `Course(classId, name, teacherId)`。班主任不自动获得别的科目的作业、成绩写权限，统一走 `lib/authz/assert.ts` 的 `assertContentWrite`。班级端可录作业，不可写成绩；员工还须对应功能权限。
+- 新建课程会建立任课关系，仅管理员可执行；课表维护范围不能用来给自己任课。现有课程的排课与外观维护仍按 `schedule:write` 和班级管理关系校验。
 - 功能、范围、关系统一由 `lib/authz/` 判定，所有服务显式传权限键。ADMIN 固定全部能力；TEACHER 永久忽略管理员专用键；CLASS_DEVICE 为空集，接口明确允许并校验本班。权限管理仅 ADMIN。
 - 岗位模板只管能力与建议范围，生效范围存 `UserPermissionGroup.scope/scopeValue`，使用 TEACHING/HEAD/GRADE/DIVISION/ALL。无显式分配的教师使用默认模板与固定 TEACHING；空或未知年级拒绝。按键独立合并范围，无键查询为空集；班级账号/学期设置永远要求本班班主任，科目写检查原/目标科目。具体断言和迁移见 `docs/dev/permissions.md`。
 - 只有一份 `prisma/schema.prisma`，切库改 provider；保持 SQLite/MySQL 通用，不加 Prisma enum 或 `@db.*`。模型变动同步迁移、`lib/snapshot.ts` 的 `SNAPSHOT_TABLES` 与旧库兼容逻辑。
@@ -95,6 +98,7 @@ pnpm monorepo，根 `package.json` 是版本单一来源。文档、注释、界
 $env:PATH = 'C:\Users\hck16\AppData\Local\deepseek-harness\bin;' + $env:PATH
 $env:DSH_NODE = 'D:\Node.js\node.exe'
 $env:DSH_PNPM_BIN = 'C:\Users\hck16\AppData\Local\node\corepack\v1\pnpm\11.8.0\bin\pnpm.cjs'
+$env:DSH_PREFER_BUNDLED_PNPM = '1'
 Remove-Item Env:DSH_PNPM -ErrorAction SilentlyContinue
 pnpm --version
 ```
@@ -108,6 +112,7 @@ Prisma 使用 driver adapter；本机优先应用已有迁移，不用 `migrate 
 | `pnpm lint` / `pnpm typecheck` / `pnpm check:icons`         | 代码静态门禁；按改动范围执行                           |
 | `pnpm docs:check`                                           | 文档严格构建，警告即失败                               |
 | `pnpm verify:e2e`                                           | 自动创建临时 SQLite 和账号，无需先开开发服务，禁止外网 |
+| `pnpm verify:authz` / `pnpm verify:audit`                   | 隔离授权攻击矩阵；审计事务、竞态、模型操作计数和 PWA   |
 | `pnpm verify:web:isolated`                                  | 构建 Web 后运行隔离服务和隐藏 UI 回归                  |
 | `pnpm verify:courseware` / `pnpm verify:v14`                | 课件/课表等隔离专项                                    |
 | `pnpm verify:desktop` / `pnpm verify:packaged --exe <路径>` | 默认后台快速检查，不创建可见岛或托盘                   |
@@ -116,7 +121,7 @@ Prisma 使用 driver adapter；本机优先应用已有迁移，不用 `migrate 
 
 禁止为验收回退到真实班级、重置其密码或发送测试通知。验收数量只记录本次实际输出。
 仅文档修改做格式、链接、构建检查，不为此反复占用桌面或重打安装包。
-Prettier 用 LF，只格式化本次改动；不要为旧基线批量格式化源码。
+Prettier 用 LF，只格式化本次改动；不要为旧基线批量格式化源码。根 `typecheck` 按包串行以限制峰值内存；若 Node 22 出现 V8 原生内存错误，记录失败并使用符合 engines 的已安装 Node LTS 复验，不删断言或依赖。
 改 Linux 交付脚本还要 bash 语法检查和 Linux 真机/CI 验证；改打包逻辑需打包后副本复验。
 
 ## 7. 发布与工作区清理
@@ -125,7 +130,7 @@ Prettier 用 LF，只格式化本次改动；不要为旧基线批量格式化�
 - 本地 `pnpm dist:all` 产出 Windows 服务端和客户端；Linux 正式包由 `release-linux-server.yml` 在 Linux runner 构建，非 Linux 交叉构建仅供验证。
 - 本地文件名与 Release 的 ASCII 上传名不同，校验清单应明确映射；保留当前版本清单、更新日志及最新包。
 - `releases/` 只放交付物及少量构建信息，不留 win-unpacked、服务端 staging、解包副本；staging 在 `.cache/server-staging/`，成功后脚本删除。
-- 2026-10-18 按用户要求清除 1.4.0 旧重构建归档，只保留 `client/1.4.0`、`server/1.4.0` 与当前清单/说明。以后同号重构建可临时留回滚副本，最新包验证完成且用户要求清理时再删除。
+- 各版本交付物以 `releases/` 现场目录为准，不沿用历史清理记录推断当前版本。同号重构建可临时留回滚副本，最新包验证完成且用户要求清理时再删除。
 - 递归删除/移动前核实绝对路径在指定工作区，禁止误删源代码、真实数据库、配置、凭据、工具缓存或其他版本交付物。
 - 不清理 `node_modules`、`.pnpm-store`、`.cache/{nuget,npm-cache,dotnet-home,mingit}`、`packages/*/dist`、生成的 Prisma Client，除非任务明确要求。
 - 保留已有未提交工作；提交前查看 diff，中文 Conventional Commits 描述。只有用户要求发布/同步时才执行远端发布链。

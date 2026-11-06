@@ -1,5 +1,7 @@
 - name: 应用帮助
   href: index.md
+- name: AI 助手
+  href: assistant.md
 - name: 课表
   href: schedules.md
 - name: 作业
