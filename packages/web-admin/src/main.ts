@@ -1,7 +1,6 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
-import ElementPlus from 'element-plus';
-import zhCn from 'element-plus/es/locale/lang/zh-cn';
+import { registerElementPlus } from './element-plus';
 import 'element-plus/dist/index.css';
 // 深色主题：html.dark 下的 --el-* 变量（品牌侧的语义色覆盖在 styles/index.css 的 html.dark 块）
 import 'element-plus/theme-chalk/dark/css-vars.css';
@@ -21,7 +20,7 @@ registerAppIcons(app);
 
 app.use(pinia);
 app.use(router);
-app.use(ElementPlus, { locale: zhCn });
+registerElementPlus(app);
 
 /**
  * 全局错误处理。
