@@ -35,5 +35,10 @@ await run([
   '--config',
   'packages/server/prisma.config.ts',
 ]);
-await run(['packages/server/node_modules/tsx/dist/cli.mjs', 'packages/server/scripts/verify-authz.ts']);
+await run([
+  'packages/server/node_modules/tsx/dist/cli.mjs',
+  process.argv.includes('--audit')
+    ? 'packages/server/scripts/verify-audit.ts'
+    : 'packages/server/scripts/verify-authz.ts',
+]);
 console.log(`授权隔离数据库：${dir}`);

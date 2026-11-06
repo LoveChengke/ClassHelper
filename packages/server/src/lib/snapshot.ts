@@ -1,5 +1,6 @@
 import { refreshClassSubscriptions } from '../realtime/bus.js';
 import { invalidateAuthPrincipals } from './authz/principal.js';
+import { resetDefaultGroups } from './permissions.js';
 import { migratePermissionScope } from '@classhelper/shared';
 import type { Prisma, PrismaClient } from '../generated/prisma/client.js';
 import type { DatabaseProvider } from './db.js';
@@ -245,6 +246,7 @@ export async function restoreSnapshot(
     if (provider === 'sqlite') await setForeignKeys(prisma, provider, true);
   }
   invalidateAuthPrincipals();
+  resetDefaultGroups();
   refreshClassSubscriptions();
   return { counts };
 }

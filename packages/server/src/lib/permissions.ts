@@ -11,10 +11,15 @@ import type { TokenPayload } from './jwt.js';
 let defaultGroupsReady: Promise<void> | null = null;
 export function ensureDefaultGroups(): Promise<void> {
   if (!defaultGroupsReady)
-    defaultGroupsReady = createDefaultGroups().finally(() => {
+    defaultGroupsReady = createDefaultGroups().catch((error: unknown) => {
       defaultGroupsReady = null;
+      throw error;
     });
   return defaultGroupsReady;
+}
+/** 整库恢复后需要重新检查初始化；不缓存任何账号的实际权限。 */
+export function resetDefaultGroups(): void {
+  defaultGroupsReady = null;
 }
 async function createDefaultGroups(): Promise<void> {
   for (const group of BUILTIN_TEACHER_GROUPS) {

@@ -462,17 +462,21 @@ export async function pushUpdate(
   if (devices.length === 0) throw ApiError.badRequest('没有匹配到任何客户端设备');
 
   const results: ClientTargetResult[] = [];
+  const notBeforeByClass = new Map<string | null, Date>();
   for (const device of devices) {
+    let notBefore: Date | null = null;
+    if (!clear && input.mode === 'after-school') {
+      notBefore =
+        notBeforeByClass.get(device.classId) ?? (await afterSchoolAt(device.classId, input.afterSchoolTime));
+      notBeforeByClass.set(device.classId, notBefore);
+    }
     await prisma.clientDevice.update({
       where: { id: device.id },
       data: {
         updateTargetVersion: target,
         updateProgress: '',
         updateMode: clear ? 'idle' : input.mode,
-        updateNotBefore:
-          !clear && input.mode === 'after-school'
-            ? await afterSchoolAt(device.classId, input.afterSchoolTime)
-            : null,
+        updateNotBefore: notBefore,
       },
     });
     results.push({ deviceId: device.id, deviceName: device.name, ok: true });

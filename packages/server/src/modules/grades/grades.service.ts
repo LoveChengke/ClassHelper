@@ -389,9 +389,13 @@ export async function updateGradeLevels(
     const byId = new Map(records.map((item) => [item.id, item]));
 
     // 逐条判权限：可能跨多个班级/科目（管理员在成绩页多选修改时会这样）
+    const checked = new Set<string>();
     for (const item of input.items) {
       const record = byId.get(item.id)!;
+      const relation = JSON.stringify([record.classId, record.courseId]);
+      if (checked.has(relation)) continue;
       await assertContentWrite(user, 'grade:write', record.classId, record.courseId, '修改成绩等级');
+      checked.add(relation);
     }
 
     await prisma.$transaction(
