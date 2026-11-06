@@ -25,6 +25,7 @@ import {
 } from '../../lib/access.js';
 import { activeStudentWhere, isActiveStudent } from '../../lib/students.js';
 import { prisma } from '../../lib/db.js';
+import type { Prisma } from '../../generated/prisma/client.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
@@ -249,29 +250,47 @@ export async function createGrade(user: TokenPayload, input: CreateGradeInput): 
 
 /** 批量录入：同一个考试一次提交整班成绩 */
 export async function bulkCreateGrades(user: TokenPayload, input: BulkCreateGradeInput): Promise<GradeDto[]> {
-  await assertContentWrite(user, 'grade:write', input.classId, input.courseId ?? null, '录入成绩');
-  if (input.courseId) await assertCourseInClass(input.courseId, input.classId);
-
   const publishedAt = parseOptionalDate(input.publishedAt) ?? new Date();
   const levelType: GradeLevelType = input.levelType ?? 'percent';
   const totalScore = input.totalScore ?? 100;
-  const results: GradeDto[] = [];
-
-  for (const item of input.items) {
-    await assertStudentInClass(item.studentId, input.classId);
-    const dto = await upsertGrade({
-      classId: input.classId,
-      courseId: input.courseId ?? null,
-      studentId: item.studentId,
-      examName: input.examName,
-      score: item.score,
-      totalScore,
-      levelType,
-      level: resolveLevel(levelType, item.level, item.score, totalScore),
-      publishedAt,
-    });
-    results.push(dto);
-  }
+  const results = await prisma.$transaction(
+    async (tx) => {
+      await assertContentWrite(user, 'grade:write', input.classId, input.courseId ?? null, '录入成绩', {
+        db: tx,
+      });
+      const students = await tx.student.findMany({
+        where: { id: { in: [...new Set(input.items.map((item) => item.studentId))] } },
+        select: { id: true, classId: true, status: true },
+      });
+      const byId = new Map(students.map((student) => [student.id, student]));
+      for (const item of input.items) {
+        const student = byId.get(item.studentId);
+        if (!student || !isActiveStudent(student)) throw ApiError.badRequest('学生不存在');
+        if (student.classId !== input.classId) throw ApiError.badRequest('该学生不属于所选班级');
+      }
+      const rows: GradeDto[] = [];
+      for (const item of input.items) {
+        rows.push(
+          await upsertGrade(
+            {
+              classId: input.classId,
+              courseId: input.courseId ?? null,
+              studentId: item.studentId,
+              examName: input.examName,
+              score: item.score,
+              totalScore,
+              levelType,
+              level: resolveLevel(levelType, item.level, item.score, totalScore),
+              publishedAt,
+            },
+            tx,
+          ),
+        );
+      }
+      return rows;
+    },
+    { timeout: 30_000 },
+  );
 
   if (results[0]) {
     await emitGradeUpdated(input.classId, {
@@ -518,18 +537,21 @@ function resolveLevel(
  * 同一学生 + 同一课程 + 同一考试名称视为同一条记录，
  * 重复录入时覆盖旧分数，避免教师"改分"产生重复行。
  */
-async function upsertGrade(data: {
-  classId: string;
-  courseId: string | null;
-  studentId: string;
-  examName: string;
-  score: number;
-  totalScore: number;
-  levelType: GradeLevelType;
-  level: string;
-  publishedAt: Date;
-}): Promise<GradeDto> {
-  const existing = await prisma.grade.findFirst({
+async function upsertGrade(
+  data: {
+    classId: string;
+    courseId: string | null;
+    studentId: string;
+    examName: string;
+    score: number;
+    totalScore: number;
+    levelType: GradeLevelType;
+    level: string;
+    publishedAt: Date;
+  },
+  db: Prisma.TransactionClient = prisma,
+): Promise<GradeDto> {
+  const existing = await db.grade.findFirst({
     where: {
       classId: data.classId,
       courseId: data.courseId,
@@ -540,7 +562,7 @@ async function upsertGrade(data: {
   });
 
   if (existing) {
-    const updated = await prisma.grade.update({
+    const updated = await db.grade.update({
       where: { id: existing.id },
       data: {
         score: data.score,
@@ -554,7 +576,7 @@ async function upsertGrade(data: {
     return toGradeDto(updated);
   }
 
-  const created = await prisma.grade.create({ data, include });
+  const created = await db.grade.create({ data, include });
   return toGradeDto(created);
 }
 
