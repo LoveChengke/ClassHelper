@@ -6,7 +6,8 @@
  * - 构建产物 /assets/*（带内容哈希）：cache-first（文件名变化即自动失效）
  * - /api 与 /socket.io：完全透传，绝不缓存（避免脏数据与鉴权问题）
  */
-const CACHE_NAME = 'classhelper-admin-v1';
+const CACHE_PREFIX = 'classhelper-admin-';
+const CACHE_NAME = `${CACHE_PREFIX}v2`;
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -23,7 +24,13 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) =>
+        Promise.all(
+          keys
+            .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
+            .map((key) => caches.delete(key)),
+        ),
+      )
       .then(() => self.clients.claim()),
   );
 });
@@ -36,15 +43,25 @@ self.addEventListener('fetch', (event) => {
   // 只接管同源请求
   if (url.origin !== self.location.origin) return;
   // 接口与实时通道透传
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/socket.io/')) return;
+  if (
+    ['/api', '/socket.io'].some((prefix) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))
+  )
+    return;
 
   // 页面导航：网络优先，离线时用缓存外壳
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put('/index.html', clone));
+          if (response.ok && response.headers.get('content-type')?.includes('text/html')) {
+            const clone = response.clone();
+            event.waitUntil(
+              caches
+                .open(CACHE_NAME)
+                .then((cache) => cache.put('/index.html', clone))
+                .catch(() => undefined),
+            );
+          }
           return response;
         })
         .catch(() => caches.match('/index.html').then((cached) => cached ?? Response.error())),
@@ -60,7 +77,12 @@ self.addEventListener('fetch', (event) => {
           .then((response) => {
             if (response.ok) {
               const clone = response.clone();
-              caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+              event.waitUntil(
+                caches
+                  .open(CACHE_NAME)
+                  .then((cache) => cache.put(request, clone))
+                  .catch(() => undefined),
+              );
             }
             return response;
           })
