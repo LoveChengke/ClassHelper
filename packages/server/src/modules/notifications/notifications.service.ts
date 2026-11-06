@@ -271,23 +271,30 @@ export async function markAsRead(
   if (!notification) throw ApiError.notFound('通知不存在');
   await assertClassAccess(user, notification.classId, 'notification:read');
 
-  const personalIds = await resolvePersonalIds(user);
-  // 先过滤已读过的记录再创建：SQLite 下 createMany 不支持 skipDuplicates，
-  // 直接 createMany 遇到重复会整体失败。
-  const existing = await prisma.notificationRead.findMany({
-    where: { notificationId, studentId: { in: personalIds } },
-    select: { studentId: true },
-  });
-  const have = new Set(existing.map((item) => item.studentId));
-  const missing = personalIds.filter((studentId) => !have.has(studentId));
+  const marked = await createMissingReads(notificationId, await resolvePersonalIds(user));
+  return { notificationId, readAt: new Date().toISOString(), marked };
+}
 
-  if (missing.length > 0) {
-    await prisma.notificationRead.createMany({
-      data: missing.map((studentId) => ({ notificationId, studentId })),
+/** 唯一约束处理并发抢写；重读后只补缺项，兼容 SQLite/MySQL。 */
+async function createMissingReads(notificationId: string, personalIds: string[]): Promise<number> {
+  for (let attempt = 0; ; attempt++) {
+    const existing = await prisma.notificationRead.findMany({
+      where: { notificationId, studentId: { in: personalIds } },
+      select: { studentId: true },
     });
+    const have = new Set(existing.map((item) => item.studentId));
+    const missing = personalIds.filter((studentId) => !have.has(studentId));
+    if (!missing.length) return 0;
+    try {
+      const result = await prisma.notificationRead.createMany({
+        data: missing.map((studentId) => ({ notificationId, studentId })),
+      });
+      return result.count;
+    } catch (error) {
+      if (attempt >= 3 || !error || typeof error !== 'object' || !('code' in error) || error.code !== 'P2002')
+        throw error;
+    }
   }
-
-  return { notificationId, readAt: new Date().toISOString(), marked: missing.length };
 }
 
 /** 全部标为已读（可按班级限定） */
@@ -304,18 +311,7 @@ export async function markAllAsRead(user: TokenPayload, classId?: string): Promi
 
   let marked = 0;
   for (const item of pending) {
-    const existing = await prisma.notificationRead.findMany({
-      where: { notificationId: item.id, studentId: { in: personalIds } },
-      select: { studentId: true },
-    });
-    const have = new Set(existing.map((row) => row.studentId));
-    const missing = personalIds.filter((studentId) => !have.has(studentId));
-    if (missing.length === 0) continue;
-
-    await prisma.notificationRead.createMany({
-      data: missing.map((studentId) => ({ notificationId: item.id, studentId })),
-    });
-    marked += missing.length;
+    marked += await createMissingReads(item.id, personalIds);
   }
 
   return { marked };
