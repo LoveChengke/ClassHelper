@@ -1,7 +1,7 @@
 import { refreshClassSubscriptions } from '../realtime/bus.js';
 import { invalidateAuthPrincipals } from './authz/principal.js';
 import { migratePermissionScope } from '@classhelper/shared';
-import type { PrismaClient } from '../generated/prisma/client.js';
+import type { Prisma, PrismaClient } from '../generated/prisma/client.js';
 import type { DatabaseProvider } from './db.js';
 
 /**
@@ -15,7 +15,7 @@ import type { DatabaseProvider } from './db.js';
  * 而 `Class.archivedYearId` / `Student.archivedYearId → ArchivedYear` 又是另一条；
  * 恢复时必须**临时关闭外键检查**再按序写入，否则任何排序都会被其中一侧卡死。
  * - SQLite：PRAGMA foreign_keys=OFF（libsql 连接级，进程内安全）
- * - MySQL：SET FOREIGN_KEY_CHECKS=0/1（会话级，连接池下同一客户端实例内生效）
+ * - MySQL：SET FOREIGN_KEY_CHECKS=0/1（会话级，恢复事务使用同一连接）
  */
 
 export const SNAPSHOT_FORMAT = 'classhelper-snapshot';
@@ -94,7 +94,7 @@ interface ModelDelegate {
   deleteMany(): Promise<unknown>;
 }
 
-function delegatesOf(prisma: PrismaClient): Record<SnapshotTable, ModelDelegate> {
+function delegatesOf(prisma: Prisma.TransactionClient): Record<SnapshotTable, ModelDelegate> {
   return prisma as unknown as Record<SnapshotTable, ModelDelegate>;
 }
 
@@ -103,7 +103,7 @@ const CHUNK_SIZE = 200;
 
 /** 导出全库快照（行内 DateTime 为 Date 对象，JSON.stringify 时自动转 ISO） */
 export async function exportSnapshot(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   provider: DatabaseProvider,
 ): Promise<DatabaseSnapshot> {
   const delegates = delegatesOf(prisma);
@@ -150,7 +150,7 @@ export function assertValidSnapshot(value: unknown): asserts value is DatabaseSn
 }
 
 async function setForeignKeys(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   provider: DatabaseProvider,
   enabled: boolean,
 ): Promise<void> {
@@ -172,63 +172,77 @@ export async function restoreSnapshot(
   options: { clean?: boolean } = {},
 ): Promise<{ counts: Record<string, number> }> {
   assertValidSnapshot(snapshot);
-  const delegates = delegatesOf(prisma);
   const clean = options.clean !== false;
   const counts: Record<string, number> = {};
 
-  await setForeignKeys(prisma, provider, false);
+  // SQLite 只能在事务外切换外键；MySQL 的会话设置必须使用事务固定的连接。
+  if (provider === 'sqlite') await setForeignKeys(prisma, provider, false);
   try {
-    if (clean) {
-      // 反向清空，保证被引用的表最后清（外键关闭后只是防御性的，保持确定性）
-      for (const table of [...SNAPSHOT_TABLES].reverse()) {
-        await delegates[table].deleteMany();
-      }
-    }
-    for (const table of SNAPSHOT_TABLES) {
-      const rows = (snapshot.data[table] ?? []).map((row) => {
-        if (table === 'PermissionGroup') {
-          const mapped = migratePermissionScope(
-            String(row.scope ?? 'TEACHING'),
-            String(row.scopeValue ?? ''),
-          );
-          return {
-            ...row,
-            ...mapped,
-            ...(row.defaultRole === 'TEACHER' ? { scope: 'TEACHING', scopeValue: '' } : {}),
-          };
+    await prisma.$transaction(
+      async (tx) => {
+        const delegates = delegatesOf(tx);
+        if (provider === 'mysql') await setForeignKeys(tx, provider, false);
+        try {
+          if (clean) {
+            // 反向清空，保证被引用的表最后清（外键关闭后只是防御性的，保持确定性）
+            for (const table of [...SNAPSHOT_TABLES].reverse()) {
+              await delegates[table].deleteMany();
+            }
+          }
+          for (const table of SNAPSHOT_TABLES) {
+            const rows = (snapshot.data[table] ?? []).map((row) => {
+              if (table === 'PermissionGroup') {
+                const mapped = migratePermissionScope(
+                  String(row.scope ?? 'TEACHING'),
+                  String(row.scopeValue ?? ''),
+                );
+                return {
+                  ...row,
+                  ...mapped,
+                  ...(row.defaultRole === 'TEACHER' ? { scope: 'TEACHING', scopeValue: '' } : {}),
+                };
+              }
+              if (table === 'UserPermissionGroup' && row.scope === undefined) {
+                const group = snapshot.data.PermissionGroup.find((g) => g.id === row.groupId);
+                return {
+                  ...row,
+                  ...migratePermissionScope(
+                    String(group?.scope ?? 'TEACHING'),
+                    String(group?.scopeValue ?? ''),
+                  ),
+                };
+              }
+              if (table === 'StudentClassTransfer') {
+                const { mode, ...rest } = row;
+                return {
+                  ...rest,
+                  kind:
+                    rest.kind ??
+                    (mode === 'transfer-out'
+                      ? 'transfer-out'
+                      : mode === 'restore-transfer'
+                        ? 'restore'
+                        : 'class-change'),
+                };
+              }
+              if (table !== 'Class' || typeof row !== 'object' || row === null) return row;
+              const copy = { ...(row as Record<string, unknown>) };
+              delete copy.notificationChannel;
+              return copy;
+            });
+            for (let index = 0; index < rows.length; index += CHUNK_SIZE) {
+              await delegates[table].createMany({ data: rows.slice(index, index + CHUNK_SIZE) });
+            }
+            counts[table] = rows.length;
+          }
+        } finally {
+          if (provider === 'mysql') await setForeignKeys(tx, provider, true);
         }
-        if (table === 'UserPermissionGroup' && row.scope === undefined) {
-          const group = snapshot.data.PermissionGroup.find((g) => g.id === row.groupId);
-          return {
-            ...row,
-            ...migratePermissionScope(String(group?.scope ?? 'TEACHING'), String(group?.scopeValue ?? '')),
-          };
-        }
-        if (table === 'StudentClassTransfer') {
-          const { mode, ...rest } = row;
-          return {
-            ...rest,
-            kind:
-              rest.kind ??
-              (mode === 'transfer-out'
-                ? 'transfer-out'
-                : mode === 'restore-transfer'
-                  ? 'restore'
-                  : 'class-change'),
-          };
-        }
-        if (table !== 'Class' || typeof row !== 'object' || row === null) return row;
-        const copy = { ...(row as Record<string, unknown>) };
-        delete copy.notificationChannel;
-        return copy;
-      });
-      for (let index = 0; index < rows.length; index += CHUNK_SIZE) {
-        await delegates[table].createMany({ data: rows.slice(index, index + CHUNK_SIZE) });
-      }
-      counts[table] = rows.length;
-    }
+      },
+      { timeout: 120_000 },
+    );
   } finally {
-    await setForeignKeys(prisma, provider, true).catch(() => undefined);
+    if (provider === 'sqlite') await setForeignKeys(prisma, provider, true);
   }
   invalidateAuthPrincipals();
   refreshClassSubscriptions();
