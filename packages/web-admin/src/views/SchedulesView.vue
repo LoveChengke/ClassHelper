@@ -107,6 +107,7 @@ async function loadCourses(): Promise<void> {
 const SUBJECT_PREFIX = 'subject:';
 
 const subjectOptions = computed(() => {
+  if (!auth.isAdmin) return [];
   const existing = new Set(courses.value.map((item) => item.name));
   return SUBJECT_CATALOG.filter((name) => !existing.has(name));
 });

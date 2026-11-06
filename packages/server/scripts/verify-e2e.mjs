@@ -697,11 +697,17 @@ async function main() {
 
   const createdCourse = await api('/courses', {
     method: 'POST',
-    token: teacherToken,
+    token: adminToken,
     body: { name: `联调验证课程 ${Date.now()}`, classId },
   });
   const createdCourseId = createdCourse.payload?.data?.id;
   record('新增课程 POST /courses', createdCourse.status === 201, `status=${createdCourse.status}`);
+  const deniedCourse = await api('/courses', {
+    method: 'POST',
+    token: teacherToken,
+    body: { name: `禁止自授权课程 ${Date.now()}`, classId },
+  });
+  record('教师不能通过建课建立任课关系', deniedCourse.status === 403, `status=${deniedCourse.status}`);
   if (createdCourseId) {
     const removedCourse = await api(`/courses/${createdCourseId}`, { method: 'DELETE', token: teacherToken });
     record('删除课程 DELETE /courses/:id', removedCourse.status === 200, `status=${removedCourse.status}`);

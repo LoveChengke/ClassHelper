@@ -107,10 +107,15 @@ async function checkClassRelations(win, options, record) {
       return { studentWrite: Array.from(drawer.querySelectorAll('#pane-students button')).some(button => button.textContent.trim() === '添加学生'), courseCreate: Boolean(drawer.querySelector('#pane-courses input')), gradeQueryEnabled: !drawer.querySelector('#pane-settings .el-switch')?.classList.contains('is-disabled') };
     })()`);
     record(
-      '班主任本人班级仍可维护名单、课程和成绩查询开关',
-      owner.studentWrite && owner.courseCreate && owner.gradeQueryEnabled,
+      '班主任可维护本班名单和成绩查询开关，但不能通过建课取得任课关系',
+      owner.studentWrite && !owner.courseCreate && owner.gradeQueryEnabled,
       JSON.stringify(owner),
     );
+    const created = await request('/courses', admin.token, 'POST', {
+      classId: other.id,
+      name: '管理员建课验证',
+    });
+    record('管理员仍可建立课程与任课关系', created.status === 201, `status=${created.status}`);
     const members = await data('/permissions/users', admin.token);
     const previous = members.find((member) => member.id === teacher.user.id).assignments;
     const groups = [];

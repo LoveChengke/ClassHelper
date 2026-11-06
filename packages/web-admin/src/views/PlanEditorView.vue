@@ -504,10 +504,10 @@ watch(tab, () => {
     selectedLayout.value = plan.value.timeLayoutId;
 });
 const missingSubjects = computed(() =>
-  SUBJECT_CATALOG.filter((name) => !courses.value.some((c) => c.name === name)),
+  auth.isAdmin ? SUBJECT_CATALOG.filter((name) => !courses.value.some((c) => c.name === name)) : [],
 );
 async function addSubject(name: string) {
-  if (!canWrite.value) return;
+  if (!canWrite.value || !auth.isAdmin) return;
   try {
     const created = await courseApi.create({ classId: classId.value, name });
     courses.value.push(created);

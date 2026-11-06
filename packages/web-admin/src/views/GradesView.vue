@@ -187,6 +187,7 @@ async function onClassChange(): Promise<void> {
 const SUBJECT_PREFIX = 'subject:';
 
 const subjectOptions = computed(() => {
+  if (!auth.isAdmin) return [];
   const existing = new Set(courses.value.map((item) => item.name));
   return SUBJECT_CATALOG.filter((name) => !existing.has(name));
 });
@@ -221,7 +222,7 @@ const ownCourses = computed(() =>
 );
 
 /** 能不能在该班新建科目（与课表管理同权限：管理员或本班班主任） */
-const canCreateCourse = computed(() => auth.canManageClass('schedule:write', filter.classId));
+const canCreateCourse = computed(() => auth.isAdmin);
 
 /** 录入弹窗的默认科目：优先沿用页面筛选，但筛的是别人的科目时退回"我的科目"第一条 */
 function defaultFormCourseId(): string {

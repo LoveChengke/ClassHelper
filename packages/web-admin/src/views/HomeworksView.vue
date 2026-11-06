@@ -222,6 +222,7 @@ const formCoursesLoading = ref(false);
 
 /** 该班还没有的科目（来自 shared 的 SUBJECT_CATALOG） */
 const newSubjectOptions = computed(() => {
+  if (!auth.isAdmin) return [];
   const existing = new Set(formCourses.value.map((item) => item.name));
   return SUBJECT_CATALOG.filter((name) => !existing.has(name));
 });
@@ -237,8 +238,8 @@ const ownFormCourses = computed(() =>
   auth.isAdmin ? formCourses.value : formCourses.value.filter((item) => item.teacherId === auth.user?.id),
 );
 
-/** 该班里能不能新建科目：与课表管理同权限（管理员或本班班主任） */
-const canCreateCourse = computed(() => auth.canManageClass('schedule:write', form.classId));
+/** 新建科目会建立任课关系，仅管理员可操作。 */
+const canCreateCourse = computed(() => auth.isAdmin);
 
 async function loadFormCourses(): Promise<void> {
   const classId = form.classId;
@@ -325,10 +326,10 @@ async function resolveCourseId(): Promise<string | null> {
       await loadFormCourses();
       return reusedId;
     }
-    // 新建课程需要"管理员或本班班主任"权限（与课表管理一致），科任老师会被 403 拦截
+    // 新建课程会建立任课关系，统一交给管理员配置。
     ElMessage.error(
       `新建科目「${name}」失败：${
-        error instanceof Error ? error.message : '仅班主任/管理员可以在班级下新建课程'
+        error instanceof Error ? error.message : '请联系管理员建立科目及任课关系'
       }，可改用已有课程或直接留空发布`,
     );
     throw error;
@@ -622,7 +623,7 @@ function canEditContent(row: HomeworkDto): boolean {
                 ? '正在加载该班课程…'
                 : canCreateCourse
                   ? '只列你任教的科目；该班还没有的科目在「其他科目（新建）」里，选中后自动建课再发布'
-                  : '只列你任教的科目；需要别的科目请先由班主任/管理员在课表管理里建好并分配任课老师'
+                  : '只列你任教的科目；需要别的科目请联系管理员建立科目并分配任课老师'
             }}
           </div>
         </el-form-item>

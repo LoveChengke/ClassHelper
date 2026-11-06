@@ -1,6 +1,11 @@
 import { refreshClassSubscriptions } from '../../realtime/bus.js';
 import type { CourseDto } from '@classhelper/shared';
-import { assertCanManageSchedule, classScopeWhere, resolveClassScope } from '../../lib/access.js';
+import {
+  assertCanAssignTeachers,
+  assertCanManageSchedule,
+  classScopeWhere,
+  resolveClassScope,
+} from '../../lib/access.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
@@ -21,6 +26,9 @@ export async function listCourses(user: TokenPayload, classId?: string): Promise
 
 export async function createCourse(user: TokenPayload, input: CreateCourseInput): Promise<CourseDto> {
   await assertCanManageSchedule(user, input.classId);
+  // 建课同时建立任课关系，只能由管理员执行，不能凭课表维护范围自授权。
+  if (user.role !== 'ADMIN') throw ApiError.forbidden('新建科目会建立任课关系，请联系管理员配置');
+  await assertCanAssignTeachers(user, input.classId);
 
   /*
    * 同名去重（一个班级里科目名唯一）。

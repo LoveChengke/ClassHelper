@@ -325,7 +325,7 @@ async function removeStudent(row: StudentDto): Promise<void> {
 const courseForm = reactive({ name: '' });
 
 async function addCourse(): Promise<void> {
-  if (!canManageDetailCourses.value) return;
+  if (!auth.isAdmin || !canManageDetailCourses.value) return;
   if (!detail.value || !courseForm.name.trim()) {
     ElMessage.warning('请输入课程名称');
     return;
@@ -771,7 +771,7 @@ async function saveSettings() {
               </el-table-column>
             </el-table>
             <el-input
-              v-if="canManageDetailCourses"
+              v-if="auth.isAdmin && canManageDetailCourses"
               v-model="courseForm.name"
               placeholder="输入课程名称后回车快速添加"
               class="mt-12"
