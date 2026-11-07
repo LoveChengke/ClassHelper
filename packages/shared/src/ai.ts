@@ -50,5 +50,25 @@ export interface AiConversationResult {
   planId: string | null;
   message: string;
   steps: AiPlanStep[];
-  results: { action: string; label: string; data: unknown }[];
+  results: { action: string; label: string; data: unknown; operation?: AiOperation }[];
 }
+export interface AiTaskDto {
+  id: string;
+  state: string;
+  text: string;
+  events: AiAgentEvent[];
+  result?: AiConversationResult;
+  error?: string;
+}
+
+export type AiReasoningEffort = 'auto' | 'none' | 'low' | 'medium' | 'high' | 'max';
+export interface AiModelInfo {
+  id: string;
+  name: string;
+  efforts: AiReasoningEffort[];
+}
+export type AiAgentEvent =
+  | { type: 'status'; message: string }
+  | { type: 'message'; text: string }
+  | { type: 'result'; result: AiConversationResult }
+  | { type: 'error'; code: string; message: string; retryable: boolean };

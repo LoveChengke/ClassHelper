@@ -71,6 +71,7 @@ gh release upload v<版本> <三个已按上传名暂存的EXE> releases/SHA256S
 推送 v* tag 触发 release-linux-server.yml，按 tag 检出，在 Ubuntu 构建并上传 Linux 包、独立 .sha256，合并跨组件清单。
 等待 Actions 成功，再下载 Linux 文件和最终 SHA256SUMS 同步回本地；检查清单的 Windows 行仍与本次文件一致。
 如需重跑，可手动运行该 workflow，指定准确 tag 和 attach=true。master 修复不会自动改变旧 tag 指向。
+用户明确要求同版本更新远端服务端资产时，可额外指定 `source_ref` 为经过验证的完整提交 SHA；版本仍须与目标 tag 一致。保留原标签，在发布说明注明服务端重建提交及客户端沿用原批次，更新两个平台的服务端包与摘要。
 
 官网和文档站由 pages.yml 拼装同一个站点：官网根、文档 /docs/。文档版本徽标读根 package.json，
 官网和下载页兜底版本由 version 脚本维护。Linux workflow 与 Pages 是独立流水线，分别确认结果。

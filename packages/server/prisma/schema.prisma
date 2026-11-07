@@ -829,3 +829,18 @@ model AiPlanStep {
   @@unique([auditId, ordinal])
   @@index([userId, createdAt])
 }
+
+/// 持久化后台任务；输入、结果和阶段消息加密，连接断开不取消任务。
+model AiTask {
+  id        String   @id @default(cuid())
+  userId    String
+  state     String   @default("preparing")
+  input     String
+  result    String   @default("")
+  events    String   @default("")
+  error     String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, createdAt])
+}

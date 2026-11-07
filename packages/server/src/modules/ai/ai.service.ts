@@ -13,6 +13,7 @@ export async function getAiSettings(): Promise<AiSettingsDto> {
     SETTING_KEYS.aiProvider,
     SETTING_KEYS.aiBaseUrl,
     SETTING_KEYS.aiModel,
+    SETTING_KEYS.aiReasoningEffort,
     SETTING_KEYS.aiApiKey,
     SETTING_KEYS.aiSystemPromptExtra,
   ]);
@@ -22,6 +23,11 @@ export async function getAiSettings(): Promise<AiSettingsDto> {
     provider: values[SETTING_KEYS.aiProvider] === 'mock' ? 'mock' : 'openai',
     baseUrl: values[SETTING_KEYS.aiBaseUrl] ?? '',
     model: values[SETTING_KEYS.aiModel] ?? '',
+    reasoningEffort: (['none', 'low', 'medium', 'high', 'max'].includes(
+      values[SETTING_KEYS.aiReasoningEffort] ?? '',
+    )
+      ? values[SETTING_KEYS.aiReasoningEffort]
+      : 'auto') as AiSettingsDto['reasoningEffort'],
     hasApiKey: apiKey.length > 0,
     keyHint: apiKey.length >= 4 ? apiKey.slice(-4) : '',
     systemPromptExtra: values[SETTING_KEYS.aiSystemPromptExtra] ?? '',
@@ -33,6 +39,8 @@ export async function updateAiSettings(
   input: UpdateAiSettingsInput,
 ): Promise<AiSettingsDto> {
   assertAdmin(user);
+  if (input.reasoningEffort !== undefined)
+    await setSetting(SETTING_KEYS.aiReasoningEffort, input.reasoningEffort);
   if (input.enabled !== undefined) await setSetting(SETTING_KEYS.aiEnabled, input.enabled ? 'true' : 'false');
   if (input.provider !== undefined) await setSetting(SETTING_KEYS.aiProvider, input.provider);
   if (input.baseUrl !== undefined) await setSetting(SETTING_KEYS.aiBaseUrl, input.baseUrl.trim());

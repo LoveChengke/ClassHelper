@@ -3,6 +3,8 @@ import type {
   AiConversationRequest,
   AiConversationResult,
   AiPlanStep,
+  AiModelInfo,
+  AiTaskDto,
 } from '@classhelper/shared';
 import {
   API_PATHS,
@@ -671,6 +673,23 @@ const AI_BASE = API_PATHS.ai;
  * 解释和附件预览只保存计划与审计；确认后由绑定的原业务接口执行写入。
  */
 export const aiApi = {
+  tasks: (): Promise<AiTaskDto[]> => api.get(`${AI_BASE}/tasks`),
+  task: (id: string): Promise<AiTaskDto> => api.get(`${AI_BASE}/tasks/${id}`),
+  createTask: (payload: AiConversationRequest): Promise<{ id: string }> =>
+    api.post(`${AI_BASE}/tasks`, payload),
+  startTask: (id: string): Promise<null> => api.post(`${AI_BASE}/tasks/${id}/start`),
+  stopTask: (id: string): Promise<null> => api.post(`${AI_BASE}/tasks/${id}/stop`),
+  executeTask: (
+    id: string,
+    body: {
+      confirmed: true;
+      extraConfirmed?: boolean;
+      urgentConfirmed?: boolean;
+      secrets?: Record<string, Record<string, string>>;
+    },
+  ): Promise<null> => api.post(`${AI_BASE}/tasks/${id}/execute`, body),
+  models: (payload: { baseUrl?: string; apiKey?: string }): Promise<AiModelInfo[]> =>
+    api.post(`${AI_BASE}/models`, payload),
   /**
    * 读取配置。
    *

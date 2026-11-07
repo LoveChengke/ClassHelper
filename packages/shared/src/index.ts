@@ -13,3 +13,4 @@ export type * from './types.js';
 export * from './courseware.js';
 export * from './lifecycle.js';
 export type * from './ai.js';
+export * from './event-stream.js';

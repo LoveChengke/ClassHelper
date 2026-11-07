@@ -33,6 +33,8 @@ export type ApiErrorCode =
   | 'AI_TIMEOUT'
   /** 大模型：返回的内容不是可用的结构化动作（已记日志，不把原始回复回传给前端） */
   | 'AI_INVALID_OUTPUT'
+  | 'AI_TASK_INCOMPLETE'
+  | 'AI_MODELS_UNAVAILABLE'
   | 'AI_PROVIDER_ERROR'
   | 'AI_READ_FAILED'
   | 'AI_RESULT_UNCERTAIN'

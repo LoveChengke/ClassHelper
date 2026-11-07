@@ -73,6 +73,7 @@ export const SNAPSHOT_TABLES = [
   'ClientRelease',
   'AiAudit',
   'AiPlanStep',
+  'AiTask',
 ] as const;
 
 export type SnapshotTable = (typeof SNAPSHOT_TABLES)[number];
@@ -146,7 +147,10 @@ export function assertValidSnapshot(value: unknown): asserts value is DatabaseSn
     // 旧版本快照没有课件表；允许恢复，文件实体仍需单独备份。
     if (
       rows === undefined &&
-      (table.startsWith('Courseware') || table === 'PermissionAudit' || table === 'AiPlanStep')
+      (table.startsWith('Courseware') ||
+        table === 'PermissionAudit' ||
+        table === 'AiPlanStep' ||
+        table === 'AiTask')
     )
       continue;
     if (!Array.isArray(rows)) {

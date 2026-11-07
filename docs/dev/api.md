@@ -127,6 +127,19 @@ API 前缀 /api，JWT 使用 Authorization: Bearer。成功/失败结构以 `lib
 
 `POST /ai/interpret` 接收 `text`、可选班级、当前会话的 `messages` 和附件元数据 `attachments`，返回 `planId/message/steps/results`，并保留旧响应字段的兼容形状。附件包含 id、文件名、大小与 SHA256；普通课件内容不发送给模型。
 
+`POST /ai/models` 仅管理员可用，接收可选 `baseUrl/apiKey`（未传时使用已保存配置），通过兼容 `/models` 获取模型及支持的推理档位，密钥不回传。设置增加 `reasoningEffort`：`auto/none/low/medium/high/max`，`auto` 不附加推理参数。
+
+后台任务接口均要求 `ai:use`，并校验归属及实际业务权限：
+
+- `POST /ai/tasks` 创建任务；`PUT /ai/tasks/:id/files/:attachmentId` 以二进制暂存已声明附件，校验大小与 SHA256，不发布课件。
+- `POST /ai/tasks/:id/start` 提交后台规划，完整附件上传后才允许开始。
+- `GET /ai/tasks` 列出本人最近任务；`GET /ai/tasks/:id` 读取状态并重新授权结果数据。
+- `GET /ai/tasks/:id/events` 以 SSE 返回 `status/message/result/error`，关闭连接仅停止订阅，不取消任务。
+- `POST /ai/tasks/:id/execute` 接收与计划确认相同的确认字段，后台逐步调用白名单业务接口，使用持久步骤去重。失败停止后续依赖项，重试不重做成功步骤。
+- `POST /ai/tasks/:id/stop` 主动停止后台任务；已发出的业务请求可完成，后续步骤停止。
+
+后台任务保存在 `AiTask`，输入、结果与进度加密，纳入快照并兼容旧快照缺表。助手页面统一使用后台任务接口。服务重启保留任务，未知业务执行结果须核对后继续。
+
 - `GET /ai/capabilities`：当前操作者可用的动作及参数契约，目录不包含数据库维护、服务器运维和密钥操作。
 - `GET /ai/plans/:id`：本人计划和分步状态；业务权限及范围重新校验。
 - `POST /ai/plans/:id/prepare`：结构化附件经哈希核对后复用原导入解析器生成预览，不发布业务数据。

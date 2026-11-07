@@ -7,6 +7,8 @@ import {
   type AiSettingsDto,
   type SystemDiagnosticsDto,
   type UpdateAiSettingsRequest,
+  type AiModelInfo,
+  type AiReasoningEffort,
 } from '@classhelper/shared';
 import { aiApi, systemApi } from '@/api';
 import { useAuthStore } from '@/stores/auth';
@@ -36,6 +38,7 @@ const form = reactive({
   provider: 'openai' as Provider,
   baseUrl: '',
   model: '',
+  reasoningEffort: 'auto' as AiReasoningEffort,
   systemPromptExtra: '',
 });
 
@@ -44,11 +47,46 @@ const hasApiKey = ref(false);
 const keyHint = ref('');
 /** 本次要写入的新密钥；留空 = 保持原密钥不变 */
 const apiKeyInput = ref('');
+const models = ref<AiModelInfo[]>([]),
+  modelsLoading = ref(false),
+  modelsError = ref('');
+const effortLabels: Record<AiReasoningEffort, string> = {
+  auto: '自动',
+  none: '快速 · 不启用推理',
+  low: '低',
+  medium: '中',
+  high: '高',
+  max: '最高',
+};
+const effortOptions = computed(
+  () =>
+    models.value.find((item) => item.id === form.model)?.efforts ??
+    (['auto', 'none', 'low', 'medium', 'high'] as AiReasoningEffort[]),
+);
+async function loadModels(): Promise<void> {
+  if (!form.baseUrl.trim() || (!hasApiKey.value && !apiKeyInput.value.trim()) || modelsLoading.value) return;
+  modelsLoading.value = true;
+  modelsError.value = '';
+  try {
+    models.value = await aiApi.models({
+      baseUrl: form.baseUrl.trim(),
+      ...(apiKeyInput.value.trim() ? { apiKey: apiKeyInput.value.trim() } : {}),
+    });
+    if (!form.model) form.model = models.value[0]?.id ?? '';
+  } catch {
+    modelsError.value = '获取失败，可重试或手动填写模型名。';
+  } finally {
+    modelsLoading.value = false;
+  }
+}
+function modelChanged(): void {
+  if (!effortOptions.value.includes(form.reasoningEffort)) form.reasoningEffort = 'auto';
+}
 
 const providerHint = computed(() =>
   form.provider === 'mock'
     ? '离线示例解析：不联网，只按关键词猜测，供演示与验收。'
-    : 'OpenAI 兼容接口：请求 {服务地址}/chat/completions，适用于 OpenAI、通义、DeepSeek 等兼容服务。',
+    : 'OpenAI 兼容接口，支持基础地址或完整 /chat/completions 地址。',
 );
 
 function applySettings(settings: AiSettingsDto): void {
@@ -56,6 +94,7 @@ function applySettings(settings: AiSettingsDto): void {
   form.provider = settings.provider;
   form.baseUrl = settings.baseUrl;
   form.model = settings.model;
+  form.reasoningEffort = settings.reasoningEffort ?? 'auto';
   form.systemPromptExtra = settings.systemPromptExtra;
   hasApiKey.value = settings.hasApiKey;
   keyHint.value = settings.keyHint;
@@ -66,6 +105,7 @@ async function loadSettings(): Promise<void> {
   loading.value = true;
   try {
     applySettings(await aiApi.settings());
+    if (form.provider === 'openai') await loadModels();
   } catch {
     // 响应拦截器已经弹过服务端的中文提示，这里只保证页面不是一片空白
   } finally {
@@ -81,6 +121,7 @@ async function save(): Promise<void> {
       provider: form.provider,
       baseUrl: form.baseUrl.trim(),
       model: form.model.trim(),
+      reasoningEffort: form.reasoningEffort,
       systemPromptExtra: form.systemPromptExtra,
     };
     // 只有真的填了新密钥才带上 apiKey：不带 = 保持原值，null = 清除
@@ -271,15 +312,40 @@ onMounted(async () => {
                   v-model="form.baseUrl"
                   placeholder="https://api.openai.com/v1"
                   class="field-input"
+                  @change="loadModels"
                 />
+                <p class="field-hint">
+                  DeepSeek 可填 https://api.deepseek.com/chat/completions，模型名按服务商填写。
+                </p>
               </el-form-item>
 
               <el-form-item label="模型名">
-                <el-input
+                <el-select
                   v-model="form.model"
-                  placeholder="gpt-4o-mini（留空即用默认）"
+                  filterable
+                  allow-create
+                  default-first-option
+                  placeholder="选择或填写模型"
                   class="field-input"
-                />
+                  :loading="modelsLoading"
+                  @change="modelChanged"
+                >
+                  <el-option v-for="model in models" :key="model.id" :value="model.id" :label="model.name" />
+                </el-select>
+                <el-button :loading="modelsLoading" @click="loadModels">获取模型</el-button>
+                <p v-if="modelsError" class="field-hint">{{ modelsError }}</p>
+              </el-form-item>
+
+              <el-form-item label="推理强度">
+                <el-select v-model="form.reasoningEffort" class="field-input">
+                  <el-option
+                    v-for="level in effortOptions"
+                    :key="level"
+                    :value="level"
+                    :label="effortLabels[level]"
+                  />
+                </el-select>
+                <p class="field-hint">自动使用服务商默认值，其他档位以模型支持为准。</p>
               </el-form-item>
 
               <el-form-item label="API 密钥">
@@ -289,6 +355,7 @@ onMounted(async () => {
                     type="password"
                     show-password
                     class="field-input"
+                    @change="loadModels"
                     :placeholder="
                       hasApiKey ? `已配置（尾号 ${keyHint}），留空表示不修改` : '粘贴密钥，保存后不再显示'
                     "

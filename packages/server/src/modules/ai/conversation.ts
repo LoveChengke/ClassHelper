@@ -1,13 +1,19 @@
 import { z } from 'zod';
-import { dayKeyLocal, type AiInterpretResult, type AiConversationResult } from '@classhelper/shared';
+import {
+  dayKeyLocal,
+  type AiInterpretResult,
+  type AiConversationResult,
+  type AiPlanStep,
+} from '@classhelper/shared';
 import { assertPermission, assertPublish } from '../../lib/authz/index.js';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
+import { loadSessionUser } from '../../lib/authz/session.js';
 import { activeStudentWhere } from '../../lib/students.js';
 import { capabilities, runRead } from './actions.js';
 import { createPlan } from './plans.js';
-import { planWithModel, sanitizePrompt } from './model-planner.js';
+import { planWithModel, sanitizePrompt, type AgentRun } from './model-planner.js';
 import { getAiSettings } from './ai.service.js';
 import type { AiInterpretInput } from './ai.schemas.js';
 
@@ -113,8 +119,10 @@ function localReply(
 export async function interpretConversation(
   user: TokenPayload,
   input: AiInterpretInput,
+  run: AgentRun = {},
 ): Promise<AiInterpretResult & AiConversationResult> {
   await assertPermission(user, 'ai:use');
+  run.emit?.({ type: 'status', message: '正在检查权限与可用功能' });
   const settings = await getAiSettings();
   if (!settings.enabled) throw new ApiError(400, 'AI_NOT_CONFIGURED', '请管理员先开启 AI 助手');
   const tools = await capabilities(user);
@@ -131,7 +139,7 @@ export async function interpretConversation(
   }
   let modelResults: AiConversationResult['results'] = [];
   if (settings.provider === 'openai') {
-    const planned = await planWithModel(user, input, tools, classes);
+    const planned = await planWithModel(user, input, tools, classes, run);
     reply = planned.reply;
     modelResults = planned.results;
   } else reply ??= localReply(input, classes);
@@ -174,6 +182,7 @@ export async function interpretConversation(
       action: query.action,
       label: tools.find((item) => item.action === query.action)?.label ?? query.action,
       data: await runRead(user, query),
+      operation: query,
     });
   for (const operation of reply.operations)
     if (operation.action === 'calls.create' && operation.params?.studentName && !operation.params.studentId) {
@@ -188,9 +197,44 @@ export async function interpretConversation(
       operation.params.studentId = students[0]!.id;
       delete operation.params.studentName;
     }
-  const plan = reply.operations.length
-    ? await createPlan(user, sanitizePrompt(input.text), reply.operations, input.attachments ?? [])
-    : { planId: null, steps: [] };
+  run.signal?.throwIfAborted();
+  await run.authorize?.();
+  user = await loadSessionUser({ ...user });
+  await assertPermission(user, 'ai:use');
+  run.emit?.({
+    type: 'status',
+    message: reply.operations.length ? '正在校验参数并生成变更预览' : '正在整理查询结果',
+  });
+  let plan: { planId: string | null; steps: AiPlanStep[] };
+  try {
+    plan = reply.operations.length
+      ? await createPlan(user, sanitizePrompt(input.text), reply.operations, input.attachments ?? [])
+      : { planId: null, steps: [] };
+  } catch (error) {
+    if (
+      settings.provider !== 'openai' ||
+      !(error instanceof ApiError) ||
+      ![400, 422].includes(error.status) ||
+      (run.corrections ?? 0) >= 2
+    )
+      throw error;
+    run.emit?.({ type: 'status', message: '参数需要调整，正在自动核对并修正预览' });
+    return interpretConversation(
+      user,
+      {
+        ...input,
+        messages: [
+          ...(input.messages ?? []),
+          { role: 'assistant' as const, content: JSON.stringify(reply).slice(0, 8000) },
+          {
+            role: 'user' as const,
+            content: `预览校验未通过：${sanitizePrompt(error.message)}。请查询真实数据后修正参数，不能省略用户要求。信息不足时提出具体问题。`,
+          },
+        ].slice(-20),
+      },
+      { ...run, corrections: (run.corrections ?? 0) + 1 },
+    );
+  }
   const message =
     reply.message ||
     (plan.steps.length

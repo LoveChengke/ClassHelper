@@ -1,4 +1,4 @@
-import type { AiConversationRequest } from './ai.js';
+import type { AiConversationRequest, AiReasoningEffort } from './ai.js';
 import type { CoursewareTransfer } from './courseware.js';
 import type {
   ClientUpdateProgressDto,
@@ -1808,6 +1808,7 @@ export type AiProvider = 'openai' | 'mock';
 
 /** `GET/PUT /api/ai/settings`：大模型设置（**API Key 只进不出**） */
 export interface AiSettingsDto {
+  reasoningEffort: AiReasoningEffort;
   enabled: boolean;
   provider: AiProvider;
   baseUrl: string;
@@ -1821,6 +1822,7 @@ export interface AiSettingsDto {
 }
 
 export interface UpdateAiSettingsRequest {
+  reasoningEffort?: AiReasoningEffort;
   enabled?: boolean;
   provider?: AiProvider;
   baseUrl?: string;

@@ -15,6 +15,7 @@ export const SETTING_KEYS = {
   aiProvider: 'ai.provider',
   aiBaseUrl: 'ai.baseUrl',
   aiModel: 'ai.model',
+  aiReasoningEffort: 'ai.reasoningEffort',
   /** 加密后的 API Key（见 lib/secrets.ts；接口只进不出） */
   aiApiKey: 'ai.apiKey',
   /** 追加到系统提示词末尾的学校自定义要求（可空） */

@@ -2,12 +2,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import axios from 'axios';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { PageHeader } from '@classhelper/ui';
 import {
   COURSEWARE_MAX_BYTES,
   type AiAttachment,
   type AiCapability,
   type AiConversationResult,
+  type AiConversationRequest,
+  type AiTaskDto,
   type AiPlanStep,
   type ClassDto,
   type ClassPeriod,
@@ -19,10 +20,13 @@ import { hashAttachment, importFileBase64 } from '@/composables/assistantFiles';
 import { findClassInSession } from '@/composables/useClassInSession';
 import AssistantData from '@/components/AssistantData.vue';
 import UrgentClassWarning from '@/components/UrgentClassWarning.vue';
+import { observeTask } from '@/composables/assistantStream';
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   result?: AiConversationResult;
+  activity?: string[];
+  state?: 'working' | 'done' | 'stopped';
 }
 const auth = useAuthStore();
 const text = ref(''),
@@ -39,6 +43,7 @@ const busy = ref(false),
   executing = ref(false),
   progress = ref(0),
   error = ref('');
+const followScroll = ref(true);
 const disabled = ref(false),
   dragging = ref(false),
   active = ref<AiConversationResult>();
@@ -47,6 +52,10 @@ const urgent = reactive({ visible: false, period: null as ClassPeriod | null, ti
 let resolveUrgent: ((confirmed: boolean) => void) | undefined;
 let controller: AbortController | undefined;
 let disposed = false;
+let observing = false;
+let lastRequest: AiConversationRequest | undefined;
+const taskId = ref(''),
+  taskHistory = ref<AiTaskDto[]>([]);
 const pending = computed(
   () => active.value?.steps.some((step) => !['succeeded', 'blocked'].includes(step.status)) ?? false,
 );
@@ -79,6 +88,7 @@ function clearCredentials(): void {
 }
 async function scroll(): Promise<void> {
   await nextTick();
+  if (!followScroll.value) return;
   conversation.value?.scrollTo({ top: conversation.value.scrollHeight, behavior: 'smooth' });
 }
 async function selectFiles(selected: FileList | File[]): Promise<void> {
@@ -133,41 +143,66 @@ async function prepare(result: AiConversationResult): Promise<void> {
     result.steps = await aiApi.prepare(result.planId, { [id]: file });
 }
 async function retryTask(): Promise<void> {
-  const last = [...messages.value].reverse().find((message) => message.role === 'user');
-  if (last) {
-    text.value = last.content;
-    await send();
-  }
+  if (lastRequest) await send(true);
 }
-async function send(): Promise<void> {
-  if (!text.value.trim() || busy.value || executing.value || hashing.value) return;
+async function send(retrying = false): Promise<void> {
+  if ((!retrying && !text.value.trim()) || busy.value || executing.value || hashing.value) return;
   busy.value = true;
   error.value = '';
   controller = new AbortController();
+  let message: ChatMessage | undefined;
+  const uploadFiles = attachments.value.map((attachment) => ({ attachment, file: files.get(attachment.id) }));
   try {
     if (active.value?.planId && pending.value) await aiApi.discard(active.value.planId);
     clearCredentials();
     active.value = undefined;
-    const content = text.value.trim(),
+    const content = retrying ? lastRequest!.text : text.value.trim(),
       history = messages.value.slice(-18).map(({ role, content }) => ({ role, content }));
-    messages.value.push({ role: 'user', content });
+    if (!retrying) {
+      lastRequest = {
+        text: content,
+        classId: classId.value || undefined,
+        messages: history,
+        attachments: [...attachments.value],
+      };
+      messages.value.push({ role: 'user', content });
+    }
+    message = reactive<ChatMessage>({ role: 'assistant', content: '', activity: [], state: 'working' });
+    messages.value.push(message);
     text.value = '';
+    followScroll.value = true;
     await scroll();
+    if (!retrying || !taskId.value) {
+      taskId.value = (await aiApi.createTask(lastRequest!)).id;
+      message.activity!.push(
+        attachments.value.length ? '正在上传附件，完成后将转入后台' : '任务已提交到后台',
+      );
+      for (const { attachment, file } of uploadFiles) {
+        if (!file) throw new Error('请重新选择原附件');
+        await api.stageAiAttachment(taskId.value, attachment.id, file, controller.signal);
+      }
+    }
+    controller.signal.throwIfAborted();
+    await aiApi.startTask(taskId.value);
+    if (disposed) return;
+    observing = true;
     const result = reactive(
-      await aiApi.interpret(
-        {
-          text: content,
-          classId: classId.value || undefined,
-          messages: history,
-          attachments: attachments.value,
+      await observeTask(
+        taskId.value,
+        (event) => {
+          if (disposed || controller?.signal.aborted) return;
+          if (event.type === 'status' && message!.activity?.at(-1) !== event.message)
+            message!.activity = [...(message!.activity ?? []), event.message].slice(-60);
+          if (event.type === 'message') message!.content = event.text;
+          void scroll();
         },
         controller.signal,
       ),
     );
     if (disposed) return;
     active.value = result;
-    const message = reactive<ChatMessage>({ role: 'assistant', content: result.message, result });
-    messages.value.push(message);
+    message.content = result.message;
+    message.result = result;
     try {
       await prepare(result);
     } finally {
@@ -175,14 +210,48 @@ async function send(): Promise<void> {
     }
     for (const step of result.steps) credentials[step.id] = {};
   } catch (e) {
-    if (!disposed && !axios.isCancel(e)) {
+    if (controller.signal.aborted) {
+      if (message) message.content = '已停止生成，任务已保留，可继续重试。';
+    } else if (!disposed && !axios.isCancel(e)) {
       error.value = failure(e);
-      if (axios.isAxiosError(e) && e.response?.data?.code === 'AI_NOT_CONFIGURED') disabled.value = true;
+      if (message) message.content = '任务尚未完成，可继续重试。';
+      if (typeof e === 'object' && e && 'code' in e && e.code === 'AI_NOT_CONFIGURED') disabled.value = true;
     }
   } finally {
+    observing = false;
+    if (message) message.state = controller.signal.aborted || error.value ? 'stopped' : 'done';
     busy.value = false;
+    if (!disposed) taskHistory.value = await aiApi.tasks().catch(() => taskHistory.value);
     await scroll();
   }
+}
+function composerKey(event: KeyboardEvent): void {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    void send();
+  }
+}
+async function newConversation(): Promise<void> {
+  if (busy.value || executing.value || hashing.value) return;
+  if (pending.value && active.value?.planId) {
+    try {
+      await ElMessageBox.confirm('开始新对话将取消当前待确认计划。', '新对话', {
+        confirmButtonText: '开始新对话',
+        cancelButtonText: '保留当前对话',
+      });
+    } catch {
+      return;
+    }
+    await aiApi.discard(active.value.planId);
+  }
+  clearCredentials();
+  active.value = undefined;
+  messages.value = [];
+  attachments.value = [];
+  files.clear();
+  lastRequest = undefined;
+  text.value = '';
+  error.value = '';
 }
 async function urgentConfirmation(period: ClassPeriod | null, title: string): Promise<boolean> {
   urgent.period = period;
@@ -256,46 +325,35 @@ async function execute(urgentConfirmed = false): Promise<void> {
           urgentConfirmed = true;
         }
       }
-    result.steps = await aiApi.confirm(result.planId, {
+    if (!taskId.value) throw new Error('请重新打开本次后台任务');
+    await aiApi.executeTask(taskId.value, {
       confirmed: true,
       extraConfirmed: danger.length > 0,
       urgentConfirmed,
       secrets: { ...credentials },
     });
     clearCredentials();
-    for (const step of result.steps) {
-      if (step.status === 'succeeded') continue;
-      if (!step.request) throw new Error('计划未确认，请刷新后重试');
-      const file = step.request.attachmentId ? files.get(step.request.attachmentId) : undefined;
-      if (step.request.attachmentId && !file) throw new Error('原附件已移除，请重新生成计划');
-      step.status = 'running';
-      try {
-        step.result = await api.executeAi(step.id, step.request, file, controller.signal, (value) => {
-          progress.value = value;
-        });
-        step.status = 'succeeded';
-      } catch (e) {
-        const refreshed = await refreshPlan(result)
-          .then(() => true)
-          .catch(() => false);
-        if (!refreshed) {
-          step.status = axios.isAxiosError(e) && e.response && e.response.status < 500 ? 'failed' : 'blocked';
-          step.error = failure(e);
-        }
-        if (
-          axios.isAxiosError(e) &&
-          e.response?.data?.code === 'URGENT_DURING_CLASS' &&
-          (await urgentConfirmation(
-            e.response.data.details?.period ?? null,
-            String(step.params?.title ?? ''),
-          ))
-        ) {
-          executing.value = false;
-          await execute(true);
-          return;
-        }
-        throw e;
-      }
+    const activity = reactive<ChatMessage>({
+      role: 'assistant',
+      content: '',
+      activity: [],
+      state: 'working',
+    });
+    messages.value.push(activity);
+    try {
+      const completed = await observeTask(
+        taskId.value,
+        (event) => {
+          if (event.type === 'status' && activity.activity!.at(-1) !== event.message)
+            activity.activity!.push(event.message);
+          void scroll();
+        },
+        controller.signal,
+      );
+      result.steps = completed.steps;
+      activity.content = '所有步骤已完成。';
+    } finally {
+      activity.state = error.value ? 'stopped' : 'done';
     }
     await refreshPlan(result);
     messages.value.push({
@@ -313,14 +371,71 @@ async function execute(urgentConfirmed = false): Promise<void> {
 }
 async function cancelPlan(): Promise<void> {
   if (executing.value) {
+    if (taskId.value) await aiApi.stopTask(taskId.value);
     controller?.abort();
     return;
   }
   if (active.value?.planId) {
     await aiApi.discard(active.value.planId);
+    if (taskId.value) await aiApi.stopTask(taskId.value);
     await refreshPlan(active.value);
   }
   clearCredentials();
+}
+async function stopGeneration(): Promise<void> {
+  if (taskId.value) await aiApi.stopTask(taskId.value);
+  controller?.abort();
+}
+async function resumeTask(id: string): Promise<void> {
+  if (busy.value || executing.value) return;
+  error.value = '';
+  const saved = await aiApi.task(id);
+  taskId.value = id;
+  lastRequest = { text: saved.text };
+  const message = reactive<ChatMessage>({
+    role: 'assistant',
+    content: saved.result?.message ?? '',
+    activity: saved.events.filter((item) => item.type === 'status').map((item) => item.message),
+    state: 'done',
+    result: saved.result,
+  });
+  messages.value = [{ role: 'user', content: saved.text }, message];
+  active.value = saved.result;
+  clearCredentials();
+  if (saved.error) error.value = saved.error;
+  if (!['planning', 'executing'].includes(saved.state)) {
+    await scroll();
+    return;
+  }
+  busy.value = saved.state === 'planning';
+  executing.value = saved.state === 'executing';
+  message.state = 'working';
+  controller = new AbortController();
+  try {
+    const result = reactive(
+      await observeTask(
+        id,
+        (event) => {
+          if (event.type === 'status' && message.activity!.at(-1) !== event.message)
+            message.activity!.push(event.message);
+          if (event.type === 'message') message.content = event.text;
+          void scroll();
+        },
+        controller.signal,
+      ),
+    );
+    active.value = result;
+    message.result = result;
+    message.content = saved.state === 'executing' ? '任务已完成。' : result.message;
+    clearCredentials();
+  } catch (e) {
+    if (!disposed && !controller.signal.aborted) error.value = failure(e);
+  } finally {
+    message.state = error.value ? 'stopped' : 'done';
+    busy.value = false;
+    executing.value = false;
+    await scroll();
+  }
 }
 function size(value: number): string {
   return value < 1024 * 1024 ? `${Math.ceil(value / 1024)} KB` : `${(value / 1024 / 1024).toFixed(1)} MB`;
@@ -331,13 +446,18 @@ onMounted(async () => {
       aiApi.capabilities(),
       classApi.list().catch(() => []),
     ]);
+    taskHistory.value = await aiApi.tasks();
+    const latest =
+      taskHistory.value.find((item) => ['planning', 'executing'].includes(item.state)) ??
+      taskHistory.value[0];
+    if (latest) await resumeTask(latest.id);
   } catch (e) {
     error.value = failure(e);
   }
 });
 onBeforeUnmount(() => {
   disposed = true;
-  controller?.abort();
+  if (observing || executing.value || hashing.value) controller?.abort();
   finishUrgent(false);
   clearCredentials();
   files.clear();
@@ -352,15 +472,57 @@ onBeforeUnmount(() => {
     @dragleave.prevent="dragging = false"
     @drop.prevent="drop"
   >
-    <PageHeader title="AI 助手">
-      <el-select v-model="classId" clearable filterable placeholder="目标班级" :disabled="busy || executing">
-        <el-option v-for="item in classes" :key="item.id" :value="item.id" :label="item.name" />
-      </el-select>
-      <el-button v-if="auth.can('ai:manage')" @click="$router.push('/ai-settings')">模型设置</el-button>
-    </PageHeader>
-    <div ref="conversation" class="assistant-conversation" aria-live="polite" :aria-busy="busy || executing">
+    <header class="page-header agent-header">
+      <div class="agent-brand">
+        <span class="agent-mark">AI</span>
+        <div>
+          <h1>AI 助手</h1>
+          <span class="agent-presence">{{ busy || executing ? '正在处理' : '班级工作助手' }}</span>
+        </div>
+      </div>
+      <div class="agent-header-actions">
+        <el-select
+          v-if="taskHistory.length"
+          :model-value="taskId"
+          placeholder="最近任务"
+          :disabled="busy || executing"
+          @change="resumeTask"
+        >
+          <el-option
+            v-for="item in taskHistory"
+            :key="item.id"
+            :value="item.id"
+            :label="item.text.slice(0, 24)"
+          />
+        </el-select>
+        <el-button :disabled="busy || executing || hashing" @click="newConversation">新对话</el-button>
+        <el-select
+          v-model="classId"
+          clearable
+          filterable
+          placeholder="目标班级"
+          :disabled="busy || executing"
+        >
+          <el-option v-for="item in classes" :key="item.id" :value="item.id" :label="item.name" />
+        </el-select>
+        <el-button v-if="auth.can('ai:manage')" @click="$router.push('/ai-settings')">模型设置</el-button>
+      </div>
+    </header>
+    <div
+      ref="conversation"
+      class="assistant-conversation"
+      aria-live="polite"
+      :aria-busy="busy || executing"
+      @scroll="
+        followScroll =
+          !conversation ||
+          conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 100
+      "
+    >
       <div v-if="!messages.length" class="assistant-welcome">
-        <h2>今天需要处理什么？</h2>
+        <span class="agent-welcome-mark" aria-hidden="true">✦</span>
+        <h2>有什么可以帮你？</h2>
+        <p>查找信息、整理课表，或把文件交给我。</p>
         <div class="assistant-examples">
           <el-button @click="text = '查看本班今天的作业'">查看作业</el-button>
           <el-button @click="text = '将附件推送到所选班级'">推送文件</el-button>
@@ -381,8 +543,27 @@ onBeforeUnmount(() => {
         class="assistant-message"
         :class="message.role"
       >
-        <span class="assistant-role">{{ message.role === 'user' ? '你' : '助手' }}</span>
-        <p>{{ message.content }}</p>
+        <span class="assistant-role">{{ message.role === 'user' ? '你' : 'ClassHelper' }}</span>
+        <details v-if="message.activity?.length" class="agent-activity" :open="message.state === 'working'">
+          <summary>
+            <span class="agent-indicator" :class="{ 'is-working': message.state === 'working' }" />
+            {{
+              message.state === 'working'
+                ? message.activity.at(-1)
+                : message.state === 'stopped'
+                  ? '处理已暂停'
+                  : '处理过程'
+            }}
+          </summary>
+          <ol>
+            <li v-for="(activity, n) in message.activity" :key="n">{{ activity }}</li>
+          </ol>
+        </details>
+        <p v-if="message.content">{{ message.content }}</p>
+        <span v-else-if="message.state === 'working'" class="agent-placeholder">
+          正在准备回复
+          <span class="agent-typing">…</span>
+        </span>
         <el-card v-for="(item, n) in message.result?.results" :key="n" shadow="never">
           <template #header>{{ item.label }}</template>
           <AssistantData :value="item.data" />
@@ -484,7 +665,7 @@ onBeforeUnmount(() => {
         <el-progress v-if="executing && progress > 0" :percentage="progress" />
       </section>
     </div>
-    <el-alert v-if="error" :title="error" type="error" :closable="true" show-icon @close="error = ''" />
+    <el-alert v-if="error" :title="error" type="warning" :closable="true" show-icon @close="error = ''" />
     <el-button v-if="error && !active?.steps.length && !busy && !executing" @click="retryTask">
       重试上次任务
     </el-button>
@@ -506,20 +687,19 @@ onBeforeUnmount(() => {
         maxlength="8000"
         placeholder="描述任务，也可以拖入文件"
         :disabled="busy || executing || disabled"
-        @keydown.ctrl.enter.prevent="send"
+        @keydown="composerKey"
       />
       <div class="assistant-composer-actions">
         <input ref="input" type="file" multiple hidden @change="choose" />
         <el-button :loading="hashing" :disabled="busy || executing || pending" @click="input?.click()">
           添加文件
         </el-button>
-        <span class="text-muted">所有更改先确认</span>
-        <el-button v-if="busy || hashing" @click="controller?.abort()">取消</el-button>
+        <span class="text-muted">Enter 发送 · Shift + Enter 换行</span>
+        <el-button v-if="busy || hashing" @click="stopGeneration">停止生成</el-button>
         <el-button
           type="primary"
-          :loading="busy"
-          :disabled="!text.trim() || hashing || executing || disabled"
-          @click="send"
+          :disabled="!text.trim() || busy || hashing || executing || disabled"
+          @click="send()"
         >
           发送
         </el-button>
@@ -537,27 +717,28 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .assistant-page {
-  max-width: 1120px;
-  margin: auto;
+  max-width: none;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  height: calc(100dvh - 110px);
+  height: 100%;
   min-height: 0;
   overflow: hidden;
   box-sizing: border-box;
 }
 .assistant-conversation {
   flex: 1;
-  min-height: 240px;
-  max-height: calc(100dvh - 380px);
+  min-height: 0;
   overflow: auto;
-  padding: 8px 2px 24px;
+  padding: 32px max(20px, calc((100% - 800px) / 2)) 24px;
+  scrollbar-gutter: stable;
 }
 .assistant-welcome {
-  padding: clamp(20px, 4vw, 56px) 0;
+  padding: clamp(24px, 7vh, 80px) 0 24px;
+  text-align: center;
 }
 .assistant-welcome h2 {
-  font-size: 28px;
+  font-size: 2em;
   font-weight: 600;
 }
 .assistant-examples,
@@ -572,20 +753,22 @@ onBeforeUnmount(() => {
 }
 .assistant-examples {
   margin: 24px 0;
+  justify-content: center;
 }
 .assistant-capabilities {
   margin-top: 16px;
 }
 .assistant-message {
   margin: 0 0 24px;
-  padding: 16px 20px;
-  border: 1px solid var(--ch-ui-border);
-  border-radius: var(--ch-ui-radius);
-  background: var(--ch-ui-surface);
+  padding: 8px 0;
 }
 .assistant-message.user {
-  margin-left: 15%;
-  background: var(--el-color-primary-light-9);
+  margin-left: auto;
+  width: fit-content;
+  max-width: 85%;
+  padding: 12px 20px;
+  border-radius: 20px 20px 4px 20px;
+  background: var(--el-fill-color);
 }
 .assistant-message p {
   white-space: pre-wrap;
@@ -594,8 +777,9 @@ onBeforeUnmount(() => {
   line-height: 1.7;
 }
 .assistant-role {
-  font-size: 12px;
-  color: var(--ch-ui-muted);
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--ch-text-secondary);
 }
 .assistant-message .el-card {
   margin-top: 16px;
@@ -626,11 +810,117 @@ onBeforeUnmount(() => {
   margin: 16px 0;
 }
 .assistant-composer {
-  margin-top: 16px;
+  width: min(880px, calc(100% - 32px));
+  box-sizing: border-box;
+  margin: 12px auto 8px;
   padding: 16px;
   border: 1px solid var(--ch-ui-border);
-  border-radius: var(--ch-ui-radius);
+  border-radius: 20px;
   background: var(--ch-ui-surface);
+  box-shadow: 0 6px 24px #00000006;
+}
+.assistant-composer :deep(.el-textarea__inner) {
+  box-shadow: none;
+  background: transparent;
+  padding: 4px;
+  resize: none;
+}
+.assistant-composer:focus-within {
+  border-color: var(--el-color-primary);
+}
+.agent-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--ch-ui-border);
+}
+.agent-brand,
+.agent-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.agent-brand h1 {
+  margin: 0;
+  font-size: 1.15em;
+  font-weight: 600;
+}
+.agent-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--ch-ui-border);
+  border-radius: 11px;
+  color: var(--el-color-primary);
+  font-weight: 700;
+}
+.agent-presence {
+  font-size: 0.8em;
+  color: var(--ch-text-muted);
+}
+.agent-header-actions .el-select {
+  width: 155px;
+}
+.agent-welcome-mark {
+  font-size: 2.4em;
+  color: var(--el-color-primary);
+}
+.assistant-welcome > p {
+  color: var(--ch-text-muted);
+}
+.agent-activity {
+  margin: 4px 0 12px;
+  border-left: 2px solid var(--ch-ui-border);
+  padding-left: 12px;
+}
+.agent-activity summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-activity ol {
+  margin: 12px 0;
+  padding-left: 20px;
+  font-size: 0.85em;
+  color: var(--ch-text-muted);
+  line-height: 1.9;
+}
+.agent-indicator {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--el-color-success);
+  flex-shrink: 0;
+}
+.agent-indicator.is-working {
+  background: var(--el-color-primary);
+  animation: agent-pulse 1.3s ease-in-out infinite;
+}
+.agent-placeholder {
+  color: var(--ch-text-muted);
+  font-size: 0.9em;
+}
+.assistant-page > .el-alert {
+  max-width: 880px;
+  margin: 8px auto;
+  box-sizing: border-box;
+}
+.assistant-page > .el-button {
+  align-self: center;
+}
+@keyframes agent-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-indicator.is-working {
+    animation: none;
+  }
 }
 .assistant-composer-actions {
   margin-top: 12px;
@@ -653,17 +943,29 @@ details > summary {
 }
 @media (max-width: 720px) {
   .assistant-page {
-    height: auto;
-    overflow: visible;
+    height: 100%;
+  }
+  .agent-header {
+    flex-wrap: wrap;
+  }
+  .agent-header-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .agent-header-actions .el-select {
+    width: 130px;
+  }
+  .assistant-composer {
+    width: 100%;
+  }
+  .assistant-composer-actions .text-muted {
+    display: none;
   }
   .assistant-diff {
     grid-template-columns: 1fr;
   }
   .assistant-message.user {
-    margin-left: 8%;
-  }
-  .assistant-conversation {
-    max-height: none;
+    max-width: 92%;
   }
 }
 </style>

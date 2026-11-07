@@ -60,6 +60,20 @@ async function request<T>(config: AxiosRequestConfig): Promise<T> {
 }
 
 export const api = {
+  stageAiAttachment: (
+    taskId: string,
+    attachmentId: string,
+    file: File,
+    signal?: AbortSignal,
+  ): Promise<null> =>
+    request({
+      method: 'PUT',
+      url: `/ai/tasks/${encodeURIComponent(taskId)}/files/${encodeURIComponent(attachmentId)}`,
+      data: file,
+      headers: { 'content-type': 'application/octet-stream' },
+      signal,
+      timeout: 600000,
+    }),
   executeAi: <T>(
     stepId: string,
     action: AiExecutionRequest,

@@ -84,6 +84,18 @@ module.exports = async function runAssistantChecks({ win, target, record, waitFo
     assert.equal((await request('/homeworks?keyword=' + encodeURIComponent(title))).length, 0);
     await screenshot('assistant-plan');
     record('AI 操作卡片显示预览，确认前无业务写入', true);
+    await win.loadURL(origin + '/dashboard');
+    await win.loadURL(origin + '/assistant');
+    assert(
+      await waitFor(win, `document.querySelector('.assistant-step .el-tag')?.textContent.includes('待确认')`),
+    );
+    assert.equal((await request('/homeworks?keyword=' + encodeURIComponent(title))).length, 0);
+    assert(
+      await win.webContents.executeJavaScript(
+        `Boolean(document.querySelector('.agent-header') && document.querySelector('.agent-activity'))`,
+      ),
+    );
+    record('Agent 对话布局支持离开页面后恢复后台任务和待确认预览', true);
     await win.webContents.executeJavaScript(
       `Array.from(document.querySelectorAll('.assistant-plan-actions button')).find(n=>n.textContent.trim()==='确认执行')?.click()`,
     );
@@ -152,6 +164,31 @@ module.exports = async function runAssistantChecks({ win, target, record, waitFo
       0,
     );
     record('管理员客户端缓存计划显示版本文件及专门确认，取消后没有下载请求或登记变化', true);
+    const agentPreferences = await win.webContents.executeJavaScript(`(() => {
+      const keys=['classhelper.admin.theme','classhelper.admin.careMode','classhelper.admin.careScale'];
+      const previous=keys.map(key=>[key,localStorage.getItem(key)]);
+      localStorage.setItem(keys[0],'dark');localStorage.setItem(keys[1],'1');localStorage.setItem(keys[2],'1.5');return previous;
+    })()`);
+    await win.loadURL(origin + '/assistant');
+    assert(
+      await waitFor(
+        win,
+        `document.documentElement.matches('.dark.care-mode') && Boolean(document.querySelector('.agent-header'))`,
+      ),
+    );
+    win.setContentSize(390, 844);
+    assert(
+      await waitFor(
+        win,
+        `innerWidth===390 && document.documentElement.scrollWidth<=innerWidth && document.querySelector('.assistant-composer').getBoundingClientRect().right<=innerWidth && document.querySelector('.assistant-composer').getBoundingClientRect().bottom<=innerHeight+1`,
+      ),
+    );
+    await screenshot('assistant-agent-mobile-dark');
+    record('Agent 页面支持390px、暗色与150%关怀模式，输入区及页头无横向溢出', true);
+    win.setContentSize(...windowSize);
+    await win.webContents.executeJavaScript(
+      `for(const [key,value] of ${JSON.stringify(agentPreferences)}){if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,value);}`,
+    );
     await win.loadURL(origin + '/homeworks');
     assert(await waitFor(win, `Boolean(document.querySelector('.day-picker input'))`));
     await chooseClass(cls.name);

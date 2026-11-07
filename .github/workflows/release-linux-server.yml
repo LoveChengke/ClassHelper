@@ -26,6 +26,10 @@ on:
         required: false
         default: true
         type: boolean
+      source_ref:
+        description: '同版本重建的源码提交；留空按 tag 检出'
+        required: false
+        type: string
   push:
     tags:
       - 'v*'
@@ -53,7 +57,7 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.ref.outputs.tag }}
+          ref: ${{ inputs.source_ref || steps.ref.outputs.tag }}
 
       - name: 安装 Node 22
         uses: actions/setup-node@v4

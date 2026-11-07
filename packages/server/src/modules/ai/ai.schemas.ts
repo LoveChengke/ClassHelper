@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 /** 大模型服务端实现：openai=真接口 / mock=离线确定性结果（自动化验收用，不联网） */
 export const AI_PROVIDERS = ['openai', 'mock'] as const;
+const reasoningEffortSchema = z.enum(['auto', 'none', 'low', 'medium', 'high', 'max']);
 
 /** `PUT /api/ai/settings`：字段都可选；`apiKey` 传字符串=换新、null=清除、不传=保持 */
 export const updateAiSettingsSchema = z.object({
@@ -9,9 +10,12 @@ export const updateAiSettingsSchema = z.object({
   provider: z.enum(AI_PROVIDERS).optional(),
   baseUrl: z.string().trim().max(300).optional(),
   model: z.string().trim().max(120).optional(),
+  reasoningEffort: reasoningEffortSchema.optional(),
   apiKey: z.string().trim().max(300).nullable().optional(),
   systemPromptExtra: z.string().trim().max(1000).optional(),
 });
+
+export const discoverModelsSchema = updateAiSettingsSchema.pick({ baseUrl: true, apiKey: true });
 
 /** `POST /api/ai/interpret`：一句中文原话 */
 export const aiInterpretSchema = z.object({
@@ -50,6 +54,10 @@ export type AiInterpretInput = z.infer<typeof aiInterpretSchema>;
 export type AiAuditQuery = z.infer<typeof aiAuditQuerySchema>;
 
 export const planIdSchema = z.object({ id: z.string().min(1).max(100) });
+export const taskAttachmentSchema = z.object({
+  id: z.string().min(1).max(100),
+  attachmentId: z.string().min(1).max(100),
+});
 export const preparePlanSchema = z
   .object({
     files: z.record(z.string(), z.object({ contentBase64: z.string().max(12 * 1024 * 1024) }).strict()),
