@@ -1,6 +1,6 @@
 {
   "name": "@classhelper/desktop-client",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "private": true,
   "description": "ClassHelper EXE 客户端（Electron + Vue 3 + Element Plus + Socket.IO + IndexedDB 离线缓存）",
   "author": "Class Helper",
@@ -24,7 +24,8 @@
     "pinia": "^4.0.3",
     "socket.io-client": "^4.8.3",
     "vue": "^3.5.42",
-    "vue-router": "^5.3.1"
+    "vue-router": "^5.3.1",
+    "@classhelper/ui": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.20.2",

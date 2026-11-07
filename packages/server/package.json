@@ -1,8 +1,9 @@
 {
   "name": "@classhelper/server",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "private": true,
   "description": "ClassHelper后端服务：REST API + Socket.IO 实时推送 + Prisma 数据访问",
+  "//": "yaml：课表 YAML 导入的解析器（yaml@2，自带类型、无子依赖）；仓库只有传递依赖 js-yaml，不要直接引用",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -38,6 +39,7 @@
     "socket.io": "^4.8.3",
     "typescript": "~5.9.3",
     "xlsx": "0.18.5",
+    "yaml": "^2.9.1",
     "zod": "^4.6.2"
   },
   "devDependencies": {

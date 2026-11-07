@@ -1,5 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { notificationApi } from '../api/index.js';
+import { fetchWithCache } from '../cache/index.js';
+import { getCacheScope } from '../cache/scope.js';
+import { useAuthStore } from '../stores/auth.js';
+import type { CalendarRange } from '@classhelper/ui';
+import { countDates } from '@classhelper/ui';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
   NOTIFICATION_PRIORITIES,
@@ -22,21 +28,70 @@ const filter = ref<'all' | 'unread'>('all');
 const detailVisible = ref(false);
 const current = ref<NotificationDto | null>(null);
 const marking = ref(false);
+const auth = useAuthStore();
+const calendarRevision = ref(0);
+const dayItems = ref<NotificationDto[] | null>(null);
+let calendarRequest = 0,
+  disposed = false;
+async function calendarDays(range: CalendarRange) {
+  const params = {
+    ...range,
+    classId: auth.classId || undefined,
+    createdBy: creatorFilter.value || undefined,
+    priority: priorityFilter.value || undefined,
+    unreadOnly: filter.value === 'unread',
+  };
+  const result = await fetchWithCache(
+    'notifications',
+    'days:' + JSON.stringify(params),
+    () => notificationApi.days(params),
+    { days: dateMarks.value },
+  );
+  return result.data.days;
+}
+async function loadDay(): Promise<void> {
+  const request = ++calendarRequest,
+    scope = getCacheScope();
+  if (!dayFilter.value) {
+    dayItems.value = null;
+    return;
+  }
+  const params = {
+    date: dayFilter.value,
+    classId: auth.classId || undefined,
+    createdBy: creatorFilter.value || undefined,
+    priority: priorityFilter.value || undefined,
+    unreadOnly: filter.value === 'unread',
+  };
+  const fallback = store.items.filter((item) => assignDay(item) === params.date);
+  dayItems.value = [];
+  const result = await fetchWithCache<NotificationDto[]>(
+    'notifications',
+    'date:' + JSON.stringify(params),
+    () => notificationApi.list(params),
+    fallback,
+  );
+  if (!disposed && request === calendarRequest && scope === getCacheScope()) dayItems.value = result.data;
+}
 
 const visibleItems = computed(() =>
-  filter.value === 'unread' ? store.items.filter((item) => !item.read) : store.items,
+  filter.value === 'unread'
+    ? (dayItems.value ?? store.items).filter((item) => !item.read)
+    : (dayItems.value ?? store.items),
 );
 
-/* ------------------------------------------------------- 按天归档 / 按发布人 / 按类型 */
-/**
- * 三个筛选都在**已加载的列表**上做，不再请求服务端：
- * 客户端是离线优先的（AGENTS.md 的现行工程约定），断网回退缓存时归档功能必须照常可用。
- * 口径与服务端一致：按 `assignDate`（本地日期）分组 —— 用 createdAt 的 UTC 切片会把晚上
- * 发出来的通知算到第二天（AGENTS.md 的现行工程约定）。
- */
+watch(
+  () => store.items,
+  () => {
+    calendarRevision.value++;
+  },
+);
 const dayFilter = ref('');
 const creatorFilter = ref('');
 const priorityFilter = ref('');
+watch([dayFilter, creatorFilter, priorityFilter, filter, () => store.items], () => {
+  void loadDay();
+});
 
 /**
  * 一条通知归到哪一天。
@@ -47,16 +102,17 @@ function assignDay(item: NotificationDto): string {
   return item.assignDate || dayKeyLocal(new Date(item.createdAt));
 }
 
-const dayOptions = computed(() => {
-  const map = new Map<string, number>();
-  for (const item of store.items) {
-    const day = assignDay(item);
-    map.set(day, (map.get(day) ?? 0) + 1);
-  }
-  return [...map.entries()]
-    .sort((a, b) => b[0].localeCompare(a[0]))
-    .map(([date, count]) => ({ date, count }));
-});
+const dateMarks = computed(() =>
+  countDates(
+    store.items.filter(
+      (item) =>
+        (filter.value !== 'unread' || !item.read) &&
+        (!creatorFilter.value || item.createdBy === creatorFilter.value) &&
+        (!priorityFilter.value || item.priority === priorityFilter.value),
+    ),
+    assignDay,
+  ),
+);
 
 const creatorOptions = computed(() => {
   const map = new Map<string, { name: string; count: number }>();
@@ -117,6 +173,7 @@ async function markRead(item: NotificationDto): Promise<void> {
   marking.value = true;
   try {
     await store.markRead(item.id);
+    item.read = true;
     if (current.value?.id === item.id) current.value = { ...item, read: true };
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '标记已读失败');
@@ -147,6 +204,8 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  disposed = true;
+  ++calendarRequest;
   // store 是全局的，这里无需清理；保留钩子以便将来取消订阅
 });
 </script>
@@ -175,16 +234,14 @@ onUnmounted(() => {
     </div>
 
     <el-card v-loading="store.loading" shadow="never">
-      <!-- 按天归档 + 按发布人 + 按类型；都在本地已加载的列表上筛（离线也能用） -->
       <div class="notice-filters">
-        <el-select v-model="dayFilter" placeholder="按天归档" clearable size="small" style="width: 150px">
-          <el-option
-            v-for="item in dayOptions"
-            :key="item.date"
-            :label="`${item.date}（${item.count}）`"
-            :value="item.date"
-          />
-        </el-select>
+        <ch-date-picker
+          v-model="dayFilter"
+          :load-marks="calendarDays"
+          :scope-key="JSON.stringify([creatorFilter, priorityFilter, filter, calendarRevision])"
+          placeholder="日期"
+          clearable
+        />
         <el-select
           v-model="creatorFilter"
           placeholder="全部发布人"

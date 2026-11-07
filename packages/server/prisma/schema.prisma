@@ -813,3 +813,19 @@ model CoursewareReceipt {
   device ClientDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
   @@id([pushId, deviceId])
 }
+
+/// AI 确认计划与执行去重；payload 加密保存，不保存明文凭据。
+model AiPlanStep {
+  id        String   @id @default(cuid())
+  auditId   String
+  userId    String
+  ordinal   Int
+  payload   String
+  state     String   @default("draft")
+  result    String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([auditId, ordinal])
+  @@index([userId, createdAt])
+}

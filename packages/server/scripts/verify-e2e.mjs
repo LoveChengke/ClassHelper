@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
  *   VERIFY_BASE_URL  默认 http://127.0.0.1:4000
  */
 import { io } from 'socket.io-client';
+import { verifyClassPlanYamlApi } from './verify-class-plan-yaml-api.mjs';
 
 const BASE_URL = process.env.VERIFY_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? 4000}`;
 const TIME_LIMIT_MS = 5000;
@@ -441,6 +442,8 @@ async function main() {
     removedSchedules >= 6,
     `删除课表 ${removedSchedules} 条、课程 ${removedImportedCourses} 门`,
   );
+
+  await verifyClassPlanYamlApi({ api, record, adminToken, teacherToken, teacher2Token, teacher1Id });
 
   // ---------------------------------------------------------------- 3. WebSocket 连接
   const socket = io(BASE_URL, {

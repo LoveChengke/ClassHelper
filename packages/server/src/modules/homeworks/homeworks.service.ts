@@ -90,7 +90,15 @@ export async function listHomeworks(
  */
 export async function listHomeworkDays(
   user: TokenPayload,
-  options: { classId?: string; from?: string; to?: string; days?: number },
+  options: {
+    classId?: string;
+    courseId?: string;
+    keyword?: string;
+    pendingOnly?: boolean;
+    from?: string;
+    to?: string;
+    days?: number;
+  },
 ): Promise<HomeworkDaysDto> {
   await assertPermissionOrClassDevice(user, 'homework:read');
   const scope = await resolveClassScope(user, options.classId, 'homework:read');
@@ -98,8 +106,19 @@ export async function listHomeworkDays(
   const to = options.to ?? today;
   const from = options.from ?? shiftDayKey(to, -(options.days ?? 60) + 1);
 
+  const personalIds = isClassDevice(user) ? await resolvePersonalIds(user) : [];
   const rows = await prisma.homework.findMany({
-    where: { ...classScopeWhere(scope), assignDate: { gte: from, lte: to } },
+    where: {
+      ...classScopeWhere(scope),
+      assignDate: { gte: from, lte: to },
+      ...(options.courseId ? { courseId: options.courseId } : {}),
+      ...(options.keyword
+        ? { OR: [{ title: { contains: options.keyword } }, { content: { contains: options.keyword } }] }
+        : {}),
+      ...(isClassDevice(user) && options.pendingOnly
+        ? { statuses: { none: { ...personalIdWhere(personalIds), completed: true } } }
+        : {}),
+    },
     select: { assignDate: true },
   });
 

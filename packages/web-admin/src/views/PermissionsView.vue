@@ -306,7 +306,6 @@ const actions: Record<string, string> = {
     <div class="page-header">
       <div>
         <h2 class="page-title">权限与范围</h2>
-        <p class="page-subtitle">模板授予能力，分配限定范围，业务关系由系统独立校验。</p>
       </div>
       <el-button @click="load">刷新</el-button>
     </div>
@@ -531,8 +530,8 @@ const actions: Record<string, string> = {
 <style scoped>
 .assignment {
   display: flex;
-  gap: 12px;
-  margin: 16px 0;
+  gap: var(--ch-space-3);
+  margin: var(--ch-space-4) 0;
   flex-wrap: wrap;
 }
 .assignment .el-select {
@@ -541,7 +540,7 @@ const actions: Record<string, string> = {
 .capability {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ch-space-2);
   flex-wrap: wrap;
 }
 .risk {
@@ -555,6 +554,6 @@ pre {
   font-size: 12px;
 }
 .toolbar {
-  margin: 16px 0;
+  margin: var(--ch-space-4) 0;
 }
 </style>

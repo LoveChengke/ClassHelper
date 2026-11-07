@@ -15,7 +15,29 @@ export const updateAiSettingsSchema = z.object({
 
 /** `POST /api/ai/interpret`：一句中文原话 */
 export const aiInterpretSchema = z.object({
-  text: z.string().trim().min(1, '请说一句要做的事').max(500, '一句话最多 500 个字'),
+  text: z.string().trim().min(1, '请说明要做的事').max(8000),
+  messages: z
+    .array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(8000) }).strict())
+    .max(20)
+    .optional(),
+  attachments: z
+    .array(
+      z
+        .object({
+          id: z.string().min(1).max(100),
+          name: z.string().min(1).max(180),
+          size: z
+            .number()
+            .int()
+            .min(1)
+            .max(512 * 1024 * 1024),
+          sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .strict(),
+    )
+    .max(8)
+    .refine((items) => new Set(items.map((item) => item.id)).size === items.length, '附件标识重复')
+    .optional(),
   classId: z.string().min(1).optional(),
 });
 
@@ -26,3 +48,19 @@ export const aiAuditQuerySchema = z.object({
 export type UpdateAiSettingsInput = z.infer<typeof updateAiSettingsSchema>;
 export type AiInterpretInput = z.infer<typeof aiInterpretSchema>;
 export type AiAuditQuery = z.infer<typeof aiAuditQuerySchema>;
+
+export const planIdSchema = z.object({ id: z.string().min(1).max(100) });
+export const preparePlanSchema = z
+  .object({
+    files: z.record(z.string(), z.object({ contentBase64: z.string().max(12 * 1024 * 1024) }).strict()),
+    mappings: z.record(z.string(), z.record(z.string(), z.string().max(200))).optional(),
+  })
+  .strict();
+export const confirmPlanSchema = z
+  .object({
+    confirmed: z.literal(true),
+    extraConfirmed: z.boolean().optional(),
+    urgentConfirmed: z.boolean().optional(),
+    secrets: z.record(z.string(), z.record(z.string(), z.string().max(128))).optional(),
+  })
+  .strict();

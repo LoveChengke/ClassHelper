@@ -500,7 +500,6 @@ function canEditContent(row: GradeDto): boolean {
     <div class="page-header">
       <div>
         <h2 class="page-title">成绩录入</h2>
-        <p class="page-subtitle">同一学生 + 课程 + 考试重复录入会覆盖旧分数，避免产生重复记录</p>
       </div>
       <div class="toolbar">
         <el-select
@@ -899,13 +898,13 @@ function canEditContent(row: GradeDto): boolean {
 .level-cell {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ch-space-2);
 }
 
 .detail-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ch-space-2);
 }
 
 .dialog-hint {

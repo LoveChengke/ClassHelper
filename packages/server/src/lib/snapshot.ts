@@ -72,6 +72,7 @@ export const SNAPSHOT_TABLES = [
   'ClientCommand',
   'ClientRelease',
   'AiAudit',
+  'AiPlanStep',
 ] as const;
 
 export type SnapshotTable = (typeof SNAPSHOT_TABLES)[number];
@@ -143,7 +144,11 @@ export function assertValidSnapshot(value: unknown): asserts value is DatabaseSn
   for (const table of SNAPSHOT_TABLES) {
     const rows = (snapshot.data as Record<string, unknown>)[table];
     // 旧版本快照没有课件表；允许恢复，文件实体仍需单独备份。
-    if (rows === undefined && (table.startsWith('Courseware') || table === 'PermissionAudit')) continue;
+    if (
+      rows === undefined &&
+      (table.startsWith('Courseware') || table === 'PermissionAudit' || table === 'AiPlanStep')
+    )
+      continue;
     if (!Array.isArray(rows)) {
       throw new Error(`快照缺少表 ${table} 的数据`);
     }

@@ -155,6 +155,9 @@ export async function uploadCourseware(user: TokenPayload, input: CoursewareUplo
       fs.createWriteStream(partial, { flags: 'wx' }),
     );
     if (bytes !== input.size) throw ApiError.badRequest('文件上传不完整，请重试');
+    const sha256 = hash.digest('hex');
+    if (req.get('x-classhelper-ai-sha256') && req.get('x-classhelper-ai-sha256') !== sha256)
+      throw ApiError.badRequest('附件校验失败，请重新生成计划');
     await fsp.rename(partial, file);
     // 上传耗时较长，完成后重新验证任课关系。
     await validateClasses(user, classIds);
@@ -170,7 +173,7 @@ export async function uploadCourseware(user: TokenPayload, input: CoursewareUplo
         folderPath: input.folderPath || '',
         createdAt: uploadedAt,
         storagePath: relative,
-        sha256: hash.digest('hex'),
+        sha256,
         visibility: { create: classIds.map((classId) => ({ classId })) },
         pushes: input.mode === 'push' ? { create: classIds.map((classId) => ({ classId })) } : undefined,
       },

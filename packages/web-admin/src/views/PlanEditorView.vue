@@ -948,7 +948,6 @@ function selectPlanItem(id: string) {
     <header class="page-header">
       <div>
         <h2 class="page-title">课表档案</h2>
-        <p class="page-subtitle">维护日课表、时间表与科目，按周查看和调整课程安排。</p>
       </div>
       <div class="toolbar archive-commands">
         <el-select
@@ -983,7 +982,7 @@ function selectPlanItem(id: string) {
               :disabled="!canWrite || !auth.can('import:schedule') || !classId"
               @click="openImport"
             >
-              导入 ClassIsland 档案
+              导入课表（JSON / YAML）
             </el-button>
             <el-button
               text
@@ -1049,10 +1048,15 @@ function selectPlanItem(id: string) {
         <p>暂无可管理的班级</p>
       </div>
 
-      <div v-else-if="tab === 'plans'" class="schedule-workspace" :inert="saving">
+      <!--
+        只在保存过程中置为 inert。不能写成 :inert="saving"：旧内核没有 inert DOM property，
+        Vue 会把 false 落成 inert="false" 属性，而 inert 属性只要存在就整块不可交互（表现为点击没反应）。
+        undefined 会让 Vue 直接移除属性，现代浏览器与旧内核行为一致。
+      -->
+      <div v-else-if="tab === 'plans'" class="schedule-workspace" :inert="saving ? true : undefined">
         <main class="schedule-main" :aria-busy="loading">
           <div class="week-navigation">
-            <el-date-picker
+            <ch-date-picker
               :model-value="selectedDate"
               type="date"
               value-format="YYYY-MM-DD"
@@ -1432,9 +1436,10 @@ function selectPlanItem(id: string) {
         </aside>
       </div>
 
+      <!-- 同上：仅保存时 inert，避免旧内核落成 inert="false" 属性 -->
       <TimeLayoutEditor
         v-else-if="tab === 'layouts'"
-        :inert="saving"
+        :inert="saving ? true : undefined"
         v-model:layout="layout"
         :layouts="layouts"
         :courses="courses"
@@ -1451,7 +1456,8 @@ function selectPlanItem(id: string) {
         @import-points="importLayout"
         @apply-default="applyDefault"
       />
-      <div v-else class="detail-workspace" :inert="saving">
+      <!-- 同上：仅保存时 inert，避免旧内核落成 inert="false" 属性 -->
+      <div v-else class="detail-workspace" :inert="saving ? true : undefined">
         <main class="detail-content">
           <template v-if="tab === 'subjects'">
             <h3>科目管理</h3>
@@ -1529,7 +1535,7 @@ function selectPlanItem(id: string) {
               <el-select v-model="temporaryGroup" class="setting-control">
                 <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id" />
               </el-select>
-              <el-date-picker
+              <ch-date-picker
                 v-model="expireTime"
                 type="datetime"
                 value-format="YYYY-MM-DDTHH:mm:ss"
@@ -1662,7 +1668,7 @@ function selectPlanItem(id: string) {
 .archive-commands .archive-icon {
   width: 17px;
   height: 17px;
-  margin-right: 6px;
+  margin-right: var(--ch-space-2);
 }
 .class-picker {
   width: 180px;
@@ -1674,7 +1680,7 @@ function selectPlanItem(id: string) {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--ch-border);
-  border-radius: 12px;
+  border-radius: var(--ch-radius-md);
   background: var(--ch-surface);
   color: var(--ch-text);
   font-size: var(--el-font-size-base);
@@ -1701,17 +1707,17 @@ function selectPlanItem(id: string) {
 }
 .archive-header {
   flex-shrink: 0;
-  padding: 0 20px;
+  padding: 0 var(--ch-space-5);
   border-bottom: 1px solid var(--ch-border);
 }
 .archive-tabs {
   display: flex;
-  gap: 28px;
+  gap: var(--ch-space-7);
 }
 .archive-tabs button {
   position: relative;
   min-height: 50px;
-  padding: 12px 0;
+  padding: var(--ch-space-3) 0;
   border: 0;
   background: transparent;
   color: var(--ch-text-secondary);
@@ -1737,9 +1743,9 @@ function selectPlanItem(id: string) {
   justify-content: center;
   gap: 7px;
   min-height: 32px;
-  padding: 6px 10px;
+  padding: var(--ch-space-2) var(--ch-space-3);
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--ch-radius-sm);
   background: transparent;
   color: var(--ch-text-secondary);
   white-space: nowrap;
@@ -1757,27 +1763,27 @@ function selectPlanItem(id: string) {
 }
 .icon-command {
   width: 34px;
-  padding: 6px;
+  padding: var(--ch-space-2);
 }
 .command-separator {
   flex: 0 0 1px;
   height: 22px;
-  margin: 0 3px;
+  margin: 0 var(--ch-space-1);
   background: var(--ch-border);
 }
 .archive-toolbar {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 6px;
+  gap: var(--ch-space-2);
   min-height: 48px;
-  padding: 6px 12px;
+  padding: var(--ch-space-2) var(--ch-space-3);
   border-bottom: 1px solid var(--ch-border);
 }
 .selection-label {
   overflow: hidden;
   min-width: 0;
-  padding: 0 6px;
+  padding: 0 var(--ch-space-2);
   color: var(--ch-text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1793,8 +1799,8 @@ function selectPlanItem(id: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 5px 12px;
+  gap: var(--ch-space-2);
+  padding: var(--ch-space-1) var(--ch-space-3);
   color: var(--el-color-danger);
   background: var(--el-color-danger-light-9);
 }
@@ -1814,9 +1820,9 @@ function selectPlanItem(id: string) {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 8px;
+  gap: var(--ch-space-2);
   min-height: 56px;
-  padding: 10px 12px;
+  padding: var(--ch-space-3) var(--ch-space-3);
 }
 .week-navigation :deep(.el-date-editor) {
   flex-shrink: 0;
@@ -1825,7 +1831,7 @@ function selectPlanItem(id: string) {
 .week-picker select {
   max-width: 110px;
   min-height: 32px;
-  padding: 3px 8px;
+  padding: var(--ch-space-1) var(--ch-space-2);
   border: 1px solid var(--ch-border);
   border-radius: var(--el-border-radius-base);
   background: var(--ch-surface);
@@ -1879,10 +1885,10 @@ function selectPlanItem(id: string) {
 }
 .schedule-grid thead th {
   height: 78px;
-  padding: 8px;
+  padding: var(--ch-space-2);
 }
 .schedule-grid thead .time-heading {
-  padding-left: 16px;
+  padding-left: var(--ch-space-4);
   text-align: left;
   color: var(--ch-text-secondary);
 }
@@ -1890,7 +1896,7 @@ function selectPlanItem(id: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
+  gap: var(--ch-space-1);
   color: var(--ch-text-secondary);
   font-size: var(--el-font-size-small);
   font-variant-numeric: tabular-nums;
@@ -1901,14 +1907,14 @@ function selectPlanItem(id: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: var(--ch-space-1);
   overflow: hidden;
   width: 100%;
   min-height: 30px;
   margin-top: 7px;
-  padding: 4px 6px;
+  padding: var(--ch-space-1) var(--ch-space-2);
   border: 1px solid var(--ch-border);
-  border-radius: 6px;
+  border-radius: var(--ch-radius-xs);
   background: var(--ch-surface);
   color: var(--ch-text-secondary);
   text-overflow: ellipsis;
@@ -1940,7 +1946,7 @@ function selectPlanItem(id: string) {
   color: var(--el-color-primary);
 }
 .time-cell {
-  padding: 8px 16px;
+  padding: var(--ch-space-2) var(--ch-space-4);
   background: var(--ch-surface-alt);
   font-size: var(--el-font-size-small);
   font-variant-numeric: tabular-nums;
@@ -1951,7 +1957,7 @@ function selectPlanItem(id: string) {
   display: block;
 }
 .time-cell small {
-  margin-top: 3px;
+  margin-top: var(--ch-space-1);
   color: var(--ch-text-muted);
   font-size: var(--el-font-size-extra-small);
 }
@@ -1962,7 +1968,7 @@ function selectPlanItem(id: string) {
   justify-content: center;
   width: 100%;
   min-height: 64px;
-  padding: 8px 5px;
+  padding: var(--ch-space-2) var(--ch-space-1);
   border: 0;
   background: transparent;
   color: var(--ch-text);
@@ -1993,11 +1999,11 @@ function selectPlanItem(id: string) {
   height: 29px;
 }
 .non-lesson-row .time-cell {
-  padding: 4px 16px;
+  padding: var(--ch-space-1) var(--ch-space-4);
 }
 .break-label {
   display: block;
-  padding: 4px;
+  padding: var(--ch-space-1);
   color: var(--ch-text-secondary);
   font-size: var(--el-font-size-extra-small);
 }
@@ -2008,14 +2014,14 @@ function selectPlanItem(id: string) {
   justify-content: center;
   align-items: center;
   min-height: 240px;
-  padding: 24px;
+  padding: var(--ch-space-6);
   color: var(--ch-text-muted);
   text-align: center;
 }
 .grid-empty svg {
   width: 48px;
   height: 48px;
-  margin-bottom: 14px;
+  margin-bottom: var(--ch-space-4);
   color: var(--ch-text-placeholder);
 }
 .grid-empty p {
@@ -2023,31 +2029,31 @@ function selectPlanItem(id: string) {
   font-size: var(--el-font-size-base);
 }
 .grid-empty .command {
-  margin-top: 12px;
+  margin-top: var(--ch-space-3);
 }
 .subject-panel {
   display: flex;
   flex-direction: column;
   overflow: auto;
   min-width: 0;
-  padding: 16px;
+  padding: var(--ch-space-4);
   border-left: 1px solid var(--ch-border);
   background: var(--ch-surface-alt);
 }
 .subject-panel h3 {
-  margin: 0 0 16px;
+  margin: 0 0 var(--ch-space-4);
   font-size: var(--el-font-size-base);
   font-weight: 600;
 }
 .inspector-tabs {
   display: flex;
   gap: 2px;
-  margin-bottom: 14px;
+  margin-bottom: var(--ch-space-4);
   border-bottom: 1px solid var(--ch-border);
 }
 .inspector-tabs button {
   flex: 1;
-  padding: 8px 6px;
+  padding: var(--ch-space-2) var(--ch-space-2);
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
@@ -2069,13 +2075,13 @@ function selectPlanItem(id: string) {
 .subject-palette {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 6px;
+  gap: var(--ch-space-2);
 }
 .subject-palette button {
   min-width: 0;
   height: 40px;
   border: 1px solid var(--ch-border);
-  border-radius: 8px;
+  border-radius: var(--ch-radius-sm);
   background: var(--ch-surface);
   color: var(--ch-text);
   font-size: var(--el-font-size-medium);
@@ -2094,15 +2100,15 @@ function selectPlanItem(id: string) {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  margin-top: 16px;
+  gap: var(--ch-space-2);
+  margin-top: var(--ch-space-4);
   color: var(--ch-text-secondary);
   font-size: var(--el-font-size-extra-small);
 }
 .auto-advance {
   height: auto;
   margin-top: auto;
-  padding-top: 20px;
+  padding-top: var(--ch-space-5);
 }
 .auto-advance :deep(.el-checkbox__label) {
   white-space: normal;
@@ -2113,9 +2119,9 @@ function selectPlanItem(id: string) {
   align-items: center;
   justify-content: space-between;
   flex: 0 0 48px;
-  gap: 12px;
+  gap: var(--ch-space-3);
   min-height: 48px;
-  padding: 6px 14px;
+  padding: var(--ch-space-2) var(--ch-space-4);
   border-top: 1px solid var(--ch-border);
   color: var(--ch-text-muted);
   font-size: var(--el-font-size-extra-small);
@@ -2123,15 +2129,15 @@ function selectPlanItem(id: string) {
 .archive-footer nav {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px;
-  border-radius: 8px;
+  gap: var(--ch-space-1);
+  padding: var(--ch-space-1);
+  border-radius: var(--ch-radius-sm);
   background: var(--ch-surface-alt);
 }
 .archive-footer .icon-command {
   width: auto;
   min-height: 28px;
-  padding: 4px 9px;
+  padding: var(--ch-space-1) var(--ch-space-2);
   font-size: var(--el-font-size-extra-small);
 }
 .archive-footer .active {
@@ -2154,7 +2160,7 @@ function selectPlanItem(id: string) {
 .plan-explorer {
   flex: 0 0 210px;
   width: 210px;
-  padding: 12px;
+  padding: var(--ch-space-3);
   overflow: auto;
   border-right: 1px solid var(--ch-border);
 }
@@ -2162,12 +2168,12 @@ function selectPlanItem(id: string) {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
+  gap: var(--ch-space-1);
   width: 100%;
-  margin-top: 6px;
-  padding: 10px;
+  margin-top: var(--ch-space-2);
+  padding: var(--ch-space-3);
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--ch-radius-sm);
   background: transparent;
   color: var(--ch-text);
   text-align: left;
@@ -2187,15 +2193,15 @@ function selectPlanItem(id: string) {
 .daily-editor {
   flex: 1;
   min-width: 0;
-  padding: 20px;
+  padding: var(--ch-space-5);
   overflow: auto;
 }
 .section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--ch-space-3);
+  margin-bottom: var(--ch-space-4);
 }
 .section-header h3,
 .detail-content h3 {
@@ -2210,21 +2216,21 @@ function selectPlanItem(id: string) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  padding: 16px 0;
+  gap: var(--ch-space-3);
+  padding: var(--ch-space-4) 0;
   border-bottom: 1px solid var(--ch-border);
 }
 .left-section {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ch-space-1);
   min-width: 180px;
 }
 .left-section strong {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ch-space-2);
   font-weight: 500;
 }
 .left-section small {
@@ -2237,13 +2243,13 @@ function selectPlanItem(id: string) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: var(--ch-space-3);
 }
 .control-row :deep(.el-input-number) {
   width: 110px;
 }
 .toolbar {
-  margin-top: 16px;
+  margin-top: var(--ch-space-4);
 }
 .toolbar :deep(.el-button + .el-button) {
   margin-left: 0;
@@ -2260,16 +2266,16 @@ function selectPlanItem(id: string) {
   display: grid;
   grid-template-columns: 34px minmax(150px, 1fr) minmax(130px, 1.1fr) 100px 54px;
   align-items: center;
-  gap: 10px;
+  gap: var(--ch-space-3);
 }
 .course-table-head {
-  padding: 8px 6px;
+  padding: var(--ch-space-2) var(--ch-space-2);
   border-bottom: 1px solid var(--ch-border);
   color: var(--ch-text-muted);
   font-size: var(--el-font-size-extra-small);
 }
 .course-row {
-  padding: 9px 6px;
+  padding: var(--ch-space-2) var(--ch-space-2);
   border-bottom: 1px solid var(--ch-border);
 }
 .course-row.selected {
@@ -2278,7 +2284,7 @@ function selectPlanItem(id: string) {
 .course-time {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ch-space-2);
   min-width: 0;
 }
 .course-time-text {
@@ -2299,7 +2305,7 @@ function selectPlanItem(id: string) {
 .course-course {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ch-space-2);
   min-width: 0;
 }
 .course-course :deep(.el-select) {
@@ -2308,9 +2314,9 @@ function selectPlanItem(id: string) {
 }
 .default-badge {
   flex-shrink: 0;
-  padding: 1px 5px;
+  padding: 1px var(--ch-space-1);
   border: 1px solid var(--el-color-primary-light-5);
-  border-radius: 999px;
+  border-radius: var(--ch-radius-pill);
   color: var(--el-color-primary);
   font-size: var(--el-font-size-extra-small);
 }
@@ -2318,7 +2324,7 @@ function selectPlanItem(id: string) {
   width: 100%;
 }
 .drag {
-  padding: 7px 3px;
+  padding: 7px var(--ch-space-1);
   border: 0;
   background: transparent;
   color: var(--ch-text-muted);
@@ -2341,7 +2347,7 @@ function selectPlanItem(id: string) {
 .plan-explorer {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--ch-space-2);
 }
 .plan-group {
   display: flex;
@@ -2351,16 +2357,16 @@ function selectPlanItem(id: string) {
 .plan-group-title {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px 2px;
+  gap: var(--ch-space-2);
+  padding: var(--ch-space-2) var(--ch-space-2) 2px;
   color: var(--ch-text-muted);
   font-size: var(--el-font-size-extra-small);
   font-weight: 500;
 }
 .plan-group-title small {
-  padding: 0 5px;
+  padding: 0 var(--ch-space-1);
   border: 1px solid var(--ch-border);
-  border-radius: 999px;
+  border-radius: var(--ch-radius-pill);
   font-size: 10px;
   font-weight: 400;
 }
@@ -2384,10 +2390,10 @@ function selectPlanItem(id: string) {
 .month-view {
   flex: 1;
   overflow: auto;
-  padding: 16px 20px;
+  padding: var(--ch-space-4) var(--ch-space-5);
 }
 .month-view h3 {
-  margin: 0 0 16px;
+  margin: 0 0 var(--ch-space-4);
   font-size: var(--el-font-size-medium);
   font-weight: 600;
 }
@@ -2396,7 +2402,7 @@ function selectPlanItem(id: string) {
   grid-template-columns: repeat(7, minmax(0, 1fr));
 }
 .calendar-heading {
-  padding: 8px;
+  padding: var(--ch-space-2);
   color: var(--ch-text-secondary);
   text-align: center;
 }
@@ -2404,9 +2410,9 @@ function selectPlanItem(id: string) {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 5px;
+  gap: var(--ch-space-1);
   min-height: 70px;
-  padding: 9px;
+  padding: var(--ch-space-2);
   border: 1px solid var(--ch-border);
   background: transparent;
   color: var(--ch-text);
@@ -2433,17 +2439,17 @@ function selectPlanItem(id: string) {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--ch-space-3);
 }
 .editor-help p {
-  margin-bottom: 18px;
+  margin-bottom: var(--ch-space-5);
   line-height: 1.8;
 }
 .transfer-menu {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 3px;
+  gap: var(--ch-space-1);
 }
 .transfer-menu .el-button {
   margin-left: 0;
@@ -2462,14 +2468,14 @@ function selectPlanItem(id: string) {
     grid-template-columns: minmax(0, 1fr) 260px;
   }
   .subject-panel {
-    padding: 12px;
+    padding: var(--ch-space-3);
   }
   .subject-palette {
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
   .week-navigation {
     flex-wrap: wrap;
-    gap: 6px;
+    gap: var(--ch-space-2);
   }
   .course-table-head,
   .course-row {
@@ -2487,16 +2493,16 @@ function selectPlanItem(id: string) {
 }
 @media (max-width: 768px) {
   .archive-commands {
-    gap: 8px;
+    gap: var(--ch-space-2);
   }
   .class-picker {
     width: 160px;
   }
   .archive-header {
-    padding: 0 12px;
+    padding: 0 var(--ch-space-3);
   }
   .archive-tabs {
-    gap: 24px;
+    gap: var(--ch-space-6);
   }
   .archive-tabs button {
     min-height: 44px;
@@ -2506,10 +2512,10 @@ function selectPlanItem(id: string) {
   }
   .archive-toolbar {
     flex-wrap: wrap;
-    padding: 8px;
+    padding: var(--ch-space-2);
   }
   .archive-toolbar .command {
-    padding: 5px 7px;
+    padding: var(--ch-space-1) 7px;
   }
   .selection-label {
     max-width: 145px;
@@ -2529,7 +2535,7 @@ function selectPlanItem(id: string) {
     min-height: 300px;
   }
   .week-navigation {
-    padding: 10px 8px;
+    padding: var(--ch-space-3) var(--ch-space-2);
   }
   .week-navigation :deep(.el-date-editor) {
     width: 140px;
@@ -2539,11 +2545,11 @@ function selectPlanItem(id: string) {
   }
   .week-picker select {
     max-width: 90px;
-    padding: 3px;
+    padding: var(--ch-space-1);
   }
   .grid-empty {
     min-height: 220px;
-    padding: 20px;
+    padding: var(--ch-space-5);
   }
   .grid-empty p {
     max-width: 280px;
@@ -2555,7 +2561,7 @@ function selectPlanItem(id: string) {
     border-left: 0;
   }
   .subject-panel h3 {
-    margin-bottom: 10px;
+    margin-bottom: var(--ch-space-3);
   }
   .subject-palette {
     grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -2564,19 +2570,19 @@ function selectPlanItem(id: string) {
     height: 36px;
   }
   .auto-advance {
-    padding-top: 12px;
+    padding-top: var(--ch-space-3);
   }
   .selection-details {
     display: none;
   }
   .archive-footer {
     flex-wrap: wrap;
-    gap: 6px;
-    padding: 8px;
+    gap: var(--ch-space-2);
+    padding: var(--ch-space-2);
   }
   .archive-footer .icon-command {
-    gap: 5px;
-    padding: 4px 6px;
+    gap: var(--ch-space-1);
+    padding: var(--ch-space-1) var(--ch-space-2);
   }
   .detail-workspace {
     flex-direction: column;
@@ -2589,7 +2595,7 @@ function selectPlanItem(id: string) {
   }
   .detail-content,
   .daily-editor {
-    padding: 12px;
+    padding: var(--ch-space-3);
   }
   .course-table-head {
     display: none;
@@ -2597,7 +2603,7 @@ function selectPlanItem(id: string) {
   .course-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--ch-space-2);
   }
   .course-time {
     flex: 1 1 140px;

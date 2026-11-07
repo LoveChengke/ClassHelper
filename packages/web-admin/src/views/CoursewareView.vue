@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { countDates } from '@classhelper/ui';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { SOCKET_EVENTS } from '@classhelper/shared';
+import { useRealtimeStore } from '@/stores/realtime';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   COURSEWARE_CATEGORIES,
@@ -13,6 +16,28 @@ import {
 import { api } from '@/api/http';
 import { useAuthStore } from '@/stores/auth';
 import { useResponsive } from '@/composables/useResponsive';
+const realtime = useRealtimeStore();
+const onCoursewareChange = () => {
+  void refresh();
+};
+onMounted(() => {
+  realtime.on(SOCKET_EVENTS.coursewareChanged, onCoursewareChange);
+});
+onUnmounted(() => {
+  realtime.off(SOCKET_EVENTS.coursewareChanged, onCoursewareChange);
+});
+watch(
+  () => realtime.connected,
+  (connected) => {
+    if (connected) void refresh();
+  },
+);
+let coursewareRequest = 0,
+  disposed = false;
+onUnmounted(() => {
+  disposed = true;
+  ++coursewareRequest;
+});
 const auth = useAuthStore();
 const { isMobile } = useResponsive();
 const items = ref<CoursewareDto[]>([]),
@@ -36,16 +61,8 @@ const folders = ref<CoursewareFolderDto[]>([]),
   folderPath = ref(''),
   folderFilter = ref('');
 const grouping = ref<'date' | 'folder'>('date');
-const dateFolder = ref('');
-const dateFolders = computed(() =>
-  [
-    ...new Set(
-      items.value.map((item) => item.archivePath?.split('/').slice(0, -1).join('/') || item.archiveDate),
-    ),
-  ]
-    .sort()
-    .reverse(),
-);
+const teacher = ref('');
+const teachers = computed(() => [...new Set(items.value.map((item) => item.teacher.name))]);
 async function newFolder() {
   try {
     const { value } = await ElMessageBox.prompt(
@@ -65,7 +82,7 @@ async function move(item: CoursewareDto, target: string) {
   await api.patch(`/courseware/${item.id}/folder`, { folderPath: target });
   await refresh();
 }
-const filtered = computed(() =>
+const dateSource = computed(() =>
   items.value.filter(
     (item) =>
       (!query.value || `${item.name} ${item.teacher.name}`.includes(query.value)) &&
@@ -74,11 +91,12 @@ const filtered = computed(() =>
         !folderFilter.value ||
         item.folderPath === folderFilter.value ||
         item.folderPath?.startsWith(folderFilter.value + '/')) &&
-      (grouping.value !== 'date' ||
-        !dateFolder.value ||
-        (item.archivePath?.startsWith(dateFolder.value + '/') ?? item.archiveDate === dateFolder.value)) &&
-      (!date.value || item.archiveDate === date.value),
+      (!teacher.value || item.teacher.name === teacher.value),
   ),
+);
+const dateMarks = computed(() => countDates(dateSource.value, (item) => item.archiveDate));
+const filtered = computed(() =>
+  dateSource.value.filter((item) => !date.value || item.archiveDate === date.value),
 );
 function size(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
@@ -95,16 +113,22 @@ function pickFile() {
   fileInput.value.click();
 }
 async function refresh() {
+  const request = ++coursewareRequest;
   loading.value = true;
   try {
-    items.value = await api.get<CoursewareDto[]>('/courseware');
-    if (canWrite.value)
-      [classes.value, folders.value] = await Promise.all([
-        api.get<CoursewareClassDto[]>('/courseware/classes'),
-        api.get<CoursewareFolderDto[]>('/courseware/folders'),
-      ]);
+    const list = await api.get<CoursewareDto[]>('/courseware');
+    const scope = canWrite.value
+      ? await Promise.all([
+          api.get<CoursewareClassDto[]>('/courseware/classes'),
+          api.get<CoursewareFolderDto[]>('/courseware/folders'),
+        ])
+      : null;
+    if (disposed || request !== coursewareRequest) return;
+    items.value = list;
+    classes.value = scope?.[0] ?? [];
+    folders.value = scope?.[1] ?? [];
   } finally {
-    loading.value = false;
+    if (!disposed && request === coursewareRequest) loading.value = false;
   }
 }
 async function upload() {
@@ -265,14 +289,14 @@ onMounted(() => void refresh());
         <el-select v-if="grouping === 'folder'" v-model="folderFilter" clearable placeholder="全部文件夹">
           <el-option v-for="folder in folders" :key="folder.id" :value="folder.path" :label="folder.path" />
         </el-select>
-        <el-select v-else v-model="dateFolder" filterable clearable placeholder="教师 / 年 / 月 / 日 / 时间">
-          <el-option v-for="folder in dateFolders" :key="folder" :value="folder" :label="folder" />
+        <el-select v-model="teacher" clearable placeholder="全部教师">
+          <el-option v-for="name in teachers" :key="name" :value="name" :label="name" />
         </el-select>
         <el-input v-model="query" clearable placeholder="搜索文件名、教师" />
         <el-select v-model="category" clearable placeholder="全部类型">
           <el-option v-for="(label, key) in COURSEWARE_CATEGORIES" :key="key" :label="label" :value="key" />
         </el-select>
-        <el-date-picker v-model="date" value-format="YYYY-MM-DD" placeholder="归档日期" />
+        <ch-date-picker v-model="date" :marks="dateMarks" value-format="YYYY-MM-DD" placeholder="归档日期" />
       </div>
       <el-table :data="filtered" empty-text="暂无课件">
         <el-table-column prop="name" label="文件名称" min-width="220" show-overflow-tooltip />
@@ -359,13 +383,13 @@ onMounted(() => void refresh());
 <style scoped>
 .courseware-page {
   display: grid;
-  gap: 20px;
+  gap: var(--ch-space-5);
 }
 header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--ch-space-3);
 }
 h2,
 h3 {
@@ -378,21 +402,21 @@ p,
 }
 .filters {
   display: flex;
-  gap: 12px;
+  gap: var(--ch-space-3);
   flex-wrap: wrap;
-  margin-bottom: 18px;
+  margin-bottom: var(--ch-space-5);
 }
 .filters > * {
   flex: 1;
   min-width: 160px;
 }
 .el-progress {
-  margin-top: 16px;
+  margin-top: var(--ch-space-4);
 }
 .folder-picker {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--ch-space-3);
   width: 100%;
 }
 .folder-picker .el-select {
@@ -402,12 +426,12 @@ p,
   display: block;
   overflow-wrap: anywhere;
   color: var(--el-text-color-secondary);
-  margin-top: 6px;
+  margin-top: var(--ch-space-2);
 }
 .file-picker {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--ch-space-3);
   flex-wrap: wrap;
   min-width: 0;
 }

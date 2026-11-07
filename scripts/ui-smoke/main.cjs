@@ -76,6 +76,44 @@ async function waitFor(win, expression, timeoutMs = 15000) {
 }
 
 /**
+ * 真实输入点击（隐藏的离屏窗口同样走 Chromium 命中测试）。
+ *
+ * 为什么不能只用元素上的 `element.click()`：那是脚本合成事件，**不会**被 inert 拦截——
+ * 页面整块 inert 了也照常触发监听器，所以"点击是否可用"必须用 sendInputEvent 走一遍命中测试。
+ * 返回值里的 `targetHit` 表示点击坐标是否真的落在目标（或其后代）上，可作为可交互断言。
+ */
+async function realClick(win, selector) {
+  const point = await win.webContents.executeJavaScript(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return null;
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    const rect = el.getBoundingClientRect();
+    const x = Math.round(rect.left + rect.width / 2);
+    const y = Math.round(rect.top + rect.height / 2);
+    const hit = document.elementFromPoint(x, y);
+    return {
+      x,
+      y,
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      targetHit: Boolean(hit) && (hit === el || el.contains(hit)),
+      hit: !hit ? '' : hit.id ? '#' + hit.id : String(hit.className || hit.tagName).slice(0, 40),
+    };
+  })()`);
+  if (!point || point.width <= 0 || point.height <= 0) return point;
+  win.webContents.sendInputEvent({
+    type: 'mouseDown',
+    x: point.x,
+    y: point.y,
+    button: 'left',
+    clickCount: 1,
+  });
+  win.webContents.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+  await sleep(250);
+  return point;
+}
+
+/**
  * 管理员专属用例：登录 → 教师管理 → 录入教师 → 断言出现在列表 → 删除清理。
  *
  * 用户要求"支持录入学生也要支持录入老师，且录入老师的权限只有 admin"：
@@ -122,14 +160,14 @@ async function runAdminTeacherChecks(win) {
 
   // 1.1) localStorage.clear() 把「已看过引导」的标记也一并清掉 → 管理员登录后引导会再次自动
   //      弹出；先把它跳过再继续，避免遮罩留在屏幕上干扰后续真实点击（跳过即记「已看过」）。
-  //      出现/关闭判据与 3.5 相同：等 × 按钮渲染，关闭看 .el-tour__mask 卸载。
+  //      出现/关闭判据与 3.5 相同：等 × 按钮渲染，关闭看 .ch-guide 卸载。
   await win.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const deadline = Date.now() + 8000;
-    while (Date.now() < deadline && !document.querySelector('.el-tour__closebtn')) await sleep(120);
-    document.querySelector('.el-tour__closebtn')?.click();
+    while (Date.now() < deadline && !document.querySelector('.ch-guide [data-action="skip"]')) await sleep(120);
+    document.querySelector('.ch-guide [data-action="skip"]')?.click();
     const closeDeadline = Date.now() + 2000;
-    while (Date.now() < closeDeadline && document.querySelector('.el-tour__mask')) await sleep(100);
+    while (Date.now() < closeDeadline && document.querySelector('.ch-guide')) await sleep(100);
     return true;
   })()`);
 
@@ -518,21 +556,17 @@ async function main() {
     return;
   }
 
-  // 3.5 初次登录引导（新功能）：首次登录自动弹出聚焦式引导，可跳过；
-  // 跳过（右上角 ×）后写入「已看过」标记，本次 profile 里不会再自动弹出。
-  // 判据说明：el-tour 关闭后内容元素会像 el-dialog 一样残留在 DOM（父级 .el-popper 被隐藏，
-  // AGENTS §7 第 22 条同款陷阱），所以「出现」等 × 按钮渲染、「关闭」看遮罩 .el-tour__mask 卸载。
+  // 首次登录显示全屏引导，跳过后卸载并保存版本标记。
   const tour = await win.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    // 引导在布局挂载后延迟 ~600ms 弹出，且 popper 内容晚于外壳渲染，等 × 按钮真正出现
     const deadline = Date.now() + 10000;
-    while (Date.now() < deadline && !document.querySelector('.el-tour__closebtn')) await sleep(120);
-    if (!document.querySelector('.el-tour__closebtn')) return { appeared: false, closed: false };
-    const close = document.querySelector('.el-tour__closebtn');
+    while (Date.now() < deadline && !document.querySelector('.ch-guide [data-action="skip"]')) await sleep(120);
+    if (!document.querySelector('.ch-guide [data-action="skip"]')) return { appeared: false, closed: false };
+    const close = document.querySelector('.ch-guide [data-action="skip"]');
     close.click();
     const closeDeadline = Date.now() + 3000;
-    while (Date.now() < closeDeadline && document.querySelector('.el-tour__mask')) await sleep(120);
-    return { appeared: true, closed: !document.querySelector('.el-tour__mask') };
+    while (Date.now() < closeDeadline && document.querySelector('.ch-guide')) await sleep(120);
+    return { appeared: true, closed: !document.querySelector('.ch-guide') };
   })()`);
   record(
     '首次登录展示新手引导且可跳过',
@@ -1066,10 +1100,8 @@ async function main() {
       `${gradeCharts?.reason ? ` 原因=${gradeCharts.reason}` : ''}`,
   );
 
-  // 7.7 ClassIsland 时间配置导入弹窗（班主任可见：粘贴 JSON → 解析预览 → 确认导入）
   // 7.7 ClassIsland 课程表导入弹窗（班主任可见：粘贴 JSON → 解析预览 → 单双周识别）
-  //     注：需求调整后课表页只保留「导入 ClassIsland 课程表」入口（"导入时间配置"按钮已下线，
-  //     时间表由课程表 JSON 里的 TimeLayouts 一起带进来）。
+  //     JSON / YAML 共用导入入口；JSON 的时间表仍由 TimeLayouts 一起带进来。
   const layoutDialog = await win.webContents.executeJavaScript(`(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
@@ -1085,8 +1117,8 @@ async function main() {
     const transfer = buttons.find((node) => (node.textContent ?? '').trim() === '导入/导出');
     transfer?.click();
     await sleep(200);
-    const openButton = Array.from(document.querySelectorAll('button')).find((node) => (node.textContent ?? '').trim() === '导入 ClassIsland 档案');
-    if (!openButton) return { ok: false, reason: '课表页没有"导入 ClassIsland 课程表"按钮（班主任权限未生效？）' };
+    const openButton = Array.from(document.querySelectorAll('button')).find((node) => (node.textContent ?? '').trim() === '导入课表（JSON / YAML）');
+    if (!openButton) return { ok: false, reason: '课表页没有课表导入按钮（班主任权限未生效？）' };
     // 旧入口必须已经下线（需求 ⑩）
     const legacy = buttons.some((node) => (node.textContent ?? '').trim() === '导入时间配置');
     openButton.click();
@@ -1098,9 +1130,9 @@ async function main() {
     if (!dialog) return { ok: false, reason: '课程表导入弹窗未打开' };
 
     const sampleButton = Array.from(dialog.querySelectorAll('button')).find((node) =>
-      (node.textContent ?? '').trim() === '填入示例',
+      (node.textContent ?? '').trim() === '填入示例 JSON',
     );
-    if (!sampleButton) return { ok: false, reason: '缺少"填入示例"按钮' };
+    if (!sampleButton) return { ok: false, reason: '缺少"填入示例 JSON"按钮' };
     sampleButton.click();
     await sleep(200);
 
@@ -1164,6 +1196,7 @@ async function main() {
 
   // 管理员维护入口：教师录入与设备管理。
   await runAdminTeacherChecks(win);
+  await require('./assistant.cjs')({ win, target: TARGET_URL, record, waitFor, realClick });
   // 客户端页保留设备、远控与安装包入口；退役联动入口已移除。
   const clientsUi = await win.webContents.executeJavaScript(`(async () => {
     const menu = Array.from(document.querySelectorAll('.el-menu-item')).find((node) =>
@@ -1177,6 +1210,7 @@ async function main() {
   record('管理员可从侧栏进入客户端设备维护页且已移除联动入口', clientsUi === true);
 
   await runPlanEditorChecks(win);
+  await runYamlPreviewChecks(win);
 
   // 8. 手机小屏适配（390×844，1Panel 风格：侧边栏收进抽屉 + 卡片内横向滚动）
   await runMobileChecks(win);
@@ -1631,6 +1665,117 @@ async function runPlanEditorChecks(win) {
       }
     })()`);
   }
+
+  // 7.9 旧浏览器外壳兼容回归（真实命中测试）。
+  //
+  // 背景：`:inert="saving"` 在支持 inert 的浏览器里走 DOM property 分支（`el.inert = false`），
+  // 不落 attribute；但在**没有 inert DOM property** 的外壳里，Vue 的 `shouldSetAsProp()` 返回 false
+  // （源码最后一行是 `return key in el`），改由 `patchAttr()` 写成 `setAttribute('inert', false)`。
+  // HTML 的 inert 是"只要属性存在就生效"的布尔属性，于是整块编辑区不可交互，
+  // 而页签等 inert 之外的按钮仍可点击 —— 正是用户反馈的"编辑点了没反应"。
+  //
+  // 两个本机实测（Electron 44 / Chromium 152）得到的关键点：
+  //   ① `inert` 挂在 HTMLElement.prototype 上，Element.prototype 上没有，
+  //      所以模拟旧内核要删 `HTMLElement.prototype.inert`（顺带删 Element.prototype 兼容未来实现）；
+  //   ② 元素 `.click()` 是脚本合成事件，**不会被 inert 拦截**，必须用 sendInputEvent 真实命中测试
+  //      才能复现"点了没反应"（现有用例都用 .click()，所以整块 inert 时也照样通过）。
+  const modernInertCount = await win.webContents.executeJavaScript(
+    `document.querySelectorAll('[inert]').length`,
+  );
+  const modernHit = await realClick(win, '.course-row .course-time-text');
+  const modernSelected = await win.webContents.executeJavaScript(
+    `Boolean(document.querySelector('.course-row.selected'))`,
+  );
+
+  const legacySetup = await win.webContents.executeJavaScript(`(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'inert') || null;
+    let deleted = false;
+    try {
+      deleted = delete HTMLElement.prototype.inert;
+    } catch {
+      deleted = false;
+    }
+    try {
+      delete Element.prototype.inert;
+    } catch {
+      // 个别实现不可配置时忽略：HTMLElement.prototype 上的已删除即可完成模拟。
+    }
+    window.__inertCompat = { descriptor, deleted };
+    return { deleted, hadDescriptor: Boolean(descriptor), hasProperty: 'inert' in document.body };
+  })()`);
+  // 离开再回到课表档案：让组件重新挂载，等价于旧内核首次打开页面时的挂载 patchProp。
+  await win.webContents.executeJavaScript(
+    `document.querySelector('.management-menu [data-path="/dashboard"]').click()`,
+  );
+  await waitFor(win, `location.pathname === '/dashboard'`);
+  await win.webContents.executeJavaScript(
+    `document.querySelector('.management-menu [data-path="/plan-editor"]').click()`,
+  );
+  const remounted = await waitFor(
+    win,
+    `location.pathname === '/plan-editor' && Boolean(document.querySelector('.schedule-workspace')) && Boolean(document.querySelector('.course-row'))`,
+  );
+  const legacyInertDom = await win.webContents.executeJavaScript(`(() => {
+    const nodes = [...document.querySelectorAll('[inert]')];
+    return {
+      count: nodes.length,
+      samples: nodes.slice(0, 5).map((el) => ({
+        className: String(el.className).slice(0, 48),
+        value: el.getAttribute('inert'),
+      })),
+    };
+  })()`);
+  const legacyHit = await realClick(win, '.course-row .course-time-text');
+  const legacySelected = await win.webContents.executeJavaScript(
+    `Boolean(document.querySelector('.course-row.selected'))`,
+  );
+  await realClick(win, '.archive-tabs button:nth-child(2)');
+  const layoutReady = await waitFor(
+    win,
+    `Boolean(document.querySelector('.layout-explorer')) && Boolean(document.querySelector('.layout-toolbar'))`,
+  );
+  const legacyPointExists = await win.webContents.executeJavaScript(`(() => {
+    const row = document.querySelector('.time-point-row');
+    if (!row) return false;
+    row.dataset.inertProbe = '1';
+    return true;
+  })()`);
+  const legacyPointHit = legacyPointExists
+    ? await realClick(win, '.time-point-row[data-inert-probe="1"] .point-time')
+    : null;
+  const legacyPointSelected = legacyPointExists
+    ? await win.webContents.executeJavaScript(
+        `Boolean(document.querySelector('.time-point-row[data-inert-probe="1"]')?.classList.contains('selected'))`,
+      )
+    : null;
+  // 复原原型链与视图，避免影响后续检查（后续用例仍跑在同一渲染进程里）。
+  await win.webContents.executeJavaScript(`(() => {
+    const saved = window.__inertCompat;
+    if (saved?.descriptor) Object.defineProperty(HTMLElement.prototype, 'inert', saved.descriptor);
+    delete window.__inertCompat;
+    document.querySelector('.archive-tabs button:first-child')?.click();
+    return true;
+  })()`);
+  await waitFor(win, `Boolean(document.querySelector('.course-table'))`);
+  record(
+    '课表档案在无 inert DOM 属性的旧浏览器外壳中真实点击仍生效',
+    modernInertCount === 0 &&
+      modernHit?.targetHit === true &&
+      modernSelected === true &&
+      legacySetup.deleted === true &&
+      remounted === true &&
+      legacyInertDom.count === 0 &&
+      legacyHit?.targetHit === true &&
+      legacySelected === true &&
+      layoutReady === true &&
+      (legacyPointHit === null || (legacyPointHit.targetHit === true && legacyPointSelected === true)),
+    `现代Chromium inert属性=${modernInertCount} 课程行命中=${modernHit?.targetHit} 选中=${modernSelected}；` +
+      `旧内核模拟=删除inert属性(${legacySetup.deleted}) 重载=${remounted} inert属性=${legacyInertDom.count}` +
+      `${legacyInertDom.samples.length ? ` 样例=${JSON.stringify(legacyInertDom.samples)}` : ''}` +
+      ` 课程行命中=${legacyHit?.targetHit} 选中=${legacySelected} 时间表页签=${layoutReady}` +
+      ` 时间点命中=${legacyPointHit?.targetHit} 选中=${legacyPointSelected}`,
+  );
+
   await win.webContents.executeJavaScript(
     `document.querySelector('.management-menu [data-path="/dashboard"]').click()`,
   );
@@ -1679,6 +1824,86 @@ async function runPlanEditorChecks(win) {
       `document.body.innerText.includes('已转出') && ![...document.querySelectorAll('button')].some(e=>e.textContent.trim()==='新建归档')`,
     ),
   );
+}
+
+/** YAML 窗口使用原始用户示例预览；不修改隔离班级的现有课表。 */
+async function runYamlPreviewChecks(win) {
+  await win.loadURL(new URL('/plan-editor', TARGET_URL).href);
+  await waitFor(win, `Boolean(document.querySelector('.course-table'))`);
+  await win.webContents.executeJavaScript(`(() => {
+    [...document.querySelectorAll('.archive-commands button')].find(b => b.textContent.trim() === '导入/导出')?.click();
+  })()`);
+  await sleep(150);
+  await win.webContents.executeJavaScript(`(() => {
+    [...document.querySelectorAll('.archive-menu button')].find(b => b.textContent.includes('JSON / YAML'))?.click();
+  })()`);
+  const opened = await waitFor(
+    win,
+    `Boolean(document.querySelector('.el-dialog input[type="file"][accept*=".yml"]'))`,
+  );
+  record('课表导入窗口支持 JSON / YAML / YML 文件', opened);
+  if (!opened) return;
+  record(
+    'YAML 辅助提示词默认折叠',
+    await win.webContents.executeJavaScript(`(() => {
+    const header = document.querySelector('.ai-panel .el-collapse-item__header');
+    return Boolean(header) && header.getAttribute('aria-expanded') === 'false';
+  })()`),
+  );
+  const example = fs.readFileSync(path.join(__dirname, '../../yml导入格式示例.yml'), 'utf8');
+  await win.webContents.executeJavaScript(`(() => {
+    const input = [...document.querySelectorAll('.el-dialog textarea')].find(el => !el.readOnly);
+    input.value = ${JSON.stringify(example)};
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await sleep(80);
+  await win.webContents.executeJavaScript(`(() => {
+    [...document.querySelectorAll('.el-dialog button')].find(b => b.textContent.trim() === '解析预览')?.click();
+  })()`);
+  const parsed = await waitFor(
+    win,
+    `document.querySelector('.preview-meta')?.textContent.includes('6 节') && document.querySelector('.preview-meta')?.textContent.includes('3 张')`,
+  );
+  record(
+    'YAML 原始示例可从界面解析预览并启用导入',
+    parsed &&
+      (await win.webContents.executeJavaScript(`(() => {
+    const button = [...document.querySelectorAll('.el-dialog__footer button')].find(b => b.textContent.trim() === '开始导入');
+    return Boolean(button && !button.disabled) && document.querySelector('.preview-meta').textContent.includes('课表 YAML');
+  })()`)),
+  );
+  record(
+    'YAML 预览弹窗内容可滚动，底部导入按钮位于视口内',
+    await win.webContents.executeJavaScript(`(() => {
+    const dialog = document.querySelector('.el-dialog.class-plan-import-dialog');
+    const footer = dialog?.querySelector('.el-dialog__footer');
+    const body = dialog?.querySelector('.el-dialog__body');
+    const rect = footer?.getBoundingClientRect();
+    return Boolean(rect) && rect.bottom <= innerHeight && rect.top > 0 && getComputedStyle(body).overflowY === 'auto';
+  })()`),
+  );
+  fs.writeFileSync(
+    path.join(__dirname, '../../docs/screenshots/plan-editor-yaml.png'),
+    (await win.webContents.capturePage()).toPNG(),
+  );
+  await win.webContents.executeJavaScript(`(() => {
+    const input = [...document.querySelectorAll('.el-dialog textarea')].find(el => !el.readOnly);
+    input.value += '\\n# 编辑后需重新预览';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  record(
+    '编辑 YAML 后旧预览失效，避免按旧预览直接导入',
+    await waitFor(
+      win,
+      `!document.querySelector('.preview-meta') && [...document.querySelectorAll('.el-dialog__footer button')].some(b => b.textContent.trim() === '开始导入' && b.disabled)`,
+    ),
+  );
+  await win.webContents.executeJavaScript(`document.querySelector('.el-dialog__headerbtn')?.click()`);
+  const geometry = await win.webContents.executeJavaScript(`(() => {
+    const root = getComputedStyle(document.documentElement);
+    return [1,2,3,4,5,6,7].every(i => root.getPropertyValue('--ch-space-' + i).trim() === (i * 4) + 'px') && root.getPropertyValue('--ch-radius-xs').trim() === '6px';
+  })()`);
+  record('管理端圆角与间距令牌有定义并使用 4px 网格', geometry);
 }
 
 async function finish(win) {

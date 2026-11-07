@@ -20,6 +20,9 @@ export const listHomeworksQuerySchema = z.object({
 
 /** 按天查看用：查一段时间内"哪些天有作业"（日期选择器高亮） */
 export const listHomeworkDaysQuerySchema = z.object({
+  courseId: z.string().min(1).optional(),
+  keyword: z.string().trim().max(64).optional(),
+  pendingOnly: booleanFlagSchema,
   classId: z.string().min(1).optional(),
   from: dayKeySchema.optional(),
   to: dayKeySchema.optional(),
@@ -44,10 +47,7 @@ export const createHomeworkSchema = z.object({
  * 一批塞几百个班会长时间占住请求。
  */
 export const bulkCreateHomeworkSchema = z.object({
-  classIds: z
-    .array(z.string().min(1))
-    .min(1, '请至少选择一个班级')
-    .max(50, '一次最多发布 50 个班级'),
+  classIds: z.array(z.string().min(1)).min(1, '请至少选择一个班级').max(50, '一次最多发布 50 个班级'),
   courseId: z.string().min(1).nullish(),
   /** 按科目名称指定（跨班只能用名称：课程是班级内的，同一门课在每个班是不同的记录） */
   subjectName: z.string().trim().min(1).max(50).nullish(),

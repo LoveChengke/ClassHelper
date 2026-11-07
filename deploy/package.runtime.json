@@ -1,6 +1,6 @@
 {
   "name": "classhelper-server-runtime",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "private": true,
   "type": "module",
   "description": "ClassHelper 服务端运行时（安装包 / 容器内置）",
@@ -21,6 +21,7 @@
     "socket.io": "^4.8.3",
     "typescript": "~5.9.3",
     "xlsx": "0.18.5",
+    "yaml": "^2.9.1",
     "zod": "^4.6.2"
   }
 }

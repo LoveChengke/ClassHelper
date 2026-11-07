@@ -75,7 +75,6 @@ onMounted(async () => {
     <div class="page-header">
       <div>
         <h2 class="page-title">关于</h2>
-        <p class="page-subtitle">版本、诊断信息与鸣谢</p>
       </div>
     </div>
 

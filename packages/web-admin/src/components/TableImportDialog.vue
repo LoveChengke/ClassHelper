@@ -432,7 +432,7 @@ async function submit(): Promise<void> {
 .import-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ch-space-2);
   flex-wrap: wrap;
 }
 .file-name {
@@ -444,14 +444,14 @@ async function submit(): Promise<void> {
 }
 .import-meta {
   display: flex;
-  gap: 16px;
+  gap: var(--ch-space-4);
   flex-wrap: wrap;
-  margin: 12px 0 4px;
+  margin: var(--ch-space-3) 0 var(--ch-space-1);
   color: var(--ch-text-secondary);
   font-size: 13px;
 }
 .required-hint {
-  margin-left: 8px;
+  margin-left: var(--ch-space-2);
   color: var(--el-color-danger);
   font-size: 12px;
 }
@@ -462,7 +462,7 @@ async function submit(): Promise<void> {
 }
 .result-stats {
   display: flex;
-  gap: 16px;
+  gap: var(--ch-space-4);
   flex-wrap: wrap;
   font-size: 13px;
 }
@@ -476,15 +476,15 @@ async function submit(): Promise<void> {
   color: var(--el-color-danger);
 }
 .mb-8 {
-  margin-bottom: 8px;
+  margin-bottom: var(--ch-space-2);
 }
 .mb-12 {
-  margin-bottom: 12px;
+  margin-bottom: var(--ch-space-3);
 }
 .mt-8 {
-  margin-top: 8px;
+  margin-top: var(--ch-space-2);
 }
 .mt-12 {
-  margin-top: 12px;
+  margin-top: var(--ch-space-3);
 }
 </style>

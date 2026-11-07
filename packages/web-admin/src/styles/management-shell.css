@@ -30,8 +30,8 @@ html.dark {
 .layout .brand,
 .ch-sidebar-drawer .brand {
   height: 64px;
-  padding: 0 24px;
-  gap: 12px;
+  padding: 0 var(--ch-space-6);
+  gap: var(--ch-space-3);
   border-bottom: 0;
   color: var(--ch-text);
   letter-spacing: 0.3px;
@@ -45,7 +45,7 @@ html.dark {
   border-radius: 0;
   box-shadow: none;
   border-bottom: 1px solid var(--ch-border);
-  padding: 0 24px;
+  padding: 0 var(--ch-space-6);
 }
 .layout .layout-body {
   display: flex;
@@ -64,14 +64,14 @@ html.dark {
   display: none;
 }
 .layout .header-right {
-  gap: 12px;
+  gap: var(--ch-space-3);
 }
 .layout .nav-toggle {
   background: transparent;
 }
 .layout .user-chip {
-  padding: 6px 10px;
-  border-radius: 10px;
+  padding: var(--ch-space-2) var(--ch-space-3);
+  border-radius: var(--ch-radius-sm);
   background: var(--ch-surface-alt);
 }
 .sidebar-foot {
@@ -79,7 +79,7 @@ html.dark {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--ch-space-2);
   height: 48px;
   color: var(--ch-text-muted);
   border-top: 1px solid var(--ch-border);
@@ -95,12 +95,12 @@ html.dark {
 .nav-search {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ch-space-2);
   background: var(--ch-surface-alt);
   border: 1px solid var(--ch-border);
   color: var(--ch-text-muted);
-  border-radius: 8px;
-  padding: 7px 10px;
+  border-radius: var(--ch-radius-sm);
+  padding: var(--ch-space-2) var(--ch-space-3);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
@@ -110,16 +110,16 @@ html.dark {
   font: inherit;
   font-size: 10px;
   border: 1px solid var(--ch-border);
-  border-radius: 4px;
-  padding: 1px 4px;
+  border-radius: var(--ch-radius-xs);
+  padding: var(--ch-space-1) var(--ch-space-1);
   background: var(--ch-surface);
 }
 .workspace-tabs {
   display: flex;
   flex-shrink: 0;
   height: 46px;
-  padding: 0 20px;
-  gap: 12px;
+  padding: 0 var(--ch-space-5);
+  gap: var(--ch-space-3);
   background: var(--ch-surface);
   border-bottom: 1px solid var(--ch-border);
   min-width: 0;
@@ -131,16 +131,16 @@ html.dark {
   overflow-x: auto;
   scrollbar-width: none;
   min-width: 0;
-  gap: 4px;
+  gap: var(--ch-space-1);
 }
 .workspace-tab {
   display: flex;
   align-items: center;
   flex-shrink: 0;
   border-bottom: 2px solid transparent;
-  gap: 2px;
+  gap: var(--ch-space-1);
   color: var(--ch-text-muted);
-  padding: 0 4px;
+  padding: 0 var(--ch-space-1);
 }
 .workspace-tab.active {
   border-bottom-color: var(--el-color-primary);
@@ -151,20 +151,20 @@ html.dark {
 .tabs-action {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ch-space-2);
   border: 0;
   color: inherit;
   background: transparent;
   cursor: pointer;
   font: inherit;
   font-size: 13px;
-  padding: 8px;
+  padding: var(--ch-space-2);
   white-space: nowrap;
 }
 .workspace-tab button.close-tab {
   font-size: 18px;
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: var(--ch-space-1) var(--ch-space-1);
+  border-radius: var(--ch-radius-xs);
 }
 .workspace-tab button:hover,
 .tabs-action:hover {
@@ -179,7 +179,7 @@ html.dark {
 .layout-main .page {
   max-width: 1800px;
   margin: 0 auto;
-  padding: 24px;
+  padding: var(--ch-space-6);
 }
 .layout-main .page-title {
   font-size: 22px;
@@ -187,16 +187,16 @@ html.dark {
   font-weight: 600;
 }
 .layout-main .page-subtitle {
-  margin-top: 8px;
+  margin-top: var(--ch-space-2);
   color: var(--ch-text-muted);
 }
 .layout-main .el-card {
-  border-radius: 12px;
+  border-radius: var(--ch-radius-md);
   border: 1px solid var(--ch-border);
   box-shadow: none;
 }
 .layout-main .el-card__header {
-  padding: 18px 22px;
+  padding: var(--ch-space-5) var(--ch-space-6);
   background: transparent;
   font-weight: 600;
   border-color: var(--ch-border);
@@ -213,19 +213,19 @@ html.dark {
 .navigation-results {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 16px;
+  gap: var(--ch-space-2);
+  margin-top: var(--ch-space-4);
   max-height: 50vh;
   overflow: auto;
 }
 .navigation-results > button {
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--ch-radius-sm);
   background: var(--ch-surface-alt);
-  padding: 12px;
+  padding: var(--ch-space-3);
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--ch-space-3);
   color: var(--ch-text);
   cursor: pointer;
   text-align: left;
@@ -251,7 +251,7 @@ html.dark {
     display: none;
   }
   .layout .header-right {
-    gap: 6px;
+    gap: var(--ch-space-2);
   }
   .management-breadcrumb .el-breadcrumb__item:nth-child(2) {
     display: none;
@@ -260,17 +260,17 @@ html.dark {
 @media (max-width: 768px) {
   .layout .layout-header {
     height: 56px;
-    padding: 0 12px;
+    padding: 0 var(--ch-space-3);
   }
   .workspace-tabs {
     height: 42px;
-    padding: 0 10px;
+    padding: 0 var(--ch-space-3);
   }
   .layout-main .page {
-    padding: 16px 12px;
+    padding: var(--ch-space-4) var(--ch-space-3);
   }
   .layout .user-chip {
-    padding: 6px;
+    padding: var(--ch-space-2);
     background: transparent;
   }
 }

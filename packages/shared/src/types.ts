@@ -1,3 +1,4 @@
+import type { AiConversationRequest } from './ai.js';
 import type { CoursewareTransfer } from './courseware.js';
 import type {
   ClientUpdateProgressDto,
@@ -639,6 +640,33 @@ export interface ClassPlanImportResultDto {
   createdCourses: string[];
   weekStart: number;
   weekEnd: number;
+}
+
+/* ------------------------------------------------------------------ 课表 YAML 导入 */
+
+/** YAML 课表预览里的单节课：与 ClassIsland JSON 预览一致，额外带上课地点。 */
+export interface ClassPlanYamlEntryDto extends ClassPlanEntryDto {
+  /** 由科目 room 带入的课次地点（可为空） */
+  location?: string;
+}
+
+/**
+ * 课表 YAML 预览结果。
+ *
+ * 字段故意与 `ClassPlanPreviewDto` 对齐，Web 导入弹窗可以复用同一套表格与错误展示；
+ * `format` 用于页面提示当前识别到的是 YAML 而不是 ClassIsland JSON。
+ */
+export interface ClassPlanYamlPreviewDto extends Omit<ClassPlanPreviewDto, 'entries'> {
+  format: 'yaml';
+  entries: ClassPlanYamlEntryDto[];
+  /** 归一化后要写入的课表数量（同一天的单周/双周会各算一张） */
+  planCount: number;
+}
+
+/** 课表 YAML 导入结果：在通用导入结果上补充解析阶段的提示。 */
+export interface ClassPlanYamlImportResultDto extends ClassPlanImportResultDto {
+  /** YAML 解析与完整档案导入过程中的提示（不阻断导入） */
+  warnings: string[];
 }
 
 /* ------------------------------------------------------------------ 作业 */
@@ -1802,16 +1830,11 @@ export interface UpdateAiSettingsRequest {
   systemPromptExtra?: string;
 }
 
-/** 助手能执行的动作（都是既有发布入口的封装，绝不直接写库） */
+/** 旧响应的兼容动作；完整能力目录使用 AiCapability。 */
 export type AiActionKind = 'create_homework' | 'create_notification' | 'call_student' | 'unknown';
 
-/** `POST /api/ai/interpret`：只解析、不落库；确认后由前端调既有端点 */
-export interface AiInterpretRequest {
-  /** 老师原话，例如「给高一二班布置作业，把卷子写完」 */
-  text: string;
-  /** 有上下文班级时一并给出（助手据此缩小候选） */
-  classId?: string;
-}
+/** AI 对话请求；写操作仅生成待确认计划。 */
+export type AiInterpretRequest = AiConversationRequest;
 
 /** 助手解析出的一次动作（params 用与手动入口**同一份 zod 校验**后再返回） */
 export interface AiInterpretResult {
@@ -1828,9 +1851,9 @@ export interface AiInterpretResult {
   };
   /** 模型自评置信度 0~1（低于 0.5 时界面提示"请仔细核对"） */
   confidence: number;
-  /** 一律为 true：助手的结果必须由老师确认后才落库 */
+  /** 写入计划需要确认，纯查询为 false。 */
   needConfirm: boolean;
-  /** 模型原始回复（仅在开发者模式下回传，便于排查格式问题） */
+  /** 兼容字段；服务端不回传模型原文。 */
   rawReply?: string | null;
 }
 

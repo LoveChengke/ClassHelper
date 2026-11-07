@@ -133,6 +133,10 @@ export const useRealtimeStore = defineStore('realtime', () => {
       dispatch(SOCKET_EVENTS.scheduleUpdated, payload);
     });
 
+    instance.on(SOCKET_EVENTS.coursewareChanged, (payload) => {
+      markEvent(SOCKET_EVENTS.coursewareChanged);
+      dispatch(SOCKET_EVENTS.coursewareChanged, payload);
+    });
     instance.on(SOCKET_EVENTS.connected, (payload: { rooms: string[] }) => {
       markEvent(SOCKET_EVENTS.connected);
       console.info('[realtime] 已加入房间', payload.rooms);

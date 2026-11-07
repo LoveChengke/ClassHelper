@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { countDates } from '@classhelper/ui';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
@@ -14,24 +15,15 @@ import { useRealtimeStore } from '../stores/realtime.js';
 const realtime = useRealtimeStore();
 const localItems = ref<CoursewareDto[]>([]),
   library = ref<'shared' | 'local'>('shared'),
-  teacher = ref(''),
-  archive = ref('');
+  teacher = ref('');
 const source = computed(() => (library.value === 'local' ? localItems.value : items.value));
 const teachers = computed(() => [...new Set(source.value.map((item) => item.teacher.name))]);
-const archiveFolders = computed(() => [
-  ...new Set(
-    source.value
-      .filter((item) => !teacher.value || item.teacher.name === teacher.value)
-      .map((item) => item.archivePath?.split('/').slice(0, -1).join('/') || item.archiveDate),
-  ),
-]);
 async function refreshLocal() {
   localItems.value = (await window.desktop?.listLocalCourseware()) || [];
 }
 // 两个来源的教师与目录不通用，切换时清空，避免看到空列表却找不到原因。
 watch(library, () => {
   teacher.value = '';
-  archive.value = '';
 });
 const items = ref<CoursewareDto[]>([]),
   loading = ref(false),
@@ -42,16 +34,17 @@ const query = ref(''),
   date = ref(''),
   busy = ref<string[]>([]),
   transfer = ref<CoursewareTransfer | null>(null);
-const filtered = computed(() =>
+const dateSource = computed(() =>
   source.value.filter(
     (item) =>
       (!query.value || `${item.name} ${item.teacher.name}`.includes(query.value)) &&
       (!category.value || item.category === category.value) &&
-      (!teacher.value || item.teacher.name === teacher.value) &&
-      (!archive.value ||
-        (item.archivePath?.startsWith(archive.value + '/') ?? item.archiveDate === archive.value)) &&
-      (!date.value || item.archiveDate === date.value),
+      (!teacher.value || item.teacher.name === teacher.value),
   ),
+);
+const dateMarks = computed(() => countDates(dateSource.value, (item) => item.archiveDate));
+const filtered = computed(() =>
+  dateSource.value.filter((item) => !date.value || item.archiveDate === date.value),
 );
 let disposed = false;
 async function refresh() {
@@ -153,17 +146,14 @@ onUnmounted(() => {
         <el-radio-button value="shared">班级共享</el-radio-button>
         <el-radio-button value="local">本机归档</el-radio-button>
       </el-radio-group>
-      <el-select v-model="teacher" clearable placeholder="全部教师" @change="archive = ''">
+      <el-select v-model="teacher" clearable placeholder="全部教师">
         <el-option v-for="name in teachers" :key="name" :label="name" :value="name" />
-      </el-select>
-      <el-select v-model="archive" clearable filterable placeholder="年 / 月 / 日 / 时间">
-        <el-option v-for="folder in archiveFolders" :key="folder" :label="folder" :value="folder" />
       </el-select>
       <el-input v-model="query" clearable placeholder="搜索课件或教师" />
       <el-select v-model="category" clearable placeholder="全部类型">
         <el-option v-for="(label, key) in COURSEWARE_CATEGORIES" :key="key" :label="label" :value="key" />
       </el-select>
-      <el-date-picker v-model="date" value-format="YYYY-MM-DD" placeholder="归档日期" />
+      <ch-date-picker v-model="date" :marks="dateMarks" value-format="YYYY-MM-DD" placeholder="归档日期" />
     </div>
     <el-card shadow="never" class="table-card" v-loading="loading">
       <el-table

@@ -885,14 +885,7 @@ export async function islandHomeworkSuppressionCheck(): Promise<SmokeCheckResult
   }
 }
 
-/**
- * 冒烟自检（不需要后端）：**初次启动引导**。
- *
- * 冒烟每次都用全新配置目录（等于"首次启动"），因此引导必须自动弹出；
- * 这里真实点击把它一步步走完，断言：遮罩关闭 + `onboardingDone` 已写入配置。
- * 关闭判据用「元素从 DOM 消失」——引导是 v-if 自绘遮罩（特意不用 el-dialog，
- * 避免"关闭后 DOM 残留在文档里"的误报，见 AGENTS §7 第 22 条）。
- */
+/** 全新配置首次展示全屏引导，完成后保存版本标记。 */
 export async function onboardingSelfTest(): Promise<SmokeCheckResult> {
   try {
     // 引导在启动后延迟 ~400ms 弹出，这里轮询等它出现
@@ -908,7 +901,10 @@ export async function onboardingSelfTest(): Promise<SmokeCheckResult> {
       };
     }
 
-    // 逐页「下一步」到最后一页再点「开始使用」（按钮由 data-action 标识，不依赖文案）
+    const guide = document.querySelector<HTMLElement>('.ch-guide')!;
+    const bounds = guide.getBoundingClientRect();
+    const fullscreen = Math.abs(bounds.width - innerWidth) < 2 && Math.abs(bounds.height - innerHeight) < 2;
+    const focused = guide.contains(document.activeElement);
     const clicks: string[] = [];
     for (let attempt = 0; attempt < 12; attempt += 1) {
       const action = document.querySelector('.onboarding-welcome [data-action="finish"]') ? 'finish' : 'next';
@@ -928,10 +924,11 @@ export async function onboardingSelfTest(): Promise<SmokeCheckResult> {
     }
 
     const config = await window.desktop?.getConfig?.();
-    const done = config?.onboardingDone === true;
+    const { ONBOARDING_VERSION } = await import('@classhelper/ui');
+    const done = config?.onboardingDone === true && config.onboardingVersion === ONBOARDING_VERSION;
     return {
-      ok: closed && done,
-      detail: `步骤点击=[${clicks.join(',')}] 已关闭=${closed} onboardingDone=${config?.onboardingDone ?? '-'}`,
+      ok: closed && done && fullscreen && focused,
+      detail: `步骤点击=[${clicks.join(',')}] 全屏=${fullscreen} 焦点=${focused} 已关闭=${closed} 引导版本=${config?.onboardingVersion ?? '-'}`,
     };
   } catch (error) {
     return {

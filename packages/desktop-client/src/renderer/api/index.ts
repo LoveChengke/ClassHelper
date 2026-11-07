@@ -67,8 +67,15 @@ export const homeworkApi = {
     date?: string;
   }): Promise<HomeworkDto[]> => api.get(API_PATHS.homeworks, params),
   /** 哪些天有作业（日期选择器高亮） */
-  days: (params: { classId?: string; from?: string; to?: string; days?: number }): Promise<HomeworkDaysDto> =>
-    api.get(`${API_PATHS.homeworks}/days`, params),
+  days: (params: {
+    classId?: string;
+    courseId?: string;
+    keyword?: string;
+    pendingOnly?: boolean;
+    from?: string;
+    to?: string;
+    days?: number;
+  }): Promise<HomeworkDaysDto> => api.get(`${API_PATHS.homeworks}/days`, params),
   /** 在教室机器上直接录入作业（班级账号可调用；也可选所属日期） */
   create: (payload: {
     classId: string;
@@ -88,8 +95,21 @@ export const homeworkApi = {
 };
 
 export const notificationApi = {
-  list: (params?: { classId?: string; unreadOnly?: boolean }): Promise<NotificationDto[]> =>
-    api.get(API_PATHS.notifications, params),
+  days: (params: {
+    classId?: string;
+    from?: string;
+    to?: string;
+    createdBy?: string;
+    priority?: string;
+    unreadOnly?: boolean;
+  }): Promise<{ days: { date: string; count: number }[] }> => api.get('/notifications/days', params),
+  list: (params?: {
+    classId?: string;
+    unreadOnly?: boolean;
+    date?: string;
+    createdBy?: string;
+    priority?: string;
+  }): Promise<NotificationDto[]> => api.get(API_PATHS.notifications, params),
   unreadCount: (): Promise<{ count: number }> => api.get(`${API_PATHS.notifications}/unread-count`),
   // id 来自服务端或灵动岛（作业卡是本地合成的 `homework-…`），一律 encodeURIComponent：
   // 否则含 `/` 或 `..` 的 id 会改变实际请求的路径

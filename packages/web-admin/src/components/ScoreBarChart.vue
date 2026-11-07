@@ -122,7 +122,7 @@ function formatValue(value: number): string {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 18px 0 28px;
+  padding: var(--ch-space-5) 0 var(--ch-space-7);
 }
 
 .tick {
@@ -130,7 +130,7 @@ function formatValue(value: number): string {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding-right: 8px;
+  padding-right: var(--ch-space-2);
   font-size: 11px;
   line-height: 1;
   white-space: nowrap;
@@ -159,9 +159,9 @@ function formatValue(value: number): string {
 .bars {
   display: flex;
   align-items: stretch;
-  gap: 8px;
+  gap: var(--ch-space-2);
   height: 100%;
-  padding: 0 6px;
+  padding: 0 var(--ch-space-2);
 }
 
 .bar-col {
@@ -194,14 +194,14 @@ function formatValue(value: number): string {
 .bar {
   width: 46%;
   max-width: 46px;
-  border-radius: 4px 4px 0 0;
+  border-radius: var(--ch-radius-xs) var(--ch-radius-xs) 0 0;
   transition: height 0.2s ease;
 }
 
 .bar-label {
   flex: none;
   height: 28px;
-  padding-top: 6px;
+  padding-top: var(--ch-space-2);
   font-size: 11px;
   line-height: 1.3;
   text-align: center;

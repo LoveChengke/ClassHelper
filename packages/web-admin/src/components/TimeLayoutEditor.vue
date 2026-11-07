@@ -65,6 +65,7 @@ const nowMinutes = ref(currentMinutes());
 let nowTimer: ReturnType<typeof setInterval> | null = null;
 let reorderFrom = '';
 let reorderTo = '';
+let draftSequence = 0;
 
 const visibleLayouts = computed(() => props.layouts.filter((item) => item.name.includes(search.value)));
 const points = computed(() => layout.value?.points ?? []);
@@ -164,7 +165,8 @@ function addPoint(type: TimePointType): void {
           ? '分割线'
           : '行动';
   const point: TimePointDto = {
-    id: `draft-${crypto.randomUUID()}`,
+    // 草稿 id 只用于本次编辑；HTTP 内网没有 randomUUID，不能依赖安全上下文 API。
+    id: `draft-${Date.now()}-${draftSequence++}`,
     position: points.value.length,
     name,
     startTime: toTime(start),
@@ -385,7 +387,12 @@ onUnmounted(() => {
       </header>
 
       <div class="tl-body">
-        <div class="layout-canvas" :inert="saving">
+        <!--
+          只在保存过程中置为 inert。不能写成 :inert="saving"：旧内核没有 inert DOM property，
+          Vue 会把 false 落成 inert="false" 属性，而 inert 属性只要存在就整块不可交互。
+          undefined 会让 Vue 直接移除属性，现代浏览器与旧内核行为一致。
+        -->
+        <div class="layout-canvas" :inert="saving ? true : undefined">
           <div v-if="!layout" class="panel-empty">
             <ArchiveIcon name="clock" />
             <p>新建一份时间表开始编辑</p>
@@ -739,14 +746,14 @@ onUnmounted(() => {
   flex: 0 0 210px;
   width: 210px;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
+  gap: var(--ch-space-2);
+  padding: var(--ch-space-3);
   overflow: auto;
   border-right: 1px solid var(--ch-border);
 }
 .explorer-actions {
   display: flex;
-  gap: 4px;
+  gap: var(--ch-space-1);
 }
 .layout-explorer .command {
   flex: 1;
@@ -756,11 +763,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
+  gap: var(--ch-space-1);
   width: 100%;
-  padding: 9px 10px;
+  padding: var(--ch-space-2) var(--ch-space-3);
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--ch-radius-sm);
   background: transparent;
   color: var(--ch-text);
   font: inherit;
@@ -799,20 +806,20 @@ onUnmounted(() => {
   flex-shrink: 0;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: var(--ch-space-1);
   min-height: 48px;
-  padding: 6px 12px;
+  padding: var(--ch-space-2) var(--ch-space-3);
   border-bottom: 1px solid var(--ch-border);
 }
 .command {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--ch-space-2);
   min-height: 32px;
-  padding: 6px 9px;
+  padding: var(--ch-space-2) var(--ch-space-2);
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--ch-radius-sm);
   background: transparent;
   color: var(--ch-text-secondary);
   font: inherit;
@@ -844,7 +851,7 @@ onUnmounted(() => {
 }
 .command.small {
   min-height: 28px;
-  padding: 3px 6px;
+  padding: var(--ch-space-1) var(--ch-space-2);
 }
 .command.wide {
   justify-content: flex-start;
@@ -854,7 +861,7 @@ onUnmounted(() => {
 .command-separator {
   flex: 0 0 1px;
   height: 22px;
-  margin: 0 3px;
+  margin: 0 var(--ch-space-1);
   background: var(--ch-border);
 }
 .tl-body {
@@ -877,22 +884,22 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--ch-space-2);
   min-height: 240px;
   color: var(--ch-text-muted);
 }
 .point-list {
   flex: 1;
   min-height: 0;
-  padding: 8px 12px 16px;
+  padding: var(--ch-space-2) var(--ch-space-3) var(--ch-space-4);
   overflow: auto;
 }
 .time-point-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--ch-space-3);
   min-height: 46px;
-  padding: 6px 8px;
+  padding: var(--ch-space-2) var(--ch-space-2);
   border-bottom: 1px solid var(--ch-border);
   cursor: pointer;
 }
@@ -906,7 +913,7 @@ onUnmounted(() => {
   color: var(--ch-text-secondary);
 }
 .drag {
-  padding: 6px 2px;
+  padding: var(--ch-space-2) 2px;
   border: 0;
   background: transparent;
   color: var(--ch-text-muted);
@@ -934,9 +941,9 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 .point-badge {
-  padding: 1px 6px;
+  padding: 1px var(--ch-space-2);
   border: 1px solid var(--ch-border);
-  border-radius: 999px;
+  border-radius: var(--ch-radius-pill);
   color: var(--ch-text-muted);
   font-size: var(--el-font-size-extra-small);
   white-space: nowrap;
@@ -946,7 +953,7 @@ onUnmounted(() => {
   color: var(--el-color-primary);
 }
 .list-hint {
-  padding: 24px 8px;
+  padding: var(--ch-space-6) var(--ch-space-2);
   color: var(--ch-text-muted);
 }
 .timeline {
@@ -962,7 +969,7 @@ onUnmounted(() => {
   position: relative;
   display: flex;
   min-height: 100%;
-  padding-right: 8px;
+  padding-right: var(--ch-space-2);
 }
 .timeline-ruler {
   position: relative;
@@ -983,7 +990,7 @@ onUnmounted(() => {
   position: relative;
   flex: 1;
   min-width: 0;
-  margin-left: 8px;
+  margin-left: var(--ch-space-2);
   border-left: 1px solid var(--ch-border);
 }
 .time-block {
@@ -993,9 +1000,9 @@ onUnmounted(() => {
   display: flex;
   overflow: visible;
   align-items: center;
-  padding: 2px 8px;
+  padding: 2px var(--ch-space-2);
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--ch-radius-xs);
   background: var(--el-color-primary-light-8);
   color: var(--el-color-primary-dark-2);
   cursor: pointer;
@@ -1081,8 +1088,8 @@ onUnmounted(() => {
   flex: 0 0 300px;
   width: 300px;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px;
+  gap: var(--ch-space-3);
+  padding: var(--ch-space-4);
   overflow: auto;
   border-left: 1px solid var(--ch-border);
   background: var(--ch-surface-alt);
@@ -1095,7 +1102,7 @@ onUnmounted(() => {
 .inspector-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--ch-space-2);
   color: var(--ch-text-secondary);
   font-size: var(--el-font-size-small);
 }
@@ -1105,7 +1112,7 @@ onUnmounted(() => {
 .time-parts {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ch-space-2);
 }
 .time-parts :deep(.el-input-number) {
   width: 76px;
@@ -1117,17 +1124,17 @@ onUnmounted(() => {
 .type-switch {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: var(--ch-space-2);
 }
 .type-switch button {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: var(--ch-space-1);
   min-height: 34px;
-  padding: 4px 6px;
+  padding: var(--ch-space-1) var(--ch-space-2);
   border: 1px solid var(--ch-border);
-  border-radius: 8px;
+  border-radius: var(--ch-radius-sm);
   background: var(--ch-surface);
   color: var(--ch-text);
   font: inherit;
@@ -1163,26 +1170,26 @@ onUnmounted(() => {
   flex-shrink: 0;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: var(--ch-space-3);
+  padding: var(--ch-space-2) var(--ch-space-3);
   border-top: 1px solid var(--ch-border);
 }
 .durations {
   min-width: 210px;
-  padding: 8px 10px;
+  padding: var(--ch-space-2) var(--ch-space-3);
   border: 1px solid var(--ch-border);
-  border-radius: 8px;
+  border-radius: var(--ch-radius-sm);
   background: var(--ch-surface);
 }
 .durations.collapsed {
-  padding: 4px 8px;
+  padding: var(--ch-space-1) var(--ch-space-2);
 }
 .durations-toggle {
   display: flex;
   width: 100%;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--ch-space-2);
   padding: 2px;
   border: 0;
   background: transparent;
@@ -1202,13 +1209,13 @@ onUnmounted(() => {
 .duration-fields {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-top: 6px;
+  gap: var(--ch-space-2);
+  padding-top: var(--ch-space-2);
 }
 .duration-fields label {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ch-space-2);
   color: var(--ch-text-secondary);
   font-size: var(--el-font-size-small);
 }
@@ -1218,7 +1225,7 @@ onUnmounted(() => {
 .view-switch {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ch-space-1);
 }
 .icon-command {
   display: inline-flex;
@@ -1226,9 +1233,9 @@ onUnmounted(() => {
   justify-content: center;
   width: 32px;
   height: 32px;
-  padding: 4px;
+  padding: var(--ch-space-1);
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--ch-radius-sm);
   background: transparent;
   color: var(--ch-text-secondary);
   cursor: pointer;
@@ -1255,7 +1262,7 @@ onUnmounted(() => {
 }
 .import-row {
   display: flex;
-  gap: 8px;
+  gap: var(--ch-space-2);
   width: 100%;
 }
 .import-row :deep(.el-select) {
@@ -1269,7 +1276,7 @@ onUnmounted(() => {
   .point-inspector {
     flex-basis: 260px;
     width: 260px;
-    padding: 10px;
+    padding: var(--ch-space-3);
   }
   .point-duration,
   .point-badge {

@@ -12,6 +12,7 @@ import {
 } from '@classhelper/shared';
 import { authApi, permissionApi } from '@/api';
 import type { MenuAction } from '@/config/navigation';
+import { clearCalendarCache } from '@/composables/calendarCache';
 
 /**
  * 会话主体。
@@ -184,6 +185,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function clear(): void {
+    clearCalendarCache();
     token.value = null;
     user.value = null;
     resetPermissions();
@@ -195,6 +197,8 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     loading,
     permissions,
+    classScopes,
+    allScopeKeys,
     permissionsFromGroups,
     permissionsLoaded,
     isAuthenticated,

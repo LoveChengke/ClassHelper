@@ -13,6 +13,7 @@ import {
 import OnboardingWelcome from './components/OnboardingWelcome.vue';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
+import { ONBOARDING_VERSION } from '@classhelper/ui';
 import { useOnboardingStore } from './stores/onboarding.js';
 import { useRealtimeStore } from './stores/realtime.js';
 import { useUiStore } from './stores/ui.js';
@@ -123,13 +124,13 @@ onMounted(async () => {
     if (auth.isAuthenticated) await router.replace('/schedule');
     else await router.replace('/login');
 
-    // 初次启动引导：配置里没记「已看过」就自动弹一次（完成/跳过后由引导组件写入配置）。
+    // 引导按版本展示，完成或跳过后记住当前版本。
     // 稍等一拍再弹：让登录页/主界面先渲染完，避免和启动过渡的收尾抢帧。
     window.setTimeout(() => {
       void window.desktop
         ?.getConfig()
         .then((config) => {
-          if (config.onboardingDone !== true) onboarding.open();
+          if ((config.onboardingVersion ?? 0) < ONBOARDING_VERSION) onboarding.open();
         })
         .catch(() => undefined);
     }, 400);

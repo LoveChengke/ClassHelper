@@ -1,11 +1,20 @@
 :root {
   --ch-bg: #f2f4f8;
-  /* 圆角设计令牌：卡片 > 面板 > 控件 > 小元素，统一走这四个档位 */
+  /* 圆角设计令牌：弹窗 > 卡片 > 面板 > 控件 > 小元素。 */
   --ch-radius-xl: 22px;
   --ch-radius-lg: 18px;
   --ch-radius-md: 14px;
   --ch-radius-sm: 10px;
+  --ch-radius-xs: 6px;
   --ch-radius-pill: 999px;
+  /* 间距统一使用 4px 网格，深浅主题与关怀模式共用同一套几何。 */
+  --ch-space-1: 4px;
+  --ch-space-2: 8px;
+  --ch-space-3: 12px;
+  --ch-space-4: 16px;
+  --ch-space-5: 20px;
+  --ch-space-6: 24px;
+  --ch-space-7: 28px;
   --ch-card-radius: var(--ch-radius-lg);
   --ch-border: #e6e8ef;
   --ch-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.04);
@@ -58,7 +67,7 @@
 
   /* Element Plus 圆角令牌对齐（组件库内部都引用这些变量，改这里即可全局生效） */
   --el-border-radius-base: var(--ch-radius-sm);
-  --el-border-radius-small: 8px;
+  --el-border-radius-small: var(--ch-radius-xs);
   --el-border-radius-round: var(--ch-radius-pill);
   --el-box-shadow-light: var(--ch-shadow-sm);
 }
@@ -229,17 +238,17 @@ html.care-mode .care-emphasis {
 .ch-nav.is-collapsed .el-menu--vertical:not(.el-menu--collapse) .el-sub-menu__title {
   height: 36px;
   line-height: 36px;
-  margin: 1px 8px;
-  padding-left: 12px;
-  padding-right: 12px;
+  margin: var(--ch-space-1) var(--ch-space-2);
+  padding-left: var(--ch-space-3);
+  padding-right: var(--ch-space-3);
 }
 
 .ch-nav.is-collapsed .el-menu--vertical:not(.el-menu--collapse) .el-sub-menu .el-menu-item {
   height: 36px;
   line-height: 36px;
-  margin: 1px 8px;
-  padding-left: 12px;
-  padding-right: 12px;
+  margin: var(--ch-space-1) var(--ch-space-2);
+  padding-left: var(--ch-space-3);
+  padding-right: var(--ch-space-3);
 }
 
 /*
@@ -270,8 +279,8 @@ html.care-mode .care-emphasis {
 /* 品牌区在折叠态收成图标一枚：收内边距 + 收掉 gap + 文字淡出（**不是** v-if 删节点） */
 .ch-nav.is-collapsed .brand {
   gap: 0;
-  padding-left: 20px;
-  padding-right: 20px;
+  padding-left: var(--ch-space-5);
+  padding-right: var(--ch-space-5);
 }
 
 .ch-nav.is-collapsed .brand-text {
@@ -296,12 +305,12 @@ html.care-mode .care-emphasis {
 
 .el-card__header {
   border-bottom: 1px solid var(--ch-border);
-  padding: 14px 18px;
+  padding: var(--ch-space-4) var(--ch-space-5);
   font-weight: 600;
 }
 
 .el-card__body {
-  padding: 18px;
+  padding: var(--ch-space-5);
 }
 
 .el-button {
@@ -344,16 +353,16 @@ html.care-mode .care-emphasis {
 
 .el-dialog__header {
   margin-right: 0;
-  padding: 18px 22px 8px;
+  padding: var(--ch-space-5) var(--ch-space-6) var(--ch-space-2);
   font-weight: 600;
 }
 
 .el-dialog__body {
-  padding: 10px 22px 6px;
+  padding: var(--ch-space-3) var(--ch-space-6) var(--ch-space-2);
 }
 
 .el-dialog__footer {
-  padding: 8px 22px 18px;
+  padding: var(--ch-space-2) var(--ch-space-6) var(--ch-space-5);
 }
 
 .el-drawer {
@@ -385,7 +394,7 @@ html.care-mode .care-emphasis {
 
 .el-message-box {
   border-radius: var(--ch-radius-lg);
-  padding: 20px 22px;
+  padding: var(--ch-space-5) var(--ch-space-6);
 }
 
 .el-popper.is-light {
@@ -396,12 +405,12 @@ html.care-mode .care-emphasis {
 .el-dropdown-menu__item,
 .el-select-dropdown__item {
   border-radius: var(--ch-radius-sm);
-  margin: 2px 6px;
+  margin: var(--ch-space-1) var(--ch-space-2);
 }
 
 .el-tag {
   border-radius: var(--ch-radius-pill);
-  padding: 0 10px;
+  padding: 0 var(--ch-space-3);
 }
 
 .el-alert {
@@ -514,15 +523,15 @@ body {
 }
 
 .page {
-  padding: 18px 22px 28px;
+  padding: var(--ch-space-5) var(--ch-space-6) var(--ch-space-7);
 }
 
 .page-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px;
-  gap: 12px;
+  margin-bottom: var(--ch-space-4);
+  gap: var(--ch-space-3);
   flex-wrap: wrap;
 }
 
@@ -535,12 +544,12 @@ body {
 .page-subtitle {
   color: var(--ch-text-muted);
   font-size: 13px;
-  margin: 4px 0 0;
+  margin: var(--ch-space-1) 0 0;
 }
 
 .toolbar {
   display: flex;
-  gap: 10px;
+  gap: var(--ch-space-3);
   flex-wrap: wrap;
   align-items: center;
 }
@@ -548,13 +557,13 @@ body {
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 12px;
+  gap: var(--ch-space-3);
 }
 
 .stat-card {
   background: var(--ch-surface);
   border-radius: var(--ch-radius-lg);
-  padding: 18px;
+  padding: var(--ch-space-5);
   border: none;
   box-shadow: var(--ch-shadow-sm);
   transition:
@@ -581,13 +590,13 @@ body {
 .stat-value {
   font-size: 26px;
   font-weight: 700;
-  margin-top: 6px;
+  margin-top: var(--ch-space-2);
 }
 
 .stat-hint {
   color: var(--ch-text-placeholder);
   font-size: 12px;
-  margin-top: 4px;
+  margin-top: var(--ch-space-1);
 }
 
 .text-muted {
@@ -595,11 +604,11 @@ body {
 }
 
 .mt-12 {
-  margin-top: 12px;
+  margin-top: var(--ch-space-3);
 }
 
 .mt-16 {
-  margin-top: 16px;
+  margin-top: var(--ch-space-4);
 }
 
 .timetable-cell {
@@ -621,7 +630,7 @@ body {
   height: 8px;
   border-radius: 50%;
   background: #f56c6c;
-  margin-right: 6px;
+  margin-right: var(--ch-space-2);
 }
 
 /* ---------------------------------------------------------------- 小屏适配 */
@@ -634,22 +643,22 @@ body {
 /* 平板：内容区收紧一点，避免横向滚动 */
 @media (max-width: 992px) {
   .page {
-    padding: 14px 14px 20px;
+    padding: var(--ch-space-4) var(--ch-space-4) var(--ch-space-5);
   }
 
   .page-header {
-    margin-bottom: 12px;
+    margin-bottom: var(--ch-space-3);
   }
 }
 
 @media (max-width: 768px) {
   .page {
-    padding: 12px 12px calc(16px + env(safe-area-inset-bottom, 0px));
+    padding: var(--ch-space-3) var(--ch-space-3) calc(var(--ch-space-4) + env(safe-area-inset-bottom, 0px));
   }
 
   .page-header {
-    margin-bottom: 10px;
-    gap: 8px;
+    margin-bottom: var(--ch-space-3);
+    gap: var(--ch-space-2);
   }
 
   .page-title {
@@ -663,7 +672,7 @@ body {
   /* 工具栏：控件纵向铺满，方便拇指点击 */
   .toolbar {
     width: 100%;
-    gap: 8px;
+    gap: var(--ch-space-2);
   }
 
   .toolbar > .el-select,
@@ -691,11 +700,11 @@ body {
   /* 统计卡片：小屏两列 */
   .stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+    gap: var(--ch-space-3);
   }
 
   .stat-card {
-    padding: 12px;
+    padding: var(--ch-space-3);
   }
 
   .stat-value {
@@ -704,7 +713,7 @@ body {
 
   /* 表格：放进卡片内横向滚动，避免整页左右晃动 */
   .table-card > .el-card__body {
-    padding: 8px;
+    padding: var(--ch-space-2);
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
@@ -721,15 +730,15 @@ body {
   .el-dialog {
     width: calc(100vw - 24px) !important;
     max-width: 560px;
-    margin: 10px auto !important;
+    margin: var(--ch-space-3) auto !important;
   }
 
   .el-dialog__body {
-    padding: 12px 14px !important;
+    padding: var(--ch-space-3) var(--ch-space-4) !important;
   }
 
   .el-dialog__header {
-    padding: 14px 14px 6px !important;
+    padding: var(--ch-space-4) var(--ch-space-4) var(--ch-space-2) !important;
   }
 
   .el-message-box {
@@ -749,7 +758,7 @@ body {
 
   /* 表单标签顶部对齐，输入框占满整行 */
   .el-form-item {
-    margin-bottom: 14px;
+    margin-bottom: var(--ch-space-4);
   }
 
   .page .el-descriptions__label {
@@ -759,7 +768,7 @@ body {
   .el-pagination {
     justify-content: center;
     flex-wrap: wrap;
-    gap: 4px;
+    gap: var(--ch-space-1);
   }
 
   /* 标签页在窄屏下可横向滚动，避免换行挤压 */
@@ -915,17 +924,17 @@ input[type='file']:not([hidden]) {
   color: var(--el-text-color-regular);
 }
 input[type='file']::file-selector-button {
-  padding: 8px 16px;
-  margin-right: 12px;
+  padding: var(--ch-space-2) var(--ch-space-4);
+  margin-right: var(--ch-space-3);
   border: 1px solid var(--el-border-color);
-  border-radius: 8px;
+  border-radius: var(--ch-radius-sm);
   background: var(--el-color-primary-light-9);
   color: var(--el-color-primary);
   font: inherit;
   cursor: pointer;
 }
 .toolbar {
-  row-gap: 12px;
+  row-gap: var(--ch-space-3);
 }
 .toolbar > .el-button + .el-button {
   margin-left: 0;

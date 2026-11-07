@@ -60,7 +60,7 @@ const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
 <style scoped>
 .update-status {
   display: grid;
-  gap: 6px;
+  gap: var(--ch-space-2);
   padding-block: 6px;
   overflow-wrap: anywhere;
 }

@@ -3078,7 +3078,9 @@ async function runIslandChecks(
       `${islandStateSummary()}`,
   );
 
-  // 10.7) 视觉风格：纯黑 / 毛玻璃（亚克力）/ 主题色渐变，切换立即生效
+  // 消息使用实色底；先清空消息，单独验证用户设置的三种基础风格。
+  await drainIsland();
+  await sleep(260);
   const probeStyle = async (style: IslandAppearance['style']): Promise<{ fill: string; stroke: string }> => {
     island.setAppearance({ ...appearanceBefore, style });
     await sleep(260);
@@ -3102,7 +3104,7 @@ async function runIslandChecks(
   const glassStyle = await probeStyle('glass');
   const tintedStyle = await probeStyle('tinted');
   record(
-    '视觉风格切换立刻生效（纯黑 / 毛玻璃半透明 / 主题色）',
+    '无消息时视觉风格切换立刻生效（纯黑 / 毛玻璃半透明 / 主题色）',
     blackStyle.fill === 'rgb(0, 0, 0)' &&
       glassStyle.fill.startsWith('rgba(32, 32, 36') &&
       tintedStyle.fill === 'rgb(11, 11, 15)',

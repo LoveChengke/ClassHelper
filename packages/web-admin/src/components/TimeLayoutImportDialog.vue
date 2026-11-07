@@ -291,21 +291,21 @@ function fillSample(): void {
 }
 .preview-meta {
   display: flex;
-  gap: 16px;
-  margin-top: 10px;
+  gap: var(--ch-space-4);
+  margin-top: var(--ch-space-3);
   color: var(--ch-text-secondary);
   font-size: 13px;
 }
 .mb-8 {
-  margin-bottom: 8px;
+  margin-bottom: var(--ch-space-2);
 }
 .mb-12 {
-  margin-bottom: 12px;
+  margin-bottom: var(--ch-space-3);
 }
 .mt-8 {
-  margin-top: 8px;
+  margin-top: var(--ch-space-2);
 }
 .mt-12 {
-  margin-top: 12px;
+  margin-top: var(--ch-space-3);
 }
 </style>

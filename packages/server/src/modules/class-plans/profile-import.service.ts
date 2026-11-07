@@ -219,13 +219,21 @@ export async function importProfile(user: TokenPayload, classId: string, payload
         const entries = Array.isArray(p.Classes) ? p.Classes : [];
         for (const [index, pointId] of layout.lessons.entries()) {
           const entry = object(entries[index]);
+          const courseId = entry.IsEmpty === true ? null : courses.get(String(entry.SubjectId)) || null;
+          // 完整档案的 Classes[i].Location 是课次地点：导出时已写出，导入时必须一并保留，
+          // 否则「导出 → 再导入」会丢失教室信息（YAML 的科目 room 也走这里落地）。
+          const location =
+            courseId && typeof entry.Location === 'string'
+              ? entry.Location.trim().slice(0, 64) || null
+              : null;
           await tx.classPlanEntry.create({
             data: {
               classPlanId: plan.id,
               timeLayoutItemId: pointId,
-              courseId: entry.IsEmpty === true ? null : courses.get(String(entry.SubjectId)) || null,
+              courseId,
               isEnabled: entry.IsEnabled !== false,
               isChangedClass: entry.IsChangedClass === true,
+              location,
             },
           });
         }

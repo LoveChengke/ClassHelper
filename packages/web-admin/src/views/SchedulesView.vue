@@ -316,7 +316,6 @@ onUnmounted(() => {
     <div class="page-header">
       <div>
         <h2 class="page-title">课表管理</h2>
-        <p class="page-subtitle">按周次维护课程安排，支持单双周范围（起始周 - 结束周）</p>
       </div>
       <div class="toolbar">
         <el-select

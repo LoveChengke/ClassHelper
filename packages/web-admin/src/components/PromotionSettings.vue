@@ -143,7 +143,7 @@ onMounted(load);
           <el-input-number v-model="status.config.hour" :min="0" :max="23" />
         </el-form-item>
         <el-form-item label="新学期开学日（空则当年 9 月 1 日）">
-          <el-date-picker
+          <ch-date-picker
             v-model="status.plan.termStartDate"
             type="date"
             value-format="YYYY-MM-DD"

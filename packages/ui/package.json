@@ -1,0 +1,15 @@
+{
+  "name": "@classhelper/ui",
+  "version": "1.4.4",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./theme.css": "./src/theme.css",
+    "./tokens.css": "./src/tokens.css"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.42",
+    "element-plus": "^2.14.5"
+  }
+}

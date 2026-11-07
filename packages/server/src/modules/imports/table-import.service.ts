@@ -177,7 +177,16 @@ function decodeBase64(contentBase64: string): Buffer {
 function parseTable(buffer: Buffer, fileName: string): ParsedTable {
   let workbook: XLSX.WorkBook;
   try {
-    workbook = XLSX.read(buffer, { type: 'buffer', raw: false, cellDates: false });
+    const hasBom =
+      (buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) ||
+      (buffer[0] === 0xff && buffer[1] === 0xfe) ||
+      (buffer[0] === 0xfe && buffer[1] === 0xff);
+    workbook = XLSX.read(buffer, {
+      type: 'buffer',
+      raw: false,
+      cellDates: false,
+      ...(/\.(csv|tsv)$/i.test(fileName) && !hasBom ? { codepage: 65001 } : {}),
+    });
   } catch (error) {
     throw new ApiError(
       400,

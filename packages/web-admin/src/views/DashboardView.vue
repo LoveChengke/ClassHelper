@@ -232,10 +232,10 @@ function openNotification(item: NotificationDto): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 26px 30px;
+  padding: var(--ch-space-7) var(--ch-space-8);
   border: 1px solid var(--el-color-primary-light-8);
-  border-radius: 14px;
-  margin-bottom: 16px;
+  border-radius: var(--ch-radius-md);
+  margin-bottom: var(--ch-space-4);
   background: linear-gradient(110deg, var(--el-color-primary-light-9), var(--ch-surface));
 }
 .welcome-eyebrow {
@@ -243,7 +243,7 @@ function openNotification(item: NotificationDto): void {
   font-size: 12px;
 }
 .dashboard-welcome h3 {
-  margin: 10px 0;
+  margin: var(--ch-space-3) 0;
   color: var(--ch-text);
   font-size: 24px;
   font-weight: 600;
@@ -257,7 +257,7 @@ function openNotification(item: NotificationDto): void {
   place-items: center;
   width: 84px;
   height: 84px;
-  border-radius: 24px;
+  border-radius: var(--ch-radius-xl);
   background: var(--el-color-primary-light-8);
   color: var(--el-color-primary);
   font-size: 44px;
@@ -266,17 +266,17 @@ function openNotification(item: NotificationDto): void {
 .dashboard-shortcuts {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 20px;
+  gap: var(--ch-space-4);
+  margin-bottom: var(--ch-space-5);
 }
 .dashboard-shortcuts button {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 18px;
+  gap: var(--ch-space-3);
+  padding: var(--ch-space-5);
   min-width: 0;
   border: 1px solid var(--ch-border);
-  border-radius: 12px;
+  border-radius: var(--ch-radius-md);
   background: var(--ch-surface);
   color: var(--el-color-primary);
   cursor: pointer;
@@ -291,7 +291,7 @@ function openNotification(item: NotificationDto): void {
   flex-shrink: 0;
   width: 38px;
   height: 38px;
-  border-radius: 10px;
+  border-radius: var(--ch-radius-sm);
   background: var(--el-color-primary-light-9);
   font-size: 22px;
 }
@@ -311,7 +311,7 @@ function openNotification(item: NotificationDto): void {
   display: block;
   font-size: 11px;
   color: var(--ch-text-muted);
-  margin-top: 6px;
+  margin-top: var(--ch-space-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -323,7 +323,7 @@ function openNotification(item: NotificationDto): void {
 }
 @media (max-width: 600px) {
   .dashboard-welcome {
-    padding: 20px;
+    padding: var(--ch-space-5);
   }
   .dashboard-welcome h3 {
     font-size: 20px;
@@ -332,7 +332,7 @@ function openNotification(item: NotificationDto): void {
     display: none;
   }
   .dashboard-shortcuts button {
-    padding: 12px;
+    padding: var(--ch-space-3);
   }
 }
 .card-header {
@@ -350,8 +350,8 @@ function openNotification(item: NotificationDto): void {
 .list-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 4px;
+  gap: var(--ch-space-3);
+  padding: var(--ch-space-2) var(--ch-space-1);
   border-bottom: 1px dashed var(--ch-border);
   cursor: pointer;
 }

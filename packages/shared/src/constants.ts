@@ -600,7 +600,7 @@ export const STORAGE_KEYS = {
   /**
    * 新手引导「已看过」标记（Web 管理端 localStorage）。
    * 值为引导版本号：改版引导内容后版本 +1，看过旧版的老用户会再收到一次新版引导。
-   * EXE 客户端不用这个键 —— 它的引导状态在主进程配置（`onboardingDone`）里。
+   * EXE 客户端的引导版本保存在主进程配置 `onboardingVersion`。
    */
   onboarding: 'classhelper.onboarding',
 } as const;

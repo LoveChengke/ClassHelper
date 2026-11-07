@@ -11,6 +11,7 @@ pnpm monorepo，根 `package.json` 是版本单一来源。文档、注释、界
 
 | 目录                       | 用途                                                      |
 | -------------------------- | --------------------------------------------------------- |
+| `packages/ui/src/`         | Web 与桌面端共享 Vue 控件、主题、日期选择器与全屏引导     |
 | `packages/shared/src/`     | 三端共享类型、权限、常量、动效、岛方案与课件契约          |
 | `packages/server/`         | Express、Prisma、Socket.IO；API 前缀 `/api`               |
 | `packages/web-admin/`      | Vue Web 管理端，PWA                                       |
@@ -39,7 +40,8 @@ pnpm monorepo，根 `package.json` 是版本单一来源。文档、注释、界
 - 作业和通知按本地 `assignDate` 归类，使用 `dayKeyLocal/isDayKey/shiftDayKey`，不用 UTC 日期切片。
 - 批量通知/作业逐班返回结果；跨班作业按科目名匹配既有课程，找不到则该班失败，不自动把发布者设为任课老师。
 - 两个登录接口共用登录限流。附件链接校验 scheme；表格文件上限 8 MB、JSON 请求体 12 MB，超限映射 413。
-- AI 助手只解析待确认动作，前端确认后调既有发布接口；参数重新校验，Key 加密存储且不回传。自动化用 mock，不访问外网。
+- AI 查询和模型上下文按原业务权限读取；写操作由动作目录生成计划，用户确认后调用既有业务接口，入口绑定操作者、参数和步骤并持久去重。数据库维护、服务器运维与密钥操作不注册为 AI 动作。密码经专用表单提交，计划参数加密保存；自动化用 mock，不访问外网。
+- AI 可管理客户端安装包缓存：写入仅 ADMIN + `client:update`，要求专门确认，固定复用 `/update/client/fetch` 和 `/update/client/releases`。预览和执行核对版本、文件及已有登记；不开放服务器更新或任意下载地址，不自动推送或运行安装器。
 
 ## 3. 课表、周次、成绩与学年
 
@@ -77,6 +79,7 @@ pnpm monorepo，根 `package.json` 是版本单一来源。文档、注释、界
 - 事件名与房间名取 shared 常量。班级房间为 `class:{id}:{channel}`，教师按每域读键及范围订阅，班级端仅本班全部通道；握手回查数据库身份。业务用 `emitToClass/emitToSession`，由总线选择事件域。
 - 会话房间为 `session:{id}`；教师/管理员 id 为账号 id，班级端为班级 id。`students` 是班级端广播房间，不是个人学生账号房间。
 - 新实时事件同步服务端、Web 订阅、客户端订阅。成绩实时载荷不可泄漏个人成绩。
+- 两端基础控件、主题、日期圆点与全屏引导维护在 `packages/ui`。日期统计跟随当前筛选和日历可见范围，缓存按服务器与班级隔离；业务日期使用本地日期工具。
 - Web 菜单分组在 `config/navigation.ts`，标题/图标/权限取路由；守卫与服务端都检查权限，前端隐藏不能代替鉴权。
 - 侧栏折叠用 CSS 保持 DOM，关怀模式放大字号/控件，不改变几何令牌。使用语义色，动效统一 shared 令牌；图标新增后检查注册表。
 - 图标源是 `build/classhelper.png` 与设计导出的 `.ico`，`pnpm icons` 派生其余资源。ICO 原样透传，客户端兜底 `build/icon.*` 同步保留。
@@ -112,6 +115,7 @@ Prisma 使用 driver adapter；本机优先应用已有迁移，不用 `migrate 
 | `pnpm lint` / `pnpm typecheck` / `pnpm check:icons`         | 代码静态门禁；按改动范围执行                           |
 | `pnpm docs:check`                                           | 文档严格构建，警告即失败                               |
 | `pnpm verify:e2e`                                           | 自动创建临时 SQLite 和账号，无需先开开发服务，禁止外网 |
+| `pnpm verify:ai`                                            | AI 白名单、计划确认、权限与附件隔离验收                |
 | `pnpm verify:authz` / `pnpm verify:audit`                   | 隔离授权攻击矩阵；审计事务、竞态、模型操作计数和 PWA   |
 | `pnpm verify:web:isolated`                                  | 构建 Web 后运行隔离服务和隐藏 UI 回归                  |
 | `pnpm verify:courseware` / `pnpm verify:v14`                | 课件/课表等隔离专项                                    |

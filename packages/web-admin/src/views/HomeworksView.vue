@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { CalendarRange } from '@classhelper/ui';
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
@@ -6,7 +7,6 @@ import {
   SUBJECT_CATALOG,
   dayKeyLocal,
   formatDate,
-  shiftDayKey,
   truncate,
   type ClassDto,
   type CourseDto,
@@ -17,6 +17,7 @@ import { classApi, courseApi, courseIdFromExistsError, homeworkApi } from '@/api
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useResponsive } from '@/composables/useResponsive';
+import { cachedCalendarMarks, calendarCacheScope } from '@/composables/calendarCache';
 
 const auth = useAuthStore();
 const realtime = useRealtimeStore();
@@ -31,7 +32,7 @@ const courses = ref<CourseDto[]>([]);
 const homeworks = ref<HomeworkDto[]>([]);
 const filter = reactive({ classId: '', courseId: '', keyword: '', date: '' });
 /** 有作业的日期（日期选择器高亮），来自 GET /homeworks/days */
-const dayMarks = ref<Map<string, number>>(new Map());
+const calendarRevision = ref(0);
 const detailVisible = ref(false);
 const current = ref<HomeworkDto | null>(null);
 
@@ -153,6 +154,7 @@ async function loadCourses(): Promise<void> {
 let homeworkRequest = 0;
 async function loadHomeworks(): Promise<void> {
   const request = ++homeworkRequest;
+  calendarRevision.value++;
   loading.value = true;
   try {
     const params: { classId?: string; courseId?: string; keyword?: string; date?: string } = {};
@@ -171,29 +173,39 @@ async function loadHomeworks(): Promise<void> {
 async function onClassChange(): Promise<void> {
   homeworkRequest += 1;
   filter.courseId = '';
-  await Promise.all([loadCourses(), loadDayMarks(), loadHomeworks()]);
+  await Promise.all([loadCourses(), loadHomeworks()]);
 }
 
-/** 拉取"哪些天有作业"（日期选择器高亮）；范围取今天前后各 45 天 */
-async function loadDayMarks(): Promise<void> {
-  try {
-    const today = dayKeyLocal(new Date());
-    const result = await homeworkApi.days({
-      classId: filter.classId || undefined,
-      from: shiftDayKey(today, -45),
-      to: shiftDayKey(today, 45),
-    });
-    dayMarks.value = new Map(result.days.map((item) => [item.date, item.count]));
-  } catch {
-    dayMarks.value = new Map();
-  }
+async function formCalendarDays(range: CalendarRange) {
+  return (
+    await homeworkApi.days({
+      ...range,
+      classId: form.classId || undefined,
+      courseId: form.courseId || undefined,
+    })
+  ).days;
 }
-
-/** 日期选择器：有作业的日期加高亮类 */
-function dayCellClass(date: Date): string {
-  return dayMarks.value.has(dayKeyLocal(date)) ? 'day-has-homework' : '';
+async function bulkCalendarDays(range: CalendarRange) {
+  const lists = await Promise.all(
+    bulkForm.classIds.map(async (classId) => (await homeworkApi.days({ ...range, classId })).days),
+  );
+  const counts = new Map<string, number>();
+  for (const item of lists.flat()) counts.set(item.date, (counts.get(item.date) ?? 0) + item.count);
+  return [...counts].map(([date, count]) => ({ date, count }));
 }
-
+async function calendarDays(range: CalendarRange) {
+  const params = {
+    ...range,
+    classId: filter.classId || undefined,
+    courseId: filter.courseId || undefined,
+    keyword: filter.keyword || undefined,
+  };
+  return cachedCalendarMarks(
+    calendarCacheScope(auth),
+    { domain: 'homeworks', ...params },
+    async () => (await homeworkApi.days(params)).days,
+  );
+}
 /* ------------------------------------------------------------ 发布 / 编辑 */
 
 const formVisible = ref(false);
@@ -486,8 +498,6 @@ function onHomeworkEvent(): void {
 
 onMounted(async () => {
   await loadClasses();
-  // 首屏也要拉一次"哪些天有作业"，否则日期选择器上没有任何高亮，直到手动切一次班级才出现
-  await loadDayMarks();
   await loadHomeworks();
   realtime.on(SOCKET_EVENTS.homeworkNew, onHomeworkEvent);
   realtime.on(SOCKET_EVENTS.homeworkUpdated, onHomeworkEvent);
@@ -512,7 +522,6 @@ function canEditContent(row: HomeworkDto): boolean {
     <div class="page-header">
       <div>
         <h2 class="page-title">作业发布</h2>
-        <p class="page-subtitle">按班级和课程发布作业，实时送达教室并查看完成情况</p>
       </div>
       <div class="toolbar">
         <el-select
@@ -532,14 +541,15 @@ function canEditContent(row: HomeworkDto): boolean {
         >
           <el-option v-for="item in courses" :key="item.id" :label="item.name" :value="item.id" />
         </el-select>
-        <el-date-picker
+        <ch-date-picker
           v-model="filter.date"
           type="date"
           value-format="YYYY-MM-DD"
           placeholder="按天查看"
           clearable
           class="day-picker"
-          :cell-class-name="dayCellClass"
+          :load-marks="calendarDays"
+          :scope-key="JSON.stringify([filter, calendarRevision])"
           @change="loadHomeworks"
         />
         <el-input
@@ -628,11 +638,12 @@ function canEditContent(row: HomeworkDto): boolean {
           </div>
         </el-form-item>
         <el-form-item label="所属日期">
-          <el-date-picker
+          <ch-date-picker
             v-model="form.assignDate"
             type="date"
             value-format="YYYY-MM-DD"
-            :cell-class-name="dayCellClass"
+            :load-marks="formCalendarDays"
+            :scope-key="JSON.stringify([form.classId, form.courseId, calendarRevision])"
             style="width: 200px"
           />
           <span class="form-hint">作业会出现在这一天（按天查看与 ClassHelper 班级端都按它归类）</span>
@@ -686,11 +697,12 @@ function canEditContent(row: HomeworkDto): boolean {
           </div>
         </el-form-item>
         <el-form-item label="所属日期">
-          <el-date-picker
+          <ch-date-picker
             v-model="bulkForm.assignDate"
             type="date"
             value-format="YYYY-MM-DD"
-            :cell-class-name="dayCellClass"
+            :load-marks="bulkCalendarDays"
+            :scope-key="JSON.stringify([bulkForm.classIds, calendarRevision])"
             style="width: 200px"
           />
         </el-form-item>
@@ -820,7 +832,7 @@ function canEditContent(row: HomeworkDto): boolean {
 }
 
 .form-hint {
-  margin-left: 10px;
+  margin-left: var(--ch-space-3);
   opacity: 0.65;
   font-size: 12px;
 }
@@ -830,15 +842,15 @@ function canEditContent(row: HomeworkDto): boolean {
   font-size: 12px;
   line-height: 1.5;
   color: var(--ch-text-muted);
-  margin-top: 4px;
+  margin-top: var(--ch-space-1);
 }
 
 .content-block {
   white-space: pre-wrap;
   line-height: 1.7;
   background: var(--ch-surface-sunken);
-  border-radius: 12px;
-  padding: 12px;
+  border-radius: var(--ch-radius-md);
+  padding: var(--ch-space-3);
   margin: 0;
 }
 
@@ -848,7 +860,7 @@ function canEditContent(row: HomeworkDto): boolean {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--ch-space-2);
 }
 
 .submission-tag {
@@ -858,21 +870,21 @@ function canEditContent(row: HomeworkDto): boolean {
 .submission-toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: var(--ch-space-3);
+  margin-bottom: var(--ch-space-3);
 }
 
 .submission-list {
   max-height: 46vh;
   overflow-y: auto;
   border: 1px solid var(--ch-border);
-  border-radius: 12px;
-  padding: 12px;
+  border-radius: var(--ch-radius-md);
+  padding: var(--ch-space-3);
 }
 
 .submission-list :deep(.el-checkbox-group) {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ch-space-1);
 }
 </style>

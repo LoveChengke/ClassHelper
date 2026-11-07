@@ -160,8 +160,8 @@ function handleConfirm(): void {
 .urgent-card {
   width: 520px;
   max-width: calc(100vw - 48px);
-  padding: 28px 30px 22px;
-  border-radius: 16px;
+  padding: var(--ch-space-7) var(--ch-space-8) var(--ch-space-6);
+  border-radius: var(--ch-radius-lg);
   background: var(--ch-surface);
   border-top: 4px solid #f56c6c;
   box-shadow: 0 24px 60px rgba(120, 20, 20, 0.35);
@@ -171,7 +171,7 @@ function handleConfirm(): void {
 .urgent-icon {
   width: 64px;
   height: 64px;
-  margin: 0 auto 12px;
+  margin: 0 auto var(--ch-space-3);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -194,13 +194,13 @@ function handleConfirm(): void {
 }
 
 .urgent-title {
-  margin: 0 0 8px;
+  margin: 0 0 var(--ch-space-2);
   font-size: 22px;
   color: var(--ch-text);
 }
 
 .urgent-subtitle {
-  margin: 0 0 18px;
+  margin: 0 0 var(--ch-space-5);
   font-size: 14px;
   line-height: 1.7;
   color: var(--ch-text-secondary);
@@ -214,10 +214,10 @@ function handleConfirm(): void {
 .urgent-preview {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  margin-bottom: 10px;
+  gap: var(--ch-space-3);
+  padding: var(--ch-space-3) var(--ch-space-4);
+  border-radius: var(--ch-radius-sm);
+  margin-bottom: var(--ch-space-3);
   text-align: left;
   font-size: 13px;
 }
@@ -250,16 +250,16 @@ function handleConfirm(): void {
 
 .urgent-actions {
   display: flex;
-  gap: 12px;
+  gap: var(--ch-space-3);
   justify-content: center;
-  margin: 18px 0 12px;
+  margin: var(--ch-space-5) 0 var(--ch-space-3);
 }
 
 .urgent-progress {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--ch-space-3);
   min-height: 52px;
 }
 

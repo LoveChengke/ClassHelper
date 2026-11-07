@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import { STORAGE_KEYS, type PermissionKey } from '@classhelper/shared';
 import { authApi } from '@/api';
+import { FullScreenGuide, ONBOARDING_VERSION } from '@classhelper/ui';
 import ManagementMenu from '@/components/ManagementMenu.vue';
 import { MANAGEMENT_GROUPS, type ManagementMenuItem } from '@/config/navigation';
 import UpdateCheckDialog from '@/components/UpdateCheckDialog.vue';
@@ -261,81 +262,64 @@ async function submitPassword(): Promise<void> {
   void router.push({ name: 'login' });
 }
 
-/* ------------------------------------------------------------ 首次登录引导 */
-
-/**
- * 引导版本：内容改版后 +1，看过旧版的老用户会再收到一次新版引导。
- * 「已看过」存 localStorage（STORAGE_KEYS.onboarding，值为版本号）。
- */
-const ONBOARDING_VERSION = 1;
-
 const tourOpen = ref(false);
-
-/** 「看过」落盘：走完、跳过（右上角 × / Esc）都算看过，之后不再自动弹出 */
 function markOnboardingSeen(): void {
   try {
     localStorage.setItem(STORAGE_KEYS.onboarding, String(ONBOARDING_VERSION));
   } catch {
-    // localStorage 不可用（隐私模式等）时仅本次会话内生效
+    /* 隐私模式仅在当前会话显示。 */
   }
 }
-
+let onboardingTimer: ReturnType<typeof setTimeout>;
 onMounted(() => {
   try {
     if (localStorage.getItem(STORAGE_KEYS.onboarding) === String(ONBOARDING_VERSION)) return;
   } catch {
     return;
   }
-  // 等布局与首屏数据渲染稳定后再弹，避免和首屏加载抢注意力
-  window.setTimeout(() => {
+  onboardingTimer = setTimeout(() => {
     tourOpen.value = true;
   }, 600);
 });
-
-/**
- * 引导锚点：按 data-tour 属性惰性查询 DOM（弹出某一步时才找元素）。
- * 找不到（例如手机小屏没有侧边栏）就返回 null，el-tour 会把卡片放到屏幕居中，不会报错。
- */
-function tourTarget(name: string): () => HTMLElement | null {
-  return () => document.querySelector<HTMLElement>(`[data-tour="${name}"]`);
-}
-
+onUnmounted(() => clearTimeout(onboardingTimer));
 const tourSteps = computed(() => [
   {
-    target: null,
-    title: '欢迎使用 ClassHelper',
-    description:
-      '教师与管理员在这里发布课表、作业、通知与成绩，学生通过桌面客户端实时接收。花一分钟认识一下界面。',
-  },
-  isMobile.value
-    ? {
-        target: tourTarget('nav-toggle'),
-        title: '打开功能菜单',
-        description: '小屏幕下侧边栏收进抽屉，点左上角按钮即可唤出全部功能页面。',
-        placement: 'bottom-start',
-      }
-    : {
-        target: tourTarget('side-nav'),
-        title: '左侧功能菜单',
-        description:
-          '菜单按角色显示：管理员可管理班级、学生与教师；班主任与科任老师可维护课表、发布作业与通知、录入成绩。',
-        // 侧栏是全高元素，默认 bottom 会把卡片推到视口外，必须放右侧
-        placement: 'right',
-      },
-  {
-    target: tourTarget('conn-tag'),
-    title: '实时通道',
-    description: '绿色表示与后端保持实时连接，发布的内容会立刻推送到对应班级的 ClassHelper 班级端与灵动岛。',
+    id: 'navigation',
+    title: '从工作台开始',
+    text: '左侧菜单只显示你可以使用的功能。',
+    example: ['工作台', '教学管理', '班级与人员'],
   },
   {
-    target: tourTarget('user-chip'),
-    title: '账号菜单',
-    description: '在这里修改密码、退出登录，也可以随时重看本引导。',
+    id: 'dates',
+    title: '用日历查找记录',
+    text: '选择日期筛选内容，圆点表示当天有记录。',
+    example: ['选择日期', '有记录的日期 ·', '查看当天内容'],
   },
+  ...(auth.can('homework:write') || auth.can('courseware:write') || auth.can('notification:publish')
+    ? [
+        {
+          id: 'publish',
+          title: '发布与导入',
+          text: '在对应页面发布内容，导入文件时先核对预览。',
+          example: ['选择班级', '填写内容或选择文件', '核对后发布'],
+        },
+      ]
+    : []),
+  ...(auth.can('ai:use')
+    ? [
+        {
+          id: 'ai',
+          title: '让 AI 帮你处理',
+          text: '描述任务或添加文件，核对操作计划后再确认执行。',
+          example: ['把这份课件推送给任教班级', '核对文件和班级', '确认执行'],
+        },
+      ]
+    : []),
   {
-    target: null,
-    title: '开始使用',
-    description: '发布第一条内容试试吧。以后随时可以点右上角头像 →「使用引导」重看。',
+    id: 'account',
+    title: '随时调整与重看',
+    text: '账号菜单可以修改密码、退出登录和重看引导。',
+    example: ['主题与关怀模式', '账号菜单', '使用引导'],
   },
 ]);
 </script>
@@ -667,20 +651,12 @@ const tourSteps = computed(() => [
     <!-- 检查更新：问服务端最新 Release（浏览器受 CSP 限制不能直连 GitHub），见组件内说明 -->
     <UpdateCheckDialog v-model="updateVisible" />
 
-    <!--
-      新手引导：首次登录自动弹出（见 script 的 onMounted），头像菜单「使用引导」可重看。
-      target 为 null 的步骤（首尾两步）由 el-tour 放到屏幕居中；其余步骤锚定真实 UI。
-    -->
-    <el-tour v-model="tourOpen" @close="markOnboardingSeen" @finish="markOnboardingSeen">
-      <el-tour-step
-        v-for="(step, index) in tourSteps"
-        :key="index"
-        :target="step.target"
-        :title="step.title"
-        :description="step.description"
-        :placement="step.placement"
-      />
-    </el-tour>
+    <FullScreenGuide
+      v-model="tourOpen"
+      :steps="tourSteps"
+      brand-logo="/logo.png"
+      @finish="markOnboardingSeen"
+    />
   </el-container>
 </template>
 
@@ -710,9 +686,9 @@ const tourSteps = computed(() => [
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ch-space-2);
   height: 56px;
-  padding: 0 16px;
+  padding: 0 var(--ch-space-4);
   color: #fff;
   font-weight: 600;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
@@ -760,7 +736,7 @@ const tourSteps = computed(() => [
 
 .layout-menu::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
+  border-radius: var(--ch-radius-pill);
 }
 
 .layout-menu::-webkit-scrollbar-track {
@@ -775,7 +751,7 @@ const tourSteps = computed(() => [
  * 现在激活项不再单独改外边距，切换时整列菜单纹丝不动。
  */
 .layout-menu :deep(.el-menu-item) {
-  margin: 2px 8px;
+  margin: var(--ch-space-1) var(--ch-space-2);
   border-radius: var(--ch-radius-sm);
   /* 压在指示器之上，文字才不会被盖住 */
   position: relative;
@@ -834,8 +810,8 @@ const tourSteps = computed(() => [
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 0 16px;
+  gap: var(--ch-space-3);
+  padding: 0 var(--ch-space-4);
 }
 
 .nav-toggle {
@@ -844,7 +820,7 @@ const tourSteps = computed(() => [
   justify-content: center;
   width: 32px;
   height: 32px;
-  margin-right: 2px;
+  margin-right: var(--ch-space-1);
   border: none;
   border-radius: var(--ch-radius-sm);
   background: var(--ch-surface-sunken);
@@ -860,7 +836,7 @@ const tourSteps = computed(() => [
 .header-left {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--ch-space-3);
   min-width: 0;
 }
 
@@ -872,14 +848,14 @@ const tourSteps = computed(() => [
 }
 
 .header-conn {
-  margin-left: 4px;
+  margin-left: var(--ch-space-1);
 }
 
 .header-right {
   display: flex;
   align-items: center;
   /* 主题按钮与用户名牌之间留一点气口（两者原本紧贴） */
-  gap: 4px;
+  gap: var(--ch-space-1);
   flex: 0 0 auto;
 }
 
@@ -925,7 +901,7 @@ const tourSteps = computed(() => [
 .user-chip {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ch-space-2);
   cursor: pointer;
   outline: none;
 }
@@ -940,8 +916,8 @@ const tourSteps = computed(() => [
 @media (max-width: 768px) {
   .layout-header {
     height: var(--ch-header-height);
-    padding: 0 10px;
-    gap: 8px;
+    padding: 0 var(--ch-space-3);
+    gap: var(--ch-space-2);
   }
 
   .header-title {
@@ -994,14 +970,14 @@ const tourSteps = computed(() => [
 .care-panel {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--ch-space-2);
 }
 
 .care-panel-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--ch-space-2);
 }
 
 .care-panel-title {

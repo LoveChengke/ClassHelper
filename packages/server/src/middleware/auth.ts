@@ -14,7 +14,7 @@ import { extractBearerToken, verifyToken, type TokenPayload } from '../lib/jwt.j
  * 角色判据换成权限键判据（`requirePermission`），角色只用来决定"没有分组时的默认模板"。
  */
 export function authenticate(): RequestHandler {
-  return async (req, _res, next) => {
+  return async (req, res, next) => {
     try {
       const token = extractBearerToken(req.headers.authorization);
       if (!token) throw ApiError.unauthorized('缺少 Authorization 头');
@@ -23,6 +23,10 @@ export function authenticate(): RequestHandler {
 
       const user = await loadSessionUser(payload);
       req.auth = { token, user, permissions: (await loadAuthPrincipal(user)).permissions };
+      if (req.get('x-classhelper-ai-step')) {
+        const { guardAiExecution } = await import('../modules/ai/execution-guard.js');
+        if (!(await guardAiExecution(req, res))) return;
+      }
       next();
     } catch (error) {
       next(error);

@@ -49,7 +49,6 @@ onMounted(loadGradeQuery);
     <div class="page-header">
       <div>
         <h2 class="page-title">提醒</h2>
-        <p class="page-subtitle">通知提醒与成绩查询状态</p>
       </div>
     </div>
 

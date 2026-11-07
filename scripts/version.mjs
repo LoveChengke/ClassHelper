@@ -42,6 +42,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  */
 const PRODUCT_TARGETS = [
   { file: 'package.json', pattern: /("version"\s*:\s*")(\d+\.\d+\.\d+)(")/ },
+  { file: 'packages/ui/package.json', pattern: /("version"\s*:\s*")(\d+\.\d+\.\d+)(")/ },
   { file: 'packages/shared/package.json', pattern: /("version"\s*:\s*")(\d+\.\d+\.\d+)(")/ },
   { file: 'packages/server/package.json', pattern: /("version"\s*:\s*")(\d+\.\d+\.\d+)(")/ },
   { file: 'packages/web-admin/package.json', pattern: /("version"\s*:\s*")(\d+\.\d+\.\d+)(")/ },

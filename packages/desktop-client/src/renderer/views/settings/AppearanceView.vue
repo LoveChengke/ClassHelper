@@ -26,7 +26,6 @@ async function selectTheme(value: 'light' | 'dark'): Promise<void> {
     <div class="page-header">
       <div>
         <h2 class="page-title">外观</h2>
-        <p class="page-subtitle">黑夜与白天模式，切换立即生效并自动保存</p>
       </div>
     </div>
 
@@ -50,7 +49,10 @@ async function selectTheme(value: 'light' | 'dark'): Promise<void> {
             </span>
           </span>
           <span class="theme-name">
-            <el-icon><Sunny v-if="option.value === 'light'" /><Moon v-else /></el-icon>
+            <el-icon>
+              <Sunny v-if="option.value === 'light'" />
+              <Moon v-else />
+            </el-icon>
             {{ option.label }}
           </span>
           <span class="theme-desc">{{ option.desc }}</span>

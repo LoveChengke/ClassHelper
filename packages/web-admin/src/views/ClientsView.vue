@@ -637,10 +637,6 @@ const deviceEmptyText = computed(() =>
     <div class="page-header">
       <div>
         <h2 class="page-title">客户端设备</h2>
-        <p class="page-subtitle">
-          教室里每台 ClassHelper 班级端都会上报自己的版本与状态；这里可以看版本、统一推送更新，也可以下发关机
-          / 重启等远控指令。
-        </p>
       </div>
     </div>
 
@@ -1146,7 +1142,7 @@ const deviceEmptyText = computed(() =>
 <style scoped>
 /* 顶部横幅 / 弹窗内提示：圆角与底都走设计令牌，不写死数值（AGENTS.md 的现行工程约定） */
 .client-banner {
-  margin-bottom: 12px;
+  margin-bottom: var(--ch-space-3);
   border-radius: var(--ch-radius-sm);
 }
 
@@ -1163,29 +1159,29 @@ const deviceEmptyText = computed(() =>
 /* 主操作按钮组：桌面端推到右侧，小屏铺满一行 */
 .client-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--ch-space-2);
   margin-left: auto;
 }
 
 .client-selection-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ch-space-2);
   flex-wrap: wrap;
-  padding: 6px 2px 10px;
+  padding: var(--ch-space-2) var(--ch-space-1) var(--ch-space-3);
   font-size: 13px;
 }
 
 /* 表格里的次级说明（状态备注 / IP / 等待确认） */
 .client-sub {
-  margin-top: 2px;
+  margin-top: var(--ch-space-1);
   font-size: 12px;
   line-height: 1.4;
   word-break: break-all;
 }
 
 .client-tag {
-  margin: 0 6px 2px 0;
+  margin: 0 var(--ch-space-2) var(--ch-space-1) 0;
 }
 
 .client-full {
@@ -1193,13 +1189,13 @@ const deviceEmptyText = computed(() =>
 }
 
 .client-switch-hint {
-  margin-left: 10px;
+  margin-left: var(--ch-space-3);
   font-size: 12px;
   line-height: 1.5;
 }
 
 .client-note {
-  margin: 8px 0 0;
+  margin: var(--ch-space-2) 0 0;
   font-size: 12px;
   line-height: 1.6;
 }
@@ -1207,29 +1203,29 @@ const deviceEmptyText = computed(() =>
 .client-release-forms {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: var(--ch-space-3);
+  margin-bottom: var(--ch-space-3);
 }
 
 .client-release-form {
-  padding: 12px;
+  padding: var(--ch-space-3);
   border: 1px solid var(--ch-border);
   border-radius: var(--ch-radius-md);
   background: var(--ch-surface-alt);
 }
 
 .client-release-form-title {
-  margin-bottom: 8px;
+  margin-bottom: var(--ch-space-2);
   font-size: 13px;
   font-weight: 600;
 }
 
 .client-release-file {
-  margin-top: 8px;
+  margin-top: var(--ch-space-2);
 }
 
 .client-release-submit {
-  margin-top: 8px;
+  margin-top: var(--ch-space-2);
   width: 100%;
 }
 
@@ -1241,10 +1237,10 @@ const deviceEmptyText = computed(() =>
 .client-target-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--ch-space-1);
   max-height: 120px;
   overflow-y: auto;
-  padding: 4px 10px;
+  padding: var(--ch-space-1) var(--ch-space-3);
   border: 1px solid var(--ch-border);
   border-radius: var(--ch-radius-md);
   background: var(--ch-surface-alt);

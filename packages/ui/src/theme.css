@@ -1,0 +1,266 @@
+@import './tokens.css';
+:root:root {
+  --el-color-primary: var(--ch-ui-primary);
+  --el-color-primary-light-3: color-mix(in srgb, var(--ch-ui-primary) 70%, var(--ch-ui-surface));
+  --el-color-primary-light-5: color-mix(in srgb, var(--ch-ui-primary) 50%, var(--ch-ui-surface));
+  --el-color-primary-light-7: color-mix(in srgb, var(--ch-ui-primary) 30%, var(--ch-ui-surface));
+  --el-color-primary-light-8: color-mix(in srgb, var(--ch-ui-primary) 20%, var(--ch-ui-surface));
+  --el-color-primary-light-9: color-mix(in srgb, var(--ch-ui-primary) 10%, var(--ch-ui-surface));
+  --el-color-primary-dark-2: color-mix(in srgb, var(--ch-ui-primary) 80%, #000);
+  --el-border-radius-base: var(--ch-ui-radius);
+  --el-bg-color: var(--ch-ui-surface);
+  --el-bg-color-overlay: var(--ch-ui-surface);
+  --el-fill-color-blank: var(--ch-ui-surface);
+  --el-text-color-primary: var(--ch-ui-text);
+  --el-text-color-regular: var(--ch-ui-text);
+  --el-border-color: var(--ch-ui-border);
+  --ch-bg: var(--ch-ui-bg);
+  --ch-surface: var(--ch-ui-surface);
+  --ch-surface-alt: var(--ch-ui-surface-alt);
+  --ch-layer: var(--ch-ui-surface);
+  --ch-layer-solid: var(--ch-ui-surface);
+  --ch-layer-alt: var(--ch-ui-surface-alt);
+  --ch-border: var(--ch-ui-border);
+  --ch-text: var(--ch-ui-text);
+  --ch-text-muted: var(--ch-ui-muted);
+  --ch-text-secondary: var(--ch-ui-muted);
+  --ch-accent: var(--ch-ui-primary);
+  --ch-accent-hover: var(--el-color-primary-dark-2);
+  --ch-accent-soft: var(--el-color-primary-light-9);
+  --ch-accent-soft-strong: var(--el-color-primary-light-8);
+  --ch-sidebar: var(--ch-ui-surface);
+  --ch-radius-card: var(--ch-ui-radius);
+  --ch-radius-control: var(--ch-ui-radius);
+}
+body {
+  background: var(--ch-ui-bg);
+  color: var(--ch-ui-text);
+}
+html body :is(.page, .settings-page) {
+  padding: 24px;
+  min-width: 0;
+  box-sizing: border-box;
+}
+html body :is(.page-header, .toolbar, .filter-bar, .page-actions) {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+html body .page-header {
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+html body .page-title {
+  margin: 0;
+  font-size: calc(22px * var(--ch-font-scale, 1));
+  font-weight: 600;
+  color: var(--ch-ui-text);
+}
+html body .page-subtitle {
+  margin: 6px 0 0;
+  color: var(--ch-ui-muted);
+  line-height: 1.6;
+}
+html body :is(.toolbar, .filter-bar) {
+  margin-bottom: 16px;
+}
+html body :is(.toolbar, .filter-bar) > :is(.el-input, .el-select) {
+  width: 200px;
+  max-width: 100%;
+}
+html body :is(.el-card, .el-dialog, .el-message-box) {
+  border-radius: var(--ch-ui-radius) !important;
+  background: var(--ch-ui-surface) !important;
+}
+html body .el-card {
+  box-shadow: none !important;
+  border-color: var(--ch-ui-border) !important;
+  backdrop-filter: none;
+}
+html body .el-dialog {
+  max-width: calc(100vw - 32px);
+}
+html body :is(.el-dialog__footer, .el-message-box__btns) {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+html body .el-form-item {
+  margin-bottom: 20px;
+}
+html body .el-table {
+  --el-table-header-bg-color: var(--ch-ui-surface-alt);
+  --el-table-border-color: var(--ch-ui-border);
+}
+.ch-calendar-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  line-height: 24px;
+}
+.ch-calendar-dot {
+  pointer-events: none;
+  position: absolute;
+  bottom: 0;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.ch-calendar {
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+}
+.ch-calendar .el-date-table {
+  font-size: calc(13px * var(--ch-font-scale, 1));
+}
+.ch-calendar .el-date-table td {
+  height: calc(38px * var(--ch-font-scale, 1));
+}
+.ch-calendar .el-date-table td .ch-calendar-day {
+  height: calc(34px * var(--ch-font-scale, 1));
+}
+.ch-calendar .el-date-table-cell__text {
+  width: calc(24px * var(--ch-font-scale, 1));
+  height: calc(24px * var(--ch-font-scale, 1));
+  line-height: calc(24px * var(--ch-font-scale, 1));
+}
+html.care-mode .ch-calendar .el-date-picker {
+  width: min(calc(322px * var(--ch-font-scale, 1)), calc(100vw - 32px));
+}
+.ch-calendar .el-date-picker .el-picker-panel__content {
+  width: auto;
+}
+@media (pointer: coarse) {
+  .ch-calendar .el-date-table td {
+    height: max(44px, calc(38px * var(--ch-font-scale, 1)));
+  }
+}
+.ch-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.ch-guide {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  background: var(--ch-ui-bg);
+  color: var(--ch-ui-text);
+  padding: clamp(20px, 5vw, 64px);
+  box-sizing: border-box;
+  outline: none;
+  overflow: auto;
+}
+.ch-guide-header,
+.ch-guide-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.ch-guide-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 20px;
+  font-weight: 650;
+}
+.ch-guide-brand img {
+  width: 32px;
+  height: 32px;
+}
+.ch-guide-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: clamp(24px, 6vw, 100px);
+  width: min(1120px, 100%);
+  margin: 32px auto;
+}
+.ch-guide-copy h1 {
+  font-size: clamp(28px, 4vw, 48px);
+  margin: 12px 0 20px;
+  letter-spacing: -1px;
+}
+.ch-guide-copy p {
+  font-size: calc(17px * var(--ch-font-scale, 1));
+  line-height: 1.8;
+  max-width: 36em;
+}
+.ch-guide-copy .ch-guide-progress {
+  color: var(--ch-ui-primary);
+  font-size: 14px;
+}
+.ch-guide-example {
+  padding: clamp(24px, 4vw, 48px);
+  border-radius: 16px;
+  border: 1px solid var(--ch-ui-border);
+  background: var(--ch-ui-surface);
+  box-shadow: var(--ch-ui-shadow);
+}
+.ch-guide-example-label {
+  font-weight: 600;
+}
+.ch-guide-example-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--ch-ui-border);
+}
+.ch-guide-example-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ch-ui-primary);
+  flex-shrink: 0;
+}
+.ch-guide-track {
+  display: flex;
+  gap: 6px;
+}
+.ch-guide-track span {
+  width: 20px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ch-ui-border);
+}
+.ch-guide-track .active {
+  background: var(--ch-ui-primary);
+}
+@media (max-width: 720px) {
+  .ch-calendar .el-date-range-picker {
+    width: calc(100vw - 32px);
+  }
+  .ch-calendar .el-date-range-picker__content {
+    width: 100%;
+    float: none;
+  }
+  .ch-calendar .el-date-range-picker__content.is-right {
+    border-left: 0;
+    border-top: 1px solid var(--ch-ui-border);
+  }
+  html body :is(.page, .settings-page) {
+    padding: 16px;
+  }
+  .ch-guide-main {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .ch-guide-footer {
+    flex-wrap: wrap;
+  }
+}

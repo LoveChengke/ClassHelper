@@ -149,7 +149,6 @@ onMounted(async () => {
     <div class="page-header">
       <div>
         <h2 class="page-title">灵动岛</h2>
-        <p class="page-subtitle">自定义组件与 ClassIsland 提醒，共用停靠位置、动画开关与通知规则</p>
       </div>
     </div>
 

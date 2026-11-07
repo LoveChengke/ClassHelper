@@ -265,7 +265,7 @@ export async function verifyLayoutSmoke(
       await editor.webContents.executeJavaScript(`document.querySelector('[aria-label="新建方案"]').click()`);
       await pause();
       await editor.webContents.executeJavaScript(
-        `(() => { const input=document.querySelector('.el-message-box__input input'); input.value='组件方案验收';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('.el-message-box__btns .el-button--primary').click(); })()`,
+        `(() => { const input=[...document.querySelectorAll('.el-message-box__input input')].filter(e=>e.getBoundingClientRect().width>0).at(-1); input.value='组件方案验收';input.dispatchEvent(new Event('input',{bubbles:true}));[...document.querySelectorAll('.el-message-box__btns .el-button--primary')].filter(e=>e.getBoundingClientRect().width>0).at(-1).click(); })()`,
       );
       await pause();
       if (getConfig().islandLayout.schemes.length !== 2) throw Error('新建方案没有保存');
@@ -274,7 +274,7 @@ export async function verifyLayoutSmoke(
       );
       await pause();
       await editor.webContents.executeJavaScript(
-        `document.querySelector('.el-message-box__btns .el-button--primary').click()`,
+        `[...document.querySelectorAll('.el-message-box__btns .el-button--primary')].filter(e=>e.getBoundingClientRect().width>0).at(-1).click()`,
       );
       await pause();
       await editor.webContents.executeJavaScript(`document.querySelector('[aria-label="管理方案"]').click()`);
@@ -284,14 +284,26 @@ export async function verifyLayoutSmoke(
       );
       await pause();
       await editor.webContents.executeJavaScript(
-        `document.querySelector('.el-message-box__btns .el-button--primary').click()`,
+        `[...document.querySelectorAll('.el-message-box__btns .el-button--primary')].filter(e=>e.getBoundingClientRect().width>0).at(-1).click()`,
       );
       await pause();
-      return (
+      const restored =
         getConfig().islandLayout.schemes.length === 1 &&
         getConfig().islandLayout.activeSchemeId === 'default' &&
-        getConfig().islandLayout.schemes[0]!.rows.length === 2
-      );
+        getConfig().islandLayout.schemes[0]!.rows.length === 2;
+      if (!restored)
+        throw Error(
+          '方案未恢复：' +
+            JSON.stringify({
+              active: getConfig().islandLayout.activeSchemeId,
+              schemes: getConfig().islandLayout.schemes.map((s) => ({
+                id: s.id,
+                name: s.name,
+                rows: s.rows.length,
+              })),
+            }),
+        );
+      return restored;
     });
     await check('方案 JSON 导入导出保留容器结构并重新生成标识', async () => {
       await editor.webContents.executeJavaScript(`document.querySelector('[aria-label="管理方案"]').click()`);
@@ -329,10 +341,22 @@ export async function verifyLayoutSmoke(
       );
       await pause();
       await editor.webContents.executeJavaScript(
-        `document.querySelector('.el-message-box__btns .el-button--primary').click()`,
+        `[...document.querySelectorAll('.el-message-box__btns .el-button--primary')].filter(e=>e.getBoundingClientRect().width>0).at(-1).click()`,
       );
       await pause();
-      return preserved && getConfig().islandLayout.schemes.length === 1;
+      if (!preserved || getConfig().islandLayout.schemes.length !== 1)
+        throw Error(
+          '方案导入或收尾不一致：' +
+            JSON.stringify({
+              preserved,
+              schemes: getConfig().islandLayout.schemes.map((s) => ({
+                id: s.id,
+                name: s.name,
+                rows: s.rows.length,
+              })),
+            }),
+        );
+      return true;
     });
     if (process.env.ISLAND_SHOTS_DIR) {
       await editor.webContents.executeJavaScript(`document.querySelector('.main').scrollTop=0`);

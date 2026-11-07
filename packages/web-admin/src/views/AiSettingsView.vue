@@ -12,20 +12,7 @@ import { aiApi, systemApi } from '@/api';
 import { useAuthStore } from '@/stores/auth';
 import { useResponsive } from '@/composables/useResponsive';
 
-/**
- * 大模型设置（`ai:manage`）。
- *
- * 三个 Tab 的理由：
- * 1. 「模型配置」—— 开关与接入参数。**密钥单向**：`GET /ai/settings` 永不回传密钥，
- *    只回 `hasApiKey` + `keyHint`（尾号），所以输入框永远是空的，"留空 = 不修改"是刻意的语义
- *    （见 `api/index.ts` 的 `aiApi.updateSettings` 与 `modules/ai/ai.service.ts` 的 put 分支）。
- * 2. 「使用记录」—— 解析审计（谁、什么原话、判断成什么动作）。
- *    本页只读，不做"发布回执"：审计行是解析那一刻写的（`status: 'pending'`），
- *    真正发布走的是既有发布端点，那不是助手链路的事。
- * 3. 「系统」（仅 `system:manage`）—— 开发者模式 + 只读诊断。
- *    放在这里而不是单独开一个路由，是因为它权限更高、平时不需要看，
- *    Tabs 天然按权限隐藏（没有 system:manage 的人连标签都看不到），比多一个菜单项更省事。
- */
+/** 模型配置只回传 Key 状态；使用记录同时包含计划和业务执行结果。 */
 
 const auth = useAuthStore();
 const { isMobile } = useResponsive();
@@ -146,13 +133,24 @@ const STATUS_LABELS: Record<string, string> = {
   interpreted: '已解析，待人工确认',
   unrecognized: '未识别出可用动作',
   pending: '已解析',
-  confirmed: '已发布',
+  confirmed: '已确认，待执行',
+  succeeded: '已完成',
+  partial: '部分完成',
+  queried: '已查询',
+  rejected: '已拒绝或取消',
+  blocked: '已停止，待核对',
   cancelled: '已放弃',
-  failed: '发布失败',
+  failed: '执行失败',
 };
 
 function intentLabel(intent: string): string {
-  return INTENT_LABELS[intent] ?? intent;
+  const parts = intent
+    .split(',')
+    .filter(Boolean)
+    .map((key) => INTENT_LABELS[key] ?? key);
+  return parts.length > 2
+    ? `${parts.slice(0, 2).join('、')} 等 ${parts.length} 项`
+    : parts.join('、') || '未识别';
 }
 
 function statusLabel(status: string): string {
@@ -162,7 +160,9 @@ function statusLabel(status: string): string {
 async function loadAudit(): Promise<void> {
   auditLoading.value = true;
   try {
-    audit.value = await aiApi.audit(50);
+    const [rows, tools] = await Promise.all([aiApi.audit(50), aiApi.capabilities().catch(() => [])]);
+    for (const tool of tools) INTENT_LABELS[tool.action] = tool.label;
+    audit.value = rows;
   } catch {
     // 拦截器已提示
   } finally {
@@ -241,7 +241,6 @@ onMounted(async () => {
     <div class="page-header">
       <div>
         <h2 class="page-title">大模型设置</h2>
-        <p class="page-subtitle">配置「AI 助手」用哪种解析方式；助手只解析、不写库，发布始终由老师确认</p>
       </div>
     </div>
 
@@ -420,7 +419,7 @@ onMounted(async () => {
 }
 
 .field-hint {
-  margin: 4px 0 0;
+  margin: var(--ch-space-1) 0 0;
   color: var(--ch-text-muted);
   font-size: var(--el-font-size-extra-small);
   line-height: 1.6;
@@ -429,7 +428,7 @@ onMounted(async () => {
 .key-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ch-space-2);
   width: 100%;
 }
 
@@ -437,8 +436,8 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: var(--ch-space-3);
+  margin-bottom: var(--ch-space-3);
 }
 
 .cell-muted {
@@ -446,7 +445,7 @@ onMounted(async () => {
 }
 
 .cell-text {
-  margin-left: 8px;
+  margin-left: var(--ch-space-2);
   color: var(--ch-text-secondary);
 }
 
@@ -457,14 +456,14 @@ onMounted(async () => {
 }
 
 .system-card + .system-card {
-  margin-top: 16px;
+  margin-top: var(--ch-space-4);
 }
 
 .switch-row {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--ch-space-4);
 }
 
 .switch-title {

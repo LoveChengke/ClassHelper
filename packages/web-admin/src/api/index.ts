@@ -1,3 +1,9 @@
+import type {
+  AiCapability,
+  AiConversationRequest,
+  AiConversationResult,
+  AiPlanStep,
+} from '@classhelper/shared';
 import {
   API_PATHS,
   type AiAuditDto,
@@ -13,6 +19,8 @@ import {
   type AutoTermWeeksRequest,
   type ClassPlanImportResultDto,
   type ClassPlanPreviewDto,
+  type ClassPlanYamlImportResultDto,
+  type ClassPlanYamlPreviewDto,
   type ClassStatusDto,
   type ClientDeviceDto,
   type ClientPushResult,
@@ -191,8 +199,15 @@ export const homeworkApi = {
     date?: string;
   }): Promise<HomeworkDto[]> => api.get(API_PATHS.homeworks, params),
   /** 哪些天有作业（日期选择器高亮） */
-  days: (params: { classId?: string; from?: string; to?: string; days?: number }): Promise<HomeworkDaysDto> =>
-    api.get(`${API_PATHS.homeworks}/days`, params),
+  days: (params: {
+    classId?: string;
+    courseId?: string;
+    keyword?: string;
+    pendingOnly?: boolean;
+    from?: string;
+    to?: string;
+    days?: number;
+  }): Promise<HomeworkDaysDto> => api.get(`${API_PATHS.homeworks}/days`, params),
   detail: (id: string): Promise<HomeworkDto> => api.get(`${API_PATHS.homeworks}/${id}`),
   create: (payload: CreateHomeworkRequest): Promise<HomeworkDto> => api.post(API_PATHS.homeworks, payload),
   /** 一次给多个班级布置同一份作业（服务端逐班判定并返回逐班结果） */
@@ -228,6 +243,7 @@ export const notificationApi = {
   days: (params: {
     classId?: string;
     priority?: string;
+    keyword?: string;
     createdBy?: string;
     from?: string;
     to?: string;
@@ -482,6 +498,23 @@ export const importApi = {
     mode?: 'replace' | 'merge';
     payload: unknown;
   }): Promise<ClassPlanImportResultDto> => api.post(`${API_PATHS.imports}/class-plan`, payload),
+
+  /**
+   * 课表 YAML 解析预览（不写库）。
+   * YAML 面向手写 / 大模型生成：`enable_day` 1=周一 … 7=周日，`weeks` 取 all/odd/even。
+   */
+  previewYamlClassPlan: (payload: {
+    classId: string;
+    mode?: 'replace' | 'merge';
+    text: string;
+  }): Promise<ClassPlanYamlPreviewDto> => api.post(`${API_PATHS.imports}/class-plan/yaml/preview`, payload),
+
+  /** 导入课表 YAML（支持单双周：replace 覆盖 / merge 合并；解析失败会抛错且不改动原课表） */
+  importYamlClassPlan: (payload: {
+    classId: string;
+    mode?: 'replace' | 'merge';
+    text: string;
+  }): Promise<ClassPlanYamlImportResultDto> => api.post(`${API_PATHS.imports}/class-plan/yaml`, payload),
 };
 
 /* ------------------------------------------------------------------ 数据库管理（仅管理员） */
@@ -635,8 +668,7 @@ const AI_BASE = API_PATHS.ai;
  *
  * 权限：`settings` / `audit` 要 `ai:manage`（仅管理员）；`interpret` 要 `ai:use`（教师也有）。
  *
- * ⚠️ **助手只解析、不落库**：`interpret` 只是把一句中文换成结构化参数，
- * 真正写数据仍然由前端在老师确认后调既有的发布接口（作业 / 通知 / 叫人）。
+ * 解释和附件预览只保存计划与审计；确认后由绑定的原业务接口执行写入。
  */
 export const aiApi = {
   /**
@@ -656,8 +688,28 @@ export const aiApi = {
   updateSettings: (payload: UpdateAiSettingsRequest): Promise<AiSettingsDto> =>
     api.put(`${AI_BASE}/settings`, payload),
   /** 把一句话解析成待确认的操作；`text` 上限 500 字（超出由服务端 400） */
-  interpret: (payload: { text: string; classId?: string }): Promise<AiInterpretResult> =>
-    api.post(`${AI_BASE}/interpret`, payload),
+  interpret: (
+    payload: AiConversationRequest,
+    signal?: AbortSignal,
+  ): Promise<AiInterpretResult & AiConversationResult> =>
+    api.post(`${AI_BASE}/interpret`, payload, { timeout: 120000, signal }),
+  capabilities: (): Promise<AiCapability[]> => api.get(`${AI_BASE}/capabilities`),
+  plan: (id: string): Promise<AiPlanStep[]> => api.get(`${AI_BASE}/plans/${id}`),
+  prepare: (
+    id: string,
+    files: Record<string, { contentBase64: string }>,
+    mappings?: Record<string, Record<string, string>>,
+  ): Promise<AiPlanStep[]> => api.post(`${AI_BASE}/plans/${id}/prepare`, { files, mappings }),
+  confirm: (
+    id: string,
+    body: {
+      confirmed: true;
+      extraConfirmed?: boolean;
+      urgentConfirmed?: boolean;
+      secrets?: Record<string, Record<string, string>>;
+    },
+  ): Promise<AiPlanStep[]> => api.post(`${AI_BASE}/plans/${id}/confirm`, body),
+  discard: (id: string): Promise<null> => api.delete(`${AI_BASE}/plans/${id}`),
   /** 使用记录（谁、什么时候、说了什么、解析成什么、结果如何），倒序 */
   audit: (limit = 50): Promise<AiAuditDto[]> => api.get(`${AI_BASE}/audit`, { limit }),
 };

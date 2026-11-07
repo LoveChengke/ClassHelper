@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { getCacheScope } from '../cache/scope.js';
+import type { CalendarRange } from '@classhelper/ui';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
@@ -60,18 +62,12 @@ const selectedDate = ref(
     ? route.query.date
     : dayKeyLocal(new Date()),
 );
-/** 有作业的日期（日期选择器高亮）：来自 GET /homeworks/days */
-const dayMarks = ref<Map<string, number>>(new Map());
+const calendarRevision = ref(0);
 /** 录入作业的科目下拉 */
 const courses = ref<CourseDto[]>([]);
 
 /** 选中的是否就是今天（标题与按钮文案用） */
 const isToday = computed(() => selectedDate.value === dayKeyLocal(now.value));
-
-/** 日期选择器：给有作业的日期加高亮类 */
-function dayCellClass(date: Date): string {
-  return dayMarks.value.has(dayKeyLocal(date)) ? 'day-has-homework' : '';
-}
 
 async function selectDate(value: string | null): Promise<void> {
   if (!value || !isDayKey(value)) return;
@@ -279,6 +275,7 @@ function onResize(): void {
 /* ------------------------------------------------------------ 数据加载 */
 
 async function loadHomework(): Promise<void> {
+  calendarRevision.value++;
   loading.value = true;
   try {
     const classId = auth.classId ?? undefined;
@@ -294,7 +291,6 @@ async function loadHomework(): Promise<void> {
     fromCache.value = result.fromCache;
     updatedAt.value = result.updatedAt;
     if (!result.fromCache) appStore.markSynced();
-    void loadDayMarks(classId);
     if (current.value) {
       current.value = homeworks.value.find((item) => item.id === current.value?.id) ?? current.value;
     }
@@ -304,22 +300,15 @@ async function loadHomework(): Promise<void> {
   }
 }
 
-/**
- * 拉取"哪些天有作业"（日期选择器高亮）。
- *
- * 范围取当前查看日期前后各 45 天：教室电脑上翻月份也能看到有作业的日子。
- */
-async function loadDayMarks(classId: string | undefined): Promise<void> {
-  try {
-    const from = shiftDayKey(selectedDate.value, -45);
-    const to = shiftDayKey(selectedDate.value, 45);
-    const result = await homeworkApi.days({ classId, from, to });
-    dayMarks.value = new Map(result.days.map((item) => [item.date, item.count]));
-  } catch {
-    // 离线/失败时保留上一次的高亮，不打断展示
-  }
+async function calendarDays(range: CalendarRange) {
+  const result = await fetchWithCache(
+    'homeworks',
+    `days:${JSON.stringify(range)}`,
+    () => homeworkApi.days({ ...range, classId: auth.classId || undefined }),
+    { days: [] as { date: string; count: number }[] },
+  );
+  return result.data.days;
 }
-
 /** 科目下拉（录入作业时可选） */
 async function loadCourses(): Promise<void> {
   if (!auth.classId) return;
@@ -569,15 +558,19 @@ onUnmounted(() => {
         <el-button-group>
           <el-button :icon="'ArrowLeft'" @click="shiftDate(-1)">前一天</el-button>
           <el-button :disabled="isToday" @click="selectDate(dayKeyLocal(now))">今天</el-button>
-          <el-button @click="shiftDate(1)">后一天<el-icon class="ml-4"><ArrowRight /></el-icon></el-button>
+          <el-button @click="shiftDate(1)">
+            后一天
+            <el-icon class="ml-4"><ArrowRight /></el-icon>
+          </el-button>
         </el-button-group>
-        <el-date-picker
+        <ch-date-picker
           :model-value="selectedDate"
           type="date"
           value-format="YYYY-MM-DD"
           placeholder="选择日期"
           class="day-picker"
-          :cell-class-name="dayCellClass"
+          :load-marks="calendarDays"
+          :scope-key="JSON.stringify([getCacheScope(), selectedDate, calendarRevision])"
           @update:model-value="(value: string | null) => selectDate(value)"
         />
         <el-radio-group v-model="viewMode" @change="saveBoardSettings">
@@ -765,11 +758,12 @@ onUnmounted(() => {
     <el-dialog v-model="createVisible" title="录入作业" width="620px">
       <el-form label-width="90px">
         <el-form-item label="所属日期">
-          <el-date-picker
+          <ch-date-picker
             :model-value="selectedDate"
             type="date"
             value-format="YYYY-MM-DD"
-            :cell-class-name="dayCellClass"
+            :load-marks="calendarDays"
+            :scope-key="JSON.stringify([getCacheScope(), calendarRevision])"
             @update:model-value="(value: string | null) => selectDate(value)"
           />
           <span class="text-muted ml-8">默认就是当前正在查看的这一天</span>
@@ -810,7 +804,9 @@ onUnmounted(() => {
             >
               {{ item }}
             </el-tag>
-            <span class="text-muted">点一下追加到「{{ lastFocused === 'title' ? '标题' : '作业要求' }}」</span>
+            <span class="text-muted">
+              点一下追加到「{{ lastFocused === 'title' ? '标题' : '作业要求' }}」
+            </span>
           </div>
         </el-form-item>
       </el-form>
@@ -880,19 +876,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* 日期选择器：有作业的日子加一个圆点，翻月份时一眼看出哪天有作业 */
-:deep(.day-has-homework .el-date-table-cell__text)::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  bottom: 2px;
-  width: 4px;
-  height: 4px;
-  margin-left: -2px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
 .day-picker {
   width: 168px;
 }

@@ -18,14 +18,17 @@ import {
   tableFileSchema,
   timeLayoutImportSchema,
   classPlanImportSchema,
+  classPlanYamlImportSchema,
   timeLayoutQuerySchema,
   type TableCommitInput,
   type TableFileInput,
   type TimeLayoutImportInput,
   type ClassPlanImportInput,
+  type ClassPlanYamlImportInput,
 } from './imports.schemas.js';
 import { buildTemplateCsv, buildTemplateXlsx, commitTable, previewTable } from './table-import.service.js';
 import { importClassPlan, previewClassPlan } from './class-plan.service.js';
+import { importYamlClassPlan, previewYamlClassPlan } from './class-plan-yaml.service.js';
 import {
   deleteTimeLayout,
   importTimeLayout,
@@ -220,6 +223,48 @@ router.post(
       result,
       `导入成功：新增 ${result.created} 节 / 更新 ${result.updated} 节` +
         `${result.createdCourses.length > 0 ? `（自动补建课程：${result.createdCourses.join('、')}）` : ''}`,
+    );
+  },
+);
+
+/**
+ * POST /api/imports/class-plan/yaml/preview - 预览课表 YAML（只解析校验，不写库）
+ * YAML 面向手写 / 大模型生成：星期 + 单双周 + 起止时间 + 科目，校验失败放进 errors 返回。
+ */
+router.post(
+  '/class-plan/yaml/preview',
+  requirePermission('import:schedule', 'schedule:write'),
+  validate({ body: classPlanYamlImportSchema }),
+  async (req, res) => {
+    const result = await previewYamlClassPlan(getAuthUser(req), validatedBody<ClassPlanYamlImportInput>(req));
+    sendOk(
+      res,
+      result,
+      result.errors.length > 0
+        ? `解析发现 ${result.errors.length} 个问题，请修正后再导入`
+        : `解析出 ${result.planCount} 张课表 / ${result.entries.length} 节课` +
+            `（${result.subjects.length} 个科目，缺 ${result.missingSubjects.length} 个待建课程）`,
+    );
+  },
+);
+
+/**
+ * POST /api/imports/class-plan/yaml - 导入课表 YAML（支持单双周）
+ * 先归一化成 ClassIsland 兼容档案再走 importProfile：事务、稳定 id、merge/replace 与实时通知一致；
+ * 解析失败返回 400 且不改动现有课表。
+ */
+router.post(
+  '/class-plan/yaml',
+  requirePermission('import:schedule', 'schedule:write'),
+  validate({ body: classPlanYamlImportSchema }),
+  async (req, res) => {
+    const result = await importYamlClassPlan(getAuthUser(req), validatedBody<ClassPlanYamlImportInput>(req));
+    sendOk(
+      res,
+      result,
+      `导入成功：新增 ${result.created} 节 / 更新 ${result.updated} 节` +
+        `${result.createdCourses.length > 0 ? `（自动补建课程：${result.createdCourses.join('、')}）` : ''}` +
+        `${result.warnings.length > 0 ? `，另有 ${result.warnings.length} 条提示` : ''}`,
     );
   },
 );

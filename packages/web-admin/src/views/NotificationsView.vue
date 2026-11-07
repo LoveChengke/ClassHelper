@@ -1,9 +1,9 @@
 <script setup lang="ts">
+import type { CalendarRange } from '@classhelper/ui';
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
 import {
-  dayKeyLocal,
   CALL_QUICK_PHRASES,
   NOTIFICATION_PRIORITIES,
   PRIORITY_LABELS,
@@ -15,7 +15,6 @@ import {
   type ClassDto,
   type ClassPeriod,
   type NotificationCreatorSummary,
-  type NotificationDaySummary,
   type NotificationDto,
   type NotificationPriority,
   type StudentDto,
@@ -24,8 +23,11 @@ import { callApi, classApi, notificationApi } from '@/api';
 import { useRealtimeStore } from '@/stores/realtime';
 import { findClassInSession } from '@/composables/useClassInSession';
 import UrgentClassWarning from '@/components/UrgentClassWarning.vue';
+import { useAuthStore } from '@/stores/auth';
+import { cachedCalendarMarks, calendarCacheScope } from '@/composables/calendarCache';
 
 const realtime = useRealtimeStore();
+const auth = useAuthStore();
 const route = useRoute();
 
 const loading = ref(false);
@@ -33,33 +35,36 @@ const classes = ref<ClassDto[]>([]);
 const notifications = ref<NotificationDto[]>([]);
 const filter = reactive({ classId: '', priority: '', keyword: '', date: '', createdBy: '' });
 
-/**
- * 按天归档 / 按发布人归档的候选列表（需求：通知按天归档，也可按发布人、类型看）。
- *
- * 两者跟着"班级 + 优先级"走：班级一换，日期栏与发布人栏就应该只剩那个班里真实存在的
- * 日期与人 —— 否则选项里全是别的班级的数据，选中后得到空列表，看着像坏了。
- * 发布人栏还额外跟着当前选中的日期收敛（"这一天都有谁发过通知"）。
- */
-const days = ref<NotificationDaySummary[]>([]);
+const calendarRevision = ref(0);
 const creators = ref<NotificationCreatorSummary[]>([]);
 let archiveRequest = 0;
 let refreshRequest = 0;
 let notificationRequest = 0;
 
+async function calendarDays(range: CalendarRange) {
+  const params = {
+    ...range,
+    classId: filter.classId || undefined,
+    priority: filter.priority || undefined,
+    createdBy: filter.createdBy || undefined,
+    keyword: filter.keyword || undefined,
+  };
+  return cachedCalendarMarks(
+    calendarCacheScope(auth),
+    { domain: 'notifications', ...params },
+    async () => (await notificationApi.days(params)).days,
+  );
+}
 async function loadArchive(): Promise<void> {
   const request = ++archiveRequest;
   const base = {
     ...(filter.classId ? { classId: filter.classId } : {}),
     ...(filter.priority ? { priority: filter.priority } : {}),
   };
-  const [dayList, creatorList] = await Promise.all([
-    notificationApi.days(base).catch(() => ({ days: [] as NotificationDaySummary[] })),
-    notificationApi
-      .creators({ ...base, ...(filter.date ? { date: filter.date } : {}) })
-      .catch(() => ({ creators: [] as NotificationCreatorSummary[] })),
-  ]);
+  const creatorList = await notificationApi
+    .creators({ ...base, ...(filter.date ? { date: filter.date } : {}) })
+    .catch(() => ({ creators: [] as NotificationCreatorSummary[] }));
   if (request !== archiveRequest) return;
-  days.value = dayList.days;
   creators.value = creatorList.creators;
   if (filter.createdBy && !creatorList.creators.some((item) => item.id === filter.createdBy))
     filter.createdBy = '';
@@ -109,6 +114,7 @@ async function loadClassStudentCounts(): Promise<void> {
 
 async function loadNotifications(): Promise<void> {
   const request = ++notificationRequest;
+  calendarRevision.value++;
   loading.value = true;
   try {
     const params: {
@@ -428,7 +434,6 @@ onUnmounted(() => {
     <div class="page-header">
       <div>
         <h2 class="page-title">通知发布</h2>
-        <p class="page-subtitle">发布后按班级房间广播（notification:new），ClassHelper 班级端 5 秒内到达</p>
       </div>
       <div class="toolbar">
         <el-select
@@ -455,27 +460,16 @@ onUnmounted(() => {
           />
         </el-select>
         <!-- 按天归档：只列当前班级/优先级下真实存在的日期与条数 -->
-        <el-date-picker
+        <ch-date-picker
           v-model="filter.date"
           type="date"
           value-format="YYYY-MM-DD"
           placeholder="按天归档"
           clearable
+          :load-marks="calendarDays"
+          :scope-key="JSON.stringify([filter, calendarRevision])"
           @change="refreshList"
-        >
-          <template #default="cell">
-            <span
-              :title="
-                days.some((d) => d.date === dayKeyLocal(cell.date))
-                  ? `${days.find((d) => d.date === dayKeyLocal(cell.date))?.count} 条通知`
-                  : ''
-              "
-            >
-              {{ cell.text }}
-              <b v-if="days.some((d) => d.date === dayKeyLocal(cell.date))">·</b>
-            </span>
-          </template>
-        </el-date-picker>
+        />
         <!-- 按发布人归档：跟着班级/优先级/日期收敛 -->
         <el-select
           v-model="filter.createdBy"

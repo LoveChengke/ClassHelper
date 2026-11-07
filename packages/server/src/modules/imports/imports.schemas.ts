@@ -73,3 +73,18 @@ export type TableFileInput = z.infer<typeof tableFileSchema>;
 export type TableCommitInput = z.infer<typeof tableCommitSchema>;
 export type TimeLayoutImportInput = z.infer<typeof timeLayoutImportSchema>;
 export type ClassPlanImportInput = z.infer<typeof classPlanImportSchema>;
+
+/**
+ * 课表 YAML 导入：`text` 是 YAML 原文（Web 读取 .yaml/.yml 文件或粘贴）。
+ *
+ * 刻意不限制最小长度：空内容交给 service 返回「课表 YAML 内容为空」这类精确中文原因。
+ * 上限 8 MB 与表格导入的文件上限一致；整个 JSON 请求体仍受 12 MB 中间件限制。
+ */
+export const classPlanYamlImportSchema = z.object({
+  classId: z.string().min(1, '请选择班级'),
+  /** replace = 清空该班现有课表后写入；merge = 保留现有条目，同 星期+单双周 的 YAML 课表原地更新 */
+  mode: z.enum(['replace', 'merge']).default('replace'),
+  text: z.string(),
+});
+
+export type ClassPlanYamlImportInput = z.infer<typeof classPlanYamlImportSchema>;

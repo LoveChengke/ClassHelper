@@ -502,7 +502,6 @@ async function saveSettings() {
     <div class="page-header">
       <div>
         <h2 class="page-title">班级管理</h2>
-        <p class="page-subtitle">按授权范围查看班级，管理操作需要相应权限。</p>
       </div>
       <div class="toolbar">
         <el-input
@@ -595,7 +594,7 @@ async function saveSettings() {
           <el-input-number v-model="settings.termWeeks" :min="1" :max="maxTermWeeks" />
         </el-form-item>
         <el-form-item label="开学日期">
-          <el-date-picker v-model="settings.termStartDate" type="date" value-format="YYYY-MM-DD" clearable />
+          <ch-date-picker v-model="settings.termStartDate" type="date" value-format="YYYY-MM-DD" clearable />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -928,24 +927,24 @@ async function saveSettings() {
 
 <style scoped>
 .account-tag {
-  margin-left: 6px;
+  margin-left: var(--ch-space-2);
 }
 .mb-12 {
-  margin-bottom: 12px;
+  margin-bottom: var(--ch-space-3);
 }
 .ml-8 {
-  margin-left: 8px;
+  margin-left: var(--ch-space-2);
 }
 
 .setting-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
+  gap: var(--ch-space-6);
 }
 
 .setting-title {
   font-weight: 600;
-  margin-bottom: 4px;
+  margin-bottom: var(--ch-space-1);
 }
 </style>

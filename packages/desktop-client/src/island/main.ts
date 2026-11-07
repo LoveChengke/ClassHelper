@@ -1,3 +1,4 @@
+import '@classhelper/ui/tokens.css';
 import { createApp } from 'vue';
 import IslandApp from './LayoutIslandApp.vue';
 import { applyMotionTokens } from '../renderer/composables/motion.js';

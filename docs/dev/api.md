@@ -27,28 +27,29 @@ API 前缀 /api，JWT 使用 Authorization: Bearer。成功/失败结构以 `lib
 
 ## 教学与文件
 
-| 路径/动作                                                                                                  | 行为及边界                                                                           |
-| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| /courses                                                                                                   | 班级科目与任课关系                                                                   |
-| GET /schedules、/grid、/current、/active-week                                                              | 新关系模型的兼容投影，按班级范围读取                                                 |
-| POST/PATCH/DELETE /schedules[/:id]                                                                         | 兼容 CRUD，写新模型，不双写旧 Schedule                                               |
-| POST /schedules/swap、/overlay、/scheduled；GET /schedules/scheduled；DELETE /schedules/scheduled/:id      | 换课、临时层、预定                                                                   |
-| /time-layouts；POST /time-layouts/:id/clone、/:id/import                                                   | 时间表 CRUD/克隆/导入，写入 timetable:manage                                         |
-| /class-plans；PUT /class-plans/:id/entries；PATCH /class-plans/:id/enabled                                 | 日课表 CRUD、整表保存、启用，写入 schedule:write + 班主任/管理员                     |
-| POST /class-plans/:id/clone、/class-plans/import、/class-plans/import/profile；GET /class-plans/:id/export | 复制、导入导出及完整档案导入；导入另需 import:schedule                               |
-| /class-plan-groups；GET /class-plan-groups/selection；POST /class-plan-groups/select                       | 群组及当前/临时选择                                                                  |
-| /homeworks、/homeworks/bulk、/:id/status、/:id/submissions                                                 | 作业、批量、完成与未交；员工功能键+科目检查，班级端可录作业                          |
-| /notifications、/notifications/bulk、/days、/creators、/unread-count、/:id/read、/read-all                 | 通知、归档和已读；发布需 notification:publish，课堂紧急须确认                        |
-| POST /calls                                                                                                | 叫人，call:create + 范围检查                                                         |
-| /grades、/grades/bulk、/stats、/levels、/my、/overview、/collective、/student/:studentNo、/exams、/ranking | [成绩与隐私](../app/grades.md)，查询列表参数用 studentId，写入仍按科目               |
-| /imports/template、/table/preview、/table/commit                                                           | 表格导入，按 kind 再检查对应导入键、管理键、班级和科目                               |
-| /imports/class-plan/preview、/imports/class-plan                                                           | 预览与提交均需 import:schedule + schedule:write；提交走关系化导入                    |
-| /imports/time-layout[/:id]、/time-layout/preview                                                           | 时间配置兼容入口，导入需 import:schedule + timetable:manage，删除需 timetable:manage |
-| GET /class-plans/profile?classId=                                                                          | 完整档案导出，按班级范围读取，保留时间点与课表关联                                   |
-| GET /courseware、/courseware/:id、/:id/download                                                            | 课件目录/详情/下载；员工需 courseware:read，班级端按可见范围                         |
-| POST /courseware/upload、/:id/push；PATCH /courseware/:id/visibility；DELETE /courseware/:id               | 写入 courseware:write + 员工身份；本人文件、任课班级与可见范围限制                   |
-| GET/POST /courseware/folders；PATCH /courseware/:id/folder                                                 | 员工 courseware:write；目录与课件均限本人                                            |
-| GET /courseware/transfers；POST /courseware/transfers/:id/ack                                              | 班级端补领、逐设备回执                                                               |
+| 路径/动作                                                                                                  | 行为及边界                                                                                  |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| /courses                                                                                                   | 班级科目与任课关系                                                                          |
+| GET /schedules、/grid、/current、/active-week                                                              | 新关系模型的兼容投影，按班级范围读取                                                        |
+| POST/PATCH/DELETE /schedules[/:id]                                                                         | 兼容 CRUD，写新模型，不双写旧 Schedule                                                      |
+| POST /schedules/swap、/overlay、/scheduled；GET /schedules/scheduled；DELETE /schedules/scheduled/:id      | 换课、临时层、预定                                                                          |
+| /time-layouts；POST /time-layouts/:id/clone、/:id/import                                                   | 时间表 CRUD/克隆/导入，写入 timetable:manage                                                |
+| /class-plans；PUT /class-plans/:id/entries；PATCH /class-plans/:id/enabled                                 | 日课表 CRUD、整表保存、启用，写入 schedule:write + 班主任/管理员                            |
+| POST /class-plans/:id/clone、/class-plans/import、/class-plans/import/profile；GET /class-plans/:id/export | 复制、导入导出及完整档案导入；导入另需 import:schedule                                      |
+| /class-plan-groups；GET /class-plan-groups/selection；POST /class-plan-groups/select                       | 群组及当前/临时选择                                                                         |
+| /homeworks、/homeworks/bulk、/:id/status、/:id/submissions                                                 | 作业、批量、完成与未交；员工功能键+科目检查，班级端可录作业                                 |
+| /notifications、/notifications/bulk、/days、/creators、/unread-count、/:id/read、/read-all                 | 通知、归档和已读；发布需 notification:publish，课堂紧急须确认                               |
+| POST /calls                                                                                                | 叫人，call:create + 范围检查                                                                |
+| /grades、/grades/bulk、/stats、/levels、/my、/overview、/collective、/student/:studentNo、/exams、/ranking | [成绩与隐私](../app/grades.md)，查询列表参数用 studentId，写入仍按科目                      |
+| /imports/template、/table/preview、/table/commit                                                           | 表格导入，按 kind 再检查对应导入键、管理键、班级和科目                                      |
+| /imports/class-plan/preview、/imports/class-plan                                                           | 预览与提交均需 import:schedule + schedule:write；提交走关系化导入                           |
+| POST /imports/class-plan/yaml/preview、/imports/class-plan/yaml                                            | YAML 预览/导入；同课表导入权限与班级范围，支持 all/odd/even 与 HHMMSS，提交复用完整档案事务 |
+| /imports/time-layout[/:id]、/time-layout/preview                                                           | 时间配置兼容入口，导入需 import:schedule + timetable:manage，删除需 timetable:manage        |
+| GET /class-plans/profile?classId=                                                                          | 完整档案导出，按班级范围读取，保留时间点与课表关联                                          |
+| GET /courseware、/courseware/:id、/:id/download                                                            | 课件目录/详情/下载；员工需 courseware:read，班级端按可见范围                                |
+| POST /courseware/upload、/:id/push；PATCH /courseware/:id/visibility；DELETE /courseware/:id               | 写入 courseware:write + 员工身份；本人文件、任课班级与可见范围限制                          |
+| GET/POST /courseware/folders；PATCH /courseware/:id/folder                                                 | 员工 courseware:write；目录与课件均限本人                                                   |
+| GET /courseware/transfers；POST /courseware/transfers/:id/ack                                              | 班级端补领、逐设备回执                                                                      |
 
 ## 设备、系统与运维
 
@@ -68,7 +69,7 @@ API 前缀 /api，JWT 使用 Authorization: Bearer。成功/失败结构以 `lib
 | /archives、/archives/transferred、/archives/transferred/:id/restore                                     | 历史归档需 archive:manage 全校范围；撤回转出需 roster:manage；不提供手动创建归档 |
 | /database/status、/test-connection、/backups、/export、/import、/sqlite-file、/backup-schedule、/switch | database:manage；目标空库、快照及换库子进程保护                                  |
 | /system/settings、/autostart、/diagnostics                                                              | system:manage，非安装形态自启动返回不可用原因                                    |
-| /ai/settings、/interpret、/audit                                                                        | ai:manage/ai:use；只解析待确认动作，密钥只进不出                                 |
+| /ai/settings、/interpret、/audit、/capabilities、/plans/:id                                             | ai:manage/ai:use；查询遵循业务权限，写入计划确认后调用原接口，密钥只进不出       |
 | /dashboard/summary、/dashboard/term                                                                     | 按范围读取看板与周次                                                             |
 
 探针 /healthz 和 /readyz 不带 API 前缀；/api/health 提供版本与模块详情。
@@ -117,3 +118,19 @@ API 前缀 /api，JWT 使用 Authorization: Bearer。成功/失败结构以 `lib
 成绩 overview/collective/exams/ranking 显式检查 grade:read，班级端由服务断言限本班并执行查询开关。设备 heartbeat/update-progress/commands/:id/ack 仅接受绑定本班的 CLASS_DEVICE，不接受教师个人设备。
 
 `GET /permissions/me` 同时返回 classScopes、manageScopes、allScopeKeys，供 Web 按钮与班级选择器显示实际能力范围；manageScopes 对名单、日课表、导入和考试配置叠加班主任或显式组织范围规则。界面范围提示不替代服务端断言。
+
+## AI 操作计划
+
+跨班作业与通知会归一为逐班步骤，分别调用单班业务接口。成功班级保持成功状态，后续重试跳过这些步骤。
+
+客户端安装包缓存允许 `clients.releases` 查询，以及仅限 ADMIN + `client:update` 的 `clients.release-fetch/register/delete`。写入均要求专门确认，并核对版本、已有登记及缓存文件状态。更新模块只开放固定的 `/update/client/releases` 查询、`/update/client/fetch` 抓取、`/update/client/releases` 登记及按版本删除；没有服务器更新、配置或任意下载地址入口。抓取复用现有官方项目下载地址与流式校验，不推送或安装。
+
+`POST /ai/interpret` 接收 `text`、可选班级、当前会话的 `messages` 和附件元数据 `attachments`，返回 `planId/message/steps/results`，并保留旧响应字段的兼容形状。附件包含 id、文件名、大小与 SHA256；普通课件内容不发送给模型。
+
+- `GET /ai/capabilities`：当前操作者可用的动作及参数契约，目录不包含数据库维护、服务器运维和密钥操作。
+- `GET /ai/plans/:id`：本人计划和分步状态；业务权限及范围重新校验。
+- `POST /ai/plans/:id/prepare`：结构化附件经哈希核对后复用原导入解析器生成预览，不发布业务数据。
+- `POST /ai/plans/:id/confirm`：提交明确确认、必要的高影响操作确认和专用敏感字段；返回绑定后的业务请求。
+- `DELETE /ai/plans/:id`：取消尚未执行的步骤。
+
+前端以 `x-classhelper-ai-step` 关联既有业务接口。服务端核对操作者、方法、路径、查询和正文后原子领取步骤，再由原接口执行完整鉴权。上传另核对文件哈希；已成功步骤返回保存的结果，不重复操作。连接中断或结果不明的步骤需先核对业务状态。自动化入口为 `pnpm verify:ai`，仅使用隔离库和模型 stub。

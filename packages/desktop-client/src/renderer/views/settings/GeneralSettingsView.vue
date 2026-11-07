@@ -308,7 +308,6 @@ onBeforeUnmount(() => {
     <div class="page-header">
       <div>
         <h2 class="page-title">通用</h2>
-        <p class="page-subtitle">服务器连接、离线缓存与作业录入</p>
       </div>
       <!-- 重看初次启动引导（首启时由 App.vue 自动弹出过一次） -->
       <el-button @click="onboarding.open()">

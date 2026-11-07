@@ -52,7 +52,7 @@ const containers = ['group', 'stack', 'slide', 'rolling'] as const;
                 <el-input v-model="node.settings.countdownTitle" :maxlength="64" @change="emit('change')" />
               </el-form-item>
               <el-form-item label="目标日期">
-                <el-date-picker
+                <ch-date-picker
                   v-model="node.settings.targetDate"
                   type="date"
                   value-format="YYYY-MM-DD"

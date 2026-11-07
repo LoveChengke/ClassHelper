@@ -11,6 +11,8 @@ import { registerAppIcons } from './icons';
 import { applyMotionTokens } from './composables/motion';
 import { useUiStore } from './stores/ui';
 import '@/styles/index.css';
+import { registerSharedUi } from '@classhelper/ui';
+import '@classhelper/ui/theme.css';
 
 const app = createApp(App);
 const pinia = createPinia();
@@ -21,6 +23,7 @@ registerAppIcons(app);
 app.use(pinia);
 app.use(router);
 registerElementPlus(app);
+registerSharedUi(app);
 
 /**
  * 全局错误处理。

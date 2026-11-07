@@ -38,6 +38,7 @@ interface PersistedConfig {
   homeworkPhrases?: string[];
   /** 是否已看过初次启动引导（向后兼容：旧配置没有该字段视为没看过，首启弹一次） */
   onboardingDone?: boolean;
+  onboardingVersion?: number;
   /** 界面主题（向后兼容：旧配置没有该字段用浅色） */
   theme?: 'light' | 'dark';
   /** 主侧边栏是否折叠（向后兼容：旧配置没有该字段视为展开） */
@@ -69,6 +70,7 @@ const DEFAULT_CONFIG: PersistedConfig = {
   homeworkBoard: { ...DEFAULT_HOMEWORK_BOARD },
   homeworkPhrases: [...HOMEWORK_PHRASE_DEFAULTS],
   onboardingDone: false,
+  onboardingVersion: 0,
   theme: 'light',
   sidebarCollapsed: false,
   ignoredUpdateVersion: '',
@@ -210,6 +212,7 @@ function readPersistedFromDisk(): PersistedConfig {
       homeworkBoard: normalizeHomeworkBoard(parsed.homeworkBoard),
       homeworkPhrases: normalizeHomeworkPhrases(parsed.homeworkPhrases),
       onboardingDone: parsed.onboardingDone === true,
+      onboardingVersion: Number.isInteger(parsed.onboardingVersion) ? Number(parsed.onboardingVersion) : 0,
       theme: normalizeTheme(parsed.theme),
       sidebarCollapsed: parsed.sidebarCollapsed === true,
       ignoredUpdateVersion:
@@ -373,6 +376,7 @@ function toDesktopConfig(state: ConfigCache): DesktopStoredConfig {
     homeworkBoard: normalizeHomeworkBoard(persisted.homeworkBoard),
     homeworkPhrases: normalizeHomeworkPhrases(persisted.homeworkPhrases),
     onboardingDone: persisted.onboardingDone === true,
+    onboardingVersion: persisted.onboardingVersion ?? 0,
     theme: normalizeTheme(persisted.theme),
     sidebarCollapsed: persisted.sidebarCollapsed === true,
     ignoredUpdateVersion: persisted.ignoredUpdateVersion ?? '',
@@ -460,6 +464,11 @@ export function saveConfig(patch: Partial<DesktopStoredConfig>): DesktopStoredCo
   if (patch.onboardingDone === true) {
     persisted.onboardingDone = true;
   }
+  if (
+    Number.isInteger(patch.onboardingVersion) &&
+    Number(patch.onboardingVersion) > (persisted.onboardingVersion ?? 0)
+  )
+    persisted.onboardingVersion = Number(patch.onboardingVersion);
   if (patch.theme !== undefined) {
     persisted.theme = normalizeTheme(patch.theme);
   }

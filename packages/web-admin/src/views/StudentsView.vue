@@ -784,28 +784,28 @@ async function submitCall(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--ch-space-3);
   flex-wrap: wrap;
 }
 
 .call-alert {
-  margin-bottom: 12px;
+  margin-bottom: var(--ch-space-3);
 }
 
 .call-section {
-  margin-bottom: 14px;
+  margin-bottom: var(--ch-space-4);
 }
 
 .call-label {
   font-size: 13px;
   color: var(--ch-text-secondary);
-  margin-bottom: 8px;
+  margin-bottom: var(--ch-space-2);
 }
 
 .call-phrases {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--ch-space-2);
 }
 
 .call-phrase {

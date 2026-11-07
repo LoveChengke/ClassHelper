@@ -48,13 +48,9 @@ export interface DesktopStoredConfig {
    * 录入作业时点一下就追加到标题/内容里，少打字（例如 P、大本、背诵）。
    */
   homeworkPhrases: string[];
-  /**
-   * 是否已看过「初次启动引导」。
-   *
-   * 首次启动自动弹出一次（完成或跳过即记为看过并写入配置，之后不再自动弹出）；
-   * 登录页与设置页的「使用引导」入口可随时重看（重看不改变该值）。
-   */
+  /** 兼容旧配置；新版引导是否展示由 onboardingVersion 决定。 */
   onboardingDone: boolean;
+  onboardingVersion: number;
   /** 界面主题：light=浅色（默认）/ dark=深色（黑夜模式） */
   theme: 'light' | 'dark';
   /** 主侧边栏是否折叠成图标栏（可由顶栏汉堡按钮切换） */

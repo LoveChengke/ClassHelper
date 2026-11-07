@@ -22,7 +22,7 @@ description: 表格预览、名单与成绩校验，以及完整离线档案导�
 
 ## 完整 ClassIsland 档案
 
-在“课表档案 → 导入档案”选择或粘贴 JSON，先预览再导入。
+在“课表档案 → 导入/导出 → 导入课表（JSON / YAML）”选择或粘贴 JSON，先预览再导入。
 完整输入包含 TimeLayouts、ClassPlans、Subjects 字典，可包含 ClassPlanGroups 和 OrderedSchedules 等配置。
 JSON 只作为离线文件导入，不依赖在线联动插件。
 
@@ -43,6 +43,37 @@ JSON 只作为离线文件导入，不依赖在线联动插件。
 日课表导入需本班班主任/管理员检查。旧 /imports/class-plan/preview 是扁平预览，
 不完整展示群组/空课/停用等结构；提交直接调用完整导入，不能把预览的单双周列当作实际数据模型。
 完整导入失败时事务回滚；部分缺失引用可能返回 warnings，须检查导入结果和日课表编辑器。
+
+## YAML 课表
+
+同一导入窗口支持 `.yaml` / `.yml` 文件和粘贴内容，提供示例下载。先解析预览，再选择合并或覆盖。
+文件上限 8 MB。格式如下：
+
+```yaml
+version: 1
+subjects:
+  - name: 数学
+    simplified_name: 数
+    teacher: 李梅
+    room: '101'
+schedules:
+  - name: 星期一
+    enable_day: 1
+    weeks: all
+    classes:
+      - subject: 数学
+        start_time: '080000'
+        end_time: '090000'
+```
+
+`enable_day` 为 1–7（周一至周日）；`weeks` 支持 `all`（每周）、`odd`（单周）、`even`（双周）。
+同一天的单周与双周分开填写，同一天同一相位不可重复，也不能混用每周与单双周课表。
+时间支持 `HHMMSS`、`HH:mm`、`HH:mm:ss`，秒必须为 `00`；未加引号的六位数字也可识别。
+兼容以 `version 1` 开头、字段省略冒号的示例写法，并在预览中提示；新文件建议采用上述标准 YAML。
+
+`simplified_name` 保存为科目简称，`room` 保存为课次地点；`teacher` 只在预览中展示，不创建教师账号或改变任课关系。
+缺失科目按完整档案规则补建。YAML 归一化为关系化时间点和日课表后复用完整导入的权限、事务和实时更新。
+合并按星期与单双周更新同一套 YAML 对象；覆盖会替换该班已有日课表。语法或字段校验失败时不会写库。
 
 ## 时间配置兼容入口
 

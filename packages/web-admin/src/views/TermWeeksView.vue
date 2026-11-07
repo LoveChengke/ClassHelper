@@ -242,7 +242,7 @@ onMounted(async () => {
     <el-card shadow="never" style="margin-bottom: 12px">
       <div class="toolbar">
         <span class="label">学期开始日期</span>
-        <el-date-picker
+        <ch-date-picker
           v-model="termStartDate"
           :disabled="!canEdit"
           type="date"
@@ -298,7 +298,7 @@ onMounted(async () => {
           <template #default="{ row }">
             <!-- 用 :model-value + @update 而不是 v-model：数据模型里是 startDate/endDate 两个字段，
                  el-date-picker 的 daterange 给的是一个数组，直接 v-model 会写到一个不存在的 range 上 -->
-            <el-date-picker
+            <ch-date-picker
               :model-value="row.startDate && row.endDate ? [row.startDate, row.endDate] : null"
               :disabled="!canEdit"
               type="daterange"
@@ -343,7 +343,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--ch-space-3);
 }
 
 .label {
@@ -358,6 +358,6 @@ onMounted(async () => {
 }
 
 .holiday-tag {
-  margin: 0 6px 6px 0;
+  margin: 0 var(--ch-space-2) var(--ch-space-2) 0;
 }
 </style>

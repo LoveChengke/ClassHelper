@@ -95,12 +95,12 @@ const emit = defineEmits<{
 .plan-details {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--ch-space-3);
 }
 .detail-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--ch-space-2);
   color: var(--ch-text-secondary);
   font-size: var(--el-font-size-small);
 }
@@ -122,7 +122,7 @@ const emit = defineEmits<{
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--ch-space-2);
 }
 .inline-fields :deep(.el-input-number) {
   width: 74px;
@@ -134,8 +134,8 @@ const emit = defineEmits<{
   display: inline-flex;
   align-items: center;
   align-self: flex-start;
-  gap: 5px;
-  padding: 4px 0;
+  gap: var(--ch-space-1);
+  padding: var(--ch-space-1) 0;
   border: 0;
   background: transparent;
   color: var(--el-color-primary);
@@ -147,7 +147,7 @@ const emit = defineEmits<{
   height: 16px;
 }
 .save-plan {
-  margin-top: 4px;
+  margin-top: var(--ch-space-1);
   width: 100%;
 }
 </style>

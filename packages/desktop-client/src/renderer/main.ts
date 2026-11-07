@@ -11,6 +11,8 @@ import router from './router/index.js';
 import { registerAppIcons } from './icons.js';
 import { applyMotionTokens } from './composables/motion.js';
 import './styles/index.css';
+import { registerSharedUi } from '@classhelper/ui';
+import '@classhelper/ui/theme.css';
 
 const app = createApp(App);
 
@@ -20,6 +22,7 @@ registerAppIcons(app);
 app.use(createPinia());
 app.use(router);
 app.use(ElementPlus, { locale: zhCn });
+registerSharedUi(app);
 
 // 冒烟验证模式：把缓存自检钩子暴露给主进程调用（正常运行时不存在）。
 //

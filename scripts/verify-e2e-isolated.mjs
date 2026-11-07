@@ -117,6 +117,7 @@ try {
     { flag: 'wx' },
   );
   if (process.argv.includes('--web')) {
+    env.UI_SMOKE_ISOLATED = '1';
     env.UI_SMOKE_URL = env.VERIFY_BASE_URL;
     env.UI_SMOKE_ADMIN = `${prefix}admin`;
     env.UI_SMOKE_ADMIN_PASS = 'admin123';

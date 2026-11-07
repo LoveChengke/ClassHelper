@@ -221,7 +221,6 @@ onMounted(async () => {
     <div class="page-header">
       <div>
         <h2 class="page-title">开发者</h2>
-        <p class="page-subtitle">版本与平台、设备上报、日志、更新与调试工具</p>
       </div>
       <el-button :loading="loading" data-test="dev-refresh" @click="loadAll">
         <el-icon><Refresh /></el-icon>

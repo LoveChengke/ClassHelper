@@ -165,7 +165,11 @@ export async function savePlan(user: TokenPayload, input: z.infer<typeof planSch
   await notifyScheduleChanged(input.classId);
   return result;
 }
-export async function saveEntries(user: TokenPayload, id: string, input: z.infer<typeof entriesSchema>) {
+export async function validatePlanEntries(
+  user: TokenPayload,
+  id: string,
+  input: z.infer<typeof entriesSchema>,
+) {
   const plan = await requirePlan(user, id);
   const ids = input.entries.map((e) => e.timeLayoutItemId);
   if (
@@ -176,6 +180,10 @@ export async function saveEntries(user: TokenPayload, id: string, input: z.infer
   const courseIds = [...new Set(input.entries.flatMap((e) => (e.courseId ? [e.courseId] : [])))];
   const count = await prisma.course.count({ where: { id: { in: courseIds }, classId: plan.classId } });
   if (count !== courseIds.length) throw ApiError.badRequest('不能使用其他班级的课程');
+  return plan;
+}
+export async function saveEntries(user: TokenPayload, id: string, input: z.infer<typeof entriesSchema>) {
+  const plan = await validatePlanEntries(user, id, input);
   await prisma.$transaction(async (tx) => {
     await tx.classPlanEntry.deleteMany({ where: { classPlanId: id } });
     for (const e of input.entries) await tx.classPlanEntry.create({ data: { ...e, classPlanId: id } });

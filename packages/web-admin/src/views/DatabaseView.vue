@@ -58,7 +58,10 @@ async function runTest(): Promise<void> {
   testing.value = true;
   testResult.value = null;
   try {
-    const result = await databaseApi.testConnection({ provider: testForm.provider, url: testForm.url.trim() });
+    const result = await databaseApi.testConnection({
+      provider: testForm.provider,
+      url: testForm.url.trim(),
+    });
     testResult.value = {
       ok: result.ok,
       text: result.ok
@@ -276,7 +279,6 @@ onMounted(async () => {
     <div class="page-header">
       <div>
         <h2 class="page-title">数据库管理</h2>
-        <p class="page-subtitle">连接状态、备份恢复、导入导出与一键切换（仅管理员可见）</p>
       </div>
       <div class="toolbar">
         <el-button icon="Refresh" :loading="loading" @click="reload">刷新</el-button>
@@ -420,8 +422,8 @@ onMounted(async () => {
         <el-card shadow="never">
           <template #header><span>导入 / 导出</span></template>
           <p class="card-hint">
-            快照为 JSON 格式（含全部 14 张表数据），可在 SQLite 与 MySQL 之间互相恢复；
-            「数据库文件」仅 SQLite 提供整文件下载。
+            快照为 JSON 格式（含全部 14 张表数据），可在 SQLite 与 MySQL 之间互相恢复； 「数据库文件」仅
+            SQLite 提供整文件下载。
           </p>
           <div class="toolbar-row">
             <el-button @click="exportSnapshot">下载快照 JSON</el-button>
@@ -543,7 +545,7 @@ onMounted(async () => {
 
 <style scoped>
 .section-card {
-  margin-bottom: 2px;
+  margin-bottom: var(--ch-space-1);
 }
 
 .card-header-row {
@@ -553,17 +555,17 @@ onMounted(async () => {
 }
 
 .schedule-form {
-  margin-top: 4px;
+  margin-top: var(--ch-space-1);
 }
 
 .form-hint {
-  margin-left: 8px;
+  margin-left: var(--ch-space-2);
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }
 
 .card-hint {
-  margin: 0 0 10px;
+  margin: 0 0 var(--ch-space-3);
   font-size: 12px;
   line-height: 1.7;
   color: var(--el-text-color-secondary);
@@ -572,11 +574,11 @@ onMounted(async () => {
 .toolbar-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--ch-space-2);
   align-items: center;
 }
 
 .switch-form {
-  margin-top: 2px;
+  margin-top: var(--ch-space-1);
 }
 </style>

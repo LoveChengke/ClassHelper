@@ -137,21 +137,21 @@ watch(
 }
 
 .update-name {
-  margin-top: 12px;
+  margin-top: var(--ch-space-3);
   font-size: 13px;
   font-weight: 600;
   color: var(--el-text-color-primary);
 }
 
 .update-notes-label {
-  margin: 12px 0 6px;
+  margin: var(--ch-space-3) 0 var(--ch-space-2);
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }
 
 .update-notes {
   margin: 0;
-  padding: 10px 12px;
+  padding: var(--ch-space-3) var(--ch-space-3);
   max-height: 200px;
   overflow: auto;
   background: var(--el-fill-color-light);
@@ -166,14 +166,14 @@ watch(
 
 .update-assets {
   margin: 0;
-  padding-left: 18px;
+  padding-left: var(--ch-space-5);
   font-size: 12px;
   line-height: 1.9;
   color: var(--el-text-color-regular);
 }
 
 .update-asset-size {
-  margin-left: 6px;
+  margin-left: var(--ch-space-2);
   color: var(--el-text-color-secondary);
 }
 </style>

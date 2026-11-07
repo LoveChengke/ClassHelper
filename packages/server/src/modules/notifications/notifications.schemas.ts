@@ -23,6 +23,8 @@ export const listNotificationsQuerySchema = z.object({
 
 /** GET /notifications/days 与 GET /notifications/creators 的筛选条件（不含 date 自身） */
 export const notificationArchiveQuerySchema = z.object({
+  unreadOnly: booleanFlagSchema,
+  keyword: z.string().trim().max(64).optional(),
   classId: z.string().min(1).optional(),
   priority: notificationPrioritySchema.optional(),
   createdBy: z.string().min(1).optional(),

@@ -107,13 +107,29 @@ export async function listNotifications(
  */
 export async function listNotificationDays(
   user: TokenPayload,
-  options: { classId?: string; priority?: string; createdBy?: string; from?: string; to?: string },
+  options: {
+    classId?: string;
+    unreadOnly?: boolean;
+    priority?: string;
+    keyword?: string;
+    createdBy?: string;
+    from?: string;
+    to?: string;
+  },
 ): Promise<NotificationDaysDto> {
   await assertPermissionOrClassDevice(user, 'notification:read');
   const scope = await resolveClassScope(user, options.classId, 'notification:read');
+  const personal = personalIdWhere(await resolvePersonalIds(user));
   const grouped = await prisma.notification.groupBy({
     by: ['assignDate'],
-    where: { ...classScopeWhere(scope), ...archiveWhere(options) },
+    where: {
+      ...classScopeWhere(scope),
+      ...archiveWhere(options),
+      ...(options.unreadOnly ? { reads: { none: personal } } : {}),
+      ...(options.keyword
+        ? { OR: [{ title: { contains: options.keyword } }, { content: { contains: options.keyword } }] }
+        : {}),
+    },
     _count: { _all: true },
   });
 

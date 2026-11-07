@@ -27,7 +27,6 @@ async function logout(): Promise<void> {
     <div class="page-header">
       <div>
         <h2 class="page-title">账号</h2>
-        <p class="page-subtitle">本机登录的班级账号</p>
       </div>
     </div>
 

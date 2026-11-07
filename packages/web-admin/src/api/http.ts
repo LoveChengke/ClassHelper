@@ -1,7 +1,10 @@
+import type { AiExecutionRequest } from '@classhelper/shared';
 import axios, { type AxiosError, type AxiosRequestConfig } from 'axios';
 import { ElMessage } from 'element-plus';
 import { STORAGE_KEYS, type ApiErrorResponse, type ApiResponse } from '@classhelper/shared';
 import { API_BASE_URL } from '@/config';
+import { clearCalendarCache } from '@/composables/calendarCache';
+import { allowsAiExecution } from '@/composables/assistantRequests';
 
 /**
  * Axios 封装：
@@ -37,6 +40,7 @@ instance.interceptors.response.use(
     const message = error.response?.data?.message ?? error.message ?? '网络请求失败';
 
     if (status === 401) {
+      clearCalendarCache();
       localStorage.removeItem(STORAGE_KEYS.token);
       localStorage.removeItem(STORAGE_KEYS.user);
       ElMessage.warning('登录状态已失效，请重新登录');
@@ -56,6 +60,31 @@ async function request<T>(config: AxiosRequestConfig): Promise<T> {
 }
 
 export const api = {
+  executeAi: <T>(
+    stepId: string,
+    action: AiExecutionRequest,
+    file?: File,
+    signal?: AbortSignal,
+    progress?: (percent: number) => void,
+  ): Promise<T> => {
+    if (!allowsAiExecution(action)) throw new Error('助手不允许执行此请求');
+    return request<T>({
+      method: action.method,
+      url: action.path,
+      params: action.query,
+      data: file ?? action.body,
+      signal,
+      timeout: file || action.path === '/update/client/fetch' ? 600000 : 120000,
+      headers: {
+        'x-classhelper-ai-step': stepId,
+        ...(file
+          ? { 'content-type': 'application/octet-stream', 'x-classhelper-ai-sha256': action.sha256 }
+          : {}),
+      },
+      onUploadProgress: (event) =>
+        progress?.(Math.min(100, Math.round(100 * (event.loaded / (event.total || file?.size || 1))))),
+    });
+  },
   get: <T>(url: string, params?: Record<string, unknown>): Promise<T> =>
     request<T>({ method: 'GET', url, params }),
   post: <T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> =>

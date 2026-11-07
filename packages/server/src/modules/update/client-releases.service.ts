@@ -49,10 +49,7 @@ type ReleaseRow = {
 };
 
 function releaseRoot(): string {
-  // 与 database 模块的备份目录同口径：<serverRoot>/../data
-  const dir = path.join(env.serverRoot, '..', 'data', CLIENT_RELEASE_DIR);
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
+  return path.join(env.serverRoot, '..', 'data', CLIENT_RELEASE_DIR);
 }
 
 function releaseDir(version: string): string {
@@ -84,6 +81,27 @@ async function sha256Of(file: string): Promise<string> {
   const hash = crypto.createHash('sha256');
   await pipeline(fs.createReadStream(file), hash);
   return hash.digest('hex');
+}
+
+/** 仅检查缓存文件和当前登记，不创建目录或修改记录。 */
+export async function inspectClientRelease(
+  actor: TokenPayload,
+  input: RegisterClientReleaseInput,
+  requireFile = false,
+) {
+  assertAdmin(actor);
+  const row = await prisma.clientRelease.findUnique({ where: { version: input.version } });
+  const fileName = input.fileName ?? row?.fileName ?? clientReleaseFileName(input.version);
+  const file = releaseFilePath(input.version, fileName);
+  const exists = fs.existsSync(file);
+  if (requireFile && !exists) throw ApiError.badRequest('请先把安装包放入对应版本的客户端缓存目录');
+  if (exists && !fs.statSync(file).isFile()) throw ApiError.badRequest('安装包必须是普通文件');
+  return {
+    version: input.version,
+    fileName,
+    file: exists ? { size: fs.statSync(file).size, sha256: await sha256Of(file) } : null,
+    current: row ? toReleaseDto(row) : null,
+  };
 }
 
 /** GET /api/update/client/releases - 已缓存的安装包（按版本从新到旧） */

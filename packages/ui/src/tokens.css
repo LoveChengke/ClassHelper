@@ -1,0 +1,21 @@
+:root {
+  --ch-ui-primary: #5d6bfa;
+  --ch-ui-bg: #f7f8fa;
+  --ch-ui-surface: #fff;
+  --ch-ui-surface-alt: #f3f5f9;
+  --ch-ui-border: #e6e9ef;
+  --ch-ui-text: #242936;
+  --ch-ui-muted: #737c8e;
+  --ch-ui-radius: 8px;
+  --ch-ui-gap: 16px;
+  --ch-ui-shadow: 0 8px 30px rgb(30 40 70 / 8%);
+}
+html.dark {
+  --ch-ui-bg: #14161a;
+  --ch-ui-surface: #1d2027;
+  --ch-ui-surface-alt: #252934;
+  --ch-ui-border: #343946;
+  --ch-ui-text: #e9edf5;
+  --ch-ui-muted: #a2abbd;
+  --ch-ui-shadow: 0 8px 30px rgb(0 0 0 / 25%);
+}
