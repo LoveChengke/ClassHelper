@@ -20,8 +20,7 @@ import type { ClassPlanYamlImportInput } from './imports.schemas.js';
  * 这里把它**归一化成 ClassIsland 兼容的 `{ TimeLayouts, ClassPlans, Subjects }` 载荷**，
  * 再交给 `importProfile()` 写入：
  * - merge / replace、稳定 id、事务回滚、权限与 `notifyScheduleChanged` 全部复用现有一份实现；
- * - 全部 schedules 里出现过的不同 (start_time, end_time) 合并成一张时间表，
- *   LESSON 时间点按时间排序，同一天没列出的时间点写成空课（IsEmpty）；
+ * - 作息存在差异时按日期与周相位生成独立子时间表，保留当天显式空课；
  * - 单双周映射：all → WeekCountDiv=0，odd → 1/2，even → 2/2；
  * - enable_day 1=周一 … 7=周日，ClassIsland 的 WeekDay 同样 1=周一 … 7=周日，直接对应。
  *
@@ -605,45 +604,44 @@ export function buildClassIslandProfile(
       ...(subject.initial ? { Initial: subject.initial } : {}),
     };
   }
-  const layouts: Record<string, unknown> = {
-    'yaml-layout': {
-      Name: LAYOUT_NAME,
-      Layouts: parsed.layout.map((point) => ({
-        StartTime: point.startTime,
-        EndTime: point.endTime,
-        TimeType: 0,
-        Name: '',
-      })),
-    },
-  };
+  const signatures = new Set(
+    parsed.schedules.map((s) => JSON.stringify(s.lessons.map((l) => [l.startTime, l.endTime]))),
+  );
+  const split = signatures.size > 1;
+  const layouts: Record<string, unknown> = {};
   const plans: Record<string, unknown> = {};
+  if (split) layouts['yaml-layout'] = { Name: LAYOUT_NAME, Layouts: [] };
   for (const schedule of parsed.schedules) {
-    const lessonByTime = new Map(
-      schedule.lessons
-        .filter((lesson) => lesson.subject)
-        .map((lesson) => [`${lesson.startTime}-${lesson.endTime}`, lesson]),
-    );
-    const classes = parsed.layout.map((point) => {
-      const lesson = lessonByTime.get(`${point.startTime}-${point.endTime}`);
-      if (!lesson) return { IsEmpty: true, IsEnabled: true };
-      return {
-        SubjectId: `yaml-subject-${lesson.subject}`,
-        IsEnabled: true,
-        Location: lesson.location || '',
-      };
-    });
-    plans[`yaml-plan-${schedule.weekday}-${schedule.parity.toLowerCase()}`] = {
+    const key = `yaml-plan-${schedule.weekday}-${schedule.parity.toLowerCase()}`;
+    const layoutId = split
+      ? `yaml-layout-${schedule.weekday}-${schedule.parity.toLowerCase()}`
+      : 'yaml-layout';
+    const lessons = [...schedule.lessons].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    layouts[layoutId] = {
+      Name: split
+        ? `${WEEKDAY_LABELS[schedule.weekday - 1]}${schedule.parity === 'ALL' ? '' : schedule.parity === 'ODD' ? '（单周）' : '（双周）'}`
+        : LAYOUT_NAME,
+      ParentTimeLayoutId: split ? 'yaml-layout' : null,
+      Layouts: lessons.map((l, i) => ({
+        StartTime: l.startTime,
+        EndTime: l.endTime,
+        TimeType: 0,
+        Name: `第 ${i + 1} 节`,
+        SlotKey: `lesson-${i + 1}`,
+      })),
+    };
+    plans[key] = {
       Name: schedule.name,
-      TimeLayoutId: 'yaml-layout',
-      TimeRule: {
-        WeekDay: schedule.weekday,
-        WeekCountDiv: parityDiv(schedule.parity),
-        WeekCountDivTotal: 2,
-      },
+      TimeLayoutId: layoutId,
+      TimeRule: { WeekDay: schedule.weekday, WeekCountDiv: parityDiv(schedule.parity), WeekCountDivTotal: 2 },
       WeekStart: 1,
       WeekEnd: weekEnd,
       IsEnabled: true,
-      Classes: classes,
+      Classes: lessons.map((l) =>
+        l.subject
+          ? { SubjectId: `yaml-subject-${l.subject}`, IsEnabled: true, Location: l.location || '' }
+          : { IsEmpty: true, IsEnabled: true },
+      ),
     };
   }
   return { TimeLayouts: layouts, ClassPlans: plans, Subjects: subjects };
@@ -667,7 +665,12 @@ export async function previewYamlClassPlan(
     entries: parsed.entries,
     subjects: parsed.subjectNames,
     missingSubjects: parsed.subjectNames.filter((name) => !existing.has(name)),
-    layoutNames: parsed.layout.length > 0 ? [LAYOUT_NAME] : [],
+    layoutNames:
+      parsed.layout.length > 0
+        ? Object.values(
+            buildClassIslandProfile(parsed, 1).TimeLayouts as Record<string, { Name: string }>,
+          ).map((l) => l.Name)
+        : [],
     planCount: parsed.planCount,
     errors: parsed.errors,
     warnings: parsed.warnings,

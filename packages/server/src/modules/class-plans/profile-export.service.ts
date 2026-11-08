@@ -47,9 +47,12 @@ export async function exportProfile(user: TokenPayload, classId: string) {
         l.id,
         {
           Name: l.name,
+          ParentTimeLayoutId: l.parentId,
           IsOverlay: l.isOverlay,
           OverlaySourceId: l.overlaySourceId,
           Layouts: l.points.map((p) => ({
+            SlotKey: p.slotKey,
+            IsAutoBreak: p.isAutoBreak,
             Name: p.name,
             StartTime: p.startTime,
             EndTime: p.endTime,

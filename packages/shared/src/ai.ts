@@ -41,18 +41,24 @@ export interface AiPlanStep extends AiOperation {
   request?: AiExecutionRequest;
 }
 export interface AiConversationRequest {
+  supersedesTaskId?: string;
+  conversationId?: string;
   text: string;
   classId?: string;
   messages?: { role: 'user' | 'assistant'; content: string }[];
   attachments?: AiAttachment[];
 }
 export interface AiConversationResult {
+  questions?: { id: string; text: string; options?: string[] }[];
   planId: string | null;
   message: string;
   steps: AiPlanStep[];
   results: { action: string; label: string; data: unknown; operation?: AiOperation }[];
 }
 export interface AiTaskDto {
+  classId?: string;
+  conversationId?: string | null;
+  turnNumber?: number;
   id: string;
   state: string;
   text: string;

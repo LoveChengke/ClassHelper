@@ -205,6 +205,14 @@ export async function listFolders(user: TokenPayload) {
 }
 export async function createFolder(user: TokenPayload, folderPath: string) {
   await assertPermission(user, 'courseware:write');
+  for (let i = 1; i < folderPath.split('/').length; i++) {
+    const parent = folderPath.split('/').slice(0, i).join('/');
+    await prisma.coursewareFolder.upsert({
+      where: { ownerId_path: { ownerId: user.sub, path: parent } },
+      create: { ownerId: user.sub, path: parent },
+      update: {},
+    });
+  }
   const row = await prisma.coursewareFolder.upsert({
     where: { ownerId_path: { ownerId: user.sub, path: folderPath } },
     create: { ownerId: user.sub, path: folderPath },

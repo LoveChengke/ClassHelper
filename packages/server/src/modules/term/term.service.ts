@@ -13,7 +13,7 @@ import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
 import { getMaxTermWeeks, loadTermContext, resolveCurrentWeek } from '../../lib/term.js';
-import { SETTING_KEYS, setSetting } from '../../lib/settings.js';
+import { SETTING_KEYS } from '../../lib/settings.js';
 import { emitToClass } from '../../realtime/bus.js';
 import { SOCKET_EVENTS } from '@classhelper/shared';
 import type { AutoTermWeeksInput, UpdateTermWeeksInput } from './term.schemas.js';
@@ -111,6 +111,24 @@ export async function updateTermWeeks(
   }
 
   await prisma.$transaction([
+    ...(!scope && input.termStartDate
+      ? [
+          prisma.appSetting.upsert({
+            where: { key: SETTING_KEYS.termStartDate },
+            create: { key: SETTING_KEYS.termStartDate, value: input.termStartDate },
+            update: { value: input.termStartDate },
+          }),
+        ]
+      : []),
+    ...(input.maxTermWeeks !== undefined
+      ? [
+          prisma.appSetting.upsert({
+            where: { key: SETTING_KEYS.termMaxWeeks },
+            create: { key: SETTING_KEYS.termMaxWeeks, value: String(maximum) },
+            update: { value: String(maximum) },
+          }),
+        ]
+      : []),
     prisma.termWeek.deleteMany({ where: { classId: scope } }),
     ...(input.weeks.length > 0
       ? [
@@ -130,15 +148,7 @@ export async function updateTermWeeks(
       : []),
   ]);
 
-  // 全校默认没有"班级记录"可以挂开学日期，写进全局设置（`term.startDate`）。
-  // 需求：「服务端可设置学期开始日期，以保证当前周次正确，管理员也可以随时纠正」——
-  // 原先这一级只能来自 `.env`，改一次要动文件 + 重启。
-  if (input.termStartDate && !scope) {
-    await setSetting(SETTING_KEYS.termStartDate, input.termStartDate);
-  }
-
-  logger.info(`学期周次已更新：范围=${scope || '全校默认'} 周数=${input.weeks.length} 由 ${user.name} 执行`);
-  if (input.maxTermWeeks !== undefined) await setSetting(SETTING_KEYS.termMaxWeeks, String(maximum));
+  logger.info(`学期周次已更新：范围=${scope || '全校默认'} 周数=${input.weeks.length}`);
   await publishTermChange(scope);
   return readTermWeeks(scope);
 }
@@ -155,12 +165,17 @@ export async function autoTermWeeks(user: TokenPayload, input: AutoTermWeeksInpu
   else assertAdmin(user);
   const context = await loadTermContext(scope || null);
   const termStartDate = input.termStartDate || context.termStartDate || env.termStartDate;
-  const maxWeek = input.maxWeek ?? context.maxWeek;
+  const maxWeek = scope ? context.maxWeek : (input.maxTermWeeks ?? input.maxWeek ?? context.maxWeek);
 
   const weeks = buildAutoTermWeeks(termStartDate, maxWeek);
   if (weeks.length === 0) throw ApiError.badRequest('请先填写学期开始日期（第 1 教学周的周一）');
 
-  return updateTermWeeks(user, { classId: scope || null, termStartDate, weeks });
+  return updateTermWeeks(user, {
+    classId: scope || null,
+    termStartDate,
+    weeks,
+    ...(scope ? {} : { maxTermWeeks: input.maxTermWeeks }),
+  });
 }
 
 /* ------------------------------------------------------------------ 调休建议（联网，可选） */

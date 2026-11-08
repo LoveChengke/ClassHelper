@@ -30,6 +30,7 @@ const layout = defineModel<TimeLayoutDetailDto | undefined>('layout', { default:
 const emit = defineEmits<{
   'select-layout': [id: string];
   create: [];
+  'create-child': [parentId: string];
   clone: [];
   save: [];
   refresh: [];
@@ -67,7 +68,13 @@ let reorderFrom = '';
 let reorderTo = '';
 let draftSequence = 0;
 
-const visibleLayouts = computed(() => props.layouts.filter((item) => item.name.includes(search.value)));
+const visibleLayouts = computed(() =>
+  props.layouts
+    .filter((item) => !item.parentId)
+    .flatMap((parent) => [parent, ...props.layouts.filter((child) => child.parentId === parent.id)])
+    .filter((item) => item.name.includes(search.value))
+    .map((item) => ({ ...item, name: item.parentId ? '　↳ ' + item.name : item.name })),
+);
 const points = computed(() => layout.value?.points ?? []);
 const selected = computed<TimePointDto | undefined>(() =>
   points.value.find((point) => point.id === selectedId.value),
@@ -346,6 +353,14 @@ onUnmounted(() => {
     </aside>
 
     <main class="layout-main">
+      <button
+        v-if="layout && !layout.parentId"
+        class="command"
+        :disabled="!canCreate"
+        @click="emit('create-child', layout.id)"
+      >
+        新建子时间表
+      </button>
       <header class="layout-toolbar">
         <button class="command" :disabled="!canEdit || !layout" @click="addPoint('LESSON')">
           <ArchiveIcon name="lesson" />

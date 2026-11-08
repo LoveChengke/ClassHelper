@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { countDates } from '@classhelper/ui';
+import { countDates, CoursewareFolders } from '@classhelper/ui';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
@@ -24,11 +24,16 @@ async function refreshLocal() {
 // 两个来源的教师与目录不通用，切换时清空，避免看到空列表却找不到原因。
 watch(library, () => {
   teacher.value = '';
+  folderPath.value = '';
+  folderOwner.value = '';
 });
 const items = ref<CoursewareDto[]>([]),
   loading = ref(false),
   offline = ref(false),
   error = ref('');
+const folderPath = ref(''),
+  folderOwner = ref(''),
+  grouping = ref('folder');
 const query = ref(''),
   category = ref(''),
   date = ref(''),
@@ -38,6 +43,11 @@ const dateSource = computed(() =>
   source.value.filter(
     (item) =>
       (!query.value || `${item.name} ${item.teacher.name}`.includes(query.value)) &&
+      (grouping.value !== 'folder' ||
+        ((item.folderPath || '') === folderPath.value &&
+          (folderOwner.value
+            ? item.teacher.id === folderOwner.value
+            : new Set(items.value.map((i) => i.teacher.id)).size <= 1))) &&
       (!category.value || item.category === category.value) &&
       (!teacher.value || item.teacher.name === teacher.value),
   ),
@@ -112,6 +122,16 @@ onUnmounted(() => {
 </script>
 <template>
   <div class="page courseware-page">
+    <el-radio-group v-model="grouping">
+      <el-radio-button value="folder">文件夹</el-radio-button>
+      <el-radio-button value="date">日期归档</el-radio-button>
+    </el-radio-group>
+    <CoursewareFolders
+      v-if="grouping === 'folder'"
+      v-model:path="folderPath"
+      v-model:owner="folderOwner"
+      :items="source"
+    />
     <header class="page-header">
       <div>
         <h2 class="page-title">课件</h2>

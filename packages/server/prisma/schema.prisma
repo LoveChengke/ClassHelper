@@ -401,6 +401,7 @@ model NotificationRead {
 
 /// 课表时间配置（ClassIsland 同款 JSON 导入后的节次时间表）
 model TimeLayout {
+  parentId String?
   id        String   @id @default(cuid())
   classId   String?
   name      String
@@ -648,6 +649,8 @@ model Exam {
 
 /// 服务端不用单机 Profile：全校共享时间表 + 班级日课表替代档案。
 model TimeLayoutItem {
+  slotKey String @default("")
+  isAutoBreak Boolean @default(false)
   id String @id @default(cuid())
   timeLayoutId String
   position Int
@@ -832,6 +835,9 @@ model AiPlanStep {
 
 /// 持久化后台任务；输入、结果和阶段消息加密，连接断开不取消任务。
 model AiTask {
+  conversationId String?
+  turnNumber Int @default(1)
+  @@unique([conversationId, turnNumber])
   id        String   @id @default(cuid())
   userId    String
   state     String   @default("preparing")
@@ -843,4 +849,14 @@ model AiTask {
   updatedAt DateTime @updatedAt
 
   @@index([userId, createdAt])
+}
+
+/// 账号所属对话；内容仍使用 AiTask 的加密输入与结果。
+model AiConversation {
+ id String @id @default(cuid())
+ userId String
+ title String @default("")
+ createdAt DateTime @default(now())
+ updatedAt DateTime @updatedAt
+ @@index([userId, updatedAt])
 }

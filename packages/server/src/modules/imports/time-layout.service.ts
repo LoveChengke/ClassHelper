@@ -368,6 +368,8 @@ export async function importTimeLayout(
     const previousPoint = candidates.find((old) => old.endTime === p.endTime) || candidates[0];
     if (previousPoint) claimed.add(previousPoint.id);
     return {
+      slotKey: previousPoint?.slotKey || '',
+      isAutoBreak: false,
       id: previousPoint?.id,
       position,
       name: p.name,

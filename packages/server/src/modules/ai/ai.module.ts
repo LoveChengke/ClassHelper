@@ -27,6 +27,29 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const router = Router();
 router.use(authenticate());
+router.post('/conversations', requirePermission('ai:use'), async (req, res) => {
+  sendOk(res, await tasks.createConversation(getAuthUser(req)));
+});
+router.get('/conversations', requirePermission('ai:use'), async (req, res) => {
+  sendOk(
+    res,
+    await tasks.conversations(
+      getAuthUser(req),
+      typeof req.query.before === 'string' ? req.query.before : undefined,
+    ),
+  );
+});
+router.get(
+  '/conversations/:id',
+  requirePermission('ai:use'),
+  validate({ params: planIdSchema }),
+  async (req, res) => {
+    const before = Number(req.query.before);
+    if (req.query.before !== undefined && (!Number.isInteger(before) || before < 1))
+      throw ApiError.badRequest('轮次游标无效');
+    sendOk(res, await tasks.conversationTurns(getAuthUser(req), String(req.params.id), before || undefined));
+  },
+);
 
 router.get(
   '/tasks/:id/events',
@@ -63,7 +86,7 @@ router.get(
             sent.add(JSON.stringify(event));
           }
         }
-        if (['ready', 'succeeded'].includes(current.state) && current.result) {
+        if (['ready', 'succeeded', 'waiting_input'].includes(current.state) && current.result) {
           send({ type: 'result', result: current.result });
           break;
         }

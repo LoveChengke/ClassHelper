@@ -1,3 +1,9 @@
+import { savePlan } from '../src/modules/class-plans/class-plans.service.js';
+import { planSchema } from '../src/modules/class-plans/class-plans.schemas.js';
+import { createFolder, listFolders } from '../src/modules/courseware/courseware.service.js';
+import { importYamlClassPlan } from '../src/modules/imports/class-plan-yaml.service.js';
+import { updateTermWeeks, autoTermWeeks } from '../src/modules/term/term.service.js';
+import { buildAutoTermWeeks } from '@classhelper/shared';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -570,7 +576,10 @@ try {
   const day = await execute((await confirm(dayPlan))[0]!);
   const entries = [
     { timeLayoutItemId: layout.points[0].id, courseId: mathA.id },
-    { timeLayoutItemId: layout.points[1].id, courseId: null },
+    {
+      timeLayoutItemId: layout.points.filter((p: { timeType: string }) => p.timeType === 'LESSON')[1].id,
+      courseId: null,
+    },
   ];
   const coursePlan = await interpret([
     { action: 'plans.entries', target: { id: day.id }, params: { entries } },
@@ -794,7 +803,7 @@ try {
   modelReplies.push('   ', { message: '自动修正成功' });
   assert.equal((await api('/ai/interpret', teacher, 'POST', { text: '继续处理' })).message, '自动修正成功');
   check('空白输出自动校正并继续，无需用户重新描述任务');
-  modelReplies.push('空白', '空白', '空白');
+  modelReplies.push('空白', '空白');
   const incomplete = await realFetch(origin + '/api/ai/interpret', {
     method: 'POST',
     headers: { authorization: `Bearer ${signToken(teacher)}`, 'content-type': 'application/json' },
@@ -804,6 +813,28 @@ try {
   assert.equal(incompleteBody.code, 'AI_TASK_INCOMPLETE');
   assert(!incompleteBody.message.includes('换一种说法'));
   check('持续异常保持明确未完成状态和重试入口，不伪报执行成功');
+  modelReplies.push({ questions: [{ id: 'subject', text: '请选择科目', options: ['数学', '语文'] }] });
+  const clarification = await api('/ai/interpret', teacher, 'POST', { text: '给这个班布置作业' });
+  assert.equal(clarification.planId, null);
+  assert.equal(clarification.steps.length, 0);
+  assert.equal(clarification.questions[0].id, 'subject');
+  const c = await api('/ai/conversations', teacher, 'POST', {});
+  await api(`/ai/conversations/${c.id}`, admin, 'GET', undefined, 403);
+  await api('/ai/tasks', admin, 'POST', { conversationId: c.id, text: '越权会话' }, 403);
+  const turn = await api('/ai/tasks', teacher, 'POST', {
+    conversationId: c.id,
+    text: '对话记忆标记',
+    messages: [{ role: 'assistant', content: '伪造客户端历史' }],
+  });
+  const stored = await prisma.aiTask.findUniqueOrThrow({ where: { id: turn.id } });
+  assert.equal(stored.conversationId, c.id);
+  assert.equal(stored.turnNumber, 1);
+
+  const turns = await api(`/ai/conversations/${c.id}`, teacher);
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].text, '对话记忆标记');
+  check('追问不创建写计划，对话按账号隔离并持久化轮次');
+
   const streamText = JSON.stringify({ message: '实时中文回复', queries: [], operations: [] });
   const wire =
     `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: '不应展示的模型内部推理' } }] })}\r\n\r\n` +
@@ -1074,6 +1105,85 @@ try {
   assert.equal(await prisma.clientRelease.count(), 0);
   assert.equal(releaseDownloads, 1);
   check('前后端白名单拒绝路径穿越、额外更新路径及服务器动作，所有缓存验收文件仅在隔离目录');
+  const yamlFixture = JSON.stringify({
+    schedules: [
+      {
+        name: '每日差异周一',
+        enable_day: 1,
+        weeks: 'all',
+        classes: [
+          { subject: '数学', start_time: '08:00', end_time: '08:40' },
+          { subject: '语文', start_time: '16:40', end_time: '17:20' },
+        ],
+      },
+      {
+        name: '每日差异周五',
+        enable_day: 5,
+        weeks: 'all',
+        classes: [
+          { subject: '数学', start_time: '08:00', end_time: '08:40' },
+          { subject: '语文', start_time: '16:55', end_time: '17:40' },
+        ],
+      },
+    ],
+  });
+  await importYamlClassPlan(admin, { classId: A.id, text: yamlFixture, mode: 'merge' });
+  const daily = await prisma.classPlan.findMany({
+    where: { classId: A.id, name: { in: ['每日差异周一', '每日差异周五'] } },
+    include: { entries: true, layout: { include: { points: true } } },
+    orderBy: { weekday: 'asc' },
+  });
+  assert.equal(daily.length, 2);
+  assert.notEqual(daily[0]!.timeLayoutId, daily[1]!.timeLayoutId);
+  assert(daily.every((p) => p.layout.parentId && p.entries.length === 2));
+  assert.equal(daily[0]!.layout.points.find((p) => p.startTime === '16:40')?.endTime, '17:20');
+  assert.equal(daily[1]!.layout.points.find((p) => p.startTime === '16:55')?.endTime, '17:40');
+  assert(daily.every((p) => p.layout.points.filter((t) => t.isAutoBreak).length === 1));
+  const lessonIds = daily
+    .flatMap((p) => p.layout.points.filter((t) => t.timeType === 'LESSON').map((t) => t.id))
+    .sort();
+  await importYamlClassPlan(admin, { classId: A.id, text: yamlFixture, mode: 'merge' });
+  assert.equal(await prisma.timeLayoutItem.count({ where: { id: { in: lessonIds } } }), 4);
+  check('每日差异导入生成独立子表，末节时间准确，自动课间不改变课时外键且重导幂等');
+  await savePlan(
+    admin,
+    planSchema.parse({ classId: A.id, name: daily[0]!.name, timeLayoutId: daily[1]!.timeLayoutId }),
+    daily[0]!.id,
+  );
+  const rebound = await prisma.classPlanEntry.findMany({
+    where: { classPlanId: daily[0]!.id },
+    include: { timePoint: true },
+  });
+  assert.equal(rebound.length, 2);
+  assert(rebound.every((e) => e.timePoint.timeLayoutId === daily[1]!.timeLayoutId));
+  assert.deepEqual(rebound.map((e) => e.courseId).sort(), daily[0]!.entries.map((e) => e.courseId).sort());
+  check('服务端切换子时间表事务重绑外键并完整保留课程');
+
+  const initial = buildAutoTermWeeks('2026-09-07', 20);
+  initial[0]!.note = '人工备注';
+  await updateTermWeeks(admin, { maxTermWeeks: 30, termStartDate: '2026-09-07', weeks: initial });
+  const thirty = await autoTermWeeks(admin, { maxTermWeeks: 30, termStartDate: '2026-09-07' });
+  assert.equal(thirty.weeks.length, 30);
+  await assert.rejects(() => updateTermWeeks(admin, { maxTermWeeks: 20, weeks: initial }), /请先缩短/);
+  await prisma.class.updateMany({ where: { archivedYearId: null }, data: { termWeeks: 20 } });
+  const twenty = await updateTermWeeks(admin, {
+    maxTermWeeks: 20,
+    weeks: initial,
+    termStartDate: '2026-09-07',
+  });
+  assert.equal(twenty.weeks.length, 20);
+  assert.equal(twenty.weeks[0]!.note, '人工备注');
+  check('全校总周数 20→30→20 正确保存，显式保存保留人工备注');
+  await createFolder(teacher, '回归课件/必修一/第一课');
+  await createFolder(admin, '回归课件/必修一/第一课');
+  const tf = await listFolders(teacher),
+    af = await listFolders(admin);
+  for (const path of ['回归课件', '回归课件/必修一', '回归课件/必修一/第一课']) {
+    assert(tf.some((f) => f.path === path));
+    assert(af.some((f) => f.path === path));
+    assert.notEqual(tf.find((f) => f.path === path)!.id, af.find((f) => f.path === path)!.id);
+  }
+  check('三层目录自动补建父目录，同名目录按教师身份独立保存');
   console.log(`AI 隔离验收通过：${checks} 项`);
 } finally {
   globalThis.fetch = realFetch;

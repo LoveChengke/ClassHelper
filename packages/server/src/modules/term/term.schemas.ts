@@ -25,6 +25,7 @@ export const updateTermWeeksSchema = z.object({
 });
 
 export const autoTermWeeksSchema = z.object({
+  maxTermWeeks: z.coerce.number().int().min(1).max(60).optional(),
   classId: z.string().min(1).nullish(),
   termStartDate: termStartDateSchema.optional(),
   maxWeek: z.coerce.number().int().min(1).max(60).optional(),

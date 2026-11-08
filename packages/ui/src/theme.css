@@ -264,3 +264,36 @@ html.care-mode .ch-calendar .el-date-picker {
     flex-wrap: wrap;
   }
 }
+
+/* 长内容与窄窗口保持可操作，滚动留在业务容器内。 */
+html body :is(.page-header, .filters, .toolbar, .filter-bar, .page-actions) {
+  flex-wrap: wrap;
+  row-gap: 12px;
+  min-width: 0;
+}
+html body :is(.page-header, .filters, .toolbar, .filter-bar) > * {
+  max-width: 100%;
+  min-width: 0;
+}
+html body :is(.el-dialog, .el-message-box) {
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+}
+html body :is(.el-dialog__body, .el-card__body) {
+  overflow-wrap: anywhere;
+}
+html body :is(.el-form-item__content, .el-select, .el-input) {
+  min-width: 0;
+}
+@media (max-width: 600px) {
+  html body .page {
+    padding: 16px;
+  }
+  html body :is(.filters, .filter-bar) > * {
+    flex: 1 1 160px;
+  }
+  html body .el-dialog {
+    width: calc(100vw - 32px) !important;
+  }
+}

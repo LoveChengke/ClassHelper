@@ -1,3 +1,4 @@
+import { fillLayoutBreaks } from './auto-breaks.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { isDayKey, dayKeyLocal } from '@classhelper/shared';
@@ -102,6 +103,17 @@ export async function importProfile(user: TokenPayload, classId: string, payload
         await tx.scheduledClassPlan.deleteMany({ where: { classId } });
         await tx.classPlan.deleteMany({ where: { classId } });
       }
+      for (const [id, value] of Object.entries(layouts)) {
+        const parent = object(value).ParentTimeLayoutId;
+        if (
+          parent != null &&
+          (typeof parent !== 'string' ||
+            !layouts[parent] ||
+            parent === id ||
+            object(layouts[parent]).ParentTimeLayoutId)
+        )
+          throw ApiError.badRequest('父时间表不存在或存在循环、嵌套关系');
+      }
       const layoutIds = new Map<string, { id: string; lessons: string[] }>();
       for (const [id, value] of Object.entries(layouts)) {
         const l = object(value),
@@ -129,6 +141,8 @@ export async function importProfile(user: TokenPayload, classId: string, payload
           if (timeType !== 'DIVIDER' && startTime >= endTime)
             throw ApiError.badRequest('时间点结束必须晚于开始');
           const pointData = {
+            slotKey: typeof p.SlotKey === 'string' ? p.SlotKey.slice(0, 100) : '',
+            isAutoBreak: p.IsAutoBreak === true,
             timeLayoutId: created.id,
             position,
             name: String(p.Name || '').slice(0, 64),
@@ -150,6 +164,14 @@ export async function importProfile(user: TokenPayload, classId: string, payload
         }
         await tx.timeLayoutItem.deleteMany({ where: { timeLayoutId: created.id, id: { notIn: pointIds } } });
         layoutIds.set(id, { id: created.id, lessons });
+      }
+      for (const [id, value] of Object.entries(layouts)) {
+        const target = layoutIds.get(id),
+          parent = layoutIds.get(String(object(value).ParentTimeLayoutId));
+        if (target) {
+          await tx.timeLayout.update({ where: { id: target.id }, data: { parentId: parent?.id ?? null } });
+          await fillLayoutBreaks(tx, target.id);
+        }
       }
       for (const [id, value] of Object.entries(layouts)) {
         const source = layoutIds.get(String(object(value).OverlaySourceId)),

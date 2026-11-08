@@ -219,7 +219,7 @@ onMounted(async () => {
 }
 
 .about-extra {
-  margin-left: auto;
+  margin-left: 12px;
   margin-right: 12px;
   font-size: 12px;
   font-weight: 400;

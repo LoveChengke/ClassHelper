@@ -22,6 +22,7 @@ import AssistantData from '@/components/AssistantData.vue';
 import UrgentClassWarning from '@/components/UrgentClassWarning.vue';
 import { observeTask } from '@/composables/assistantStream';
 interface ChatMessage {
+  taskId?: string;
   role: 'user' | 'assistant';
   content: string;
   result?: AiConversationResult;
@@ -29,6 +30,85 @@ interface ChatMessage {
   state?: 'working' | 'done' | 'stopped';
 }
 const auth = useAuthStore();
+let viewEpoch = 0;
+const replacePlan = ref(false);
+const conversationId = ref('');
+const conversations = ref<{ id: string; title: string }[]>([]);
+async function loadConversations() {
+  conversations.value = await api.get('/ai/conversations');
+}
+async function openConversation(id: string) {
+  if ((busy.value || executing.value) && !observing) return;
+  viewEpoch++;
+  controller?.abort();
+  busy.value = false;
+  executing.value = false;
+  conversationId.value = id;
+  attachments.value = [];
+  files.clear();
+  replacePlan.value = false;
+  const turns = await api.get<AiTaskDto[]>(`/ai/conversations/${id}`);
+  messages.value = turns.flatMap((t) => [
+    { role: 'user' as const, content: t.text },
+    {
+      role: 'assistant' as const,
+      taskId: t.id,
+      activity: t.events.filter((e) => e.type === 'status').map((e) => e.message),
+      content: t.result?.message || t.error || '',
+      result: t.result,
+      state: 'done' as const,
+    },
+  ]);
+  const last = turns.at(-1);
+  error.value = last?.error || '';
+  classId.value = last?.classId || '';
+  taskId.value = last?.id || '';
+  active.value = last?.result;
+  lastRequest = last ? { text: last.text, conversationId: id } : undefined;
+  clearCredentials();
+  if (last && ['planning', 'executing'].includes(last.state)) await resumeTask(last.id, true);
+}
+async function olderConversations() {
+  const older = await api.get<{ id: string; title: string }[]>('/ai/conversations', {
+    before: conversations.value.at(-1)?.id,
+  });
+  conversations.value.push(...older);
+}
+async function olderTurns() {
+  const first = messages.value.find((m) => m.taskId);
+  if (!first?.taskId) return;
+  const before = await api.get<AiTaskDto>(`/ai/tasks/${first.taskId}`);
+  if (!before.turnNumber) return;
+  const older = await api.get<AiTaskDto[]>(`/ai/conversations/${conversationId.value}`, {
+    before: before.turnNumber,
+  });
+  messages.value.unshift(
+    ...older.flatMap((t) => [
+      { role: 'user' as const, content: t.text, taskId: t.id },
+      { role: 'assistant' as const, content: t.result?.message || '', result: t.result, taskId: t.id },
+    ]),
+  );
+}
+const currentTurn = ref(0);
+function onConversationScroll() {
+  const box = conversation.value;
+  if (!box) return;
+  followScroll.value = box.scrollHeight - box.scrollTop - box.clientHeight < 100;
+  const top = box.getBoundingClientRect().top;
+  const sections = [...box.querySelectorAll('.assistant-message.user')];
+  let active = 0;
+  sections.forEach((node, index) => {
+    if (node.getBoundingClientRect().top <= top + 100) active = index;
+  });
+  currentTurn.value = Math.max(0, active);
+}
+function jumpTurn(index: number) {
+  currentTurn.value = index;
+  conversation.value
+    ?.querySelectorAll('.assistant-message.user')
+    [index]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 const text = ref(''),
   classId = ref(''),
   classes = ref<ClassDto[]>([]),
@@ -147,19 +227,22 @@ async function retryTask(): Promise<void> {
 }
 async function send(retrying = false): Promise<void> {
   if ((!retrying && !text.value.trim()) || busy.value || executing.value || hashing.value) return;
+  const epoch = viewEpoch;
+  const supersedesTaskId = replacePlan.value && pending.value ? taskId.value : undefined;
   busy.value = true;
   error.value = '';
   controller = new AbortController();
   let message: ChatMessage | undefined;
   const uploadFiles = attachments.value.map((attachment) => ({ attachment, file: files.get(attachment.id) }));
   try {
-    if (active.value?.planId && pending.value) await aiApi.discard(active.value.planId);
     clearCredentials();
     active.value = undefined;
     const content = retrying ? lastRequest!.text : text.value.trim(),
       history = messages.value.slice(-18).map(({ role, content }) => ({ role, content }));
     if (!retrying) {
       lastRequest = {
+        supersedesTaskId,
+        conversationId: conversationId.value || undefined,
         text: content,
         classId: classId.value || undefined,
         messages: history,
@@ -173,7 +256,11 @@ async function send(retrying = false): Promise<void> {
     followScroll.value = true;
     await scroll();
     if (!retrying || !taskId.value) {
+      if (!conversationId.value)
+        conversationId.value = (await api.post<{ id: string }>('/ai/conversations', {})).id;
+      lastRequest!.conversationId = conversationId.value;
       taskId.value = (await aiApi.createTask(lastRequest!)).id;
+      message.taskId = taskId.value;
       message.activity!.push(
         attachments.value.length ? '正在上传附件，完成后将转入后台' : '任务已提交到后台',
       );
@@ -190,7 +277,7 @@ async function send(retrying = false): Promise<void> {
       await observeTask(
         taskId.value,
         (event) => {
-          if (disposed || controller?.signal.aborted) return;
+          if (disposed || epoch !== viewEpoch || controller?.signal.aborted) return;
           if (event.type === 'status' && message!.activity?.at(-1) !== event.message)
             message!.activity = [...(message!.activity ?? []), event.message].slice(-60);
           if (event.type === 'message') message!.content = event.text;
@@ -199,7 +286,7 @@ async function send(retrying = false): Promise<void> {
         controller.signal,
       ),
     );
-    if (disposed) return;
+    if (disposed || epoch !== viewEpoch) return;
     active.value = result;
     message.content = result.message;
     message.result = result;
@@ -210,6 +297,7 @@ async function send(retrying = false): Promise<void> {
     }
     for (const step of result.steps) credentials[step.id] = {};
   } catch (e) {
+    if (epoch !== viewEpoch) return;
     if (controller.signal.aborted) {
       if (message) message.content = '已停止生成，任务已保留，可继续重试。';
     } else if (!disposed && !axios.isCancel(e)) {
@@ -218,10 +306,14 @@ async function send(retrying = false): Promise<void> {
       if (typeof e === 'object' && e && 'code' in e && e.code === 'AI_NOT_CONFIGURED') disabled.value = true;
     }
   } finally {
+    if (epoch !== viewEpoch) return;
     observing = false;
     if (message) message.state = controller.signal.aborted || error.value ? 'stopped' : 'done';
     busy.value = false;
-    if (!disposed) taskHistory.value = await aiApi.tasks().catch(() => taskHistory.value);
+    if (!disposed) {
+      taskHistory.value = await aiApi.tasks().catch(() => taskHistory.value);
+      await loadConversations();
+    }
     await scroll();
   }
 }
@@ -232,19 +324,17 @@ function composerKey(event: KeyboardEvent): void {
   }
 }
 async function newConversation(): Promise<void> {
-  if (busy.value || executing.value || hashing.value) return;
-  if (pending.value && active.value?.planId) {
-    try {
-      await ElMessageBox.confirm('开始新对话将取消当前待确认计划。', '新对话', {
-        confirmButtonText: '开始新对话',
-        cancelButtonText: '保留当前对话',
-      });
-    } catch {
-      return;
-    }
-    await aiApi.discard(active.value.planId);
-  }
+  if (hashing.value || ((busy.value || executing.value) && !observing)) return;
+  viewEpoch++;
+  controller?.abort();
+  busy.value = false;
+  executing.value = false;
+  observing = false;
+  conversationId.value = (await api.post<{ id: string }>('/ai/conversations', {})).id;
+  await loadConversations();
   clearCredentials();
+  replacePlan.value = false;
+  classId.value = '';
   active.value = undefined;
   messages.value = [];
   attachments.value = [];
@@ -386,9 +476,10 @@ async function stopGeneration(): Promise<void> {
   if (taskId.value) await aiApi.stopTask(taskId.value);
   controller?.abort();
 }
-async function resumeTask(id: string): Promise<void> {
+async function resumeTask(id: string, preserveHistory = false): Promise<void> {
   if (busy.value || executing.value) return;
   error.value = '';
+  const epoch = viewEpoch;
   const saved = await aiApi.task(id);
   taskId.value = id;
   lastRequest = { text: saved.text };
@@ -399,7 +490,8 @@ async function resumeTask(id: string): Promise<void> {
     state: 'done',
     result: saved.result,
   });
-  messages.value = [{ role: 'user', content: saved.text }, message];
+  if (preserveHistory) messages.value[messages.value.length - 1] = message;
+  else messages.value = [{ role: 'user', content: saved.text }, message];
   active.value = saved.result;
   clearCredentials();
   if (saved.error) error.value = saved.error;
@@ -416,6 +508,7 @@ async function resumeTask(id: string): Promise<void> {
       await observeTask(
         id,
         (event) => {
+          if (epoch !== viewEpoch) return;
           if (event.type === 'status' && message.activity!.at(-1) !== event.message)
             message.activity!.push(event.message);
           if (event.type === 'message') message.content = event.text;
@@ -424,13 +517,16 @@ async function resumeTask(id: string): Promise<void> {
         controller.signal,
       ),
     );
+    if (epoch !== viewEpoch) return;
     active.value = result;
     message.result = result;
     message.content = saved.state === 'executing' ? '任务已完成。' : result.message;
     clearCredentials();
   } catch (e) {
+    if (epoch !== viewEpoch) return;
     if (!disposed && !controller.signal.aborted) error.value = failure(e);
   } finally {
+    if (epoch !== viewEpoch) return;
     message.state = error.value ? 'stopped' : 'done';
     busy.value = false;
     executing.value = false;
@@ -446,11 +542,8 @@ onMounted(async () => {
       aiApi.capabilities(),
       classApi.list().catch(() => []),
     ]);
-    taskHistory.value = await aiApi.tasks();
-    const latest =
-      taskHistory.value.find((item) => ['planning', 'executing'].includes(item.state)) ??
-      taskHistory.value[0];
-    if (latest) await resumeTask(latest.id);
+    await loadConversations();
+    if (conversations.value[0]) await openConversation(conversations.value[0].id);
   } catch (e) {
     error.value = failure(e);
   }
@@ -481,21 +574,24 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="agent-header-actions">
+        <el-button v-if="conversations.length >= 30" @click="olderConversations">更多对话</el-button>
         <el-select
-          v-if="taskHistory.length"
-          :model-value="taskId"
-          placeholder="最近任务"
-          :disabled="busy || executing"
-          @change="resumeTask"
+          v-if="conversations.length"
+          :model-value="conversationId"
+          placeholder="对话历史"
+          :disabled="(busy || executing) && !observing"
+          @change="openConversation"
         >
           <el-option
-            v-for="item in taskHistory"
+            v-for="item in conversations"
             :key="item.id"
             :value="item.id"
-            :label="item.text.slice(0, 24)"
+            :label="item.title || '新对话'"
           />
         </el-select>
-        <el-button :disabled="busy || executing || hashing" @click="newConversation">新对话</el-button>
+        <el-button :disabled="hashing || ((busy || executing) && !observing)" @click="newConversation">
+          新对话
+        </el-button>
         <el-select
           v-model="classId"
           clearable
@@ -508,17 +604,37 @@ onBeforeUnmount(() => {
         <el-button v-if="auth.can('ai:manage')" @click="$router.push('/ai-settings')">模型设置</el-button>
       </div>
     </header>
+    <el-checkbox v-if="pending" v-model="replacePlan">本轮明确替换当前待确认计划（历史记录保留）</el-checkbox>
+    <select
+      class="mobile-turn-select"
+      aria-label="跳转对话轮次"
+      :value="currentTurn"
+      @change="jumpTurn(Number(($event.target as HTMLSelectElement).value))"
+    >
+      <option v-for="(turn, index) in messages.filter((m) => m.role === 'user')" :key="index" :value="index">
+        第 {{ index + 1 }} 轮：{{ turn.content.slice(0, 16) }}
+      </option>
+    </select>
+    <nav class="turn-navigation" aria-label="对话轮次">
+      <button
+        v-for="(turn, index) in messages.filter((m) => m.role === 'user')"
+        :key="index"
+        :title="turn.content"
+        :aria-current="index === currentTurn ? 'step' : undefined"
+        :aria-label="`跳转第 ${index + 1} 轮：${turn.content}`"
+        @click="jumpTurn(index)"
+      >
+        <span>{{ index + 1 }}</span>
+      </button>
+    </nav>
     <div
       ref="conversation"
       class="assistant-conversation"
       aria-live="polite"
       :aria-busy="busy || executing"
-      @scroll="
-        followScroll =
-          !conversation ||
-          conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 100
-      "
+      @scroll="onConversationScroll"
     >
+      <el-button v-if="messages.length >= 60" @click="olderTurns">加载更早轮次</el-button>
       <div v-if="!messages.length" class="assistant-welcome">
         <span class="agent-welcome-mark" aria-hidden="true">✦</span>
         <h2>有什么可以帮你？</h2>
@@ -559,6 +675,38 @@ onBeforeUnmount(() => {
             <li v-for="(activity, n) in message.activity" :key="n">{{ activity }}</li>
           </ol>
         </details>
+        <el-card
+          v-for="question in message.result?.questions || []"
+          :key="question.id"
+          class="assistant-question"
+        >
+          <strong>{{ question.text }}</strong>
+          <div class="question-options">
+            <el-button
+              v-for="option in question.options || []"
+              :key="option"
+              :disabled="busy"
+              @click="
+                text = question.text + '：' + option;
+                send();
+              "
+            >
+              {{ option }}
+            </el-button>
+          </div>
+          <small>也可以在下方输入框自由回答。</small>
+        </el-card>
+        <el-button
+          v-if="message.result?.planId && message.taskId"
+          :disabled="busy || executing"
+          @click="
+            active = message.result;
+            taskId = message.taskId!;
+            clearCredentials();
+          "
+        >
+          查看此轮计划
+        </el-button>
         <p v-if="message.content">{{ message.content }}</p>
         <span v-else-if="message.state === 'working'" class="agent-placeholder">
           正在准备回复
@@ -716,9 +864,79 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.mobile-turn-select {
+  display: none;
+}
+.turn-navigation button {
+  opacity: 0.45;
+}
+.turn-navigation button[aria-current='step'] {
+  opacity: 1;
+}
+@media (max-width: 600px) {
+  .mobile-turn-select {
+    display: block;
+    width: 100%;
+    margin: 8px 0;
+    max-width: 100%;
+    padding: 6px;
+    background: var(--el-bg-color);
+    color: var(--el-text-color-primary);
+    border: 1px solid var(--el-border-color);
+  }
+  .turn-navigation {
+    display: none !important;
+  }
+}
+
+.turn-navigation {
+  position: absolute;
+  right: 12px;
+  top: 100px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 60%;
+  overflow: auto;
+  z-index: 2;
+}
+.turn-navigation button {
+  width: 28px;
+  min-height: 24px;
+  border: 0;
+  background: transparent;
+  border-top: 3px solid var(--el-color-primary);
+  cursor: pointer;
+}
+.turn-navigation span {
+  font-size: 10px;
+}
+.question-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.assistant-page {
+  position: relative;
+}
+.assistant-conversation {
+  padding-right: 44px;
+}
+@media (max-width: 600px) {
+  .turn-navigation {
+    right: 4px;
+    top: 150px;
+    max-height: 25%;
+  }
+  .assistant-conversation {
+    padding-right: 32px;
+  }
+}
+
 .assistant-page {
   max-width: none;
-  padding: 0;
+  padding: 16px 24px;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -738,7 +956,7 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 .assistant-welcome h2 {
-  font-size: 2em;
+  font-size: clamp(22px, 1.5em, 36px);
   font-weight: 600;
 }
 .assistant-examples,
@@ -944,6 +1162,7 @@ details > summary {
 @media (max-width: 720px) {
   .assistant-page {
     height: 100%;
+    padding: 16px;
   }
   .agent-header {
     flex-wrap: wrap;

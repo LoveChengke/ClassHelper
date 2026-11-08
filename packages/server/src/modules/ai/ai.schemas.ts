@@ -19,6 +19,8 @@ export const discoverModelsSchema = updateAiSettingsSchema.pick({ baseUrl: true,
 
 /** `POST /api/ai/interpret`：一句中文原话 */
 export const aiInterpretSchema = z.object({
+  supersedesTaskId: z.string().min(1).max(100).optional(),
+  conversationId: z.string().min(1).max(100).optional(),
   text: z.string().trim().min(1, '请说明要做的事').max(8000),
   messages: z
     .array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(8000) }).strict())

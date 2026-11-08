@@ -14,3 +14,5 @@ declare module 'vue' {
     ChDatePicker: typeof ChDatePicker;
   }
 }
+
+export { default as CoursewareFolders } from './CoursewareFolders.vue';

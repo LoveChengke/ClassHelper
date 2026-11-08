@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { CoursewareFolders } from '@classhelper/ui';
 import { countDates } from '@classhelper/ui';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { SOCKET_EVENTS } from '@classhelper/shared';
@@ -60,7 +61,11 @@ const canWrite = computed(() => auth.can('courseware:write'));
 const folders = ref<CoursewareFolderDto[]>([]),
   folderPath = ref(''),
   folderFilter = ref('');
-const grouping = ref<'date' | 'folder'>('date');
+const grouping = ref<'date' | 'folder'>('folder');
+const folderOwner = ref('');
+watch(folderFilter, (value) => {
+  folderPath.value = value;
+});
 const teacher = ref('');
 const teachers = computed(() => [...new Set(items.value.map((item) => item.teacher.name))]);
 async function newFolder() {
@@ -69,7 +74,7 @@ async function newFolder() {
       '输入文件夹名称，可用 / 创建多层分类，如 地理/必修一',
       '新建文件夹',
     );
-    const path = String(value ?? '').trim();
+    const path = [folderFilter.value, String(value ?? '').trim()].filter(Boolean).join('/');
     if (!path) return;
     await api.post('/courseware/folders', { path });
     await refresh();
@@ -88,9 +93,10 @@ const dateSource = computed(() =>
       (!query.value || `${item.name} ${item.teacher.name}`.includes(query.value)) &&
       (!category.value || item.category === category.value) &&
       (grouping.value !== 'folder' ||
-        !folderFilter.value ||
-        item.folderPath === folderFilter.value ||
-        item.folderPath?.startsWith(folderFilter.value + '/')) &&
+        ((item.folderPath || '') === folderFilter.value &&
+          (folderOwner.value
+            ? item.teacher.id === folderOwner.value
+            : new Set(items.value.map((i) => i.teacher.id)).size <= 1))) &&
       (!teacher.value || item.teacher.name === teacher.value),
   ),
 );
@@ -298,6 +304,13 @@ onMounted(() => void refresh());
         </el-select>
         <ch-date-picker v-model="date" :marks="dateMarks" value-format="YYYY-MM-DD" placeholder="归档日期" />
       </div>
+      <CoursewareFolders
+        v-if="grouping === 'folder'"
+        v-model:path="folderFilter"
+        v-model:owner="folderOwner"
+        :items="items"
+        :folders="folders"
+      />
       <el-table :data="filtered" empty-text="暂无课件">
         <el-table-column prop="name" label="文件名称" min-width="220" show-overflow-tooltip />
         <el-table-column label="分类 / 归档位置" min-width="230">

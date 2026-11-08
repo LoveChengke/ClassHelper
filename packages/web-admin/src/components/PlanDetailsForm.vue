@@ -62,7 +62,16 @@ const emit = defineEmits<{
         placeholder="选择时间表"
         @change="emit('change-layout', $event)"
       >
-        <el-option v-for="item in props.layouts" :key="item.id" :value="item.id" :label="item.name" />
+        <el-option
+          v-for="item in props.layouts"
+          :key="item.id"
+          :value="item.id"
+          :label="
+            item.parentId
+              ? (props.layouts.find((p) => p.id === item.parentId)?.name || '') + ' / ' + item.name
+              : item.name
+          "
+        />
       </el-select>
       <button class="text-command" type="button" @click="emit('edit-layout')">
         <ArchiveIcon name="clock" />

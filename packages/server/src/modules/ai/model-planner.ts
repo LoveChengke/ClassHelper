@@ -29,12 +29,26 @@ const operationSchema = z
   .strict();
 const replySchema = z
   .object({
+    questions: z
+      .array(
+        z.object({
+          id: z.string().min(1).max(100),
+          text: z.string().min(1).max(1000),
+          options: z.array(z.string().max(200)).max(10).optional(),
+        }),
+      )
+      .max(3)
+      .optional(),
     message: z.string().max(4000).optional(),
     queries: z.array(operationSchema).max(8).default([]),
     operations: z.array(operationSchema).max(16).default([]),
   })
   .refine(
-    (value) => !!value.message?.trim() || value.queries.length > 0 || value.operations.length > 0,
+    (value) =>
+      !!value.message?.trim() ||
+      !!value.questions?.length ||
+      value.queries.length > 0 ||
+      value.operations.length > 0,
     '回复不能是空对象',
   );
 
@@ -95,6 +109,7 @@ export async function planWithModel(
       content: [
         '你是 ClassHelper 助手。只输出严格 JSON：{message,queries:[{action,target?,query?}],operations:[{action,target?,params?,attachmentId?}]}。',
         '例如普通回复：{"message":"你好，需要处理什么？","queries":[],"operations":[]}；查询：{"message":"正在查询班级","queries":[{"action":"classes.list"}],"operations":[]}。禁止 Markdown 围栏，message 只写简短进度或给用户的回复。',
+        '缺少用户才能提供的必要信息时，返回 questions:[{id,text,options?}]，operations 和 queries 必须为空，等待用户回答。',
         'queries 只能查询，operations 是待确认写操作，不能声称已执行。先查询真实 id 和现状，再规划修改；不猜测班级、账号、学生、课程和时间点 id。信息不足时追问。',
         '仅可选择工具目录中的 action。工具 schema.target 列出路径参数，schema.params 是 params 的 JSON Schema。查询条件放 query。所有数据和动作遵循操作者的实时权限。',
         '数据库备份/恢复/清空/切换/SQL、服务器配置/启停/升级和密钥维护禁止执行。密码字段留空，由用户在专门表单输入。',
@@ -112,7 +127,8 @@ export async function planWithModel(
   ];
   const results: AiConversationResult['results'] = [];
   const apiKey = decryptSecret(await getSetting(SETTING_KEYS.aiApiKey));
-  let corrections = 0;
+  let corrections = run.corrections ?? 0;
+  const seenQueries = new Set<string>();
   for (let round = 0; round < 12; round++) {
     signal.throwIfAborted();
     await run.authorize?.();
@@ -185,13 +201,14 @@ export async function planWithModel(
       reply = parseModelReply(completion.content);
     } catch {
       signal.throwIfAborted();
-      if (++corrections >= 3)
+      run.corrections = ++corrections;
+      if (corrections > 1)
         throw new ApiError(
           502,
           'AI_TASK_INCOMPLETE',
-          '任务已保留，但模型暂未给出可执行方案。自动校正已尝试三次，可点击继续重试；尚未执行任何更改。',
+          '任务已保留，但模型暂未给出可执行方案。自动校正已尝试一次，可点击继续重试；尚未执行任何更改。',
         );
-      run.emit?.({ type: 'status', message: `正在自动校正回复（${corrections}/3）` });
+      run.emit?.({ type: 'status', message: `正在自动校正回复（${corrections}/1）` });
       messages.push({
         role: 'user',
         content:
@@ -199,9 +216,21 @@ export async function planWithModel(
       });
       continue;
     }
-    corrections = 0;
+    if (reply.questions?.length) return { reply: { ...reply, operations: [], queries: [] }, results };
     if (!reply.queries.length) return { reply, results };
     for (const query of reply.queries) {
+      const signature = JSON.stringify(query);
+      if (seenQueries.has(signature))
+        return {
+          reply: {
+            message: '已有查询结果仍不足以确定你的意图，请补充需要处理的对象或期望结果。',
+            questions: [{ id: 'clarify-task', text: '请补充你要处理的对象和具体要求。' }],
+            queries: [],
+            operations: [],
+          },
+          results,
+        };
+      seenQueries.add(signature);
       signal.throwIfAborted();
       run.emit?.({
         type: 'status',

@@ -83,6 +83,59 @@ export async function runQuickSmoke(win: BrowserWindow): Promise<void> {
       return result.detail;
     });
   }
+  await check('主窗口最小与常规尺寸、深浅主题及关怀字号无页面横向溢出', async () => {
+    const bounds = win.getContentBounds();
+    const appearance = await win.webContents.executeJavaScript(
+      `({className:document.documentElement.className,style:document.documentElement.getAttribute('style')})`,
+    );
+    const shots = path.resolve(app.getAppPath(), '../../docs/screenshots/desktop-responsive');
+    fs.mkdirSync(shots, { recursive: true });
+    await win.webContents.executeJavaScript('window.__classhelperSmoke__.islandEditorSmoke(true)');
+    try {
+      for (const [width, height] of [
+        [1000, 540],
+        [1242, 582],
+        [1920, 1080],
+      ])
+        for (const theme of ['light', 'dark']) {
+          win.setContentSize(width!, height!);
+          await win.webContents.executeJavaScript(
+            `document.documentElement.classList.toggle('dark',${theme === 'dark'});document.documentElement.classList.toggle('care-mode',${theme === 'dark'});document.documentElement.style.setProperty('--ch-font-scale',${JSON.stringify(theme === 'dark' ? '1.5' : '1')})`,
+          );
+          for (const route of [
+            '/schedule',
+            '/homeworks',
+            '/notifications',
+            '/grades',
+            '/courseware',
+            '/settings/general',
+            '/settings/appearance',
+            '/settings/island',
+            '/settings/island/editor',
+            '/settings/reminder',
+            '/settings/account',
+            '/settings/about',
+          ]) {
+            await win.webContents.executeJavaScript(`location.hash=${JSON.stringify('#' + route)}`);
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            if (
+              !(await win.webContents.executeJavaScript('document.documentElement.scrollWidth<=innerWidth+1'))
+            )
+              throw new Error(`${route} ${width} ${theme} 页面溢出`);
+          }
+          fs.writeFileSync(
+            path.join(shots, `main-${width}-${theme}.png`),
+            (await win.webContents.capturePage()).toPNG(),
+          );
+        }
+    } finally {
+      await win.webContents.executeJavaScript(
+        `document.documentElement.className=${JSON.stringify(appearance.className)};document.documentElement.setAttribute('style',${JSON.stringify(appearance.style || '')});window.__classhelperSmoke__.islandEditorSmoke(false)`,
+      );
+      win.setContentSize(bounds.width, bounds.height);
+    }
+    return '1000×540、1242×582、1920×1080，截图保存在 docs/screenshots/desktop-responsive';
+  });
   await verifyAgentSmoke(check);
   await verifyLayoutSmoke(check);
   await verifyCoursewareSmoke(check);

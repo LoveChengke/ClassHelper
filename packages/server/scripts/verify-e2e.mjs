@@ -2215,7 +2215,9 @@ async function main() {
     mergeImport.status === 200 &&
       mergeData?.merged === 1 &&
       mergeData?.replaced === 1 &&
-      mergeData?.layout?.items?.length === 4,
+      mergeData?.layout?.items?.length === 5 &&
+      mergeData.layout.items.filter((item) => item.type === 'class').length === 3 &&
+      mergeData.layout.items.filter((item) => item.type === 'break').length === 2,
     `合并=${mergeData?.merged} 新增=${mergeData?.replaced} 共=${mergeData?.layout?.items?.length}`,
   );
 

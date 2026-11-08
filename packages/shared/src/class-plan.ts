@@ -4,6 +4,8 @@ import type { CourseBrief, ScheduleDto } from './types.js';
 export const TIME_POINT_TYPES = ['LESSON', 'BREAK', 'DIVIDER', 'ACTION'] as const;
 export type TimePointType = (typeof TIME_POINT_TYPES)[number];
 export interface TimePointDto {
+  slotKey?: string;
+  isAutoBreak?: boolean;
   id: string;
   position: number;
   name: string;
@@ -18,6 +20,7 @@ export interface TimePointDto {
   actionSet: string;
 }
 export interface TimeLayoutDetailDto {
+  parentId?: string | null;
   id: string;
   name: string;
   classId: string | null;

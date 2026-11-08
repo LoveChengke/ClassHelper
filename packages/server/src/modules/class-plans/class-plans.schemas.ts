@@ -8,6 +8,8 @@ export const scopeQuery = z.object({
 export const pointSchema = z
   .object({
     id: z.string().min(1).optional(),
+    slotKey: z.string().max(100).default(''),
+    isAutoBreak: z.boolean().default(false),
     name: z.string().max(64).default(''),
     startTime: timeSchema,
     endTime: timeSchema,
@@ -19,6 +21,7 @@ export const pointSchema = z
   })
   .refine((p) => p.timeType === 'DIVIDER' || p.startTime < p.endTime, '结束时间必须晚于开始时间');
 export const layoutSchema = z.object({
+  parentId: z.string().min(1).nullish(),
   name: z.string().trim().min(1).max(64),
   classId: z.string().nullish(),
   points: z.array(pointSchema).max(100),

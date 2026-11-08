@@ -16,7 +16,7 @@ import { coursewareRoot } from '../courseware/courseware.service.js';
 import { interpretConversation } from './conversation.js';
 import { sanitizePrompt } from './model-planner.js';
 import { runRead } from './actions.js';
-import { confirmPlan, getPlan, preparePlan } from './plans.js';
+import { confirmPlan, getPlan, preparePlan, discardPlan } from './plans.js';
 import type { AiInterpretInput } from './ai.schemas.js';
 
 const active = new Map<string, AbortController>();
@@ -71,7 +71,7 @@ export async function createTask(user: TokenPayload, input: AiInterpretInput) {
   const expired = await prisma.aiTask.findMany({
     where: {
       userId: user.sub,
-      state: { in: ['preparing', 'ready', 'failed', 'stopped', 'succeeded'] },
+      state: { in: ['preparing', 'ready', 'failed', 'stopped', 'succeeded', 'waiting_input'] },
       updatedAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
     },
     take: 20,
@@ -82,16 +82,87 @@ export async function createTask(user: TokenPayload, input: AiInterpretInput) {
     3
   )
     throw ApiError.conflict('请等待现有后台任务完成');
+  const conversation = input.conversationId
+    ? await ownedConversation(user, input.conversationId)
+    : await createConversation(user);
+  if (input.supersedesTaskId) {
+    const old = await owned(user, input.supersedesTaskId);
+    if (old.conversationId !== conversation.id || old.state !== 'ready')
+      throw ApiError.conflict('只能替换本对话中明确选中的待确认计划');
+  }
+  const previous = await prisma.aiTask.findMany({
+    where: { userId: user.sub, conversationId: conversation.id },
+    orderBy: { turnNumber: 'asc' },
+  });
+  if (previous.some((t) => ['planning', 'executing'].includes(t.state)))
+    throw ApiError.conflict('当前对话仍在处理，请等待完成');
+  const history: { role: 'user' | 'assistant'; content: string }[] = [];
+  for (const old of previous) {
+    const checked = await task(user, old.id);
+    history.push({ role: 'user', content: checked.text });
+    if (checked.result)
+      history.push({
+        role: 'assistant',
+        content:
+          checked.result.message +
+          '\n' +
+          JSON.stringify(
+            checked.result.steps.map((s) => ({ action: s.action, status: s.status, summary: s.summary })),
+          ),
+      });
+  }
+  const context =
+    history.length > 18
+      ? [
+          {
+            role: 'user' as const,
+            content:
+              '此前用户需求摘要：' +
+              history
+                .slice(0, -18)
+                .filter((m) => m.role === 'user')
+                .map((m) => m.content.slice(0, 300))
+                .join('；')
+                .slice(-7000),
+          },
+          ...history.slice(-18),
+        ]
+      : history;
+  const last = previous.at(-1);
+  const inherited =
+    last?.state === 'waiting_input' && !input.attachments?.length
+      ? decode<AiInterpretInput>(last.input).attachments
+      : undefined;
   const safe = {
     ...input,
+    attachments: input.attachments?.length ? input.attachments : inherited,
     text: sanitizePrompt(input.text),
-    messages: input.messages?.map((item) => ({ ...item, content: sanitizePrompt(item.content) })),
+    conversationId: conversation.id,
+    messages: context.map((item) => ({ ...item, content: sanitizePrompt(item.content).slice(0, 8000) })),
   };
   Object.assign(safe, { accessStamp: await accessStamp(user) });
   const row = await prisma.aiTask.create({
-    data: { userId: user.sub, input: encryptSecret(JSON.stringify(safe)) },
+    data: {
+      userId: user.sub,
+      conversationId: conversation.id,
+      turnNumber: (previous.at(-1)?.turnNumber ?? 0) + 1,
+      input: encryptSecret(JSON.stringify(safe)),
+    },
   });
-  return { id: row.id };
+  if (last && inherited?.length) {
+    for (const attachment of inherited) {
+      const source = attachmentPath(last.id, attachment.id),
+        target = attachmentPath(row.id, attachment.id);
+      if (!fs.existsSync(source)) throw ApiError.badRequest('原附件暂存已过期，请重新上传后继续');
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      await fsp.copyFile(source, target);
+    }
+  }
+  await prisma.aiConversation.update({
+    where: { id: conversation.id },
+    data: { title: conversation.title || sanitizePrompt(input.text).slice(0, 80), updatedAt: new Date() },
+  });
+  return { id: row.id, conversationId: conversation.id };
 }
 export async function stageAttachment(
   user: TokenPayload,
@@ -174,6 +245,9 @@ export async function task(user: TokenPayload, id: string): Promise<AiTaskDto> {
   }
   return {
     id,
+    classId: decode<AiInterpretInput>(row.input).classId,
+    conversationId: row.conversationId,
+    turnNumber: row.turnNumber,
     state: row.state,
     text: decode<AiInterpretInput>(row.input).text,
     result,
@@ -283,12 +357,29 @@ export async function startTask(user: TokenPayload, id: string) {
     await prisma.aiTask.update({
       where: { id },
       data: {
-        state: result.steps.length ? 'ready' : 'succeeded',
+        state: result.questions?.length ? 'waiting_input' : result.steps.length ? 'ready' : 'succeeded',
         result: encryptSecret(JSON.stringify(result)),
       },
     });
+    if (input.supersedesTaskId && result.steps.length) {
+      const old = await owned(user, input.supersedesTaskId);
+      if (old.conversationId !== row.conversationId || old.state !== 'ready')
+        throw ApiError.conflict('原计划已变化，替换未完成，请分别核对计划');
+      if (active.has(old.id)) throw ApiError.conflict('原计划正在执行，不能替换');
+      const claimed = await prisma.aiTask.updateMany({
+        where: { id: old.id, state: 'ready' },
+        data: { state: 'superseded' },
+      });
+      if (!claimed.count) throw ApiError.conflict('原计划已变化，替换未完成');
+      const oldResult = decode<AiConversationResult>(old.result);
+      if (oldResult.planId) await discardPlan(user, oldResult.planId);
+      await prisma.aiTask.updateMany({
+        where: { id: old.id, state: 'ready' },
+        data: { state: 'superseded' },
+      });
+    }
     emit({ type: 'status', message: result.steps.length ? '变更预览已准备，等待确认' : '处理完成' });
-    if (!result.steps.length) await cleanup(id, input);
+    if (!result.steps.length && !result.questions?.length) await cleanup(id, input);
   });
 }
 
@@ -363,4 +454,54 @@ export async function stopTask(user: TokenPayload, id: string) {
       where: { id },
       data: { state: 'stopped', error: '任务已按你的要求停止。' },
     });
+}
+
+export async function createConversation(user: TokenPayload) {
+  await assertPermission(user, 'ai:use');
+  return prisma.aiConversation.create({ data: { userId: user.sub } });
+}
+async function ownedConversation(user: TokenPayload, id: string) {
+  await assertPermission(user, 'ai:use');
+  const row = await prisma.aiConversation.findFirst({ where: { id, userId: user.sub } });
+  if (!row) throw ApiError.forbidden('无法访问此对话');
+  return row;
+}
+export async function conversations(user: TokenPayload, before?: string) {
+  await assertPermission(user, 'ai:use');
+  const legacy = await prisma.aiTask.findMany({
+    where: { userId: user.sub, conversationId: null },
+    take: 100,
+  });
+  for (const old of legacy)
+    await prisma.$transaction(async (tx) => {
+      const c = await tx.aiConversation.upsert({
+        where: { id: old.id },
+        create: {
+          id: old.id,
+          userId: user.sub,
+          title: sanitizePrompt(decode<AiInterpretInput>(old.input).text).slice(0, 80),
+          createdAt: old.createdAt,
+        },
+        update: {},
+      });
+      await tx.aiTask.updateMany({
+        where: { id: old.id, conversationId: null },
+        data: { conversationId: c.id },
+      });
+    });
+  return prisma.aiConversation.findMany({
+    where: { userId: user.sub },
+    orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+    take: 30,
+    ...(before ? { cursor: { id: before }, skip: 1 } : {}),
+  });
+}
+export async function conversationTurns(user: TokenPayload, id: string, before?: number) {
+  await ownedConversation(user, id);
+  const rows = await prisma.aiTask.findMany({
+    where: { conversationId: id, userId: user.sub, ...(before ? { turnNumber: { lt: before } } : {}) },
+    orderBy: { turnNumber: 'desc' },
+    take: 30,
+  });
+  return Promise.all(rows.reverse().map((row) => task(user, row.id)));
 }

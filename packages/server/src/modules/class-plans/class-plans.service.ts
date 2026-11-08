@@ -1,3 +1,4 @@
+import { fillLayoutBreaks } from './auto-breaks.js';
 import { assertAdmin, assertHeadOnly, assertPermissionOrClassDevice } from '../../lib/authz/index.js';
 import { SOCKET_EVENTS } from '@classhelper/shared';
 import { prisma } from '../../lib/db.js';
@@ -43,11 +44,18 @@ export async function saveLayout(user: TokenPayload, input: z.infer<typeof layou
   await assertLayoutWrite(user, layoutClassId, id);
   if (existing && input.classId !== undefined && input.classId !== existing.classId)
     throw ApiError.forbidden('不能移动时间表到其他班级');
+  if (input.parentId) {
+    const parent = await prisma.timeLayout.findUnique({ where: { id: input.parentId } });
+    if (!parent || parent.id === id || parent.classId !== layoutClassId || parent.parentId)
+      throw ApiError.badRequest('父时间表无效或范围不一致');
+  }
   // 默认课程属于具体班级：全校时间表不保留默认课程，非上课时间点也不保留。
-  const points = input.points.map((point) => ({
-    ...point,
-    defaultClassId: point.timeType === 'LESSON' && layoutClassId ? (point.defaultClassId ?? null) : null,
-  }));
+  const points = input.points
+    .filter((p) => !p.isAutoBreak)
+    .map((point) => ({
+      ...point,
+      defaultClassId: point.timeType === 'LESSON' && layoutClassId ? (point.defaultClassId ?? null) : null,
+    }));
   const defaultIds = [...new Set(points.flatMap((p) => (p.defaultClassId ? [p.defaultClassId] : [])))];
   if (defaultIds.length && layoutClassId) {
     const count = await prisma.course.count({
@@ -59,9 +67,17 @@ export async function saveLayout(user: TokenPayload, input: z.infer<typeof layou
   if (new Set(pointIds).size !== pointIds.length) throw ApiError.badRequest('时间点不能重复');
   const result = await prisma.$transaction(async (tx) => {
     const layout = id
-      ? await tx.timeLayout.update({ where: { id }, data: { name: input.name } })
+      ? await tx.timeLayout.update({
+          where: { id },
+          data: { name: input.name, ...(input.parentId !== undefined ? { parentId: input.parentId } : {}) },
+        })
       : await tx.timeLayout.create({
-          data: { name: input.name, classId: input.classId ?? null, source: 'manual' },
+          data: {
+            name: input.name,
+            classId: input.classId ?? null,
+            parentId: input.parentId,
+            source: 'manual',
+          },
         });
     const owned = await tx.timeLayoutItem.findMany({
       where: { timeLayoutId: layout.id },
@@ -75,6 +91,7 @@ export async function saveLayout(user: TokenPayload, input: z.infer<typeof layou
       if (pointId) await tx.timeLayoutItem.update({ where: { id: pointId }, data: { ...data, position } });
       else await tx.timeLayoutItem.create({ data: { ...data, position, timeLayoutId: layout.id } });
     }
+    await fillLayoutBreaks(tx, layout.id);
     return tx.timeLayout.findUniqueOrThrow({
       where: { id: layout.id },
       include: { points: { orderBy: { position: 'asc' } } },
@@ -152,16 +169,54 @@ export async function savePlan(user: TokenPayload, input: z.infer<typeof planSch
   input = { ...input, weekEnd: Math.min(input.weekEnd, maxWeek) };
   if (id && (await requirePlan(user, id)).classId !== input.classId)
     throw ApiError.badRequest('不能移动课表到另一班');
-  const layout = await prisma.timeLayout.findUnique({ where: { id: input.timeLayoutId } });
+  const layout = await prisma.timeLayout.findUnique({
+    where: { id: input.timeLayoutId },
+    include: { points: { orderBy: { position: 'asc' } } },
+  });
   if (!layout || (layout.classId && layout.classId !== input.classId))
     throw ApiError.badRequest('时间表不属于本班或全校');
   if (input.associatedGroup) {
     const group = await prisma.classPlanGroup.findUnique({ where: { id: input.associatedGroup } });
     if (group?.classId !== input.classId) throw ApiError.badRequest('课表群组不属于本班');
   }
-  const result = id
-    ? await prisma.classPlan.update({ where: { id }, data: input })
-    : await prisma.classPlan.create({ data: input });
+  const previous = id ? await requirePlan(user, id) : null;
+  const changes =
+    previous && previous.timeLayoutId !== layout.id
+      ? previous.entries.map((entry) => {
+          const oldLessons = previous.layout.points.filter((p) => p.timeType === 'LESSON');
+          const source = oldLessons.find((p) => p.id === entry.timeLayoutItemId);
+          const lessons = layout.points.filter((p) => p.timeType === 'LESSON');
+          const target =
+            lessons.find((p) => source?.slotKey && p.slotKey === source.slotKey) ||
+            lessons[oldLessons.findIndex((p) => p.id === source?.id)];
+          if (!target) throw ApiError.conflict('目标时间表课时不足，原课表已保留，请先处理差异');
+          return { id: entry.id, target: target.id };
+        })
+      : [];
+  const result = await prisma.$transaction(async (tx) => {
+    const row = id
+      ? await tx.classPlan.update({ where: { id }, data: input })
+      : await tx.classPlan.create({ data: input });
+    // 先删除再重建，避免槽位交换命中日课表/时间点的组合唯一键。
+    if (changes.length && previous) {
+      await tx.classPlanEntry.deleteMany({ where: { classPlanId: previous.id } });
+      for (const entry of previous.entries) {
+        const target = changes.find((c) => c.id === entry.id)!;
+        await tx.classPlanEntry.create({
+          data: {
+            id: entry.id,
+            classPlanId: previous.id,
+            timeLayoutItemId: target.target,
+            courseId: entry.courseId,
+            isEnabled: entry.isEnabled,
+            isChangedClass: entry.isChangedClass,
+            location: entry.location,
+          },
+        });
+      }
+    }
+    return row;
+  });
   await notifyScheduleChanged(input.classId);
   return result;
 }
@@ -317,6 +372,7 @@ export async function deleteLayout(user: TokenPayload, id: string) {
   const layout = await prisma.timeLayout.findUnique({ where: { id } });
   if (!layout) throw ApiError.notFound('时间表不存在');
   await assertLayoutWrite(user, layout.classId, id);
+  if (await prisma.timeLayout.count({ where: { parentId: id } })) throw ApiError.conflict('仍有子时间表');
   if (await prisma.classPlan.count({ where: { timeLayoutId: id } }))
     throw ApiError.conflict('仍有课表使用该时间表');
   await prisma.timeLayout.delete({ where: { id } });

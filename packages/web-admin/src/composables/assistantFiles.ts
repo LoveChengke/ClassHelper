@@ -1,6 +1,8 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import type { AiAttachment } from '@classhelper/shared';
 
+let attachmentSequence = 0;
+
 export async function hashAttachment(file: File, signal?: AbortSignal): Promise<AiAttachment> {
   const hash = sha256.create();
   const reader = file.stream().getReader();
@@ -16,7 +18,7 @@ export async function hashAttachment(file: File, signal?: AbortSignal): Promise<
     reader.releaseLock();
   }
   return {
-    id: crypto.randomUUID(),
+    id: `attachment-${Date.now().toString(36)}-${++attachmentSequence}-${Math.random().toString(36).slice(2)}`,
     name: file.name,
     size: file.size,
     sha256: [...hash.digest()].map((value) => value.toString(16).padStart(2, '0')).join(''),

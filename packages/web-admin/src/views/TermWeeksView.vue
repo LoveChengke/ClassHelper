@@ -13,10 +13,12 @@
  * `classId` 留空 = 全校默认；某个班有自己的配置时优先用它。
  */
 import { useAuthStore } from '@/stores/auth';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   getMaxTermWeeks,
+  buildAutoTermWeeks,
+  shiftDayKey,
   validateTermWeeks,
   isDayKey,
   type ClassDto,
@@ -97,7 +99,7 @@ async function autoGenerate(): Promise<void> {
       ...(scope.value ? {} : { maxTermWeeks: maxTermWeeks.value }),
       classId: scope.value || null,
       termStartDate: termStartDate.value,
-      maxWeek: term.value?.maxWeek ?? getMaxTermWeeks(),
+      maxWeek: scope.value ? term.value?.maxWeek : maxTermWeeks.value,
     });
     term.value = result;
     weeks.value = result.weeks.map((item) => ({ ...item }));
@@ -107,7 +109,42 @@ async function autoGenerate(): Promise<void> {
   }
 }
 
+watch(maxTermWeeks, (maximum, previous) => {
+  if (
+    scope.value ||
+    !term.value ||
+    (maximum === getMaxTermWeeks(term.value.maxTermWeeks) && previous === maximum)
+  )
+    return;
+  const last = weeks.value.at(-1);
+  if (!last) {
+    if (isDayKey(termStartDate.value)) weeks.value = buildAutoTermWeeks(termStartDate.value, maximum);
+    return;
+  }
+  if (maximum > (last.weekNumber ?? 0) && isDayKey(last.endDate)) {
+    for (
+      let n = last.weekNumber + 1, start = shiftDayKey(last.endDate, 1);
+      n <= maximum;
+      n++, start = shiftDayKey(start, 7)
+    ) {
+      weeks.value.push({ weekNumber: n, startDate: start, endDate: shiftDayKey(start, 6), note: '' });
+    }
+  }
+});
 async function save(): Promise<void> {
+  const removed = weeks.value.filter((w) => w.weekNumber > maxTermWeeks.value);
+  if (!scope.value && removed.length) {
+    try {
+      await ElMessageBox.confirm(
+        `将移除第 ${removed.map((w) => w.weekNumber).join('、')} 周日期区间，确认保存？`,
+        '缩短学期',
+      );
+    } catch {
+      return;
+    }
+    weeks.value = weeks.value.filter((w) => w.weekNumber <= maxTermWeeks.value);
+  }
+
   if (saving.value) return;
   const errors = validateTermWeeks(weeks.value);
   if (!isDayKey(termStartDate.value)) errors.unshift('请填写有效的学期开始日期');

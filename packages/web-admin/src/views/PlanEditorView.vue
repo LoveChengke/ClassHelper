@@ -175,13 +175,19 @@ watch(
   },
   { flush: 'sync' },
 );
-async function newLayout() {
+async function newLayout(parentId?: string) {
   if (!canCreateTime.value || saving.value) return;
   const { value } = await ElMessageBox.prompt('输入时间表名称', '新时间表');
   const result = await api.post<TimeLayoutDetailDto>('/time-layouts', {
     name: value,
     classId: classId.value || null,
-    points: [],
+    parentId,
+    points: parentId
+      ? layouts.value
+          .find((l) => l.id === parentId)
+          ?.points.filter((p) => !p.isAutoBreak)
+          .map((p) => ({ ...p, id: undefined })) || []
+      : [],
   });
   selectedLayout.value = result.id;
   await load();
@@ -192,7 +198,9 @@ async function persistLayout(item: TimeLayoutDetailDto) {
     throw new Error('时间点的结束时间必须晚于开始时间');
   const result = await api.put<TimeLayoutDetailDto>(`/time-layouts/${item.id}`, {
     ...item,
-    points: item.points.map((p) => ({ ...p, id: p.id.startsWith('draft-') ? undefined : p.id || undefined })),
+    points: item.points
+      .filter((p) => !p.isAutoBreak)
+      .map((p) => ({ ...p, id: p.id.startsWith('draft-') ? undefined : p.id || undefined })),
   });
   layouts.value = layouts.value.map((p) => (p.id === result.id ? result : p));
   layoutBaseline.value[result.id] = JSON.stringify(result);
@@ -606,15 +614,20 @@ function changeLayout(value: string) {
   if (!plan.value) return;
   const old = layouts.value.find((l) => l.id === plan.value!.timeLayoutId);
   const next = layouts.value.find((l) => l.id === value);
-  // 时间点通过时间与类型匹配，不能把原外键带进另一张时间表。
-  plan.value.entries = plan.value.entries.flatMap((e) => {
-    const oldPoint = old?.points.find((p) => p.id === e.timeLayoutItemId);
-    const target = next?.points.find(
-      (p) =>
-        p.timeType === 'LESSON' && p.startTime === oldPoint?.startTime && p.endTime === oldPoint?.endTime,
-    );
-    return target ? [{ ...e, id: '', timeLayoutItemId: target.id }] : [];
+  const oldLessons = old?.points.filter((p) => p.timeType === 'LESSON') || [];
+  const nextLessons = next?.points.filter((p) => p.timeType === 'LESSON') || [];
+  const mapped = plan.value.entries.map((e) => {
+    const source = oldLessons.find((p) => p.id === e.timeLayoutItemId);
+    const target =
+      nextLessons.find((p) => source?.slotKey && p.slotKey === source.slotKey) ||
+      nextLessons[oldLessons.findIndex((p) => p.id === source?.id)];
+    return target ? { ...e, id: '', timeLayoutItemId: target.id } : undefined;
   });
+  if (mapped.some((e) => !e)) {
+    ElMessage.warning('目标时间表节数不足，请先增加课时；原课程已保留。');
+    return;
+  }
+  plan.value.entries = mapped.filter((e): e is NonNullable<typeof e> => Boolean(e));
   plan.value.timeLayoutId = value;
   selectedLayout.value = value;
 }
@@ -753,20 +766,46 @@ type GridRow = {
 function pointKey(p: Pick<TimePointDto, 'startTime' | 'endTime' | 'timeType'>) {
   return `${p.startTime}|${p.endTime}|${p.timeType}`;
 }
+const focusedDay = ref<number | null>(null);
+function dayPoints(day: number) {
+  return layouts.value.find((l) => l.id === dayPlan(day)?.timeLayoutId)?.points || [];
+}
+function visualKey(p: TimePointDto, points: TimePointDto[]) {
+  return (
+    p.slotKey ||
+    (p.timeType === 'LESSON'
+      ? `lesson-${points.filter((x) => x.timeType === 'LESSON').findIndex((x) => x.id === p.id) + 1}`
+      : pointKey(p))
+  );
+}
 const gridRows = computed(() => {
   const rows = new Map<string, GridRow>();
-  for (const day of weekDays.value) {
-    const l = layouts.value.find((l) => l.id === dayPlan(day.day)?.timeLayoutId);
-    for (const p of l?.points || []) rows.set(pointKey(p), { ...p, key: pointKey(p) });
-  }
+  for (const day of weekDays.value)
+    for (const p of dayPoints(day.day)) {
+      const key = visualKey(p, dayPoints(day.day));
+      if (!rows.has(key)) rows.set(key, { ...p, key });
+    }
   return [...rows.values()].sort(
     (a, b) => a.startTime.localeCompare(b.startTime) || a.endTime.localeCompare(b.endTime),
   );
 });
 function gridPoint(day: number, row: GridRow) {
-  return layouts.value
-    .find((l) => l.id === dayPlan(day)?.timeLayoutId)
-    ?.points.find((p) => pointKey(p) === row.key);
+  const points = dayPoints(day);
+  return points.find((p) => visualKey(p, points) === row.key);
+}
+function rowTimes(row: GridRow) {
+  const byTime = new Map<string, string[]>();
+  for (const day of weekDays.value) {
+    if (focusedDay.value !== null && day.day !== focusedDay.value) continue;
+    const p = gridPoint(day.day, row);
+    if (!p) continue;
+    const key = `${p.startTime}–${p.endTime}`;
+    byTime.set(key, [...(byTime.get(key) || []), day.label]);
+  }
+  return [...byTime].map(([time, days]) => ({
+    time,
+    label: focusedDay.value === null && byTime.size > 1 ? days.join('、') : '',
+  }));
 }
 function gridEntry(day: number, row: GridRow) {
   const point = gridPoint(day, row);
@@ -780,6 +819,7 @@ function selectCell(day: number, row?: GridRow) {
   if (!p) return;
   selectedPlan.value = p.id;
   selectedDay.value = day;
+  focusedDay.value = day;
   if (row) activePoint.value = gridPoint(day, row)?.id || '';
 }
 function isSelectedCell(day: number, row: GridRow) {
@@ -1107,7 +1147,7 @@ function selectPlanItem(id: string) {
             </template>
           </div>
 
-          <div v-if="viewMode === 'week'" class="week-view">
+          <div v-if="viewMode === 'week'" class="week-view" @keydown.esc="focusedDay = null">
             <div class="week-scroll">
               <table class="schedule-grid" aria-label="周课表">
                 <colgroup>
@@ -1116,7 +1156,9 @@ function selectPlanItem(id: string) {
                 </colgroup>
                 <thead>
                   <tr>
-                    <th scope="col" class="time-heading">时间</th>
+                    <th scope="col" class="time-heading">
+                      <button class="text-command" @click="focusedDay = null">时间（清除选择）</button>
+                    </th>
                     <th
                       v-for="day in weekDays"
                       :key="day.day"
@@ -1157,8 +1199,10 @@ function selectPlanItem(id: string) {
                     :class="{ 'non-lesson-row': row.timeType !== 'LESSON' }"
                   >
                     <th scope="row" class="time-cell">
-                      <span>{{ row.startTime }}</span>
-                      <small v-if="row.timeType !== 'DIVIDER'">{{ row.endTime }}</small>
+                      <template v-for="time in rowTimes(row)" :key="time.time">
+                        <span>{{ time.time }}</span>
+                        <small v-if="time.label">{{ time.label }}</small>
+                      </template>
                     </th>
                     <td
                       v-for="day in weekDays"
@@ -1449,6 +1493,7 @@ function selectPlanItem(id: string) {
         :plan-count="layoutPlanCount"
         @select-layout="selectedLayout = $event"
         @create="newLayout"
+        @create-child="newLayout($event)"
         @clone="cloneLayout"
         @save="saveLayout"
         @refresh="refresh"

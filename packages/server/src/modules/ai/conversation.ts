@@ -27,6 +27,16 @@ const operationSchema = z
   })
   .strict();
 const replySchema = z.object({
+  questions: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(100),
+        text: z.string().min(1).max(1000),
+        options: z.array(z.string().max(200)).max(10).optional(),
+      }),
+    )
+    .max(3)
+    .optional(),
   message: z.string().max(4000).optional(),
   queries: z.array(operationSchema).max(8).default([]),
   operations: z.array(operationSchema).max(16).default([]),
@@ -176,6 +186,20 @@ export async function interpretConversation(
       });
     else reply = replySchema.parse({ message: '离线示例未识别此任务，请配置模型或补充具体操作。' });
   }
+  if (reply.questions?.length)
+    return {
+      planId: null,
+      steps: [],
+      results: modelResults,
+      message: reply.message || reply.questions.map((q) => q.text).join('；'),
+      questions: reply.questions,
+      action: 'unknown',
+      params: {},
+      preview: { summary: '请补充必要信息', warnings: [] },
+      confidence: 0,
+      needConfirm: false,
+      rawReply: null,
+    };
   const results: AiConversationResult['results'] = [...modelResults];
   for (const query of reply.queries)
     results.push({
@@ -215,7 +239,7 @@ export async function interpretConversation(
       settings.provider !== 'openai' ||
       !(error instanceof ApiError) ||
       ![400, 422].includes(error.status) ||
-      (run.corrections ?? 0) >= 2
+      (run.corrections ?? 0) >= 1
     )
       throw error;
     run.emit?.({ type: 'status', message: '参数需要调整，正在自动核对并修正预览' });

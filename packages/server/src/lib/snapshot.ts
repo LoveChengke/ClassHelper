@@ -73,6 +73,7 @@ export const SNAPSHOT_TABLES = [
   'ClientRelease',
   'AiAudit',
   'AiPlanStep',
+  'AiConversation',
   'AiTask',
 ] as const;
 
@@ -150,7 +151,8 @@ export function assertValidSnapshot(value: unknown): asserts value is DatabaseSn
       (table.startsWith('Courseware') ||
         table === 'PermissionAudit' ||
         table === 'AiPlanStep' ||
-        table === 'AiTask')
+        table === 'AiTask' ||
+        table === 'AiConversation')
     )
       continue;
     if (!Array.isArray(rows)) {

@@ -319,6 +319,49 @@ module.exports = async function runAssistantChecks({ win, target, record, waitFo
     await win.webContents.executeJavaScript(`document.querySelector('.ch-guide [data-action=skip]').click()`);
     assert(await waitFor(win, `!document.querySelector('.ch-guide')`));
     record('共享日历支持深色与150%关怀模式，全屏引导在390px小屏无横向溢出', true);
+    for (const [width, height] of [
+      [360, 800],
+      [768, 1024],
+      [1366, 768],
+      [1920, 1080],
+    ]) {
+      win.setContentSize(width, height);
+      for (const route of [
+        'assistant',
+        'courseware',
+        'term-weeks',
+        'plan-editor',
+        'dashboard',
+        'classes',
+        'students',
+        'teachers',
+        'promotion',
+        'archives',
+        'homeworks',
+        'notifications',
+        'grades',
+        'ai-settings',
+        'database',
+        'permissions',
+        'clients',
+        'system-settings',
+      ]) {
+        await win.loadURL(origin + '/' + route);
+        assert(
+          await waitFor(
+            win,
+            `location.pathname === ${JSON.stringify('/' + route)} && Boolean(document.querySelector('.page, .page-container'))`,
+          ),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assert(
+          await waitFor(win, `document.documentElement.scrollWidth<=innerWidth+1`),
+          route + ' 页面溢出 ' + width,
+        );
+      }
+      await screenshot('responsive-' + width);
+    }
+    record('全部Web业务页面在360/768/1366/1920宽度无页面横向溢出', true);
   } catch (error) {
     record('AI 与共享控件隔离界面验收', false, error.stack || error.message);
   } finally {
