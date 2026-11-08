@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { modelReplySchema as replySchema, normalizeModelReply, type ModelReply } from './model-reply.js';
 import {
   dayKeyLocal,
   type AiInterpretResult,
@@ -17,30 +17,6 @@ import { planWithModel, sanitizePrompt, type AgentRun } from './model-planner.js
 import { getAiSettings } from './ai.service.js';
 import type { AiInterpretInput } from './ai.schemas.js';
 
-const operationSchema = z
-  .object({
-    action: z.string().min(1).max(80),
-    target: z.record(z.string(), z.string().max(100)).optional(),
-    params: z.record(z.string(), z.unknown()).optional(),
-    query: z.record(z.string(), z.unknown()).optional(),
-    attachmentId: z.string().max(100).optional(),
-  })
-  .strict();
-const replySchema = z.object({
-  questions: z
-    .array(
-      z.object({
-        id: z.string().min(1).max(100),
-        text: z.string().min(1).max(1000),
-        options: z.array(z.string().max(200)).max(10).optional(),
-      }),
-    )
-    .max(3)
-    .optional(),
-  message: z.string().max(4000).optional(),
-  queries: z.array(operationSchema).max(8).default([]),
-  operations: z.array(operationSchema).max(16).default([]),
-});
 const aliases: Record<string, string> = {
   create_homework: 'homeworks.create',
   create_notification: 'notifications.create',
@@ -48,10 +24,7 @@ const aliases: Record<string, string> = {
 };
 
 /** 本地确定性解析只用于 mock 和原有模型之外的文件、查询入口，不新增任何模型出站数据。 */
-function localReply(
-  input: AiInterpretInput,
-  classes: { id: string; name: string }[],
-): z.infer<typeof replySchema> | null {
+function localReply(input: AiInterpretInput, classes: { id: string; name: string }[]): ModelReply | null {
   const classId =
     input.classId ||
     classes.find((item) => input.text.includes(item.name))?.id ||
@@ -139,10 +112,10 @@ export async function interpretConversation(
   const classes = tools.some((item) => item.action === 'classes.list')
     ? ((await runRead(user, { action: 'classes.list' })) as { id: string; name: string }[])
     : [];
-  let reply: z.infer<typeof replySchema> | null = null;
+  let reply: ModelReply | null = null;
   if (settings.provider === 'mock') {
     try {
-      reply = replySchema.parse(JSON.parse(input.text));
+      reply = normalizeModelReply(JSON.parse(input.text));
     } catch {
       /* 自然语言示例继续走本地解析。 */
     }
@@ -186,6 +159,7 @@ export async function interpretConversation(
       });
     else reply = replySchema.parse({ message: '离线示例未识别此任务，请配置模型或补充具体操作。' });
   }
+  reply = normalizeModelReply(reply);
   if (reply.questions?.length)
     return {
       planId: null,
@@ -252,7 +226,7 @@ export async function interpretConversation(
           { role: 'assistant' as const, content: JSON.stringify(reply).slice(0, 8000) },
           {
             role: 'user' as const,
-            content: `预览校验未通过：${sanitizePrompt(error.message)}。请查询真实数据后修正参数，不能省略用户要求。信息不足时提出具体问题。`,
+            content: `预览校验未通过：${sanitizePrompt(error.message)}。请查询真实数据后修正参数，不能省略用户要求。信息不足时通过 questions:[{id,text,options?}] 提出具体问题，并清空 operations 和 queries。`,
           },
         ].slice(-20),
       },

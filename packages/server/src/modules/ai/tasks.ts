@@ -8,6 +8,7 @@ import type { Request } from 'express';
 import type { AiAgentEvent, AiConversationResult, AiTaskDto } from '@classhelper/shared';
 import { prisma } from '../../lib/db.js';
 import { ApiError } from '../../lib/http.js';
+import { logger } from '../../lib/logger.js';
 import { assertPermission, loadAuthPrincipal } from '../../lib/authz/index.js';
 import { loadSessionUser } from '../../lib/authz/session.js';
 import { encryptSecret, decryptSecret } from '../../lib/secrets.js';
@@ -141,13 +142,27 @@ export async function createTask(user: TokenPayload, input: AiInterpretInput) {
     messages: context.map((item) => ({ ...item, content: sanitizePrompt(item.content).slice(0, 8000) })),
   };
   Object.assign(safe, { accessStamp: await accessStamp(user) });
-  const row = await prisma.aiTask.create({
-    data: {
-      userId: user.sub,
-      conversationId: conversation.id,
-      turnNumber: (previous.at(-1)?.turnNumber ?? 0) + 1,
-      input: encryptSecret(JSON.stringify(safe)),
-    },
+  const row = await prisma.$transaction(async (tx) => {
+    // 与删除对话共用同一行锁，避免新轮次写入已删除的对话。
+    const locked = await tx.aiConversation.updateMany({
+      where: { id: conversation.id, userId: user.sub },
+      data: { updatedAt: new Date(), title: conversation.title || sanitizePrompt(input.text).slice(0, 80) },
+    });
+    if (!locked.count) throw ApiError.forbidden('此对话已删除或无法访问');
+    const latest = await tx.aiTask.findFirst({
+      where: { conversationId: conversation.id, userId: user.sub },
+      orderBy: { turnNumber: 'desc' },
+    });
+    if ((latest?.turnNumber ?? 0) !== (previous.at(-1)?.turnNumber ?? 0))
+      throw ApiError.conflict('对话已有新轮次，请重新发送');
+    return tx.aiTask.create({
+      data: {
+        userId: user.sub,
+        conversationId: conversation.id,
+        turnNumber: (latest?.turnNumber ?? 0) + 1,
+        input: encryptSecret(JSON.stringify(safe)),
+      },
+    });
   });
   if (last && inherited?.length) {
     for (const attachment of inherited) {
@@ -158,10 +173,6 @@ export async function createTask(user: TokenPayload, input: AiInterpretInput) {
       await fsp.copyFile(source, target);
     }
   }
-  await prisma.aiConversation.update({
-    where: { id: conversation.id },
-    data: { title: conversation.title || sanitizePrompt(input.text).slice(0, 80), updatedAt: new Date() },
-  });
   return { id: row.id, conversationId: conversation.id };
 }
 export async function stageAttachment(
@@ -504,4 +515,42 @@ export async function conversationTurns(user: TokenPayload, id: string, before?:
     take: 30,
   });
   return Promise.all(rows.reverse().map((row) => task(user, row.id)));
+}
+
+/** 删除自己的对话，不回滚已执行业务，也不删除业务审计。 */
+export async function deleteConversation(user: TokenPayload, id: string) {
+  await ownedConversation(user, id);
+  const rows = await prisma.$transaction(async (tx) => {
+    const locked = await tx.aiConversation.updateMany({
+      where: { id, userId: user.sub },
+      data: { updatedAt: new Date() },
+    });
+    if (!locked.count) throw ApiError.forbidden('无法访问此对话');
+    const tasks = await tx.aiTask.findMany({ where: { conversationId: id, userId: user.sub } });
+    if (tasks.some((t) => active.has(t.id) || ['planning', 'executing'].includes(t.state)))
+      throw ApiError.conflict('对话仍有后台任务，请先停止或等待完成后再删除');
+    const planIds = tasks.flatMap((t) =>
+      t.result ? [decode<AiConversationResult>(t.result).planId].filter((p): p is string => Boolean(p)) : [],
+    );
+    if (
+      await tx.aiPlanStep.count({ where: { auditId: { in: planIds }, userId: user.sub, state: 'running' } })
+    )
+      throw ApiError.conflict('业务操作正在执行，请等待完成后再删除');
+    await tx.aiPlanStep.updateMany({
+      where: {
+        auditId: { in: planIds },
+        userId: user.sub,
+        state: { in: ['draft', 'prepared', 'confirmed', 'failed'] },
+      },
+      data: { state: 'blocked', result: JSON.stringify({ message: '对话已删除，未完成计划已取消' }) },
+    });
+    await tx.aiTask.deleteMany({ where: { conversationId: id, userId: user.sub } });
+    await tx.aiConversation.delete({ where: { id } });
+    return tasks;
+  });
+  for (const row of rows)
+    await cleanup(row.id, decode<AiInterpretInput>(row.input)).catch(() =>
+      logger.warn('AI 对话已删除，暂存附件清理未完成'),
+    );
+  return { id };
 }

@@ -104,9 +104,9 @@ const child = spawn(executable, [entry], {
   }),
 });
 const timeout = setTimeout(() => {
-  console.error('[ui-smoke] 后台验收超过 120 秒，终止验证进程');
+  console.error('[ui-smoke] 后台验收超过 180 秒，终止验证进程');
   child.kill();
-}, 120_000);
+}, 180_000);
 
 child.on('exit', async (code) => {
   clearTimeout(timeout);

@@ -27,6 +27,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const router = Router();
 router.use(authenticate());
+router.delete(
+  '/conversations/:id',
+  requirePermission('ai:use'),
+  validate({ params: planIdSchema }),
+  async (req, res) => {
+    sendOk(res, await tasks.deleteConversation(getAuthUser(req), String(req.params.id)));
+  },
+);
 router.post('/conversations', requirePermission('ai:use'), async (req, res) => {
   sendOk(res, await tasks.createConversation(getAuthUser(req)));
 });

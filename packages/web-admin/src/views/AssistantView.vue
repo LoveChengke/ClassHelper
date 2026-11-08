@@ -19,6 +19,7 @@ import { useAuthStore } from '@/stores/auth';
 import { hashAttachment, importFileBase64 } from '@/composables/assistantFiles';
 import { findClassInSession } from '@/composables/useClassInSession';
 import AssistantData from '@/components/AssistantData.vue';
+import AssistantQuestions from '@/components/AssistantQuestions.vue';
 import UrgentClassWarning from '@/components/UrgentClassWarning.vue';
 import { observeTask } from '@/composables/assistantStream';
 interface ChatMessage {
@@ -32,22 +33,44 @@ interface ChatMessage {
 const auth = useAuthStore();
 let viewEpoch = 0;
 const replacePlan = ref(false);
+const deletingConversation = ref(false);
+const questionsVisible = ref(false),
+  questionSource = ref<ChatMessage>();
+function showQuestions(message: ChatMessage) {
+  if (busy.value || executing.value || !message.result?.questions?.length) return;
+  questionSource.value = message;
+  questionsVisible.value = true;
+}
+async function answerQuestions(answer: string) {
+  if (busy.value || executing.value) return;
+  text.value = answer;
+  await send();
+}
+
 const conversationId = ref('');
 const conversations = ref<{ id: string; title: string }[]>([]);
+let conversationListRequest = 0;
 async function loadConversations() {
-  conversations.value = await api.get('/ai/conversations');
+  const request = ++conversationListRequest;
+  const rows = await api.get<{ id: string; title: string }[]>('/ai/conversations');
+  if (request === conversationListRequest && !disposed) conversations.value = rows;
 }
 async function openConversation(id: string) {
   if ((busy.value || executing.value) && !observing) return;
-  viewEpoch++;
+  questionsVisible.value = false;
+  questionSource.value = undefined;
+  const epoch = ++viewEpoch;
   controller?.abort();
   busy.value = false;
   executing.value = false;
+  questionsVisible.value = false;
+  questionSource.value = undefined;
   conversationId.value = id;
   attachments.value = [];
   files.clear();
   replacePlan.value = false;
   const turns = await api.get<AiTaskDto[]>(`/ai/conversations/${id}`);
+  if (epoch !== viewEpoch || disposed) return;
   messages.value = turns.flatMap((t) => [
     { role: 'user' as const, content: t.text },
     {
@@ -67,6 +90,48 @@ async function openConversation(id: string) {
   lastRequest = last ? { text: last.text, conversationId: id } : undefined;
   clearCredentials();
   if (last && ['planning', 'executing'].includes(last.state)) await resumeTask(last.id, true);
+  else if (last?.state === 'waiting_input' && messages.value.at(-1)) showQuestions(messages.value.at(-1)!);
+}
+async function deleteCurrentConversation() {
+  const id = conversationId.value;
+  if (!id || busy.value || executing.value || hashing.value || deletingConversation.value) return;
+  const title = conversations.value.find((c) => c.id === id)?.title || '新对话';
+  try {
+    await ElMessageBox.confirm(
+      `删除“${title}”？对话轮次和暂存附件会清除，未完成计划会取消。已执行的业务操作及审计记录保留。`,
+      '删除对话',
+      { type: 'warning', confirmButtonText: '删除对话', cancelButtonText: '保留对话' },
+    );
+  } catch {
+    return;
+  }
+  deletingConversation.value = true;
+  try {
+    await api.delete(`/ai/conversations/${encodeURIComponent(id)}`);
+    viewEpoch++;
+    controller?.abort();
+    questionsVisible.value = false;
+    questionSource.value = undefined;
+    conversationId.value = '';
+    taskId.value = '';
+    messages.value = [];
+    active.value = undefined;
+    lastRequest = undefined;
+    error.value = '';
+    text.value = '';
+    attachments.value = [];
+    files.clear();
+    clearCredentials();
+    classId.value = '';
+    replacePlan.value = false;
+    await loadConversations();
+    if (conversations.value[0]) await openConversation(conversations.value[0].id);
+    ElMessage.success('对话已删除');
+  } catch (e) {
+    error.value = failure(e);
+  } finally {
+    deletingConversation.value = false;
+  }
 }
 async function olderConversations() {
   const older = await api.get<{ id: string; title: string }[]>('/ai/conversations', {
@@ -226,7 +291,14 @@ async function retryTask(): Promise<void> {
   if (lastRequest) await send(true);
 }
 async function send(retrying = false): Promise<void> {
-  if ((!retrying && !text.value.trim()) || busy.value || executing.value || hashing.value) return;
+  if (
+    (!retrying && !text.value.trim()) ||
+    busy.value ||
+    executing.value ||
+    hashing.value ||
+    deletingConversation.value
+  )
+    return;
   const epoch = viewEpoch;
   const supersedesTaskId = replacePlan.value && pending.value ? taskId.value : undefined;
   busy.value = true;
@@ -310,6 +382,7 @@ async function send(retrying = false): Promise<void> {
     observing = false;
     if (message) message.state = controller.signal.aborted || error.value ? 'stopped' : 'done';
     busy.value = false;
+    if (message?.result?.questions?.length && !disposed) showQuestions(message);
     if (!disposed) {
       taskHistory.value = await aiApi.tasks().catch(() => taskHistory.value);
       await loadConversations();
@@ -324,7 +397,9 @@ function composerKey(event: KeyboardEvent): void {
   }
 }
 async function newConversation(): Promise<void> {
-  if (hashing.value || ((busy.value || executing.value) && !observing)) return;
+  if (deletingConversation.value || hashing.value || ((busy.value || executing.value) && !observing)) return;
+  questionsVisible.value = false;
+  questionSource.value = undefined;
   viewEpoch++;
   controller?.abort();
   busy.value = false;
@@ -481,6 +556,7 @@ async function resumeTask(id: string, preserveHistory = false): Promise<void> {
   error.value = '';
   const epoch = viewEpoch;
   const saved = await aiApi.task(id);
+  if (disposed || epoch !== viewEpoch) return;
   taskId.value = id;
   lastRequest = { text: saved.text };
   const message = reactive<ChatMessage>({
@@ -496,6 +572,7 @@ async function resumeTask(id: string, preserveHistory = false): Promise<void> {
   clearCredentials();
   if (saved.error) error.value = saved.error;
   if (!['planning', 'executing'].includes(saved.state)) {
+    if (saved.state === 'waiting_input') showQuestions(message);
     await scroll();
     return;
   }
@@ -530,6 +607,7 @@ async function resumeTask(id: string, preserveHistory = false): Promise<void> {
     message.state = error.value ? 'stopped' : 'done';
     busy.value = false;
     executing.value = false;
+    if (message.result?.questions?.length && !disposed) showQuestions(message);
     await scroll();
   }
 }
@@ -574,12 +652,20 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="agent-header-actions">
+        <el-button
+          v-if="conversationId"
+          :disabled="busy || executing || hashing"
+          :loading="deletingConversation"
+          @click="deleteCurrentConversation"
+        >
+          删除对话
+        </el-button>
         <el-button v-if="conversations.length >= 30" @click="olderConversations">更多对话</el-button>
         <el-select
           v-if="conversations.length"
           :model-value="conversationId"
           placeholder="对话历史"
-          :disabled="(busy || executing) && !observing"
+          :disabled="deletingConversation || ((busy || executing) && !observing)"
           @change="openConversation"
         >
           <el-option
@@ -589,7 +675,10 @@ onBeforeUnmount(() => {
             :label="item.title || '新对话'"
           />
         </el-select>
-        <el-button :disabled="hashing || ((busy || executing) && !observing)" @click="newConversation">
+        <el-button
+          :disabled="deletingConversation || hashing || ((busy || executing) && !observing)"
+          @click="newConversation"
+        >
           新对话
         </el-button>
         <el-select
@@ -681,19 +770,7 @@ onBeforeUnmount(() => {
           class="assistant-question"
         >
           <strong>{{ question.text }}</strong>
-          <div class="question-options">
-            <el-button
-              v-for="option in question.options || []"
-              :key="option"
-              :disabled="busy"
-              @click="
-                text = question.text + '：' + option;
-                send();
-              "
-            >
-              {{ option }}
-            </el-button>
-          </div>
+          <el-button :disabled="busy || executing" @click="showQuestions(message)">回答问题</el-button>
           <small>也可以在下方输入框自由回答。</small>
         </el-card>
         <el-button
@@ -813,6 +890,11 @@ onBeforeUnmount(() => {
         <el-progress v-if="executing && progress > 0" :percentage="progress" />
       </section>
     </div>
+    <AssistantQuestions
+      v-model="questionsVisible"
+      :questions="questionSource?.result?.questions || []"
+      @answer="answerQuestions"
+    />
     <el-alert v-if="error" :title="error" type="warning" :closable="true" show-icon @close="error = ''" />
     <el-button v-if="error && !active?.steps.length && !busy && !executing" @click="retryTask">
       重试上次任务

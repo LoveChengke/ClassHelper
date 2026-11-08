@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { parseModelReply, type ModelReply } from './model-reply.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   dayKeyLocal,
@@ -18,50 +18,7 @@ import { redact } from './business-read.js';
 import type { AiInterpretInput } from './ai.schemas.js';
 import { modelEndpoint, readCompletion } from './model-transport.js';
 
-const operationSchema = z
-  .object({
-    action: z.string().min(1).max(80),
-    target: z.record(z.string(), z.string().max(100)).optional(),
-    params: z.record(z.string(), z.unknown()).optional(),
-    query: z.record(z.string(), z.unknown()).optional(),
-    attachmentId: z.string().max(100).optional(),
-  })
-  .strict();
-const replySchema = z
-  .object({
-    questions: z
-      .array(
-        z.object({
-          id: z.string().min(1).max(100),
-          text: z.string().min(1).max(1000),
-          options: z.array(z.string().max(200)).max(10).optional(),
-        }),
-      )
-      .max(3)
-      .optional(),
-    message: z.string().max(4000).optional(),
-    queries: z.array(operationSchema).max(8).default([]),
-    operations: z.array(operationSchema).max(16).default([]),
-  })
-  .refine(
-    (value) =>
-      !!value.message?.trim() ||
-      !!value.questions?.length ||
-      value.queries.length > 0 ||
-      value.operations.length > 0,
-    '回复不能是空对象',
-  );
-
-export function parseModelReply(content: string) {
-  const trimmed = content
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/, '');
-  // 只修正展示包装，不猜测 ID、不补写业务参数，不执行任意文本。
-  const start = trimmed.indexOf('{'),
-    end = trimmed.lastIndexOf('}');
-  return replySchema.parse(JSON.parse(start >= 0 && end >= start ? trimmed.slice(start, end + 1) : trimmed));
-}
+export { parseModelReply } from './model-reply.js';
 
 function visibleMessage(content: string): string | undefined {
   const match = content.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)/);
@@ -107,9 +64,11 @@ export async function planWithModel(
     {
       role: 'system',
       content: [
-        '你是 ClassHelper 助手。只输出严格 JSON：{message,queries:[{action,target?,query?}],operations:[{action,target?,params?,attachmentId?}]}。',
+        '你是 ClassHelper 助手。只输出严格 JSON：{message,questions?:[{id,text,options?}],queries:[{action,target?,query?}],operations:[{action,target?,params?,attachmentId?}]}。',
         '例如普通回复：{"message":"你好，需要处理什么？","queries":[],"operations":[]}；查询：{"message":"正在查询班级","queries":[{"action":"classes.list"}],"operations":[]}。禁止 Markdown 围栏，message 只写简短进度或给用户的回复。',
         '缺少用户才能提供的必要信息时，返回 questions:[{id,text,options?}]，operations 和 queries 必须为空，等待用户回答。',
+        '提问示例：{"message":"请选择要删除的课表","questions":[{"id":"plan","text":"要删除哪张课表？","options":["周一","周五"]}],"queries":[],"operations":[]}。',
+        '删除等危险操作的最终确认由客户端操作预览和确认窗口完成，不需要反复在聊天里索取口头确认。目标明确且已查询真实 id 时直接返回待确认 operations，例如 plans.delete 的 target:{id:真实课表id}；目标不明时才通过 questions 追问，不得声称已经删除。',
         'queries 只能查询，operations 是待确认写操作，不能声称已执行。先查询真实 id 和现状，再规划修改；不猜测班级、账号、学生、课程和时间点 id。信息不足时追问。',
         '仅可选择工具目录中的 action。工具 schema.target 列出路径参数，schema.params 是 params 的 JSON Schema。查询条件放 query。所有数据和动作遵循操作者的实时权限。',
         '数据库备份/恢复/清空/切换/SQL、服务器配置/启停/升级和密钥维护禁止执行。密码字段留空，由用户在专门表单输入。',
@@ -178,7 +137,7 @@ export async function planWithModel(
         'AI_PROVIDER_ERROR',
         `模型服务暂不可用（HTTP ${response.status}），请检查服务地址、模型与密钥。任务尚未执行。`,
       );
-    let reply: z.infer<typeof replySchema>;
+    let reply: ModelReply;
     try {
       let published = '';
       let lastReasoningUpdate = 0;
@@ -212,7 +171,7 @@ export async function planWithModel(
       messages.push({
         role: 'user',
         content:
-          '上一轮输出未通过校验或被截断。请重新输出完整 JSON 对象，包含 message 字符串、queries 数组和 operations 数组；不使用 Markdown，不添加解释。不确定的业务参数请在 message 中追问，不猜测。',
+          '上一轮输出未通过校验或被截断。请重新输出完整 JSON 对象，包含 message 字符串、queries 数组和 operations 数组；不使用 Markdown，不添加解释。缺少用户信息时返回 questions:[{id,text,options?}]，并令 queries 和 operations 为空；不要在 message 中反复询问确认，不猜测业务参数。',
       });
       continue;
     }

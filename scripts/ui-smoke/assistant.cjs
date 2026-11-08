@@ -108,6 +108,124 @@ module.exports = async function runAssistantChecks({ win, target, record, waitFo
     );
     assert.equal((await request('/homeworks?keyword=' + encodeURIComponent(title))).length, 1);
     record('AI 界面确认后通过原业务端点执行并显示结果', true);
+    const sendChat = async (content) => {
+      await win.webContents.executeJavaScript(
+        `(() => {const input=document.querySelector('.assistant-composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(content)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+      );
+      assert(
+        await waitFor(
+          win,
+          `Array.from(document.querySelectorAll('.assistant-composer button')).some(b=>b.textContent.trim()==='发送'&&!b.disabled)`,
+        ),
+      );
+      await win.webContents.executeJavaScript(
+        `Array.from(document.querySelectorAll('.assistant-composer button')).find(b=>b.textContent.trim()==='发送').click()`,
+      );
+    };
+    await sendChat(
+      JSON.stringify({
+        message: '请确认要处理哪张课表？',
+        questions: [{ question: '请选择下一步', options: ['查看本班今天的作业'] }],
+      }),
+    );
+    const questionVisible = `Array.from(document.querySelectorAll('.assistant-questions-dialog')).some(d=>d.getBoundingClientRect().height>0 && d.textContent.includes('请选择下一步'))`;
+    assert(await waitFor(win, questionVisible));
+    await screenshot('assistant-question-dialog');
+    await win.loadURL(origin + '/assistant');
+    assert(await waitFor(win, questionVisible));
+    const roundsBefore = await win.webContents.executeJavaScript(
+      `document.querySelectorAll('.assistant-message.user').length`,
+    );
+    await win.webContents.executeJavaScript(
+      `document.querySelector('.assistant-questions-dialog .question-options button').click()`,
+    );
+    assert(
+      await waitFor(
+        win,
+        `Array.from(document.querySelectorAll('.assistant-questions-dialog .el-dialog__footer button')).some(b=>b.textContent.trim()==='发送回答'&&!b.disabled)`,
+      ),
+    );
+    await win.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('.assistant-questions-dialog .el-dialog__footer button')).find(b=>b.textContent.trim()==='发送回答').click()`,
+    );
+    assert(
+      await waitFor(
+        win,
+        `document.querySelectorAll('.assistant-message.user').length===${roundsBefore + 1} && Array.from(document.querySelectorAll('.assistant-composer button')).some(b=>b.textContent.trim()==='发送'&&!b.disabled)===false && !(${questionVisible})`,
+      ),
+    );
+    // 输入为空时发送按钮禁用，等待后台结束由停止生成按钮消失判断。
+    assert(
+      await waitFor(
+        win,
+        `!Array.from(document.querySelectorAll('.assistant-composer button')).some(b=>b.textContent.trim()==='停止生成')`,
+      ),
+    );
+    record('模型提问弹出交互窗口，刷新可恢复，回答作为同一对话的新一轮继续', true);
+    const layout = await request('/time-layouts', 'POST', {
+      classId: cls.id,
+      name: title + '删除作息',
+      points: [],
+    });
+    const day = await request('/class-plans', 'POST', {
+      classId: cls.id,
+      name: title + '待删除课表',
+      timeLayoutId: layout.id,
+      weekday: 1,
+    });
+    await sendChat(JSON.stringify({ operations: [{ action: 'plans.delete', target: { id: day.id } }] }));
+    assert(
+      await waitFor(
+        win,
+        `document.querySelector('.assistant-step')?.textContent.includes(${JSON.stringify(day.name)}) && document.querySelector('.assistant-step .el-tag')?.textContent.includes('待确认')`,
+      ),
+    );
+    assert(
+      (await request('/class-plans?classId=' + encodeURIComponent(cls.id))).some((p) => p.id === day.id),
+    );
+    await win.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('.assistant-plan-actions button')).find(b=>b.textContent.trim()==='确认执行').click()`,
+    );
+    assert(
+      await waitFor(
+        win,
+        `(() => {const box=document.querySelector('.el-message-box');if(!box?.textContent.includes(${JSON.stringify(day.name)})||!box.getBoundingClientRect().height)return false;for(let node=box;node;node=node.parentElement){const style=getComputedStyle(node);if(style.display==='none'||style.visibility==='hidden'||Number(style.opacity)<0.99)return false;}return true;})()`,
+      ),
+    );
+    await win.webContents.capturePage();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await screenshot('assistant-delete-confirm');
+    await win.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('.el-message-box__btns button')).find(b=>b.textContent.trim()==='取消').click()`,
+    );
+    assert(
+      (await request('/class-plans?classId=' + encodeURIComponent(cls.id))).some((p) => p.id === day.id),
+    );
+    record('删除课表先显示预览及危险操作确认窗口，取消不会删除', true);
+    // 对话删除不回滚已完成的作业，也不执行其余待确认删除计划。
+    const current = (await request('/ai/conversations'))[0];
+    await win.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('.agent-header-actions button')).find(b=>b.textContent.trim()==='删除对话').click()`,
+    );
+    assert(await waitFor(win, `document.querySelector('.el-message-box')?.textContent.includes('删除对话')`));
+    await win.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('.el-message-box__btns button')).find(b=>b.textContent.trim()==='删除对话').click()`,
+    );
+    assert(
+      await waitFor(
+        win,
+        `!document.querySelector('.assistant-step') && !document.querySelector('.assistant-message')`,
+      ),
+    );
+    assert(!(await request('/ai/conversations')).some((c) => c.id === current.id));
+    assert.equal((await request('/homeworks?keyword=' + encodeURIComponent(title))).length, 1);
+    assert(
+      (await request('/class-plans?classId=' + encodeURIComponent(cls.id))).some((p) => p.id === day.id),
+    );
+    await request('/class-plans/' + day.id, 'DELETE');
+    await request('/time-layouts/' + layout.id, 'DELETE');
+    record('界面可以确认删除当前对话，轮次消失，已执行作业保留且待确认课表未删除', true);
+
     const cachedBefore = await request('/update/client/releases');
     const cacheVersion = `0.0.0-ai-${Date.now()}`;
     const cacheTask = JSON.stringify({

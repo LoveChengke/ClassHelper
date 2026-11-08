@@ -813,6 +813,21 @@ try {
   assert.equal(incompleteBody.code, 'AI_TASK_INCOMPLETE');
   assert(!incompleteBody.message.includes('换一种说法'));
   check('持续异常保持明确未完成状态和重试入口，不伪报执行成功');
+  const questionSamples = [
+    '请确认是否删除“周一课表”？确认后我会继续。',
+    { message: '请确认是否删除“周一课表”？', queries: [], operations: [] },
+    { questions: [{ question: '要删除哪张课表？', options: ['周一', '周五'] }], queries: [], operations: [] },
+  ];
+  for (const sample of questionSamples) {
+    const before = modelBodies.length;
+    modelReplies.push(sample);
+    const reply = await api('/ai/interpret', teacher, 'POST', { text: '删除课表' });
+    assert.equal(modelBodies.length, before + 1, '自然语言追问不应进入格式校正循环');
+    assert.equal(reply.planId, null);
+    assert.equal(reply.steps.length, 0);
+    assert(reply.questions?.length);
+  }
+  check('普通中文确认、message追问和question别名均转为可交互问题，不触发校正或写入');
   modelReplies.push({ questions: [{ id: 'subject', text: '请选择科目', options: ['数学', '语文'] }] });
   const clarification = await api('/ai/interpret', teacher, 'POST', { text: '给这个班布置作业' });
   assert.equal(clarification.planId, null);
@@ -870,6 +885,10 @@ try {
   });
   const reader = connection.body!.getReader();
   assert((await reader.read()).value!.length > 0);
+  const runningConversation = (await prisma.aiTask.findUniqueOrThrow({ where: { id: background.id } }))
+    .conversationId!;
+  await api(`/ai/conversations/${runningConversation}`, teacher, 'DELETE', undefined, 409);
+  assert.equal(await prisma.aiTask.count({ where: { id: background.id } }), 1);
   await reader.cancel();
   releaseModel();
   modelHold = undefined;
@@ -1184,6 +1203,63 @@ try {
     assert.notEqual(tf.find((f) => f.path === path)!.id, af.find((f) => f.path === path)!.id);
   }
   check('三层目录自动补建父目录，同名目录按教师身份独立保存');
+  const deletable = await api('/ai/conversations', teacher, 'POST', {});
+  const deletingTask = await api('/ai/tasks', teacher, 'POST', {
+    conversationId: deletable.id,
+    text: '对话删除验收',
+  });
+  const pendingPlan = await interpret([
+    {
+      action: 'notifications.create',
+      params: { classId: A.id, title: '删除对话不发布', content: '只生成预览' },
+    },
+  ]);
+  await prisma.aiTask.update({
+    where: { id: deletingTask.id },
+    data: {
+      state: 'ready',
+      result: (await import('../src/lib/secrets.js')).encryptSecret(JSON.stringify(pendingPlan)),
+    },
+  });
+  const auditCount = await prisma.aiAudit.count();
+  const actualNotificationCount = await prisma.notification.count();
+  await api(`/ai/conversations/${deletable.id}`, admin, 'DELETE', undefined, 403);
+  await api(`/ai/conversations/${deletable.id}`, teacher, 'DELETE');
+  assert.equal(await prisma.aiConversation.count({ where: { id: deletable.id } }), 0);
+  assert.equal(await prisma.aiTask.count({ where: { conversationId: deletable.id } }), 0);
+  assert.equal(await prisma.aiAudit.count(), auditCount);
+  assert.equal(await prisma.notification.count(), actualNotificationCount);
+  assert(
+    (await prisma.aiPlanStep.findMany({ where: { auditId: pendingPlan.planId! } })).every(
+      (s) => s.state === 'blocked',
+    ),
+  );
+  await api('/ai/tasks', teacher, 'POST', { conversationId: deletable.id, text: '不能继续已删除对话' }, 403);
+  const attachmentChat = await api('/ai/conversations', teacher, 'POST', {});
+  const attachmentTask = await api('/ai/tasks', teacher, 'POST', {
+    conversationId: attachmentChat.id,
+    text: '暂存附件',
+    attachments: [attachment],
+  });
+  await api(`/ai/tasks/${attachmentTask.id}/files/${attachment.id}`, teacher, 'PUT', bytes, 200, {
+    'content-type': 'application/octet-stream',
+  });
+  const stagedPath = path.join(
+    process.env.COURSEWARE_DIR!,
+    '.ai-tasks',
+    createHash('sha256').update(attachmentTask.id).digest('hex'),
+    createHash('sha256').update(attachment.id).digest('hex'),
+  );
+  assert(fs.existsSync(stagedPath));
+  await api(`/ai/conversations/${attachmentChat.id}`, teacher, 'DELETE');
+  assert(!fs.existsSync(stagedPath));
+  const executedConversation = (await prisma.aiTask.findUniqueOrThrow({ where: { id: staged.id } }))
+    .conversationId!;
+  const homeworkCount = await prisma.homework.count();
+  await api(`/ai/conversations/${executedConversation}`, teacher, 'DELETE');
+  assert.equal(await prisma.homework.count(), homeworkCount);
+  check('删除对话仅限本人，轮次清除、待确认计划失效且业务数据与审计保留');
+
   console.log(`AI 隔离验收通过：${checks} 项`);
 } finally {
   globalThis.fetch = realFetch;
