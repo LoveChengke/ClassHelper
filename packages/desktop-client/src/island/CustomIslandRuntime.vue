@@ -27,7 +27,10 @@ const props = defineProps<{
 }>();
 const scheme = computed(() => props.settings.schemes.find((s) => s.id === props.settings.activeSchemeId)!);
 const expanded = computed(() => props.state.mode === 'expanded');
-const lesson = computed(() => props.state.lessonReminder ?? null);
+// 即将下课只在当前课程旁显示秒数，保留常驻组件与消息入口。
+const lesson = computed(() =>
+  props.state.lessonReminder?.kind === 'ending' ? null : (props.state.lessonReminder ?? null),
+);
 const lastLesson = ref<IslandLessonReminder | null>(null);
 watch(
   lesson,
@@ -283,7 +286,15 @@ watch(
   { deep: true, flush: 'post' },
 );
 watch(
-  [fit, motion, expanded, lesson, () => props.appearance.radius, () => props.appearance.speed],
+  [
+    fit,
+    motion,
+    expanded,
+    lesson,
+    () => scheme.value.radius,
+    () => props.appearance.radius,
+    () => props.appearance.speed,
+  ],
   () => {
     animate();
     trackHit();

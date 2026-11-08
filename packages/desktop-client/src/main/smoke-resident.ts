@@ -527,7 +527,7 @@ export async function verifyResidentSmoke(
     await pause(700);
     return Math.abs(immediate - opacity) < 0.01 && Math.abs(after - opacity) < 0.01;
   });
-  await check('两种布局均弹出ClassIsland课前/上下课提醒，倒计时与右侧时间正确且不写入通知队列', async () => {
+  await check('两种布局的上下课提醒、课程旁下课倒数与右侧时间正确且不写入通知队列', async () => {
     const capture = process.env.ISLAND_MOTION_CAPTURE === '1' && process.env.ELECTRON_SMOKE_MODE === 'visual';
     const recorded: Array<{ at: number; image: Electron.NativeImage }> = [];
     const start = Date.now();
@@ -642,17 +642,33 @@ export async function verifyResidentSmoke(
             throw new Error('自动倒计时未切到本节下课');
         }
         if (layout === 'custom') {
-          saveConfig({ islandLayout: { ...fixture, layout } });
+          const endingLayout = JSON.parse(JSON.stringify(fixture));
+          endingLayout.schemes[0].rows[0].nodes = [islandNode('schedule', 'lesson-ending-course')];
+          saveConfig({ islandLayout: endingLayout });
           island.syncCustomLayout();
         }
         await setTime(9, 44);
-        await pause(700);
+        await pause(1100);
         if (island.getState().lessonReminder?.kind !== 'ending')
           throw new Error(layout + '下课倒数状态错误：' + JSON.stringify(island.getState().lessonReminder));
         const ending = await win.webContents.executeJavaScript(
-          `document.querySelector('${layout === 'custom' ? '.resident-lesson-page' : '.ci-fixed-lesson'}')?.textContent.includes('距下课还剩')`,
+          `(() => {
+            const root=document.querySelector('${layout === 'custom' ? '.resident-compact' : '.ci-fixed-lesson'}');
+            const badge=root?.querySelector('.lesson-ending-badge');
+            const course=root?.querySelector('${layout === 'custom' ? '.lesson-line.current strong' : '.ci-lesson-course strong'}');
+            const rect=badge?.getBoundingClientRect(),name=course?.getBoundingClientRect();
+            return Boolean(badge?.textContent.trim()==='-60'&&rect&&name&&rect.left>=name.right&&Math.abs(rect.width-rect.height)<1&&!root?.querySelector('.ci-mask-active'));
+          })()`,
         );
         if (!ending) throw new Error(layout + '下课倒数未渲染');
+        await setTime(9, 44, 59);
+        await pause(1100);
+        if (
+          !(await win.webContents.executeJavaScript(
+            `document.querySelector('${layout === 'custom' ? '.resident-compact' : '.ci-fixed-lesson'} .lesson-ending-badge')?.textContent.trim()==='-1'`,
+          ))
+        )
+          throw new Error(layout + '最后一秒徽标错误');
         await shot('lesson-ending-' + layout);
         await setTime(9, 45);
         island.setClassState({ inClass: false });

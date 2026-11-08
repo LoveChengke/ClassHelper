@@ -1313,6 +1313,8 @@ export interface TableImportResult {
   failed: number;
   errors: TableImportRowError[];
   warnings: string[];
+  /** 仅在新建教师的导入响应中返回，供管理员一次性分发；不写审计记录。 */
+  credentials?: { username: string; name: string; password: string }[];
 }
 
 /** ClassIsland 时间配置条目 */

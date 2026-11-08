@@ -54,7 +54,7 @@ const container = computed(() => ['group', 'stack', 'slide', 'rolling'].includes
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  border-radius: 5px;
+  border-radius: var(--ch-radius-control);
 }
 .component-chip {
   display: flex;
@@ -62,9 +62,9 @@ const container = computed(() => ['group', 'stack', 'slide', 'rolling'].includes
   gap: 5px;
   min-height: 36px;
   padding: 5px 9px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  background: transparent;
+  border: 1px solid var(--ch-border);
+  border-radius: var(--ch-radius-control);
+  background: var(--ch-surface);
   color: inherit;
   font: inherit;
   white-space: nowrap;

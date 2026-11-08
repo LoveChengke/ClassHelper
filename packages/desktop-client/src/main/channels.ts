@@ -19,8 +19,6 @@ export const IPC_CHANNELS = {
   clearConfig: 'classhelper:config:clear',
   appInfo: 'classhelper:app:info',
   openExternal: 'classhelper:shell:open-external',
-  updateCheck: 'classhelper:update:check',
-  updateIgnore: 'classhelper:update:ignore',
   getAutoLaunch: 'classhelper:app:get-autolaunch',
   setAutoLaunch: 'classhelper:app:set-autolaunch',
   openLogDir: 'classhelper:app:open-log-dir',
@@ -28,6 +26,3 @@ export const IPC_CHANNELS = {
   clientStatus: 'classhelper:client:status',
   clientBeatNow: 'classhelper:client:beat-now',
 } as const;
-
-/** 主进程 → 渲染进程的单向推送：有可用更新（同理，供 preload 与主进程共用） */
-export const UPDATE_AVAILABLE_CHANNEL = 'classhelper:update:available';

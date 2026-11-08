@@ -307,27 +307,27 @@ pnpm --filter @classhelper/server start      # 或 node packages/server/dist/ind
 
 ## 五、环境变量清单
 
-| 变量                                                | 默认                   | 说明                                                        |
-| --------------------------------------------------- | ---------------------- | ----------------------------------------------------------- |
-| `NODE_ENV`                                          | `development`          | `production` 会启用生产校验、HSTS、更严的限流               |
-| `HOST` / `PORT`                                     | `0.0.0.0` / `4000`     | 监听地址与端口                                              |
-| `DATABASE_PROVIDER`                                 | `sqlite`               | `sqlite` 或 `mysql`                                         |
-| `DATABASE_URL`                                      | `file:./prisma/dev.db` | SQLite 相对路径以 `server` 根为基准；MySQL 用连接串         |
-| `AUTO_MIGRATE`                                      | `false`                | SQLite 启动时补跑随包迁移，空库另创建管理员                 |
-| `JWT_SECRET`                                        | —                      | **必填**，至少 16 位；生产需 ≥32 位且拒绝示例密钥           |
-| `JWT_EXPIRES_IN`                                    | `7d`                   | 令牌有效期                                                  |
-| `CORS_ORIGIN`                                       | `*`                    | 允许来源，多个用逗号分隔；生产建议写具体域名                |
-| `TRUST_PROXY`                                       | `false`                | 反向代理层数（Nginx 填 `1`），影响限流与日志中的真实 IP     |
-| `RATE_LIMIT_ENABLED`                                | `true`                 | 通用限流（生产 600 次/5 分钟）+ 登录限流（20 次/10 分钟）   |
-| `STARTUP_DB_CHECK`                                  | `true`                 | 启动校验数据库；生产不可用时直接退出                        |
-| `PID_FILE`                                          | —                      | PID 文件路径（安装包启停脚本依赖），相对 `server` 根        |
-| `WEB_DIST_DIR`                                      | 自动探测               | Web 管理端产物目录（`../web-admin/dist` 或 `./web`）        |
-| `LOG_LEVEL`                                         | `info`                 | `debug` / `info` / `warn` / `error`                         |
-| `DEFAULT_CLASS_PASSWORD`                            | `123456`               | 新建班级时班级账号（ClassHelper 班级端登录）的默认密码      |
-| `DEFAULT_TEACHER_PASSWORD`                          | `123456`               | 新增/重置教师账号的默认密码（管理员录入教师用）             |
-| `COURSEWARE_DIR`                                    | 默认 data/courseware   | 课件文件实体目录；需纳入完整备份                            |
-| `TERM_START_DATE`                                   | —                      | 开学日环境兜底；界面全校/班级设置与逐周区间优先，见课表帮助 |
-| `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` | `admin` / `admin123`   | 空库首启动创建的管理员                                      |
+| 变量                                                | 默认                   | 说明                                                                                                          |
+| --------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                                          | `development`          | `production` 会启用生产校验、HSTS、更严的限流                                                                 |
+| `HOST` / `PORT`                                     | `0.0.0.0` / `4000`     | 监听地址与端口                                                                                                |
+| `DATABASE_PROVIDER`                                 | `sqlite`               | `sqlite` 或 `mysql`                                                                                           |
+| `DATABASE_URL`                                      | `file:./prisma/dev.db` | SQLite 相对路径以 `server` 根为基准；MySQL 用连接串                                                           |
+| `AUTO_MIGRATE`                                      | `false`                | SQLite 启动时补跑随包迁移，空库另创建管理员                                                                   |
+| `JWT_SECRET`                                        | —                      | **必填**，至少 16 位；生产需 ≥32 位且拒绝示例密钥                                                             |
+| `JWT_EXPIRES_IN`                                    | `7d`                   | 令牌有效期                                                                                                    |
+| `CORS_ORIGIN`                                       | `*`                    | 允许来源，多个用逗号分隔；生产建议写具体域名                                                                  |
+| `TRUST_PROXY`                                       | `false`                | 反向代理层数（Nginx 填 `1`），影响限流与日志中的真实 IP                                                       |
+| `RATE_LIMIT_ENABLED`                                | `true`                 | 通用限流（生产 600 次/5 分钟）；同一来源 IP 连续五次登录失败后封禁 5 分钟，成功登录清零，两种登录入口共用计数 |
+| `STARTUP_DB_CHECK`                                  | `true`                 | 启动校验数据库；生产不可用时直接退出                                                                          |
+| `PID_FILE`                                          | —                      | PID 文件路径（安装包启停脚本依赖），相对 `server` 根                                                          |
+| `WEB_DIST_DIR`                                      | 自动探测               | Web 管理端产物目录（`../web-admin/dist` 或 `./web`）                                                          |
+| `LOG_LEVEL`                                         | `info`                 | `debug` / `info` / `warn` / `error`                                                                           |
+| `DEFAULT_CLASS_PASSWORD`                            | `123456`               | 新建班级时班级账号（ClassHelper 班级端登录）的默认密码                                                        |
+| `DEFAULT_TEACHER_PASSWORD`                          | `123456`               | 新增/重置教师账号的默认密码（管理员录入教师用）                                                               |
+| `COURSEWARE_DIR`                                    | 默认 data/courseware   | 课件文件实体目录；需纳入完整备份                                                                              |
+| `TERM_START_DATE`                                   | —                      | 开学日环境兜底；界面全校/班级设置与逐周区间优先，见课表帮助                                                   |
+| `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` | `admin` / `admin123`   | 空库首启动创建的管理员                                                                                        |
 
 ---
 

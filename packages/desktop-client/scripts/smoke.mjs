@@ -84,8 +84,8 @@ function launchSmoke(extraEnv) {
         child.kill();
         resolve(124);
       },
-      // 快速套件已包含本地 HTTP、校验下载和布局编辑；保留冷启动余量，单项断言不放宽。
-      mode === 'visual' ? 360_000 : 90_000,
+      // 快速套件包含两种布局的完整上下课时序、本地下载和编辑；总时限保留冷启动余量。
+      mode === 'visual' ? 360_000 : 120_000,
     );
     child.once('exit', (code) => {
       clearTimeout(deadline);

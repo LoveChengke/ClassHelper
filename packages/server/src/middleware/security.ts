@@ -1,6 +1,6 @@
 import type { RequestHandler } from 'express';
 import helmet from 'helmet';
-import { rateLimit } from 'express-rate-limit';
+import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
 
@@ -78,25 +78,50 @@ export function apiRateLimiter(): RequestHandler {
   return limiter;
 }
 
-/** 登录接口专用限流：防暴力破解 */
+/** 两种登录入口共用来源 IP：连续五次密码错误，从第五次失败起封禁五分钟。 */
 export function loginRateLimiter(): RequestHandler {
-  return rateLimit({
-    windowMs: 10 * 60 * 1000,
-    limit: env.isProduction ? 20 : 200,
-    standardHeaders: 'draft-7',
-    legacyHeaders: false,
-    skipSuccessfulRequests: true,
-    skip: () => !env.rateLimitEnabled,
-    handler: (req, res) => {
-      logger.warn(`登录尝试过于频繁：${req.ip ?? '-'}`);
+  const duration = 5 * 60 * 1000;
+  const attempts = new Map<string, { failures: number; expiresAt: number; blockedUntil: number }>();
+  let sweepAt = 0;
+  return (req, res, next) => {
+    if (!env.rateLimitEnabled) return next();
+    const now = Date.now();
+    if (now >= sweepAt) {
+      for (const [key, attempt] of attempts) {
+        if (attempt.expiresAt <= now) attempts.delete(key);
+      }
+      sweepAt = now + 60_000;
+    }
+    const key = ipKeyGenerator(req.ip ?? req.socket.remoteAddress ?? 'unknown');
+    let attempt = attempts.get(key);
+    if (attempt && attempt.expiresAt <= now) {
+      attempts.delete(key);
+      attempt = undefined;
+    }
+    if (attempt && attempt.blockedUntil > now) {
+      res.setHeader('Retry-After', Math.ceil((attempt.blockedUntil - now) / 1000));
       res.status(429).json({
         success: false,
         data: null,
-        message: '登录尝试过于频繁，请 10 分钟后再试',
+        message: '连续五次密码错误，已封禁登录 5 分钟，请稍后再试',
         code: 'TOO_MANY_REQUESTS',
       });
-    },
-  });
+      return;
+    }
+    res.once('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        attempts.delete(key);
+      } else if (res.statusCode === 401) {
+        const finishedAt = Date.now();
+        const previous = attempts.get(key);
+        const failures = (previous && previous.expiresAt > finishedAt ? previous.failures : 0) + 1;
+        const blockedUntil = failures >= 5 ? previous?.blockedUntil || finishedAt + duration : 0;
+        attempts.set(key, { failures, blockedUntil, expiresAt: blockedUntil || finishedAt + duration });
+        if (failures === 5) logger.warn(`连续五次登录失败，封禁五分钟：${req.ip ?? '-'}`);
+      }
+    });
+    next();
+  };
 }
 
 /**

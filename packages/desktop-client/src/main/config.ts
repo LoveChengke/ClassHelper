@@ -43,7 +43,7 @@ interface PersistedConfig {
   theme?: 'light' | 'dark';
   /** 主侧边栏是否折叠（向后兼容：旧配置没有该字段视为展开） */
   sidebarCollapsed?: boolean;
-  /** 用户选择「忽略此版本」的版本号（向后兼容：旧配置没有该字段视为没忽略过任何版本） */
+  /** 旧版主动更新检查的兼容字段；统一云端下发更新后不再参与更新决策。 */
   ignoredUpdateVersion?: string;
   /** 本机设备标识（向后兼容：旧配置没有该字段时首次读取生成并落盘，之后永不变） */
   deviceKey?: string;

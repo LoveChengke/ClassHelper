@@ -6,7 +6,7 @@
   min-width: 0;
   color: var(--ch-text);
   padding: 12px 24px 16px;
-  background: var(--editor-background, var(--ch-bg));
+  background: var(--ch-bg);
 }
 :global(.main:has(> .island-editor-page)) {
   display: flex;
@@ -15,11 +15,6 @@
 :global(.main:has(> .island-editor-page) > .offline-banner),
 .island-editor-page > * {
   flex-shrink: 0;
-}
-:global(html.dark) .island-editor-page {
-  --editor-background: #262626;
-  --editor-divider: #3a3a3a;
-  --editor-card: #2c2c2c;
 }
 .editor-actions {
   display: flex;
@@ -77,7 +72,8 @@
 }
 .scheme-controls :deep(.el-select__wrapper) {
   min-height: 38px;
-  background: var(--ch-card-subtle);
+  background: var(--ch-surface);
+  border-radius: var(--ch-radius-control);
 }
 .icon-button {
   width: 34px;
@@ -139,7 +135,7 @@
   display: flex;
   align-items: center;
   min-height: 54px;
-  border-radius: 6px;
+  border-radius: var(--ch-radius-control);
   gap: 12px;
   padding: 4px;
   border: 1px solid transparent;
@@ -180,7 +176,7 @@
   background: transparent;
   color: var(--ch-text-tertiary);
   padding: 10px 24px;
-  border-radius: 5px;
+  border-radius: var(--ch-radius-control);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -251,7 +247,7 @@
   font-size: 12px;
 }
 .component-library {
-  border-top: 6px solid var(--editor-divider, var(--ch-divider));
+  border-top: 1px solid var(--ch-border);
   margin: 0 -24px;
   padding: 14px 24px 24px;
   flex: 1 0 auto;
@@ -288,9 +284,9 @@
   text-align: left;
   min-height: 76px;
   padding: 10px 8px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
+  border: 1px solid var(--ch-border);
+  border-radius: var(--ch-radius-control);
+  background: var(--ch-surface);
   color: inherit;
   font: inherit;
   cursor: grab;
@@ -332,51 +328,6 @@
   font-size: calc(14px * var(--ch-font-scale));
   line-height: 1.5;
 }
-.message-library-title {
-  color: var(--ch-text-tertiary);
-  font-size: 12px;
-  font-weight: 400;
-  margin: 20px 8px 4px;
-}
-.message-options .library-item {
-  min-height: 64px;
-}
-.message-options .library-item strong {
-  font-size: 15px;
-}
-.message-options .library-item > svg {
-  width: 26px;
-  height: 26px;
-  flex-basis: 26px;
-}
-.editor-tip {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 12px 16px;
-  min-height: 60px;
-  border: 1px solid var(--ch-border-strong);
-  border-radius: 5px;
-  background: var(--editor-card, var(--ch-card-subtle));
-  font-size: 14px;
-}
-.editor-tip > span {
-  flex: 1;
-  line-height: 1.6;
-}
-.tip-icon {
-  color: var(--ch-accent);
-  font-size: 22px;
-}
-.dismiss-tip {
-  border: 0;
-  color: var(--ch-text);
-  background: transparent;
-  font-size: 26px;
-  cursor: pointer;
-  margin-left: auto;
-  padding: 0 8px;
-}
 .drag-ghost {
   position: fixed;
   z-index: 10000;
@@ -391,6 +342,22 @@
 }
 .inspector-tabs {
   margin-bottom: 20px;
+}
+:global(.island-inspector) {
+  color: var(--ch-text);
+  background: var(--ch-surface);
+}
+:global(.island-inspector .el-drawer__header) {
+  color: var(--ch-text);
+}
+:global(.island-inspector .el-input-number),
+:global(.island-inspector .el-select) {
+  width: 100%;
+}
+:global(.island-inspector .el-input__wrapper),
+:global(.island-inspector .el-select__wrapper) {
+  background: var(--ch-surface);
+  border-radius: var(--ch-radius-control);
 }
 .row-actions {
   display: flex;
@@ -425,9 +392,6 @@
   }
   .scheme-tools {
     flex: 1 1 100%;
-  }
-  .editor-tip {
-    flex-wrap: wrap;
   }
   .preview-toolbar .hint {
     display: none;

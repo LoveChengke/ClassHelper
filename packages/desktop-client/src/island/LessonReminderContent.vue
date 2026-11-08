@@ -10,7 +10,7 @@ const props = defineProps<{
 }>();
 const root = ref<HTMLElement>();
 const width = ref(480);
-const mask = computed(() => props.now < props.reminder.maskUntil);
+const mask = computed(() => props.reminder.kind !== 'ending' && props.now < props.reminder.maskUntil);
 const title = computed(
   () =>
     ({
@@ -140,15 +140,14 @@ onUnmounted(() => {
     aria-live="polite"
   >
     <div class="ci-lesson-info">
-      <span
-        v-if="reminder.kind === 'prepare' || reminder.kind === 'ending' || reminder.kind === 'in-class'"
-        class="ci-countdown"
-      >
+      <span v-if="reminder.kind === 'prepare' || reminder.kind === 'in-class'" class="ci-countdown">
         {{ reminder.kind === 'prepare' ? '距上课还剩' : '距下课还剩' }}
         <strong>{{ leftSeconds }}</strong>
         秒
       </span>
-      <span v-else class="ci-countdown">{{ reminder.kind === 'on-class' ? '开始上课' : '课间休息' }}</span>
+      <span v-else-if="reminder.kind !== 'ending'" class="ci-countdown">
+        {{ reminder.kind === 'on-class' ? '开始上课' : '课间休息' }}
+      </span>
       <span class="ci-lesson-course">
         <span>
           {{
@@ -158,6 +157,13 @@ onUnmounted(() => {
           }}
         </span>
         <strong>{{ course || '今日课程已结束' }}</strong>
+        <span
+          v-if="reminder.kind === 'ending'"
+          class="lesson-ending-badge"
+          :aria-label="`距下课${leftSeconds}秒`"
+        >
+          -{{ leftSeconds }}
+        </span>
         <small v-if="course">{{ time }}</small>
       </span>
     </div>
@@ -309,3 +315,4 @@ onUnmounted(() => {
   transition: transform 50ms linear;
 }
 </style>
+<style src="./lesson-ending.css"></style>

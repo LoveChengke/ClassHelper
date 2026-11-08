@@ -61,7 +61,10 @@ http.interceptors.response.use(
     const status = error.response.status;
     const message = error.response.data?.message ?? `请求失败（${status}）`;
 
-    if (status === 401) {
+    const loginAttempt =
+      error.config?.method?.toLowerCase() === 'post' &&
+      /\/auth\/(?:class-)?login\/?(?:\?|$)/.test(error.config?.url ?? '');
+    if (status === 401 && !loginAttempt) {
       ElMessage.warning('登录状态已失效，请重新登录');
       unauthorizedHandler();
     } else {

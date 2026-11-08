@@ -206,7 +206,6 @@ try {
     'native/update-helper.cs',
     'src/main/client-agent.ts',
     'src/main/index.ts',
-    'src/main/update.ts',
   ])
     report.sourceHashes[file] = sha(path.join(repo, 'packages/desktop-client', file));
   fs.mkdirSync(serverDir, { recursive: true });

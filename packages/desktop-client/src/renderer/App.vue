@@ -1,8 +1,6 @@
 <script setup lang="ts">
-import { h, onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElButton, ElNotification } from 'element-plus';
-import type { UpdateInfo } from '@classhelper/shared';
 import {
   replayMissedNotifications,
   startIslandBridge,
@@ -29,55 +27,9 @@ const booting = ref(true);
 const bootText = ref('正在读取本地配置...');
 
 /**
- * 启动自动检查发现新版本时的提示（主进程查出后推过来，见 main/update.ts）。
- *
- * **为什么订阅放在 App.vue**：`onUpdateAvailable` 底层是 `ipcRenderer.on`，
- * 桥接层没有对应的 off —— 挂在会随"登出 → 登录"反复挂载的 ClientLayout 里，
- * 处理器会越堆越多（与灵动岛订阅同一个坑）。App.vue 整个应用生命周期只挂载一次。
- *
- * 提示是**一次性**且可永久消音：点「忽略此版本」写进 config.json，同一版本不再提示；
- * 「关于」页里仍可随时手动检查。
- */
-function showUpdateAvailable(info: UpdateInfo): void {
-  if (!info.latestVersion) return;
-  ElNotification({
-    title: `发现新版本 v${info.latestVersion}`,
-    type: 'info',
-    // 不自动消失：这是需要用户决定的事（去下载 / 忽略），滑过去就只能靠「关于」页再想起来
-    duration: 0,
-    message: h('div', { style: 'line-height: 1.7' }, [
-      h('p', { style: 'margin: 0 0 10px' }, `当前版本 ${info.currentVersion}，可前往下载更新。`),
-      h('div', { style: 'display: flex; gap: 8px' }, [
-        h(
-          ElButton,
-          {
-            size: 'small',
-            type: 'primary',
-            onClick: () => {
-              void window.desktop?.openExternal(info.releaseUrl);
-            },
-          },
-          () => '前往下载',
-        ),
-        h(
-          ElButton,
-          {
-            size: 'small',
-            onClick: () => {
-              void window.desktop?.ignoreUpdateVersion(info.latestVersion ?? '');
-            },
-          },
-          () => '忽略此版本',
-        ),
-      ]),
-    ]),
-  });
-}
-
-/**
  * 上线补弹「离线期间收到的消息」（需求 11）。
  *
- * **为什么订阅放在 App.vue**：与 `onUpdateAvailable` 同一条理由 —— App.vue 整个应用生命周期
+ * **为什么订阅放在 App.vue**：App.vue 整个应用生命周期
  * 只挂载一次，而 `ClientLayout` 会随"登出 → 登录"反复挂载。而且恢复事件本身是"可达性由不可达
  * 变为可达"的那一刻，一次会话里可能发生多次，处理器必须是**幂等**的（`replayMissedNotifications`
  * 推完就清掉离线起点，重复触发时第二次读到空值、直接返回 0）。
@@ -117,9 +69,6 @@ onMounted(async () => {
 
     // 离线期间收到的消息：可达性恢复的那一刻补弹到灵动岛（App.vue 常驻，所以每次恢复只跑一次）
     appStore.onServerRecovered(handleServerRecovered);
-
-    // 启动自动检查发现新版本时由主进程推过来（订阅只挂一次，理由见 showUpdateAvailable）
-    window.desktop?.onUpdateAvailable?.(showUpdateAvailable);
 
     if (auth.isAuthenticated) await router.replace('/schedule');
     else await router.replace('/login');

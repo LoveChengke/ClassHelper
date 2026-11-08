@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { refreshClassSubscriptions } from '../../realtime/bus.js';
 import { assertAdmin, assertManage, assertContentWrite } from '../../lib/authz/index.js';
 import { changeStudentLifecycle, notifyStudentClasses } from '../../lib/student-lifecycle.js';
@@ -7,7 +8,6 @@ import * as XLSX from 'xlsx';
 import { formatClassName, normalizeStudentNo, type TableImportKind } from '@classhelper/shared';
 import { activeStudentWhere, isActiveStudent } from '../../lib/students.js';
 import { prisma } from '../../lib/db.js';
-import { env } from '../../config/env.js';
 import { ApiError } from '../../lib/http.js';
 import type { TokenPayload } from '../../lib/jwt.js';
 import { logger } from '../../lib/logger.js';
@@ -98,7 +98,6 @@ export const IMPORT_FIELDS: Record<ImportKind, ImportField[]> = {
     },
     { key: 'name', label: '姓名', required: true, synonyms: ['姓名', 'name', '教师', '教师姓名'] },
     { key: 'phone', label: '手机号', required: false, synonyms: ['手机号', '电话', 'phone', '联系方式'] },
-    { key: 'password', label: '初始密码', required: false, synonyms: ['密码', 'password', '初始密码'] },
     {
       key: 'role',
       label: '角色',
@@ -226,7 +225,7 @@ function parseTable(buffer: Buffer, fileName: string): ParsedTable {
 const TEMPLATE_SAMPLES: Record<ImportKind, (string | number)[]> = {
   grades: ['202601', '王小明', '期中考试', 92, 100, '数学', 'A'],
   students: ['202601', '王小明', '2026级1班', '男', '13800000000'],
-  teachers: ['T1001', '王老师', '13800000000', 'teacher123', '教师'],
+  teachers: ['T1001', '王老师', '13800000000', '教师'],
   classTeachers: ['2026级1班', '数学', 'T1001', '王老师', '科任'],
 };
 
@@ -311,6 +310,7 @@ export interface ImportResult {
   failed: number;
   errors: ImportRowError[];
   warnings: string[];
+  credentials?: { username: string; name: string; password: string }[];
 }
 
 function cellValue(row: string[], columns: string[], mapping: Record<string, string>, key: string): string {
@@ -677,6 +677,7 @@ export async function commitTeachers(user: TokenPayload, input: TableCommitInput
 
       const errors: ImportRowError[] = [];
       const warnings: string[] = [];
+      const credentials: NonNullable<ImportResult['credentials']> = [];
       let inserted = 0;
       let updated = 0;
       let skipped = 0;
@@ -686,7 +687,6 @@ export async function commitTeachers(user: TokenPayload, input: TableCommitInput
         const username = cellValue(row, parsed.columns, input.mapping, 'username');
         const name = cellValue(row, parsed.columns, input.mapping, 'name');
         const phone = cellValue(row, parsed.columns, input.mapping, 'phone');
-        const password = cellValue(row, parsed.columns, input.mapping, 'password');
         const roleCell = cellValue(row, parsed.columns, input.mapping, 'role');
 
         if (!username || !name) {
@@ -715,7 +715,7 @@ export async function commitTeachers(user: TokenPayload, input: TableCommitInput
           });
           updated += 1;
         } else {
-          const initialPassword = password || env.defaultTeacherPassword;
+          const initialPassword = `Ch!${randomBytes(12).toString('base64url')}`;
           await tx.user.create({
             data: {
               username,
@@ -726,6 +726,7 @@ export async function commitTeachers(user: TokenPayload, input: TableCommitInput
             },
           });
           inserted += 1;
+          credentials.push({ username, name, password: initialPassword });
         }
       }
 
@@ -753,7 +754,7 @@ export async function commitTeachers(user: TokenPayload, input: TableCommitInput
           afterJson: JSON.stringify(result),
         },
       });
-      return result;
+      return { ...result, credentials };
     },
     { timeout: 30000 },
   );
@@ -788,6 +789,7 @@ export async function commitClassTeachers(
 
         const errors: ImportRowError[] = [];
         const warnings: string[] = [];
+        const credentials: NonNullable<ImportResult['credentials']> = [];
         let inserted = 0;
         let updated = 0;
         let skipped = 0;
@@ -877,19 +879,25 @@ export async function commitClassTeachers(
             }
             await assertPermission(user, 'teacher:manage');
             await assertPermission(user, 'import:teachers');
+            const initialPassword = `Ch!${randomBytes(12).toString('base64url')}`;
             const created = await tx.user.create({
               data: {
                 username: teacherNo,
                 name: teacherName || teacherNo,
                 role: 'TEACHER',
-                passwordHash: await hashPassword(env.defaultTeacherPassword),
+                passwordHash: await hashPassword(initialPassword),
               },
               select: { id: true },
             });
             teacherId = created.id;
             inserted += 1;
+            credentials.push({
+              username: teacherNo,
+              name: teacherName || teacherNo,
+              password: initialPassword,
+            });
             warnings.push(
-              `第 ${rowNumber} 行：工号 ${teacherNo} 没有对应账号，已新建教师「${teacherName || teacherNo}」（初始密码见部署配置）`,
+              `第 ${rowNumber} 行：工号 ${teacherNo} 没有对应账号，已新建教师「${teacherName || teacherNo}」，请保存本次生成的随机密码`,
             );
           }
           createdTeachers.set(teacherNo.toLowerCase(), teacherId);
@@ -947,7 +955,7 @@ export async function commitClassTeachers(
             afterJson: JSON.stringify(result),
           },
         });
-        return result;
+        return { ...result, credentials };
       },
       { timeout: 30000 },
     )

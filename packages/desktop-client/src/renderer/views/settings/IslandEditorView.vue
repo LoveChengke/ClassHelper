@@ -37,7 +37,6 @@ const selectedId = ref(''),
   rowId = ref(''),
   inspectorOpen = ref(false),
   editMode = ref(false),
-  showTip = ref(true),
   zoom = ref(1),
   importInput = ref<HTMLInputElement>();
 const scheme = computed(() =>
@@ -68,11 +67,6 @@ const library: { kind: IslandComponentKind; description: string }[] = [
   { kind: 'rolling', description: '滚动显示组件内的内容。' },
   { kind: 'group', description: '将多个组件组合到一个组件中显示。' },
   { kind: 'stack', description: '将多个容器堆叠显示。' },
-];
-const messageLibrary: { kind: IslandComponentKind; description: string }[] = [
-  { kind: 'notification', description: '显示班级收到的通知。' },
-  { kind: 'homework', description: '显示班级作业提醒。' },
-  { kind: 'call', description: '显示教师的叫人提醒。' },
 ];
 const containers: readonly string[] = ['group', 'stack', 'slide', 'rolling'];
 function id() {
@@ -773,34 +767,7 @@ function dropPreview(event: PointerEvent) {
             </span>
           </button>
         </div>
-        <h4 class="message-library-title">班级消息</h4>
-        <div class="component-options message-options">
-          <button
-            v-for="item in messageLibrary"
-            :key="item.kind"
-            class="library-item"
-            :data-library-kind="item.kind"
-            :aria-label="`添加${ISLAND_COMPONENT_LABELS[item.kind]}`"
-            @pointerdown="beginDrag($event, { kind: item.kind, label: ISLAND_COMPONENT_LABELS[item.kind] })"
-            @click="add(item.kind)"
-          >
-            <ComponentIcon :kind="item.kind" />
-            <span>
-              <strong>{{ ISLAND_COMPONENT_LABELS[item.kind] }}</strong>
-              <span class="component-description">{{ item.description }}</span>
-            </span>
-          </button>
-        </div>
       </section>
-      <div v-if="showTip" class="editor-tip" role="note">
-        <el-icon class="tip-icon"><InfoFilled /></el-icon>
-        <span>
-          <strong>编辑提示：</strong>
-          现在可以使用「编辑模式」更加直观地编辑主界面上的组件！
-        </span>
-        <el-button @click="editMode = !editMode">{{ editMode ? '退出编辑模式' : '进入编辑模式' }}</el-button>
-        <button class="dismiss-tip" aria-label="关闭编辑提示" @click="showTip = false">×</button>
-      </div>
     </template>
     <el-skeleton v-else :rows="8" animated />
     <input ref="importInput" type="file" accept="application/json,.json" hidden @change="importScheme" />

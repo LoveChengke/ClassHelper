@@ -195,6 +195,31 @@ try {
   });
   check('导入课表采用班级配置的 30 周', imported.data?.weekEnd === 30);
   const className = (await api(`/classes/${a}`, admin)).data.name;
+  const teacherTemplate = (await api('/imports/template?kind=teachers&format=csv', admin)).data.content;
+  const templateRows = teacherTemplate
+    .trim()
+    .replace(/^\ufeff/, '')
+    .split(/\r?\n/)
+    .map((line) => line.split(','));
+  check(
+    '教师 CSV 模板删除密码列且示例角色仍正确对齐',
+    templateRows[0].join(',') === '工号,姓名,手机号,角色' &&
+      templateRows[1].length === templateRows[0].length &&
+      templateRows[1].at(-1) === '教师',
+  );
+  const templateResponse = await fetch(`${base}/api/imports/template?kind=teachers&format=xlsx`, {
+    headers: { authorization: `Bearer ${admin}` },
+  });
+  const XLSX = createRequire(path.resolve('packages/server/package.json'))('xlsx');
+  const workbook = XLSX.read(Buffer.from(await templateResponse.arrayBuffer()));
+  const templateSheet = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
+  check(
+    '教师 Excel 模板不包含默认密码且列数与示例一致',
+    templateResponse.ok &&
+      templateSheet[0].length === templateSheet[1].length &&
+      !templateSheet[0].includes('初始密码') &&
+      templateSheet[1].at(-1) === '教师',
+  );
   const relations = await api('/imports/table/commit', admin, {
     kind: 'classTeachers',
     fileName: 'relations.csv',
@@ -210,6 +235,44 @@ try {
     relations.status === 200 &&
       relations.data?.errors.length === 0 &&
       relations.data.inserted + relations.data.updated > 0,
+  );
+  const randomTeacherNames = [`review_r1_${stamp}`, `review_r2_${stamp}`];
+  const randomClassName = (await api(`/classes/${b}`, admin)).data.name;
+  const randomRelations = await api('/imports/table/commit', admin, {
+    kind: 'classTeachers',
+    fileName: 'random-relations.csv',
+    mode: 'upsert',
+    useTeacherNo: true,
+    mapping: { className: '班级', subjectName: '科目', teacherNo: '工号', teacherName: '姓名', role: '角色' },
+    contentBase64: Buffer.from(
+      `\ufeff班级,科目,工号,姓名,角色\n${randomClassName},随机密码甲,${randomTeacherNames[0]},随机教师甲,科任\n${randomClassName},随机密码乙,${randomTeacherNames[1]},随机教师乙,科任\n${randomClassName},随机密码丙,${randomTeacherNames[0]},随机教师甲,科任`,
+    ).toString('base64'),
+  });
+  const relationCredentials = randomRelations.data?.credentials ?? [];
+  const generatedTeachers = (await api('/teachers', admin)).data.filter((teacher) =>
+    randomTeacherNames.includes(teacher.username),
+  );
+  users.push(...generatedTeachers.map((teacher) => teacher.id));
+  check(
+    '任课关系导入为新教师分别生成随机密码且同一工号不重复生成',
+    randomRelations.status === 200 &&
+      randomRelations.data?.inserted === 2 &&
+      relationCredentials.length === 2 &&
+      new Set(relationCredentials.map((c) => c.password)).size === 2,
+  );
+  for (const credential of relationCredentials) {
+    const login = await api('/auth/login', null, {
+      username: credential.username,
+      password: credential.password,
+    });
+    check('任课导入的随机密码可用于教师登录', login.status === 200);
+  }
+  const relationAudits = (await api('/permissions/audit?pageSize=100', admin)).data.items.filter(
+    (item) => item.action === 'import-commitClassTeachers',
+  );
+  check(
+    '任课导入审计不存储随机密码或凭据清单',
+    relationAudits.length > 0 && relationAudits.every((item) => !/password|credentials/.test(item.afterJson)),
   );
   const csv = `\ufeff学号,姓名,考试,分数\n,同名同学,审查考试,80`;
   const importBase = {
@@ -304,6 +367,7 @@ try {
     'teacher:read',
     'call:create',
     'ai:use',
+    'notification:publish',
     'student:grade-query',
     'update:check',
   ];
@@ -343,9 +407,15 @@ try {
     (await api('/ai/interpret', staffToken, { classId: b, text: '发布通知测试' })).status === 403,
   );
   const interpreted = await api('/ai/interpret', staffToken, { classId: a, text: '发布通知，明天带书' });
-  check('自己的班级可以离线解析', interpreted.status === 200);
+  check(
+    '具有业务发布权限时为本班生成离线通知计划',
+    interpreted.status === 200 && Boolean(interpreted.data?.planId) && interpreted.data?.steps?.length > 0,
+  );
   const audits = (await api('/ai/audit', admin)).data;
-  check('解析审计使用明确的解析状态', ['interpreted', 'unrecognized'].includes(audits[0]?.status));
+  check(
+    '通知计划保留待确认状态，不在解析时执行',
+    audits.find((item) => item.id === interpreted.data?.planId)?.status === 'pending',
+  );
   check(
     '协议相对附件地址不能写入作业',
     (

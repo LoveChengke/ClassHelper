@@ -55,7 +55,7 @@ onMounted(loadGradeQuery);
     <el-card shadow="never" class="lesson-channel-settings">
       <template #header>上下课提醒</template>
       <p class="text-muted">
-        沿用 ClassIsland 的遮罩、课前倒计时、上下课提示及下节课预告；课中显示课程进度，临近下课显示倒数。
+        课前倒计时、上下课提示及下节课预告保留遮罩；课中显示课程进度，临近下课在课程名右侧显示蓝色圆形秒数倒计时。
       </p>
       <div
         v-for="channel in [

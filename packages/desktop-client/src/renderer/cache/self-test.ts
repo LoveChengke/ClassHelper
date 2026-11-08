@@ -1168,18 +1168,12 @@ export async function aboutPageSelfTest(): Promise<SmokeCheckResult> {
     const hasDiagnostics = text.includes('诊断信息');
     const info = await window.desktop?.getAppInfo?.();
     const hasConfigPath = Boolean(info?.configPath);
-
-    // 检查更新入口（新功能回归）：关于页要有这一块，且按钮可点。
-    // 这里只断言"入口存在"——是否真有新版本取决于 GitHub，不该绑进冒烟（见 main/update.ts）
-    const updateBlock = document.querySelector('[data-test="update-check"]');
-    const updateButton = document.querySelector('[data-test="update-check-button"]');
+    const hasUpdateCheck = Boolean(document.querySelector('[data-test="update-check"]'));
 
     await router.push('/schedule');
     return {
-      ok: hasThanks && hasDiagnostics && hasConfigPath && Boolean(updateBlock) && Boolean(updateButton),
-      detail:
-        `鸣谢=${hasThanks} 诊断=${hasDiagnostics} configPath=${hasConfigPath ? '有' : '无'} ` +
-        `检查更新块=${updateBlock ? '有' : '无'} 按钮=${updateButton ? '有' : '无'}`,
+      ok: hasThanks && hasDiagnostics && hasConfigPath && !hasUpdateCheck,
+      detail: `鸣谢=${hasThanks} 诊断=${hasDiagnostics} configPath=${hasConfigPath ? '有' : '无'}`,
     };
   } catch (error) {
     return {

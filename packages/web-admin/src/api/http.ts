@@ -39,7 +39,10 @@ instance.interceptors.response.use(
     const status = error.response?.status;
     const message = error.response?.data?.message ?? error.message ?? '网络请求失败';
 
-    if (status === 401) {
+    const loginAttempt =
+      error.config?.method?.toLowerCase() === 'post' &&
+      /\/auth\/(?:class-)?login\/?(?:\?|$)/.test(error.config?.url ?? '');
+    if (status === 401 && !loginAttempt) {
       clearCalendarCache();
       localStorage.removeItem(STORAGE_KEYS.token);
       localStorage.removeItem(STORAGE_KEYS.user);

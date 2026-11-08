@@ -171,6 +171,7 @@ class IslandController {
   private lessonTimer: ReturnType<typeof setInterval> | null = null;
   private lessonTestTime: number | null = null;
   private get lessonShowing(): boolean {
+    if (this.customLayout && this.lessonCue?.kind === 'ending') return false;
     return Boolean(
       this.lessonCue &&
       !this.editingLayout &&
@@ -649,7 +650,10 @@ class IslandController {
     return {
       ...this.state,
       coursewareTransfer: this.coursewareShowing ? this.state.coursewareTransfer : null,
-      lessonReminder: this.lessonShowing ? this.lessonCue : null,
+      lessonReminder:
+        this.lessonShowing || (this.customLayout && this.lessonCue?.kind === 'ending')
+          ? this.lessonCue
+          : null,
       queued: [...this.state.queued],
     };
   }

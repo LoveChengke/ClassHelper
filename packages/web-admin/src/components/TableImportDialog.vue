@@ -55,7 +55,6 @@ const FIELDS: Record<Kind, FieldDef[]> = {
     { key: 'username', label: '工号', required: true },
     { key: 'name', label: '姓名', required: true },
     { key: 'phone', label: '手机号', required: false },
-    { key: 'password', label: '初始密码', required: false },
     { key: 'role', label: '角色', required: false },
   ],
   classTeachers: [
@@ -72,7 +71,8 @@ const KIND_HINTS: Record<Kind, string> = {
   grades: '按**学号**匹配本班学生；同一学生 + 科目 + 考试重复导入会覆盖旧分数。',
   students:
     '按**学号**去重；只生成班级名单，**不创建任何账号**（学生没有密码、不能登录）。班级列可留空，用上一步选的班级。',
-  teachers: '按**工号**去重；工号就是登录名。',
+  teachers:
+    '按**工号**去重；工号就是登录名。新教师分别生成随机密码，导入后请保存密码清单；已有账号密码保持不变。',
   classTeachers:
     '导入「班级 + 科目 + 教师」的任课关系。角色填「班主任」或「科任」；' +
     '同一位老师既是班主任又教某一科时，写两条记录即可 —— 系统只保留一个账号，权限自动合并。',
@@ -279,6 +279,26 @@ async function submit(): Promise<void> {
     committing.value = false;
   }
 }
+
+function downloadCredentials(): void {
+  if (!result.value?.credentials?.length) return;
+  const cell = (value: string) =>
+    `"${(/^[=+@\-\t\r]/.test(value) ? `'${value}` : value).replaceAll('"', '""')}"`;
+  const rows = [
+    ['工号', '姓名', '初始密码'],
+    ...result.value.credentials.map((c) => [c.username, c.name, c.password]),
+  ];
+  const url = URL.createObjectURL(
+    new Blob(['\ufeff' + rows.map((row) => row.map(cell).join(',')).join('\r\n')], {
+      type: 'text/csv;charset=utf-8',
+    }),
+  );
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = '教师初始密码.csv';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 </script>
 
 <template>
@@ -396,6 +416,20 @@ async function submit(): Promise<void> {
           <span>跳过：{{ result.skipped }}</span>
           <span class="bad">失败：{{ result.failed }}</span>
         </div>
+        <template v-if="result.credentials?.length">
+          <el-alert
+            type="warning"
+            :closable="false"
+            class="mt-8"
+            title="随机密码仅在本次导入结果中显示，请在关闭前下载并分发给对应教师。"
+          />
+          <el-button class="mt-8" @click="downloadCredentials">下载教师密码清单</el-button>
+          <el-table :data="result.credentials" size="small" max-height="240" class="mt-8">
+            <el-table-column prop="username" label="工号" />
+            <el-table-column prop="name" label="姓名" />
+            <el-table-column prop="password" label="初始密码" />
+          </el-table>
+        </template>
         <el-table
           v-if="result.errors.length"
           :data="result.errors"

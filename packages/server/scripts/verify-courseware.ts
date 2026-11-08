@@ -437,11 +437,20 @@ try {
       coursewareCategory('a.7z') === 'archive',
   );
   await restoreSnapshot(prisma, 'sqlite', snapshot);
+  const restoredFolders = await prisma.coursewareFolder.findMany();
   check(
     '恢复数据库后保留课件共享和回执数据',
     (await prisma.courseware.count()) === 3 &&
       (await prisma.coursewareReceipt.count()) === 1 &&
-      (await prisma.coursewareFolder.count()) === 1,
+      restoredFolders.length === snapshot.data.CoursewareFolder.length &&
+      snapshot.data.CoursewareFolder.every((expected) =>
+        restoredFolders.some(
+          (actual) =>
+            actual.id === expected.id &&
+            actual.path === expected.path &&
+            actual.teacherId === expected.teacherId,
+        ),
+      ),
   );
   console.log(`=== 课件隔离验收：${count}/${count} 项通过 ===`);
 } finally {

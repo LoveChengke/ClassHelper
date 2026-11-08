@@ -10,7 +10,6 @@ import { island, registerIslandIpc } from './island.js';
 import { logger } from './logger.js';
 import { runSmokeTest } from './smoke.js';
 import { createTray, destroyTray, isTrayReady } from './tray.js';
-import { scheduleStartupUpdateCheck } from './update.js';
 
 // 主进程由 esbuild 打包为 CommonJS，因此这里可以直接使用 __dirname
 // （dist/main/index.js -> dist/preload/index.js 与 dist/renderer/index.html）
@@ -258,9 +257,6 @@ if (!gotLock) {
       } catch (error) {
         logger.warn(`系统托盘初始化失败（不影响主功能）：${error instanceof Error ? error.message : error}`);
       }
-
-      // 启动后自动查一次更新（延迟几秒，不跟首屏抢带宽）；冒烟模式下自动跳过，见 main/update.ts
-      scheduleStartupUpdateCheck(() => mainWindow);
 
       // 服务端统一下发：定时上报本机状态并领取「待执行命令 / 统一更新」（冒烟默认不上报）
       startClientAgent();

@@ -9,7 +9,7 @@ import type {
  * 主进程与渲染进程之间的桥接契约（preload 通过 contextBridge 暴露）。
  * 渲染进程只依赖这些最小 API，不接触 Node.js。
  */
-import type { IslandAppearance, IslandNotification, IslandState, UpdateInfo } from '@classhelper/shared';
+import type { IslandAppearance, IslandNotification, IslandState } from '@classhelper/shared';
 import type { ClientAgentStatus } from '../main/client-agent.js';
 import type { IslandBridge } from '../preload/island.js';
 
@@ -55,12 +55,7 @@ export interface DesktopStoredConfig {
   theme: 'light' | 'dark';
   /** 主侧边栏是否折叠成图标栏（可由顶栏汉堡按钮切换） */
   sidebarCollapsed: boolean;
-  /**
-   * 用户点过「忽略此版本」的版本号（空串 = 没忽略过）。
-   *
-   * 启动时的自动检查会跳过这个版本，避免每次开客户端都弹一次同样的提示；
-   * 在「关于」页手动检查时仍会正常显示结果。
-   */
+  /** 旧版主动更新检查的兼容字段，不再影响云端下发更新。 */
   ignoredUpdateVersion: string;
   /**
    * 本机设备标识（UUID）：这台机器在服务端的身份。
@@ -158,21 +153,6 @@ export interface DesktopBridge {
   clearConfig(): Promise<DesktopStoredConfig>;
   getAppInfo(): Promise<DesktopAppInfo>;
   openExternal(url: string): Promise<boolean>;
-
-  /* 更新检查 */
-  /**
-   * 检查 GitHub 上有没有新版本（主进程直连，不经后端）。
-   *
-   * @param force true = 绕过主进程缓存（对应「关于」页里用户主动点的那次检查）
-   *
-   * 返回的 `ok:false` 是**正常结果**（教室机器没有外网 / GitHub 限流 / 超时），不是异常，
-   * 界面按"暂时查不到更新"呈现即可。
-   */
-  checkForUpdates(force?: boolean): Promise<UpdateInfo>;
-  /** 忽略某个版本的更新提示（写入 config.json，启动自动检查不再提示它） */
-  ignoreUpdateVersion(version: string): Promise<void>;
-  /** 订阅"启动自动检查发现新版本"（仅新版本且未被忽略时触发一次） */
-  onUpdateAvailable(handler: (info: UpdateInfo) => void): void;
 
   /* 灵动岛 */
   getIslandWeather(coordinates: { latitude: number; longitude: number }): Promise<IslandWeather>;

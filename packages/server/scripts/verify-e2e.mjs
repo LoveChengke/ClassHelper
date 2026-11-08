@@ -3223,7 +3223,8 @@ async function main() {
   // 教师名单表格导入：教师预览 403；管理员预览 + 提交（教师与班级无关，classId 可省略）
   const teacherCsv =
     '\ufeff工号,姓名,初始密码,角色\n' +
-    `imp_t_${Date.now().toString().slice(-8)},冒烟导入教师,import123456,教师\n`;
+    `imp_t_${Date.now().toString().slice(-8)},冒烟导入教师,import123456,教师\n` +
+    `imp_t_${Date.now().toString().slice(-8)}_b,冒烟导入教师乙,import123456,教师\n`;
   const teacherCsvBase64 = Buffer.from(teacherCsv, 'utf8').toString('base64');
   const importedTeacherUsername = teacherCsv.split('\n')[1]?.split(',')[0] ?? '';
 
@@ -3250,7 +3251,10 @@ async function main() {
   });
   const importedTeacherLogin = await api('/auth/login', {
     method: 'POST',
-    body: { username: importedTeacherUsername, password: 'import123456' },
+    body: {
+      username: importedTeacherUsername,
+      password: adminTeacherCommit.payload?.data?.credentials?.[0]?.password ?? '',
+    },
   });
   record(
     '教师名单表格导入（教师 403 / 管理员预览+导入成功，且导入账号可登录）',
@@ -3258,11 +3262,45 @@ async function main() {
       adminTeacherPreview.status === 200 &&
       Boolean(adminTeacherPreview.payload?.data?.suggestedMapping?.username) &&
       adminTeacherCommit.status === 200 &&
-      adminTeacherCommit.payload?.data?.inserted === 1 &&
+      adminTeacherCommit.payload?.data?.inserted === 2 &&
+      adminTeacherCommit.payload?.data?.credentials?.[0]?.password !== 'import123456' &&
       importedTeacherLogin.status === 200,
     `教师预览=${teacherPreviewDenied.status} 管理员预览=${adminTeacherPreview.status} ` +
       `建议映射=${JSON.stringify(adminTeacherPreview.payload?.data?.suggestedMapping ?? {})} ` +
       `导入新增=${adminTeacherCommit.payload?.data?.inserted ?? '-'} 登录=${importedTeacherLogin.status}`,
+  );
+
+  const importedCredentials = adminTeacherCommit.payload?.data?.credentials ?? [];
+  const repeatedImport = await api('/imports/table/commit', {
+    method: 'POST',
+    token: adminToken,
+    body: {
+      kind: 'teachers',
+      fileName: 'teachers.csv',
+      contentBase64: teacherCsvBase64,
+      mapping: { username: '工号', name: '姓名', role: '角色' },
+      mode: 'upsert',
+    },
+  });
+  const repeatLogin = await api('/auth/login', {
+    method: 'POST',
+    body: { username: importedTeacherUsername, password: importedCredentials[0]?.password ?? '' },
+  });
+  const importAudits = await api('/permissions/audit?pageSize=100', { token: adminToken });
+  const teacherImportAudits = (importAudits.payload?.data?.items ?? []).filter(
+    (item) => item.action === 'import-commitTeachers',
+  );
+  record(
+    '教师导入逐人生成随机密码，重复导入不重置且审计不含凭据',
+    importedCredentials.length === 2 &&
+      new Set(importedCredentials.map((c) => c.password)).size === 2 &&
+      importedCredentials.every((c) => c.password.length >= 16 && c.password !== 'import123456') &&
+      repeatedImport.payload?.data?.updated === 2 &&
+      repeatedImport.payload?.data?.credentials?.length === 0 &&
+      repeatLogin.status === 200 &&
+      teacherImportAudits.length > 0 &&
+      teacherImportAudits.every((item) => !/password|credentials/.test(item.afterJson)),
+    `凭据=${importedCredentials.length} 重复更新=${repeatedImport.payload?.data?.updated ?? '-'} 登录=${repeatLogin.status}`,
   );
 
   // 删除护栏：还是班主任的账号不允许删除；没有班级职责的可以删
@@ -3661,10 +3699,10 @@ async function main() {
       await api(`/classes/${probeClassId}`, { method: 'DELETE', token: adminToken });
     }
   }
-  const importedTeacherRow = (await api('/teachers', { token: adminToken })).payload?.data?.find(
-    (item) => item.username === importedTeacherUsername,
+  const importedTeacherRows = (await api('/teachers', { token: adminToken })).payload?.data?.filter((item) =>
+    importedCredentials.some((credential) => credential.username === item.username),
   );
-  if (importedTeacherRow) {
+  for (const importedTeacherRow of importedTeacherRows ?? []) {
     await api(`/teachers/${importedTeacherRow.id}`, { method: 'DELETE', token: adminToken });
   }
   const isProbeAccount = (username) =>

@@ -37,8 +37,8 @@ const current = computed(() => today.value.find((s) => s.id === status.value.cur
 const next = computed(() => today.value.find((s) => s.id === status.value.next?.scheduleId));
 function timeAt(time: string) {
   const d = new Date(props.now);
-  const [h, m] = time.split(':').map(Number);
-  d.setHours(h!, m!, 0, 0);
+  const [h, m, s = 0] = time.split(':').map(Number);
+  d.setHours(h!, m!, s, 0);
   return d.getTime();
 }
 /**
@@ -106,6 +106,7 @@ const remaining = computed(() =>
   currentLesson.value ? Math.max(0, Math.ceil((timeAt(currentLesson.value.endTime) - props.now) / 1000)) : 0,
 );
 const hidden = computed(
+  // 临近下课仍使用真实时间点，不因提醒切换而替换课程组件。
   () =>
     !props.editing &&
     ((['notification', 'homework', 'call'].includes(props.node.kind) &&
@@ -256,6 +257,13 @@ const style = computed<CSSProperties>(() => {
           :class="{ current: p.id === currentPoint?.id, break: p.timeType === 'BREAK' }"
         >
           <strong>{{ p.courseName || p.name || '—' }}</strong>
+          <span
+            v-if="p.id === currentLesson?.id && state.lessonReminder?.kind === 'ending' && remaining > 0"
+            class="lesson-ending-badge"
+            :aria-label="`距下课${remaining}秒`"
+          >
+            -{{ remaining }}
+          </span>
           <small v-if="p.id === currentPoint?.id && node.settings.showPeriod" class="lesson-time">
             {{ p.startTime }}–{{ p.endTime }}
           </small>
@@ -352,8 +360,11 @@ const style = computed<CSSProperties>(() => {
   transform-origin: left;
   transition: transform 1s linear;
 }
-.schedule > .lesson-line + .lesson-line {
-  margin-top: 8px;
+.schedule {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 .separator > span {
   display: block;
@@ -441,3 +452,5 @@ strong,
   }
 }
 </style>
+<style src="./lesson-ending.css"></style>
+<style src="./lesson-ending.css"></style>

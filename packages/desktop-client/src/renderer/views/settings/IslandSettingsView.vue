@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
 import {
   DEFAULT_ISLAND_APPEARANCE,
+  defaultIslandLayouts,
   ISLAND_APPEARANCE_RANGES as RANGES,
   ISLAND_POSITION_LABELS,
   ISLAND_POSITIONS,
@@ -30,6 +31,13 @@ function editLayout() {
   void router.push('/settings/island/editor');
 }
 const layoutMode = ref<'fixed' | 'custom'>('fixed');
+const layoutSettings = ref(defaultIslandLayouts());
+const activeScheme = computed(() =>
+  layoutSettings.value.schemes.find((s) => s.id === layoutSettings.value.activeSchemeId)!,
+);
+const currentRadius = computed(() =>
+  layoutMode.value === 'custom' ? activeScheme.value.radius : island.value.radius,
+);
 const residentEnabled = ref(false);
 const pointerFadeEnabled = ref(true);
 const pointerFadeReversed = ref(false);
@@ -65,6 +73,7 @@ async function changePointerFade(
 }
 async function loadLayout() {
   const settings = (await window.desktop?.getConfig())?.islandLayout;
+  if (settings) layoutSettings.value = settings;
   layoutMode.value = settings?.layout ?? 'fixed';
   residentEnabled.value = settings?.residentEnabled ?? false;
   pointerFadeEnabled.value = settings?.pointerFadeEnabled ?? true;
@@ -103,6 +112,12 @@ async function loadIslandAppearance(): Promise<void> {
 /** 改动即生效：属性变化时先应用（实时预览），点"保存"再落盘 */
 function applyIslandAppearance(patch: Partial<IslandAppearance> = {}): void {
   island.value = { ...island.value, ...patch };
+  if (layoutMode.value === 'custom' && patch.radius !== undefined) {
+    activeScheme.value.radius = patch.radius;
+    void window.desktop
+      ?.saveConfig({ islandLayout: JSON.parse(JSON.stringify(layoutSettings.value)) })
+      .catch(() => ElMessage.error('圆角保存失败，请重试'));
+  }
   window.desktop?.islandSetAppearance({ ...island.value });
 }
 
@@ -230,9 +245,9 @@ onMounted(async () => {
             @input="(value: number) => applyIslandAppearance({ width: value })"
           />
         </el-form-item>
-        <el-form-item :label="`圆角 ${island.radius}px`">
+        <el-form-item :label="`圆角 ${currentRadius}px`">
           <el-slider
-            :model-value="island.radius"
+            :model-value="currentRadius"
             :min="RANGES.radius.min"
             :max="RANGES.radius.max"
             :step="1"

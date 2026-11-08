@@ -2,7 +2,7 @@
 import { confirmAction } from '../../composables/confirm.js';
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
-import { formatDate, relativeTime, type UpdateInfo } from '@classhelper/shared';
+import { formatDate, relativeTime } from '@classhelper/shared';
 import type { ClientAgentStatus, DesktopAppInfo } from '../../../types/desktop.js';
 import { useAppStore } from '../../stores/app.js';
 import { useUiStore } from '../../stores/ui.js';
@@ -42,7 +42,6 @@ async function loadAll(): Promise<void> {
   try {
     await loadAppInfo();
     await refreshAgent();
-    await loadIgnoredVersion();
     await appStore.refreshCacheStats();
   } finally {
     loading.value = false;
@@ -110,51 +109,6 @@ async function openLogDir(): Promise<void> {
   if (!ok) ElMessage.warning('打开日志目录失败，请按上面的路径手动前往');
 }
 
-/* ------------------------------------------------------------ 更新 */
-
-/**
- * 更新检查。
- *
- * 「立即检查」走 `checkForUpdates(true)`：**强制绕过主进程那 30 分钟缓存**。
- * 这是本页与「关于」页的区别 —— 那边用户点检查也可能是缓存结果（省流量），
- * 这边维护者要的是"现在到底拿得到什么"，所以按钮默认就是强制的。
- */
-const checking = ref(false);
-const updateInfo = ref<UpdateInfo | null>(null);
-const ignoredUpdateVersion = ref('');
-
-async function checkUpdate(force: boolean): Promise<void> {
-  if (!window.desktop?.checkForUpdates) return;
-  checking.value = true;
-  try {
-    updateInfo.value = await window.desktop.checkForUpdates(force);
-  } finally {
-    checking.value = false;
-  }
-}
-
-async function loadIgnoredVersion(): Promise<void> {
-  if (!window.desktop?.getConfig) return;
-  const stored = await window.desktop.getConfig().catch(() => null);
-  ignoredUpdateVersion.value = stored?.ignoredUpdateVersion ?? '';
-}
-
-async function ignoreVersion(): Promise<void> {
-  const version = updateInfo.value?.latestVersion;
-  if (!version || !window.desktop?.ignoreUpdateVersion) return;
-  await window.desktop.ignoreUpdateVersion(version);
-  ignoredUpdateVersion.value = version;
-  ElMessage.success(`已忽略 v${version}：启动时的自动检查不再提示它`);
-}
-
-/** 忽略是可逆的（排查线上"用户说不再提示"时经常要把它清掉），顺手给一个恢复入口 */
-async function clearIgnoredVersion(): Promise<void> {
-  if (!window.desktop?.saveConfig) return;
-  const saved = await window.desktop.saveConfig({ ignoredUpdateVersion: '' });
-  ignoredUpdateVersion.value = saved.ignoredUpdateVersion;
-  ElMessage.success('已恢复该版本的更新提示');
-}
-
 /* ------------------------------------------------------------ 调试工具 */
 
 const openingDevTools = ref(false);
@@ -211,8 +165,6 @@ async function clearCache(): Promise<void> {
 
 onMounted(async () => {
   await loadAll();
-  // 带出启动自动检查的结果（这次命中主进程缓存，不会真的再发一次请求）
-  void checkUpdate(false);
 });
 </script>
 
@@ -323,56 +275,6 @@ onMounted(async () => {
           </p>
           <div class="toolbar mt-12">
             <el-button data-test="dev-open-log-dir" @click="openLogDir">打开日志目录</el-button>
-          </div>
-        </el-card>
-
-        <!-- 更新 -->
-        <el-card shadow="never" class="mt-12">
-          <template #header><span>更新</span></template>
-          <div class="toolbar">
-            <el-button :loading="checking" data-test="dev-check-update" @click="checkUpdate(true)">
-              强制检查更新
-            </el-button>
-            <span class="text-muted">绕过主进程 30 分钟缓存，直接问 GitHub</span>
-          </div>
-          <el-descriptions :column="1" border size="small" class="mt-12">
-            <el-descriptions-item label="本次结果">
-              <template v-if="checking">正在检查…</template>
-              <template v-else-if="!updateInfo">尚未检查</template>
-              <template v-else-if="!updateInfo.ok">
-                <span class="text-muted">{{ updateInfo.error ?? '暂时无法检查更新' }}</span>
-              </template>
-              <template v-else-if="updateInfo.hasUpdate">
-                <el-tag size="small" type="success" effect="light">
-                  有新版本 v{{ updateInfo.latestVersion }}
-                </el-tag>
-                <span class="text-muted">当前 v{{ updateInfo.currentVersion }}</span>
-              </template>
-              <template v-else>
-                <el-tag size="small" type="info" effect="plain">已是最新版本</el-tag>
-                <span class="text-muted">v{{ updateInfo.currentVersion }}</span>
-              </template>
-            </el-descriptions-item>
-            <el-descriptions-item label="检查时间">
-              {{ updateInfo?.checkedAt ? formatDate(updateInfo.checkedAt, true) : '—' }}
-            </el-descriptions-item>
-            <el-descriptions-item label="已忽略的版本">
-              <template v-if="ignoredUpdateVersion">
-                <span class="mono">v{{ ignoredUpdateVersion }}</span>
-                <el-button link type="primary" size="small" @click="clearIgnoredVersion">恢复提示</el-button>
-              </template>
-              <span v-else class="text-muted">无</span>
-            </el-descriptions-item>
-          </el-descriptions>
-          <div class="toolbar mt-12">
-            <el-button
-              :disabled="!updateInfo?.latestVersion"
-              data-test="dev-ignore-version"
-              @click="ignoreVersion"
-            >
-              不再提示该版本
-            </el-button>
-            <span class="text-muted">写入配置后，启动时的自动检查会跳过它</span>
           </div>
         </el-card>
 

@@ -1,0 +1,16 @@
+/* 两种岛共用临近下课徽标；固定正圆，数字使用等宽字形。 */
+.lesson-ending-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: #fff;
+  background: #0a84ff;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
